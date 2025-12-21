@@ -1,0 +1,141 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 246 248 247;
+    --foreground: 15 23 42;
+    --card: 255 255 255;
+    --card-foreground: 15 23 42;
+    --popover: 255 255 255;
+    --popover-foreground: 15 23 42;
+    --primary: 142 71% 55%;
+    --primary-foreground: 144 50% 10%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 142 71% 95%;
+    --accent-foreground: 142 71% 30%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 142 71% 45%;
+    --radius: 0.5rem;
+
+    /* Custom theme colors */
+    --sidebar-bg: 150 20% 97%;
+    --sidebar-border: 150 15% 90%;
+    --surface-bg: 255 255 255;
+    --text-primary: 15 23 42;
+    --text-secondary: 100 116 139;
+    --text-muted: 148 163 184;
+  }
+
+  .dark {
+    --background: 144 40% 6%;
+    --foreground: 210 40% 98%;
+    --card: 144 35% 12%;
+    --card-foreground: 210 40% 98%;
+    --popover: 144 35% 12%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 142 71% 55%;
+    --primary-foreground: 144 50% 10%;
+    --secondary: 144 30% 15%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 144 30% 15%;
+    --muted-foreground: 150 30% 60%;
+    --accent: 144 30% 18%;
+    --accent-foreground: 142 71% 55%;
+    --destructive: 0 62.8% 50%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 144 30% 18%;
+    --input: 144 30% 18%;
+    --ring: 142 71% 45%;
+
+    /* Custom theme colors */
+    --sidebar-bg: 144 40% 6%;
+    --sidebar-border: 144 30% 18%;
+    --surface-bg: 144 35% 12%;
+    --text-primary: 255 255 255;
+    --text-secondary: 150 30% 70%;
+    --text-muted: 150 30% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-display antialiased;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 dark:bg-[#234833] rounded;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400 dark:bg-[#326748];
+  }
+}
+
+@layer components {
+  /* Donut Chart CSS */
+  .donut-chart {
+    width: 160px;
+    height: 160px;
+    border-radius: 50%;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .donut-hole {
+    width: 110px;
+    height: 110px;
+    border-radius: 50%;
+    @apply bg-white dark:bg-surface-dark;
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+  }
+
+  /* Stat Card Hover Effect */
+  .stat-card {
+    @apply transition-all duration-200 hover:shadow-lg hover:scale-[1.02];
+  }
+
+  /* Navigation Link Active State */
+  .nav-link-active {
+    @apply bg-primary/20 text-primary border border-primary/10;
+  }
+
+  .nav-link {
+    @apply text-slate-500 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}

@@ -1,0 +1,46 @@
+import express from 'express';
+import cors from 'cors';
+import { initDatabase } from './db/index.js';
+import dashboardRoutes from './routes/dashboard.js';
+import executionRoutes from './routes/executions.js';
+import casesRoutes from './routes/cases.js';
+import tasksRoutes from './routes/tasks.js';
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// 中间件
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+
+// 初始化数据库
+console.log('Initializing database...');
+initDatabase();
+
+// API 路由
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/executions', executionRoutes);
+app.use('/api/cases', casesRoutes);
+app.use('/api/tasks', tasksRoutes);
+
+// 健康检查
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// 错误处理
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Error:', err);
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.message || 'Internal Server Error',
+  });
+});
+
+// 启动服务器
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`API available at http://localhost:${PORT}/api`);
+});
+
+export default app;
