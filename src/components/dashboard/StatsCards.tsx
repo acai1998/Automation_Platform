@@ -69,7 +69,7 @@ export function StatsCards() {
   const [, setLocation] = useLocation();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {

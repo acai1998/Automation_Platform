@@ -54,7 +54,7 @@ export default function Collections() {
     }
   };
 
-  const handleRun = (id: number) => {
+  const handleRun = (_id: number) => {
     toast.success('集合执行已开始');
   };
 
