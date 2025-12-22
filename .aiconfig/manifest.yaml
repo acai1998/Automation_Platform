@@ -1,0 +1,55 @@
+# AI Refactor Manifest
+# This file records the project structure version and AI refactoring history
+
+version: "1.0.0"
+project_name: "automation-platform"
+last_refactor: "2025-12-22T23:20:00+08:00"
+
+# Project structure version
+structure_version: "2.0.0"
+
+# Refactoring history
+refactor_history:
+  - version: "2.0.0"
+    date: "2025-12-22"
+    description: "Standardized project directory structure"
+    changes:
+      - "Created configs/ directory for configuration files"
+      - "Created tests/ directory for test files"
+      - "Created scripts/ directory for utility scripts"
+      - "Created archive/legacy/ for deprecated files"
+      - "Created tmp/ for temporary files"
+      - "Moved postcss.config.js to configs/"
+      - "Moved tailwind.config.js to configs/"
+      - "Moved legacy root files to archive/legacy/"
+      - "Updated path references in vite.config.ts"
+      - "Updated tsconfig.json with new paths"
+      - "Updated tsconfig.server.json with new paths"
+
+# Standard directory structure
+directory_structure:
+  src/: "Frontend source code (React)"
+  server/: "Backend source code (Express)"
+  configs/: "Configuration files"
+  tests/: "Test files"
+  scripts/: "Utility scripts"
+  docs/: "Documentation"
+  shared/: "Shared types and utilities"
+  public/: "Static assets"
+  dist/: "Build output"
+  archive/: "Archived/deprecated files"
+  tmp/: "Temporary files (git-ignored)"
+  .aiconfig/: "AI refactoring configuration"
+
+# Path aliases
+aliases:
+  "@/*": "./src/*"
+  "@shared/*": "./shared/*"
+  "@configs/*": "./configs/*"
+
+# Build and validation commands
+commands:
+  analyze: "npx tsc --noEmit"
+  build: "npm run build"
+  validate: "npm run build && npx tsc --noEmit -p tsconfig.json && npx tsc --noEmit -p tsconfig.server.json"
+  dev: "npm run start"

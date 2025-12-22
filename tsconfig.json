@@ -18,9 +18,11 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@shared/*": ["./shared/*"]
+      "@shared/*": ["./shared/*"],
+      "@configs/*": ["./configs/*"]
     }
   },
   "include": ["src", "shared"],
+  "exclude": ["node_modules", "dist", "archive", "tmp", ".aiconfig"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

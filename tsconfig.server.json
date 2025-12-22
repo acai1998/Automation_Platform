@@ -9,8 +9,10 @@
     "outDir": "./dist/server",
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["./shared/*"]
+      "@shared/*": ["./shared/*"],
+      "@configs/*": ["./configs/*"]
     }
   },
-  "include": ["server", "shared"]
+  "include": ["server", "shared"],
+  "exclude": ["node_modules", "dist", "archive", "tmp", ".aiconfig"]
 }

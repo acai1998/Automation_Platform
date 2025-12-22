@@ -1,0 +1,56 @@
+# AI Refactor Rules Template
+# Rules for automated code refactoring
+
+rules:
+  # Directory naming conventions
+  directories:
+    source_code: ["src/", "server/"]
+    configuration: ["configs/"]
+    tests: ["tests/"]
+    documentation: ["docs/"]
+    scripts: ["scripts/"]
+    data: ["data/"]
+    models: ["models/"]
+    logs: ["logs/"]
+    temporary: ["tmp/"]
+    archive: ["archive/"]
+
+  # File type mappings
+  file_types:
+    typescript: ["*.ts", "*.tsx"]
+    javascript: ["*.js", "*.jsx"]
+    configuration: ["*.json", "*.yaml", "*.yml", "*.toml"]
+    documentation: ["*.md", "*.rst", "*.txt"]
+    styles: ["*.css", "*.scss", "*.less"]
+    sql: ["*.sql"]
+
+  # Import path patterns
+  import_patterns:
+    frontend:
+      - pattern: "@/*"
+        base: "./src/"
+      - pattern: "@shared/*"
+        base: "./shared/"
+      - pattern: "@configs/*"
+        base: "./configs/"
+    backend:
+      - pattern: "@shared/*"
+        base: "./shared/"
+      - pattern: "@configs/*"
+        base: "./configs/"
+
+  # Excluded directories (never process)
+  excluded:
+    - node_modules/
+    - .git/
+    - dist/
+    - .venv/
+    - __pycache__/
+    - .pytest_cache/
+    - .next/
+    - .nuxt/
+
+  # Cross-platform path handling
+  path_handling:
+    separator: "/"  # Always use forward slash
+    case_sensitive: false  # Windows compatibility

@@ -8,7 +8,11 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
       '@shared': path.resolve(__dirname, './shared'),
+      '@configs': path.resolve(__dirname, './configs'),
     },
+  },
+  css: {
+    postcss: './configs/postcss.config.js',
   },
   server: {
     port: 5173,

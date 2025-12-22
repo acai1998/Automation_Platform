@@ -150,3 +150,9 @@ Thumbs.db
 deepseek_*
 test_crypto.py
 node_modules
+
+# Project specific
+tmp/
+archive/
+*.db
+server/db/autotest.db
