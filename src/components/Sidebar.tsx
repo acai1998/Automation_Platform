@@ -1,5 +1,6 @@
 import { useLocation } from "wouter";
 import { ThemeToggle } from "./ThemeToggle";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   LayoutDashboard,
   FolderOpen,
@@ -26,6 +27,12 @@ const navItems: NavItem[] = [
 
 export function Sidebar() {
   const [location, setLocation] = useLocation();
+  const { user, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    setLocation('/login');
+  };
 
   return (
     <aside className="hidden lg:flex w-72 flex-col border-r border-slate-200 dark:border-[#234833] bg-slate-50 dark:bg-[#122017] h-full">
@@ -77,18 +84,26 @@ export function Sidebar() {
           </div>
 
           {/* User */}
-          <button className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors">
+          <button
+            onClick={() => setLocation('/profile')}
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
+          >
             <div className="size-8 rounded-full bg-primary/20 flex items-center justify-center">
               <User className="h-4 w-4 text-primary" />
             </div>
             <div className="flex flex-col text-left">
-              <span className="text-slate-900 dark:text-white text-sm font-medium">管理员</span>
+              <span className="text-slate-900 dark:text-white text-sm font-medium">
+                {user?.display_name || user?.username || '用户'}
+              </span>
               <span className="text-xs text-slate-500 dark:text-gray-500">查看个人资料</span>
             </div>
           </button>
 
           {/* Logout */}
-          <button className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-400/10 transition-colors">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-400/10 transition-colors"
+          >
             <LogOut className="h-5 w-5" />
             <span className="text-sm font-medium">退出登录</span>
           </button>
