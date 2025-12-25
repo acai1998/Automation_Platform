@@ -1,5 +1,4 @@
 import { getDatabase } from '../db/index.js';
-import { RunnerFactory, TestCaseConfig, ExecutionResult, ApiConfig } from '../runners/index.js';
 
 export interface TaskExecutionInput {
   taskId: number;
@@ -17,15 +16,32 @@ export interface ExecutionProgress {
   status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 }
 
+export interface CaseResultInput {
+  caseId: number;
+  caseName: string;
+  status: 'passed' | 'failed' | 'skipped' | 'error';
+  duration: number;
+  errorMessage?: string;
+}
+
+export interface ExecutionCallbackInput {
+  executionId: number;
+  status: 'success' | 'failed' | 'cancelled';
+  results: CaseResultInput[];
+  duration: number;
+  reportUrl?: string;
+}
+
 /**
  * 执行服务
- * 负责协调任务执行、结果记录、状态更新
+ * 负责创建执行记录、处理外部系统回调、状态更新
+ * 注：实际测试执行由 Jenkins 等外部系统完成
  */
 export class ExecutionService {
   /**
-   * 执行任务
+   * 创建执行记录（供 Jenkins 触发时调用）
    */
-  async executeTask(input: TaskExecutionInput): Promise<ExecutionProgress> {
+  createExecution(input: TaskExecutionInput): ExecutionProgress {
     const db = getDatabase();
 
     // 1. 获取任务信息
@@ -34,7 +50,7 @@ export class ExecutionService {
       FROM tasks t
       LEFT JOIN environments e ON t.environment_id = e.id
       WHERE t.id = ?
-    `).get(input.taskId) as any;
+    `).get(input.taskId) as Record<string, unknown> | undefined;
 
     if (!task) {
       throw new Error(`Task not found: ${input.taskId}`);
@@ -43,105 +59,120 @@ export class ExecutionService {
     // 2. 解析用例ID列表
     let caseIds: number[] = [];
     try {
-      caseIds = JSON.parse(task.case_ids || '[]');
+      caseIds = JSON.parse((task.case_ids as string) || '[]');
     } catch {
       caseIds = [];
     }
 
-    if (caseIds.length === 0) {
-      throw new Error('Task has no test cases');
+    // 3. 获取用例数量
+    let totalCases = caseIds.length;
+    if (totalCases > 0) {
+      const placeholders = caseIds.map(() => '?').join(',');
+      const cases = db.prepare(`
+        SELECT COUNT(*) as count FROM test_cases WHERE id IN (${placeholders}) AND status = 'active'
+      `).get(...caseIds) as { count: number };
+      totalCases = cases.count;
     }
 
-    // 3. 获取用例详情
-    const placeholders = caseIds.map(() => '?').join(',');
-    const cases = db.prepare(`
-      SELECT * FROM test_cases WHERE id IN (${placeholders}) AND status = 'active'
-    `).all(...caseIds) as any[];
-
-    // 4. 创建执行记录
+    // 4. 创建执行记录（状态为 pending，等待 Jenkins 回调）
     const insertExecution = db.prepare(`
       INSERT INTO task_executions (
         task_id, task_name, trigger_type, status, total_cases,
         passed_cases, failed_cases, skipped_cases, start_time, executed_by, environment_id
-      ) VALUES (?, ?, ?, 'running', ?, 0, 0, 0, datetime('now'), ?, ?)
+      ) VALUES (?, ?, ?, 'pending', ?, 0, 0, 0, datetime('now'), ?, ?)
     `);
 
     const result = insertExecution.run(
       task.id,
       task.name,
       input.triggerType,
-      cases.length,
+      totalCases,
       input.triggeredBy,
       task.environment_id
     );
 
     const executionId = result.lastInsertRowid as number;
 
-    // 5. 准备环境配置
-    const environment = {
-      baseUrl: task.base_url,
-      variables: task.env_config ? JSON.parse(task.env_config) : {},
+    return {
+      executionId,
+      totalCases,
+      completedCases: 0,
+      passedCases: 0,
+      failedCases: 0,
+      skippedCases: 0,
+      status: 'pending',
     };
+  }
 
-    // 6. 开始执行用例
-    let passedCases = 0;
-    let failedCases = 0;
-    let skippedCases = 0;
+  /**
+   * 更新执行状态为运行中
+   */
+  markExecutionRunning(executionId: number): void {
+    const db = getDatabase();
+    db.prepare(`
+      UPDATE task_executions
+      SET status = 'running', start_time = datetime('now')
+      WHERE id = ? AND status = 'pending'
+    `).run(executionId);
+  }
 
+  /**
+   * 处理外部系统（Jenkins）的执行结果回调
+   */
+  handleCallback(input: ExecutionCallbackInput): void {
+    const db = getDatabase();
+
+    // 1. 验证执行记录存在
+    const execution = db.prepare(`
+      SELECT * FROM task_executions WHERE id = ?
+    `).get(input.executionId);
+
+    if (!execution) {
+      throw new Error(`Execution not found: ${input.executionId}`);
+    }
+
+    // 2. 插入用例结果
     const insertCaseResult = db.prepare(`
       INSERT INTO case_results (
         execution_id, case_id, case_name, status, start_time, end_time,
         duration, error_message, assertions_total, assertions_passed, response_data
-      ) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, 0, 0, NULL)
     `);
 
-    for (const testCase of cases) {
-      // 构建用例配置
-      const caseConfig = this.buildTestCaseConfig(testCase, environment);
+    let passedCases = 0;
+    let failedCases = 0;
+    let skippedCases = 0;
 
-      // 执行用例
-      const execResult = await RunnerFactory.execute(caseConfig);
-
-      // 记录结果
-      const status = execResult.status;
-      if (status === 'passed') passedCases++;
-      else if (status === 'failed') failedCases++;
-      else skippedCases++;
-
-      const assertionsTotal = execResult.assertions?.length || 0;
-      const assertionsPassed = execResult.assertions?.filter(a => a.passed).length || 0;
-
+    for (const result of input.results) {
       insertCaseResult.run(
-        executionId,
-        testCase.id,
-        testCase.name,
-        status,
-        execResult.duration,
-        execResult.errorMessage || null,
-        assertionsTotal,
-        assertionsPassed,
-        JSON.stringify(execResult.responseData || null)
+        input.executionId,
+        result.caseId,
+        result.caseName,
+        result.status,
+        result.duration,
+        result.errorMessage || null
       );
+
+      if (result.status === 'passed') passedCases++;
+      else if (result.status === 'failed') failedCases++;
+      else skippedCases++;
     }
 
-    // 7. 更新执行记录
-    const finalStatus = failedCases > 0 ? 'failed' : 'success';
+    // 3. 更新执行记录
     db.prepare(`
       UPDATE task_executions
       SET status = ?, passed_cases = ?, failed_cases = ?, skipped_cases = ?,
-          end_time = datetime('now'), duration = CAST((julianday(datetime('now')) - julianday(start_time)) * 86400 AS INTEGER)
+          end_time = datetime('now'), duration = ?, error_message = ?
       WHERE id = ?
-    `).run(finalStatus, passedCases, failedCases, skippedCases, executionId);
-
-    return {
-      executionId,
-      totalCases: cases.length,
-      completedCases: cases.length,
+    `).run(
+      input.status,
       passedCases,
       failedCases,
       skippedCases,
-      status: finalStatus,
-    };
+      input.duration,
+      input.reportUrl || null,
+      input.executionId
+    );
   }
 
   /**
@@ -188,84 +219,39 @@ export class ExecutionService {
     db.prepare(`
       UPDATE task_executions
       SET status = 'cancelled', end_time = datetime('now')
-      WHERE id = ? AND status = 'running'
+      WHERE id = ? AND status IN ('pending', 'running')
     `).run(executionId);
   }
 
   /**
-   * 构建用例配置
+   * 获取任务的用例列表（供 Jenkins 使用）
    */
-  private buildTestCaseConfig(testCase: any, environment: any): TestCaseConfig {
-    let config: any;
+  getTaskCases(taskId: number) {
+    const db = getDatabase();
 
+    const task = db.prepare(`SELECT case_ids FROM tasks WHERE id = ?`).get(taskId) as { case_ids: string } | undefined;
+
+    if (!task) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    let caseIds: number[] = [];
     try {
-      config = JSON.parse(testCase.config_json || '{}');
+      caseIds = JSON.parse(task.case_ids || '[]');
     } catch {
-      config = {};
+      caseIds = [];
     }
 
-    // 根据类型构建配置
-    switch (testCase.type) {
-      case 'api':
-        return {
-          id: testCase.id,
-          name: testCase.name,
-          type: 'api',
-          config: {
-            method: config.method || 'GET',
-            url: config.url || '',
-            headers: config.headers,
-            params: config.params,
-            body: config.body,
-            timeout: config.timeout,
-            assertions: config.assertions || [],
-          } as ApiConfig,
-          environment,
-        };
-
-      case 'postman':
-        return {
-          id: testCase.id,
-          name: testCase.name,
-          type: 'postman',
-          config: {
-            collectionJson: config.collectionJson || config,
-            environmentJson: config.environmentJson,
-            iterationCount: config.iterationCount,
-            delayRequest: config.delayRequest,
-          },
-          environment,
-        };
-
-      case 'pytest':
-        return {
-          id: testCase.id,
-          name: testCase.name,
-          type: 'pytest',
-          config: {
-            scriptPath: config.scriptPath || testCase.script_path,
-            testFunction: config.testFunction,
-            args: config.args,
-            pythonPath: config.pythonPath,
-            timeout: config.timeout,
-          },
-          environment,
-        };
-
-      default:
-        // 默认当作 API 类型处理
-        return {
-          id: testCase.id,
-          name: testCase.name,
-          type: 'api',
-          config: {
-            method: 'GET',
-            url: '',
-            assertions: [],
-          } as ApiConfig,
-          environment,
-        };
+    if (caseIds.length === 0) {
+      return [];
     }
+
+    const placeholders = caseIds.map(() => '?').join(',');
+    return db.prepare(`
+      SELECT id, name, type, module, priority, script_path, config_json
+      FROM test_cases
+      WHERE id IN (${placeholders}) AND status = 'active'
+    `).all(...caseIds);
   }
 }
 

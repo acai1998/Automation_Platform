@@ -1,30 +1,50 @@
 import { Router } from 'express';
 import { executionService } from '../services/ExecutionService.js';
-import { RunnerFactory } from '../runners/index.js';
 
 const router = Router();
 
 /**
- * POST /api/executions/run
- * 执行任务
+ * POST /api/executions/callback
+ * Jenkins 执行结果回调接口
  */
-router.post('/run', async (req, res) => {
+router.post('/callback', (req, res) => {
   try {
-    const { taskId, triggeredBy = 1 } = req.body;
+    const { executionId, status, results, duration, reportUrl } = req.body;
 
-    if (!taskId) {
-      return res.status(400).json({ success: false, message: 'taskId is required' });
+    if (!executionId || !status || !Array.isArray(results)) {
+      return res.status(400).json({
+        success: false,
+        message: 'executionId, status, and results are required'
+      });
     }
 
-    const result = await executionService.executeTask({
-      taskId,
-      triggeredBy,
-      triggerType: 'manual',
+    executionService.handleCallback({
+      executionId,
+      status,
+      results,
+      duration: duration || 0,
+      reportUrl
     });
 
-    res.json({ success: true, data: result });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+    res.json({ success: true, message: 'Callback processed successfully' });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * POST /api/executions/:id/start
+ * 标记执行开始运行（Jenkins 开始执行时调用）
+ */
+router.post('/:id/start', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    executionService.markExecutionRunning(id);
+    res.json({ success: true, message: 'Execution marked as running' });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -42,8 +62,9 @@ router.get('/:id', (req, res) => {
     }
 
     res.json({ success: true, data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -56,8 +77,9 @@ router.get('/', (req, res) => {
     const limit = parseInt(req.query.limit as string) || 20;
     const data = executionService.getRecentExecutions(limit);
     res.json({ success: true, data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -70,21 +92,9 @@ router.post('/:id/cancel', (req, res) => {
     const id = parseInt(req.params.id);
     executionService.cancelExecution(id);
     res.json({ success: true, message: 'Execution cancelled' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-/**
- * GET /api/executions/runners/available
- * 获取可用的执行器
- */
-router.get('/runners/available', async (req, res) => {
-  try {
-    const runners = await RunnerFactory.getAvailableRunners();
-    res.json({ success: true, data: runners });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
