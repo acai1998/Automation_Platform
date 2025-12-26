@@ -7,7 +7,6 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AuthProvider } from "./contexts/AuthContext";
 import Home from "./pages/Home";
-import Collections from "./pages/Collections";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
@@ -79,11 +78,6 @@ function Router() {
       <Route path="/">
         <ProtectedRoute>
           <Home />
-        </ProtectedRoute>
-      </Route>
-      <Route path="/collections">
-        <ProtectedRoute>
-          <Collections />
         </ProtectedRoute>
       </Route>
       <Route path="/cases">
