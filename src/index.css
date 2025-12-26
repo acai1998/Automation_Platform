@@ -1,33 +1,50 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
+/* ============================================
+ * 字体导入 - 只导入实际使用的字重以优化性能
+ * ============================================ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================
+ * CSS 变量 - 主题配置
+ * ============================================ */
 @layer base {
   :root {
+    /* Base Colors */
     --background: 246 248 247;
     --foreground: 15 23 42;
     --card: 255 255 255;
     --card-foreground: 15 23 42;
     --popover: 255 255 255;
     --popover-foreground: 15 23 42;
+
+    /* Brand Colors */
     --primary: 142 71% 55%;
     --primary-foreground: 144 50% 10%;
+
+    /* Secondary & Muted */
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
     --muted: 210 40% 96.1%;
     --muted-foreground: 215.4 16.3% 46.9%;
+
+    /* Accent */
     --accent: 142 71% 95%;
     --accent-foreground: 142 71% 30%;
+
+    /* Destructive */
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
+
+    /* Border & Input */
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 142 71% 45%;
     --radius: 0.5rem;
 
-    /* Custom theme colors */
+    /* Custom Theme Colors */
     --sidebar-bg: 150 20% 97%;
     --sidebar-border: 150 15% 90%;
     --surface-bg: 255 255 255;
@@ -36,6 +53,7 @@
     --text-muted: 148 163 184;
   }
 
+  /* Dark Theme */
   .dark {
     --background: 144 40% 6%;
     --foreground: 210 40% 98%;
@@ -57,7 +75,7 @@
     --input: 144 30% 18%;
     --ring: 142 71% 45%;
 
-    /* Custom theme colors */
+    /* Custom Theme Colors */
     --sidebar-bg: 144 40% 6%;
     --sidebar-border: 144 30% 18%;
     --surface-bg: 144 35% 12%;
@@ -67,6 +85,9 @@
   }
 }
 
+/* ============================================
+ * 基础样式
+ * ============================================ */
 @layer base {
   * {
     @apply border-border;
@@ -76,7 +97,22 @@
     @apply bg-background text-foreground font-display antialiased;
   }
 
-  /* Custom scrollbar */
+  /* ----------------------------------------
+   * 滚动条样式
+   * 支持 Webkit (Chrome, Safari, Edge) 和 Firefox
+   * ---------------------------------------- */
+
+  /* Firefox 滚动条支持 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(203 213 225) transparent;
+  }
+
+  .dark * {
+    scrollbar-color: rgb(35 72 51) transparent;
+  }
+
+  /* Webkit 滚动条样式 */
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -93,8 +129,19 @@
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-slate-400 dark:bg-[#326748];
   }
+
+  /* 移动端更窄的滚动条 */
+  @media (max-width: 768px) {
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+  }
 }
 
+/* ============================================
+ * 组件样式
+ * ============================================ */
 @layer components {
   /* Donut Chart CSS */
   .donut-chart {
@@ -119,11 +166,14 @@
     align-items: center;
   }
 
-  /* Fix: remove default focus outline from Recharts SVG when clicked */
+  /*
+   * Recharts 焦点样式修复
+   * 移除 Recharts 图表 SVG 默认焦点样式，避免点击时出现黑色边框
+   */
   .recharts-surface:focus,
   .recharts-wrapper svg:focus {
-    outline: none !important;
-    box-shadow: none !important;
+    outline: none;
+    box-shadow: none;
   }
 
   /* Stat Card Hover Effect */
@@ -141,8 +191,25 @@
   }
 }
 
+/* ============================================
+ * 工具类
+ * ============================================ */
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+}
+
+/* ============================================
+ * 可访问性 - 尊重用户的减少动画偏好
+ * ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

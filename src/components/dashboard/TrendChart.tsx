@@ -164,7 +164,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange }: ChartHeaderPro
         <button
           type="button"
           onClick={() => onChartTypeChange('line')}
-          className={`p-2 rounded-lg transition-colors ${
+          className={`p-2 rounded-lg transition-colors focus:outline-none ${
             chartType === 'line'
               ? 'bg-primary/10 text-primary'
               : 'text-slate-400 hover:text-slate-600 dark:hover:text-gray-300'
@@ -176,7 +176,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange }: ChartHeaderPro
         <button
           type="button"
           onClick={() => onChartTypeChange('bar')}
-          className={`p-2 rounded-lg transition-colors ${
+          className={`p-2 rounded-lg transition-colors focus:outline-none ${
             chartType === 'bar'
               ? 'bg-primary/10 text-primary'
               : 'text-slate-400 hover:text-slate-600 dark:hover:text-gray-300'
