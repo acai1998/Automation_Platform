@@ -354,7 +354,7 @@ export function TrendChart({ timeRange }: TrendChartProps) {
             />
             <XAxis {...xAxisProps} />
             <YAxis {...yAxisProps} />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip />} cursor={false} />
             <Line
               type="monotone"
               dataKey="successRate"
@@ -374,7 +374,7 @@ export function TrendChart({ timeRange }: TrendChartProps) {
             />
             <XAxis {...xAxisProps} />
             <YAxis {...yAxisProps} />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip />} cursor={false} />
             <Bar
               dataKey="successRate"
               fill={CHART_CONFIG.colors.primary}
