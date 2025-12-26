@@ -104,22 +104,22 @@ export function TrendChart({ timeRange }: TrendChartProps) {
   const totalFailed = trendData.reduce((acc, d) => acc + (d.failedCases || 0), 0);
 
   const timeRangeLabels = {
-    '7d': '7天稳定性趋势',
-    '30d': '30天稳定性趋势',
-    '90d': '90天稳定性趋势',
+    '7d': '近7天稳定性趋势',
+    '30d': '近30天稳定性趋势',
+    '90d': '近90天稳定性趋势',
   };
 
   // X轴配置：根据时间周期调整倾斜角度和间隔
   const getXAxisConfig = () => {
     switch (timeRange) {
       case '7d':
-        return { angle: 0, textAnchor: 'middle' as const, interval: 0 };
+        return { angle: 0, textAnchor: 'end' as const, interval: 0 };
       case '30d':
-        return { angle: -30, textAnchor: 'end' as const, interval: 0 };
+        return { angle: -45, textAnchor: 'end' as const, interval: 0 };
       case '90d':
         return { angle: -45, textAnchor: 'end' as const, interval: 6 }; // 每7天显示一个刻度
       default:
-        return { angle: 0, textAnchor: 'middle' as const, interval: 0 };
+        return { angle: -45, textAnchor: 'end' as const, interval: 0 };
     }
   };
 
@@ -137,7 +137,14 @@ export function TrendChart({ timeRange }: TrendChartProps) {
   };
 
   // 共用的图表配置
-  const chartMargin = { top: 10, right: 10, left: 0, bottom: timeRange === '7d' ? 20 : 40 };
+  const chartMargin = {
+    top: 10,
+    right: 10,
+    left: 0,
+    bottom: 2, // 👈 问题核心
+  };
+
+  // const chartMargin = { top: 10, right: 10, left: 0, bottom: timeRange === '7d' ? 20 : 40 };
 
   return (
     <div className="xl:col-span-2 rounded-xl border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark p-6 flex flex-col">
@@ -167,11 +174,10 @@ export function TrendChart({ timeRange }: TrendChartProps) {
           <button
             type="button"
             onClick={() => setChartType('line')}
-            className={`p-2 rounded-lg transition-colors ${
-              chartType === 'line'
-                ? 'bg-primary/10 text-primary'
-                : 'text-slate-400 hover:text-slate-600 dark:hover:text-gray-300'
-            }`}
+            className={`p-2 rounded-lg transition-colors ${chartType === 'line'
+              ? 'bg-primary/10 text-primary'
+              : 'text-slate-400 hover:text-slate-600 dark:hover:text-gray-300'
+              }`}
             title="折线图"
           >
             <TrendingUp className="h-4 w-4" />
@@ -179,11 +185,10 @@ export function TrendChart({ timeRange }: TrendChartProps) {
           <button
             type="button"
             onClick={() => setChartType('bar')}
-            className={`p-2 rounded-lg transition-colors ${
-              chartType === 'bar'
-                ? 'bg-primary/10 text-primary'
-                : 'text-slate-400 hover:text-slate-600 dark:hover:text-gray-300'
-            }`}
+            className={`p-2 rounded-lg transition-colors ${chartType === 'bar'
+              ? 'bg-primary/10 text-primary'
+              : 'text-slate-400 hover:text-slate-600 dark:hover:text-gray-300'
+              }`}
             title="柱状图"
           >
             <BarChart3 className="h-4 w-4" />
@@ -202,7 +207,7 @@ export function TrendChart({ timeRange }: TrendChartProps) {
             暂无数据
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height={250} minHeight={250}>
             {chartType === 'line' ? (
               <LineChart data={trendData} margin={chartMargin}>
                 <CartesianGrid
