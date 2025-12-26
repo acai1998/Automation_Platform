@@ -143,6 +143,7 @@
  * 组件样式
  * ============================================ */
 @layer components {
+
   /* Donut Chart CSS */
   .donut-chart {
     width: 160px;
@@ -176,6 +177,12 @@
     box-shadow: none;
   }
 
+  /* 去除所有元素在获得焦点时的黑色边框 */
+  *:focus {
+    outline: none;
+  }
+
+
   /* Stat Card Hover Effect */
   .stat-card {
     @apply transition-all duration-200 hover:shadow-lg hover:scale-[1.02];
@@ -204,6 +211,7 @@
  * 可访问性 - 尊重用户的减少动画偏好
  * ============================================ */
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
