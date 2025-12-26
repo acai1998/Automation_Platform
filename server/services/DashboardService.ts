@@ -102,11 +102,12 @@ export class DashboardService {
 
   /**
    * 获取历史趋势数据
+   * 采用 T-1 数据口径：不展示当天数据，最新可展示日期 = 当前日期 - 1 天
    */
   getTrendData(days: number = 30): DailySummary[] {
     const db = getDatabase();
 
-    // 优先从 daily_summaries 表获取
+    // 优先从 daily_summaries 表获取（T-1 口径）
     const summaries = db.prepare(`
       SELECT
         summary_date as date,
@@ -117,6 +118,7 @@ export class DashboardService {
         success_rate as successRate
       FROM daily_summaries
       WHERE summary_date >= DATE('now', '-' || ? || ' days')
+        AND summary_date < DATE('now')
       ORDER BY summary_date ASC
     `).all(days) as DailySummary[];
 
@@ -124,7 +126,7 @@ export class DashboardService {
       return summaries;
     }
 
-    // 如果没有汇总数据，从执行记录实时计算
+    // 如果没有汇总数据，从执行记录实时计算（T-1 口径）
     return db.prepare(`
       SELECT
         DATE(start_time) as date,
@@ -135,6 +137,7 @@ export class DashboardService {
         ROUND(SUM(passed_cases) * 100.0 / NULLIF(SUM(passed_cases + failed_cases + skipped_cases), 0), 2) as successRate
       FROM task_executions
       WHERE DATE(start_time) >= DATE('now', '-' || ? || ' days')
+        AND DATE(start_time) < DATE('now')
       GROUP BY DATE(start_time)
       ORDER BY date ASC
     `).all(days) as DailySummary[];

@@ -119,6 +119,12 @@ npx tsc --noEmit -p tsconfig.server.json
   通过 `server/db` 中的 `better-sqlite3` 操作，**禁止**在代码中硬编码 SQL
 - 🔥 **API 路由**：
   严格按 `API Routes` 部分定义（如 `/api/cases` 用于测试用例管理）
+- 🔥 **图表开发**：
+  使用 **Recharts** 库（`recharts`）绑定真实数据，禁止使用静态图片或手写 SVG 模拟图表
+
+## 数据展示规范
+- ⚠️ **T-1 数据口径**：统计类数据（如趋势图）不展示当天数据，最新可展示日期 = 当前日期 - 1 天
+- ⚠️ **图表交互**：图表必须支持 Hover Tooltip 展示详细数据
 
 ## 重要提示
 - ⚠️ **不要修改** `tsconfig.json` 中的路径别名（已配置好）
