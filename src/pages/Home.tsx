@@ -5,6 +5,7 @@ import { TrendChart } from "@/components/dashboard/TrendChart";
 import { RecentTests } from "@/components/dashboard/RecentTests";
 import { Button } from "@/components/ui/button";
 import { Play, ChevronDown } from "lucide-react";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState } from "react";
 
 type TimeRange = '7d' | '30d' | '90d';
@@ -23,7 +24,7 @@ export default function Home() {
                 仪表盘
               </h2>
               <p className="text-slate-500 dark:text-[#92c9a9] text-base font-normal">
-                自动化测试套件性能概览
+                自动化测试数据概览
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -52,16 +53,18 @@ export default function Home() {
           </div>
 
           {/* Stats Cards */}
-          <StatsCards />
+          <TooltipProvider>
+            <StatsCards />
 
-          {/* Charts Section */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            {/* Today's Execution Donut Chart */}
-            <TodayExecution />
+            {/* Charts Section */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              {/* Today's Execution Donut Chart */}
+              <TodayExecution />
 
-            {/* Trend Line Chart */}
-            <TrendChart timeRange={timeRange} />
-          </div>
+              {/* Trend Line Chart */}
+              <TrendChart timeRange={timeRange} />
+            </div>
+          </TooltipProvider>
 
           {/* Recent Test Runs */}
           <RecentTests />

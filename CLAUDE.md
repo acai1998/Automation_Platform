@@ -34,6 +34,7 @@ npx tsc --noEmit -p tsconfig.server.json
 
 ## 架构说明
 
+```bash
 这是一个用于管理自动化测试用例、调度执行任务、展示测试报告的全栈自动化测试平台。
 **注意**：实际测试执行由 Jenkins 等外部系统完成，平台专注于管理和调度。
 
@@ -80,6 +81,7 @@ npx tsc --noEmit -p tsconfig.server.json
 - `@/*` → `./src/*`（前端）
 - `@shared/*` → `./shared/*`（共享类型）
 - `@configs/*` → `./configs/*`（配置文件）
+```
 
 ## 项目目录结构
 
@@ -99,6 +101,7 @@ npx tsc --noEmit -p tsconfig.server.json
 
 ## **请严格遵守以下规则，当生成代码时：**
 
+```bash
 ## 代码规范
 - **尽可能减少自行实现的底层与通用逻辑，优先、直接、完整地复用既有成熟仓库与库代码，仅在必要时编写最小业务层与调度代码**
 - ✅ **必须用 TypeScript**，禁止 `any` 类型（用 `unknown` 或具体类型替代）
@@ -130,3 +133,4 @@ npx tsc --noEmit -p tsconfig.server.json
 - ⚠️ **不要修改** `tsconfig.json` 中的路径别名（已配置好）
 - ⚠️ **不要添加** `node_modules` 或 `dist/` 文件到版本控制
 - ⚠️ **所有新文件**必须放在对应目录（如新组件放 `src/components/`）
+```

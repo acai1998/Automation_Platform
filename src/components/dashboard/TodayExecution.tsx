@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, HelpCircle } from "lucide-react";
 import { dashboardApi } from "@/lib/api";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 interface TodayExecutionData {
   total: number;
@@ -49,7 +50,19 @@ export function TodayExecution() {
   return (
     <div className="xl:col-span-1 rounded-xl border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark p-6 flex flex-col">
       <div className="mb-6">
-        <h3 className="text-slate-900 dark:text-white text-lg font-bold">今日执行统计</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-slate-900 dark:text-white text-lg font-bold">今日执行统计</h3>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" title="查看说明">
+                <HelpCircle className="h-4 w-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+              <div className="text-slate-600 dark:text-gray-400 text-sm">显示今天内执行用例的实时状态分布（成功/失败/跳过），用于快速了解当前执行情况。</div>
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <p className="text-slate-500 dark:text-gray-400 text-sm">实时状态分布</p>
       </div>
 

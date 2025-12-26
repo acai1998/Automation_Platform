@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, TrendingUp, BarChart3 } from "lucide-react";
+import { Loader2, TrendingUp, BarChart3, HelpCircle } from "lucide-react";
 import { dashboardApi } from "@/lib/api";
 import {
   LineChart,
@@ -12,6 +12,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { Tooltip as UiTooltip, TooltipTrigger as UiTooltipTrigger, TooltipContent as UiTooltipContent } from "@/components/ui/tooltip";
 
 interface DailySummary {
   date: string;
@@ -143,9 +144,21 @@ export function TrendChart({ timeRange }: TrendChartProps) {
       {/* Header */}
       <div className="flex justify-between items-start mb-6">
         <div>
-          <h3 className="text-slate-900 dark:text-white text-lg font-bold">
-            {timeRangeLabels[timeRange]}
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-slate-900 dark:text-white text-lg font-bold">
+              {timeRangeLabels[timeRange]}
+            </h3>
+            <UiTooltip>
+              <UiTooltipTrigger asChild>
+                <button className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" title="查看说明">
+                  <HelpCircle className="h-4 w-4" />
+                </button>
+              </UiTooltipTrigger>
+              <UiTooltipContent side="top" className="max-w-xs">
+                <div className="text-slate-600 dark:text-gray-400 text-sm">展示过去 {timeRange === '7d' ? '7 天' : timeRange === '30d' ? '30 天' : '90 天'} 的成功率趋势，用于评估稳定性变化。</div>
+              </UiTooltipContent>
+            </UiTooltip>
+          </div>
           <p className="text-slate-500 dark:text-gray-400 text-sm">通过率一致性变化（T-1 数据）</p>
         </div>
 

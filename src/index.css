@@ -119,6 +119,13 @@
     align-items: center;
   }
 
+  /* Fix: remove default focus outline from Recharts SVG when clicked */
+  .recharts-surface:focus,
+  .recharts-wrapper svg:focus {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
   /* Stat Card Hover Effect */
   .stat-card {
     @apply transition-all duration-200 hover:shadow-lg hover:scale-[1.02];
