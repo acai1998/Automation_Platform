@@ -47,7 +47,22 @@
 - Node.js >= 18
 - npm >= 9
 
-### 安装
+### 快速部署（推荐）
+
+```bash
+# 自动部署脚本（macOS/Linux）
+bash deployment/scripts/setup.sh
+
+# 或 Windows
+deployment\scripts\setup.bat
+
+# 启动应用
+npm run start
+```
+
+**所需时间**: 5-15 分钟
+
+### 手动安装
 
 ```bash
 # 克隆仓库
@@ -81,6 +96,10 @@ npm run build
 # 预览构建结果
 npm run preview
 ```
+
+### 详细部署指南
+
+详见 [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) 和 [deployment/](./deployment/) 文件夹中的完整文档。
 
 ## 📁 项目结构
 

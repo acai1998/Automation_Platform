@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # 自动化测试平台应用
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: automation-platform
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_PATH: /app/server/db/autotest.db
+    volumes:
+      # 持久化数据库
+      - db-volume:/app/server/db
+      # 持久化日志
+      - logs-volume:/app/logs
+    restart: unless-stopped
+    networks:
+      - automation-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Nginx 反向代理（可选）
+  nginx:
+    image: nginx:alpine
+    container_name: automation-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - automation-network
+
+volumes:
+  db-volume:
+    driver: local
+  logs-volume:
+    driver: local
+
+networks:
+  automation-network:
+    driver: bridge
