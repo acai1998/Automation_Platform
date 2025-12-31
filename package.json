@@ -9,7 +9,9 @@
     "server": "tsx watch server/index.ts",
     "start": "concurrently \"npm run dev\" \"npm run server\"",
     "db:init": "tsx server/db/index.ts",
-    "db:reset": "tsx server/db/index.ts --reset"
+    "db:reset": "tsx server/db/index.ts --reset",
+    "db:mariadb:init": "tsx server/db/init-mariadb.ts",
+    "db:mariadb:reset": "tsx server/db/init-mariadb.ts --reset"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",

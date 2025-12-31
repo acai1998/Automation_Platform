@@ -10,16 +10,26 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    email VARCHAR(100) UNIQUE,
     display_name VARCHAR(100),
     avatar VARCHAR(255),
     role VARCHAR(20) DEFAULT 'tester' CHECK (role IN ('admin', 'tester', 'developer', 'viewer')),
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'locked')),
+    email_verified BOOLEAN DEFAULT 0,
+    reset_token VARCHAR(255),
+    reset_token_expires DATETIME,
+    remember_token VARCHAR(255),
+    login_attempts INTEGER DEFAULT 0,
+    locked_until DATETIME,
     last_login_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token);
 
 -- ============================================
 -- 2. 项目表 (projects)
@@ -29,10 +39,13 @@ CREATE TABLE IF NOT EXISTS projects (
     name VARCHAR(100) NOT NULL,
     description TEXT,
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'archived')),
-    owner_id INTEGER REFERENCES users(id),
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
 
 -- ============================================
 -- 3. 测试用例表 (test_cases)
@@ -41,7 +54,7 @@ CREATE TABLE IF NOT EXISTS test_cases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name VARCHAR(200) NOT NULL,
     description TEXT,
-    project_id INTEGER REFERENCES projects(id),
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
     module VARCHAR(100),
     priority VARCHAR(10) DEFAULT 'P1' CHECK (priority IN ('P0', 'P1', 'P2', 'P3')),
     type VARCHAR(20) DEFAULT 'api' CHECK (type IN ('api', 'ui', 'performance', 'security')),
@@ -49,8 +62,8 @@ CREATE TABLE IF NOT EXISTS test_cases (
     tags VARCHAR(500),
     script_path VARCHAR(500),
     config_json TEXT,
-    created_by INTEGER REFERENCES users(id),
-    updated_by INTEGER REFERENCES users(id),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -58,6 +71,7 @@ CREATE TABLE IF NOT EXISTS test_cases (
 CREATE INDEX IF NOT EXISTS idx_test_cases_project ON test_cases(project_id);
 CREATE INDEX IF NOT EXISTS idx_test_cases_status ON test_cases(status);
 CREATE INDEX IF NOT EXISTS idx_test_cases_module ON test_cases(module);
+CREATE INDEX IF NOT EXISTS idx_test_cases_priority ON test_cases(priority);
 
 -- ============================================
 -- 4. 环境配置表 (environments)
@@ -73,6 +87,8 @@ CREATE TABLE IF NOT EXISTS environments (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_env_status ON environments(status);
+
 -- ============================================
 -- 5. 测试任务表 (tasks)
 -- ============================================
@@ -80,23 +96,27 @@ CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name VARCHAR(200) NOT NULL,
     description TEXT,
-    project_id INTEGER REFERENCES projects(id),
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
     case_ids TEXT, -- JSON array of case IDs
     trigger_type VARCHAR(20) DEFAULT 'manual' CHECK (trigger_type IN ('manual', 'scheduled', 'ci_triggered')),
     cron_expression VARCHAR(50),
-    environment_id INTEGER REFERENCES environments(id),
+    environment_id INTEGER REFERENCES environments(id) ON DELETE SET NULL,
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'paused', 'archived')),
-    created_by INTEGER REFERENCES users(id),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_trigger ON tasks(trigger_type);
 
 -- ============================================
 -- 6. 任务执行记录表 (task_executions)
 -- ============================================
 CREATE TABLE IF NOT EXISTS task_executions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER REFERENCES tasks(id),
+    task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
     task_name VARCHAR(200),
     trigger_type VARCHAR(20) CHECK (trigger_type IN ('manual', 'scheduled', 'ci_triggered')),
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'success', 'failed', 'cancelled')),
@@ -107,9 +127,11 @@ CREATE TABLE IF NOT EXISTS task_executions (
     start_time DATETIME,
     end_time DATETIME,
     duration INTEGER, -- seconds
-    executed_by INTEGER REFERENCES users(id),
-    environment_id INTEGER REFERENCES environments(id),
+    executed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    environment_id INTEGER REFERENCES environments(id) ON DELETE SET NULL,
     error_message TEXT,
+    jenkins_build_id VARCHAR(100),
+    jenkins_build_url VARCHAR(500),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -122,8 +144,8 @@ CREATE INDEX IF NOT EXISTS idx_task_executions_start_time ON task_executions(sta
 -- ============================================
 CREATE TABLE IF NOT EXISTS case_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    execution_id INTEGER REFERENCES task_executions(id) ON DELETE CASCADE,
-    case_id INTEGER REFERENCES test_cases(id),
+    execution_id INTEGER NOT NULL REFERENCES task_executions(id) ON DELETE CASCADE,
+    case_id INTEGER REFERENCES test_cases(id) ON DELETE SET NULL,
     case_name VARCHAR(200),
     status VARCHAR(20) CHECK (status IN ('passed', 'failed', 'skipped', 'error')),
     start_time DATETIME,
@@ -181,6 +203,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON audit_logs(target_type, target_id);
 
 -- ============================================
 -- 触发器：自动更新 updated_at
