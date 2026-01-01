@@ -8,6 +8,7 @@ import casesRoutes from './routes/cases.js';
 import tasksRoutes from './routes/tasks.js';
 import jenkinsRoutes from './routes/jenkins.js';
 import authRoutes from './routes/auth.js';
+import repositoriesRoutes from './routes/repositories.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -38,6 +39,7 @@ app.use('/api/executions', executionRoutes);
 app.use('/api/cases', casesRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/jenkins', jenkinsRoutes);
+app.use('/api/repositories', repositoriesRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

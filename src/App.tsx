@@ -12,7 +12,20 @@ import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import ComingSoon from "./pages/ComingSoon";
+import RepositoryManagement from "./pages/RepositoryManagement";
+import GitHubRepositoryManagement from "./pages/GitHubRepositoryManagement";
 import { FolderOpen, Boxes, BarChart3, Settings, User } from "lucide-react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+// 创建 QueryClient 实例
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 分钟
+      retry: 1,
+    },
+  },
+});
 
 // 开发中页面的包装组件
 function CasesPage() {
@@ -90,6 +103,16 @@ function Router() {
           <TasksPage />
         </ProtectedRoute>
       </Route>
+      <Route path="/repositories">
+        <ProtectedRoute>
+          <RepositoryManagement />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/github-repositories">
+        <ProtectedRoute>
+          <GitHubRepositoryManagement />
+        </ProtectedRoute>
+      </Route>
       <Route path="/reports">
         <ProtectedRoute>
           <ReportsPage />
@@ -115,14 +138,16 @@ function Router() {
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider defaultTheme="light">
-        <AuthProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Router />
-          </TooltipProvider>
-        </AuthProvider>
-      </ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider defaultTheme="light">
+          <AuthProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Router />
+            </TooltipProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }
