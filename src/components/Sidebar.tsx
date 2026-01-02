@@ -9,7 +9,6 @@ import {
   LogOut,
   Boxes,
   User,
-  GitBranch,
   Github,
 } from "lucide-react";
 
@@ -23,8 +22,7 @@ const navItems: NavItem[] = [
   { icon: <LayoutDashboard className="h-5 w-5" />, label: "仪表盘", href: "/" },
   { icon: <FolderOpen className="h-5 w-5" />, label: "用例管理", href: "/cases" },
   { icon: <Boxes className="h-5 w-5" />, label: "任务管理", href: "/tasks" },
-  { icon: <GitBranch className="h-5 w-5" />, label: "仓库管理", href: "/repositories" },
-  { icon: <Github className="h-5 w-5" />, label: "GitHub 仓库", href: "/github-repositories" },
+  { icon: <Github className="h-5 w-5" />, label: "GitHub 仓库", href: "/repositories" },
   { icon: <BarChart3 className="h-5 w-5" />, label: "报告中心", href: "/reports" },
   { icon: <Settings className="h-5 w-5" />, label: "系统设置", href: "/settings" },
 ];

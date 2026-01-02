@@ -4,6 +4,7 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ProtectedRoute from "./components/ProtectedRoute";
+import { Layout } from "./components/Layout";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AuthProvider } from "./contexts/AuthContext";
 import Home from "./pages/Home";
@@ -90,42 +91,51 @@ function Router() {
       {/* 受保护路由 */}
       <Route path="/">
         <ProtectedRoute>
-          <Home />
+          <Layout>
+            <Home />
+          </Layout>
         </ProtectedRoute>
       </Route>
       <Route path="/cases">
         <ProtectedRoute>
-          <CasesPage />
+          <Layout>
+            <CasesPage />
+          </Layout>
         </ProtectedRoute>
       </Route>
       <Route path="/tasks">
         <ProtectedRoute>
-          <TasksPage />
+          <Layout>
+            <TasksPage />
+          </Layout>
         </ProtectedRoute>
       </Route>
       <Route path="/repositories">
         <ProtectedRoute>
-          <RepositoryManagement />
-        </ProtectedRoute>
-      </Route>
-      <Route path="/github-repositories">
-        <ProtectedRoute>
-          <GitHubRepositoryManagement />
+          <Layout>
+            <GitHubRepositoryManagement />
+          </Layout>
         </ProtectedRoute>
       </Route>
       <Route path="/reports">
         <ProtectedRoute>
-          <ReportsPage />
+          <Layout>
+            <ReportsPage />
+          </Layout>
         </ProtectedRoute>
       </Route>
       <Route path="/settings">
         <ProtectedRoute>
-          <SettingsPage />
+          <Layout>
+            <SettingsPage />
+          </Layout>
         </ProtectedRoute>
       </Route>
       <Route path="/profile">
         <ProtectedRoute>
-          <ProfilePage />
+          <Layout>
+            <ProfilePage />
+          </Layout>
         </ProtectedRoute>
       </Route>
 

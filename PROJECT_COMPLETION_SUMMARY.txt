@@ -68,7 +68,7 @@
       npm run dev
 
   2️⃣  打开浏览器
-      http://localhost:5173/github-repositories
+      http://localhost:5173/repositories
 
   3️⃣  开始使用
       点击"新增仓库"添加第一个仓库
