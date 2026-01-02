@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS test_cases (
     priority VARCHAR(10) DEFAULT 'P1' CHECK (priority IN ('P0', 'P1', 'P2', 'P3')),
     type VARCHAR(20) DEFAULT 'api' CHECK (type IN ('api', 'ui', 'performance', 'security')),
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'deprecated')),
+    running_status VARCHAR(20) DEFAULT 'idle' CHECK (running_status IN ('idle', 'running')),
     tags VARCHAR(500),
     script_path VARCHAR(500),
     config_json TEXT,
@@ -72,6 +73,8 @@ CREATE INDEX IF NOT EXISTS idx_test_cases_project ON test_cases(project_id);
 CREATE INDEX IF NOT EXISTS idx_test_cases_status ON test_cases(status);
 CREATE INDEX IF NOT EXISTS idx_test_cases_module ON test_cases(module);
 CREATE INDEX IF NOT EXISTS idx_test_cases_priority ON test_cases(priority);
+CREATE INDEX IF NOT EXISTS idx_test_cases_type ON test_cases(type);
+CREATE INDEX IF NOT EXISTS idx_test_cases_running_status ON test_cases(running_status);
 
 -- ============================================
 -- 4. 环境配置表 (environments)

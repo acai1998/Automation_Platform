@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, Redirect } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { Layout } from "./components/Layout";
@@ -13,9 +13,11 @@ import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import ComingSoon from "./pages/ComingSoon";
-import RepositoryManagement from "./pages/RepositoryManagement";
 import GitHubRepositoryManagement from "./pages/GitHubRepositoryManagement";
-import { FolderOpen, Boxes, BarChart3, Settings, User } from "lucide-react";
+import APICases from "./pages/cases/APICases";
+import UICases from "./pages/cases/UICases";
+import PerformanceCases from "./pages/cases/PerformanceCases";
+import { Boxes, BarChart3, Settings, User } from "lucide-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // 创建 QueryClient 实例
@@ -29,16 +31,6 @@ const queryClient = new QueryClient({
 });
 
 // 开发中页面的包装组件
-function CasesPage() {
-  return (
-    <ComingSoon
-      title="用例管理"
-      description="测试用例的创建、编辑、分组和管理功能正在开发中"
-      icon={<FolderOpen className="h-10 w-10 text-blue-500" />}
-    />
-  );
-}
-
 function TasksPage() {
   return (
     <ComingSoon
@@ -96,13 +88,33 @@ function Router() {
           </Layout>
         </ProtectedRoute>
       </Route>
+
+      {/* 用例管理路由 */}
       <Route path="/cases">
+        <Redirect to="/cases/api" />
+      </Route>
+      <Route path="/cases/api">
         <ProtectedRoute>
           <Layout>
-            <CasesPage />
+            <APICases />
           </Layout>
         </ProtectedRoute>
       </Route>
+      <Route path="/cases/ui">
+        <ProtectedRoute>
+          <Layout>
+            <UICases />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/cases/performance">
+        <ProtectedRoute>
+          <Layout>
+            <PerformanceCases />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+
       <Route path="/tasks">
         <ProtectedRoute>
           <Layout>
