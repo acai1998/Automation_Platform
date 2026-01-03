@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.js';
+import { getPool } from '../config/database.js';
 
 /**
  * Jenkins 配置接口
@@ -74,7 +74,7 @@ export class JenkinsService {
     scriptPath: string,
     callbackUrl?: string
   ): Promise<JenkinsTriggerResult> {
-    const db = getDatabase();
+    const pool = getPool();
     const jobName = this.getJobName(type);
     const triggerUrl = `${this.config.baseUrl}/job/${jobName}/buildWithParameters`;
 
@@ -91,7 +91,7 @@ export class JenkinsService {
 
     try {
       // 更新用例状态为 running
-      db.prepare('UPDATE test_cases SET running_status = ? WHERE id = ?').run('running', caseId);
+      await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', ['running', caseId]);
 
       // 调用 Jenkins API
       const response = await fetch(`${triggerUrl}?${params.toString()}`, {
@@ -115,7 +115,7 @@ export class JenkinsService {
         };
       } else {
         // 触发失败，恢复状态
-        db.prepare('UPDATE test_cases SET running_status = ? WHERE id = ?').run('idle', caseId);
+        await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', ['idle', caseId]);
 
         return {
           success: false,
@@ -124,7 +124,7 @@ export class JenkinsService {
       }
     } catch (error) {
       // 发生错误，恢复状态
-      db.prepare('UPDATE test_cases SET running_status = ? WHERE id = ?').run('idle', caseId);
+      await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', ['idle', caseId]);
 
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -145,17 +145,17 @@ export class JenkinsService {
   /**
    * 更新用例运行状态
    */
-  updateCaseStatus(caseId: number, status: 'idle' | 'running'): void {
-    const db = getDatabase();
-    db.prepare('UPDATE test_cases SET running_status = ? WHERE id = ?').run(status, caseId);
+  async updateCaseStatus(caseId: number, status: 'idle' | 'running'): Promise<void> {
+    const pool = getPool();
+    await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', [status, caseId]);
   }
 
   /**
    * 批量更新用例状态为 idle（用于清理）
    */
-  resetAllRunningStatus(): void {
-    const db = getDatabase();
-    db.prepare("UPDATE test_cases SET running_status = 'idle' WHERE running_status = 'running'").run();
+  async resetAllRunningStatus(): Promise<void> {
+    const pool = getPool();
+    await pool.execute("UPDATE Auto_TestCase SET running_status = 'idle' WHERE running_status = 'running'");
   }
 
   /**

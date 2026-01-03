@@ -192,7 +192,7 @@ export default function RepositoryForm({ repository, onSuccess, onCancel }: Repo
         {/* 同步间隔 */}
         <div>
           <label className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
-            同步间隔（秒，0 = 仅手动）
+            同步间隔（分钟，0 = 仅手动同步）
           </label>
           <Input
             name="sync_interval"
@@ -202,6 +202,9 @@ export default function RepositoryForm({ repository, onSuccess, onCancel }: Repo
             placeholder="0"
             min="0"
           />
+          <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+            设置为 0 表示不自动同步，只能手动触发。建议值：30（每30分钟）、60（每小时）、1440（每天）
+          </p>
         </div>
       </div>
 

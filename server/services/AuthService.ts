@@ -119,7 +119,7 @@ class AuthService {
     try {
       // 检查邮箱是否已存在
       const existingEmail = await queryOne<User>(
-        'SELECT id FROM users WHERE email = ?',
+        'SELECT id FROM Auto_Users WHERE email = ?',
         [email]
       );
       if (existingEmail) {
@@ -128,7 +128,7 @@ class AuthService {
 
       // 检查用户名是否已存在
       const existingUsername = await queryOne<User>(
-        'SELECT id FROM users WHERE username = ?',
+        'SELECT id FROM Auto_Users WHERE username = ?',
         [username]
       );
       if (existingUsername) {
@@ -140,13 +140,13 @@ class AuthService {
 
       // 插入新用户
       await query(
-        `INSERT INTO users (username, email, password_hash, display_name) VALUES (?, ?, ?, ?)`,
+        `INSERT INTO Auto_Users (username, email, password_hash, display_name) VALUES (?, ?, ?, ?)`,
         [username, email, passwordHash, username]
       );
 
       // 获取新创建的用户
       const user = await queryOne<User>(
-        'SELECT * FROM users WHERE email = ?',
+        'SELECT * FROM Auto_Users WHERE email = ?',
         [email]
       );
 
@@ -170,7 +170,7 @@ class AuthService {
     try {
       // 查找用户
       const user = await queryOne<User>(
-        'SELECT * FROM users WHERE email = ?',
+        'SELECT * FROM Auto_Users WHERE email = ?',
         [email]
       );
 
@@ -185,7 +185,7 @@ class AuthService {
         }
         // 锁定时间已过，解锁账户
         await query(
-          'UPDATE users SET status = ?, login_attempts = 0, locked_until = NULL WHERE id = ?',
+          'UPDATE Auto_Users SET status = ?, login_attempts = 0, locked_until = NULL WHERE id = ?',
           ['active', user.id]
         );
       }
@@ -199,13 +199,13 @@ class AuthService {
           // 锁定账户 15 分钟
           const lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
           await query(
-            'UPDATE users SET login_attempts = ?, status = ?, locked_until = ? WHERE id = ?',
+            'UPDATE Auto_Users SET login_attempts = ?, status = ?, locked_until = ? WHERE id = ?',
             [newAttempts, 'locked', lockedUntil, user.id]
           );
           return { success: false, message: '登录失败次数过多，账户已被锁定 15 分钟' };
         }
         await query(
-          'UPDATE users SET login_attempts = ? WHERE id = ?',
+          'UPDATE Auto_Users SET login_attempts = ? WHERE id = ?',
           [newAttempts, user.id]
         );
         return { success: false, message: '密码错误' };
@@ -213,7 +213,7 @@ class AuthService {
 
       // 登录成功，重置登录失败次数
       await query(
-        'UPDATE users SET login_attempts = 0, last_login_at = NOW() WHERE id = ?',
+        'UPDATE Auto_Users SET login_attempts = 0, last_login_at = NOW() WHERE id = ?',
         [user.id]
       );
 
@@ -224,7 +224,7 @@ class AuthService {
       // 如果选择记住登录，保存 remember_token
       if (remember && refreshToken) {
         await query(
-          'UPDATE users SET remember_token = ? WHERE id = ?',
+          'UPDATE Auto_Users SET remember_token = ? WHERE id = ?',
           [refreshToken, user.id]
         );
       }
@@ -246,7 +246,7 @@ class AuthService {
   async logout(userId: number): Promise<{ success: boolean; message: string }> {
     try {
       await query(
-        'UPDATE users SET remember_token = NULL WHERE id = ?',
+        'UPDATE Auto_Users SET remember_token = NULL WHERE id = ?',
         [userId]
       );
       return { success: true, message: '登出成功' };
@@ -260,7 +260,7 @@ class AuthService {
   async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
     try {
       const user = await queryOne<User>(
-        'SELECT * FROM users WHERE email = ?',
+        'SELECT * FROM Auto_Users WHERE email = ?',
         [email]
       );
 
@@ -274,7 +274,7 @@ class AuthService {
       const resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 小时后过期
 
       await query(
-        'UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?',
+        'UPDATE Auto_Users SET reset_token = ?, reset_token_expires = ? WHERE id = ?',
         [resetToken, resetTokenExpires, user.id]
       );
 
@@ -292,7 +292,7 @@ class AuthService {
   async resetPassword(token: string, newPassword: string): Promise<{ success: boolean; message: string }> {
     try {
       const user = await queryOne<User>(
-        'SELECT * FROM users WHERE reset_token = ? AND reset_token_expires > NOW()',
+        'SELECT * FROM Auto_Users WHERE reset_token = ? AND reset_token_expires > NOW()',
         [token]
       );
 
@@ -305,7 +305,7 @@ class AuthService {
 
       // 更新密码并清除重置 Token
       await query(
-        'UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?',
+        'UPDATE Auto_Users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?',
         [passwordHash, user.id]
       );
 
@@ -320,7 +320,7 @@ class AuthService {
   async getCurrentUser(userId: number): Promise<UserInfo | null> {
     try {
       const user = await queryOne<User>(
-        'SELECT * FROM users WHERE id = ?',
+        'SELECT * FROM Auto_Users WHERE id = ?',
         [userId]
       );
       return user ? this.toUserInfo(user) : null;
@@ -339,7 +339,7 @@ class AuthService {
       }
 
       const user = await queryOne<User>(
-        'SELECT * FROM users WHERE id = ? AND remember_token = ?',
+        'SELECT * FROM Auto_Users WHERE id = ? AND remember_token = ?',
         [decoded.id, refreshToken]
       );
 

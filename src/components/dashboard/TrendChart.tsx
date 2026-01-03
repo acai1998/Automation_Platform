@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { Loader2, TrendingUp, BarChart3, HelpCircle, RefreshCw } from "lucide-react";
 import { dashboardApi } from "@/lib/api";
 import {
@@ -218,6 +218,25 @@ export function TrendChart({ timeRange }: TrendChartProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [chartType, setChartType] = useState<ChartType>('line');
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isChartVisible, setIsChartVisible] = useState(false);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setIsChartVisible(true);
+        }
+      }
+    });
+
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
 
   const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
 

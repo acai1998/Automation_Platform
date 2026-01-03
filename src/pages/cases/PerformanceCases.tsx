@@ -34,7 +34,7 @@ export default function PerformanceCases() {
     <BaseCaseList
       type="performance"
       title="性能自动化用例"
-      icon={<Gauge className="w-6 h-6 text-white" />}
+      icon={<Gauge className="w-6 h-6" />}
       description="管理性能 / 压测相关用例"
       columns={columns}
     />

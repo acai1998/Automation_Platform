@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.js';
+import { query, queryOne, getPool } from '../config/database.js';
 import { repositoryService, RepositoryConfig, ScriptFileInfo, ParsedTestCase } from './RepositoryService.js';
 import { scriptParserService } from './ScriptParserService.js';
 
@@ -44,24 +44,25 @@ export class RepositorySyncService {
   /**
    * 创建同步日志记录
    */
-  private createSyncLog(
+  private async createSyncLog(
     repoConfigId: number,
     syncType: 'manual' | 'scheduled' | 'webhook',
     triggeredBy?: number
-  ): number {
-    const db = getDatabase();
-    const result = db.prepare(`
+  ): Promise<number> {
+    const pool = getPool();
+    const [result] = await pool.execute(`
       INSERT INTO sync_logs (repo_config_id, sync_type, status, start_time, triggered_by)
-      VALUES (?, ?, 'pending', datetime('now'), ?)
-    `).run(repoConfigId, syncType, triggeredBy || null);
+      VALUES (?, ?, 'pending', NOW(), ?)
+    `, [repoConfigId, syncType, triggeredBy || null]);
 
-    return result.lastInsertRowid as number;
+    const insertResult = result as { insertId: number };
+    return insertResult.insertId;
   }
 
   /**
    * 更新同步日志
    */
-  private updateSyncLog(
+  private async updateSyncLog(
     logId: number,
     data: {
       status?: 'pending' | 'running' | 'success' | 'failed';
@@ -76,8 +77,7 @@ export class RepositorySyncService {
       end_time?: string;
       duration?: number;
     }
-  ): void {
-    const db = getDatabase();
+  ): Promise<void> {
     const updates: string[] = [];
     const params: unknown[] = [];
 
@@ -129,7 +129,8 @@ export class RepositorySyncService {
     if (updates.length === 0) return;
 
     params.push(logId);
-    db.prepare(`UPDATE sync_logs SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    const pool = getPool();
+    await pool.execute(`UPDATE sync_logs SET ${updates.join(', ')} WHERE id = ?`, params);
   }
 
   /**
@@ -141,16 +142,16 @@ export class RepositorySyncService {
     triggeredBy?: number
   ): Promise<SyncResult> {
     const startTime = Date.now();
-    const logId = this.createSyncLog(repoConfigId, syncType, triggeredBy);
+    const logId = await this.createSyncLog(repoConfigId, syncType, triggeredBy);
 
     try {
       // 1. 获取仓库配置
-      const config = repositoryService.getRepositoryConfig(repoConfigId);
+      const config = await repositoryService.getRepositoryConfig(repoConfigId);
       if (!config) {
         throw new Error(`Repository configuration not found: ${repoConfigId}`);
       }
 
-      this.updateSyncLog(logId, { status: 'running' });
+      await this.updateSyncLog(logId, { status: 'running' });
 
       // 2. 同步仓库
       await repositoryService.syncRepository(config);
@@ -168,12 +169,32 @@ export class RepositorySyncService {
       let createdCases = 0;
       let updatedCases = 0;
 
+      // 根据仓库名称推断用例类型（如果仓库名称包含类型关键词）
+      const inferCaseType = (repoName: string): 'api' | 'ui' | 'performance' => {
+        const name = repoName.toLowerCase();
+        if (name.includes('ui') || name.includes('界面') || name.includes('ui测试')) {
+          return 'ui';
+        }
+        if (name.includes('performance') || name.includes('性能') || name.includes('压测')) {
+          return 'performance';
+        }
+        return 'api'; // 默认为 API
+      };
+
+      const caseType = inferCaseType(config.name);
+
       if (config.auto_create_cases) {
         for (const scriptFile of scriptFiles) {
           const parsedCases = await scriptParserService.parseScript(scriptFile, config.script_type);
 
           for (const parsedCase of parsedCases) {
-            const result = await this.createOrUpdateCase(repoConfigId, scriptFile.path, parsedCase);
+            // 设置用例类型
+            parsedCase.type = caseType;
+
+            // 获取 pytest 完整路径（如果存在），否则使用文件路径
+            const scriptPath = (parsedCase.configJson?.fullPath as string) || scriptFile.path;
+
+            const result = await this.createOrUpdateCase(repoConfigId, scriptPath, parsedCase);
             if (result === 'created') createdCases++;
             else if (result === 'updated') updatedCases++;
           }
@@ -181,7 +202,7 @@ export class RepositorySyncService {
       }
 
       // 6. 更新仓库配置的最后同步时间
-      repositoryService.updateRepositoryConfig(repoConfigId, {
+      await repositoryService.updateRepositoryConfig(repoConfigId, {
         last_sync_at: new Date().toISOString(),
         last_sync_status: 'success',
         status: 'active',
@@ -189,7 +210,7 @@ export class RepositorySyncService {
 
       // 7. 完成同步
       const duration = Math.floor((Date.now() - startTime) / 1000);
-      this.updateSyncLog(logId, {
+      await this.updateSyncLog(logId, {
         status: 'success',
         total_files: scriptFiles.length,
         added_files: addedFiles.length,
@@ -219,14 +240,14 @@ export class RepositorySyncService {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
       // 更新仓库配置状态为错误
-      repositoryService.updateRepositoryConfig(repoConfigId, {
+      await repositoryService.updateRepositoryConfig(repoConfigId, {
         last_sync_at: new Date().toISOString(),
         last_sync_status: 'failed',
         status: 'error',
       });
 
       // 更新同步日志
-      this.updateSyncLog(logId, {
+      await this.updateSyncLog(logId, {
         status: 'failed',
         error_message: errorMessage,
         end_time: new Date().toISOString(),
@@ -260,12 +281,11 @@ export class RepositorySyncService {
     modifiedFiles: ScriptFileInfo[];
     deletedFiles: ScriptFileInfo[];
   }> {
-    const db = getDatabase();
-
     // 获取上次同步的脚本映射
-    const previousMappings = db
-      .prepare('SELECT script_file_path, script_hash FROM repository_script_mappings WHERE repo_config_id = ?')
-      .all(repoConfigId) as Array<{ script_file_path: string; script_hash: string }>;
+    const previousMappings = await query<Array<{ script_file_path: string; script_hash: string }>>(
+      'SELECT script_file_path, script_hash FROM repository_script_mappings WHERE repo_config_id = ?',
+      [repoConfigId]
+    );
 
     const previousMap = new Map(previousMappings.map(m => [m.script_file_path, m.script_hash]));
     const currentMap = new Map(currentScriptFiles.map(f => [f.path, f.hash]));
@@ -302,20 +322,21 @@ export class RepositorySyncService {
     scriptPath: string,
     parsedCase: ParsedTestCase
   ): Promise<'created' | 'updated' | 'skipped'> {
-    const db = getDatabase();
+    const pool = getPool();
 
     // 检查是否已存在映射
-    const existingMapping = db
-      .prepare('SELECT case_id FROM repository_script_mappings WHERE repo_config_id = ? AND script_file_path = ?')
-      .get(repoConfigId, scriptPath) as { case_id: number } | undefined;
+    const existingMapping = await queryOne<{ case_id: number }>(
+      'SELECT case_id FROM repository_script_mappings WHERE repo_config_id = ? AND script_file_path = ?',
+      [repoConfigId, scriptPath]
+    );
 
     if (existingMapping && existingMapping.case_id) {
       // 更新已存在的用例
-      db.prepare(`
-        UPDATE test_cases
+      await pool.execute(`
+        UPDATE Auto_TestCase
         SET name = ?, description = ?, module = ?, priority = ?, type = ?, tags = ?, config_json = ?
         WHERE id = ?
-      `).run(
+      `, [
         parsedCase.name,
         parsedCase.description || null,
         parsedCase.module || null,
@@ -323,17 +344,17 @@ export class RepositorySyncService {
         parsedCase.type || 'api',
         parsedCase.tags ? parsedCase.tags.join(',') : null,
         JSON.stringify(parsedCase.configJson || {}),
-        existingMapping.case_id
-      );
+        existingMapping.case_id,
+      ]);
 
       return 'updated';
     }
 
     // 创建新用例
-    const result = db.prepare(`
-      INSERT INTO test_cases (name, description, module, priority, type, tags, script_path, config_json)
+    const [result] = await pool.execute(`
+      INSERT INTO Auto_TestCase (name, description, module, priority, type, tags, script_path, config_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       parsedCase.name,
       parsedCase.description || null,
       parsedCase.module || null,
@@ -341,16 +362,17 @@ export class RepositorySyncService {
       parsedCase.type || 'api',
       parsedCase.tags ? parsedCase.tags.join(',') : null,
       scriptPath,
-      JSON.stringify(parsedCase.configJson || {})
-    );
+      JSON.stringify(parsedCase.configJson || {}),
+    ]);
 
-    const caseId = result.lastInsertRowid as number;
+    const insertResult = result as { insertId: number };
+    const caseId = insertResult.insertId;
 
     // 创建脚本与用例的映射
-    db.prepare(`
+    await pool.execute(`
       INSERT INTO repository_script_mappings (repo_config_id, case_id, script_file_path, status)
       VALUES (?, ?, ?, 'synced')
-    `).run(repoConfigId, caseId, scriptPath);
+    `, [repoConfigId, caseId, scriptPath]);
 
     return 'created';
   }
@@ -358,36 +380,32 @@ export class RepositorySyncService {
   /**
    * 获取同步日志
    */
-  getSyncLog(logId: number): SyncLog | null {
-    const db = getDatabase();
-    const log = db.prepare('SELECT * FROM sync_logs WHERE id = ?').get(logId) as SyncLog | undefined;
+  async getSyncLog(logId: number): Promise<SyncLog | null> {
+    const log = await queryOne<SyncLog>('SELECT * FROM sync_logs WHERE id = ?', [logId]);
     return log || null;
   }
 
   /**
    * 获取仓库的同步日志列表
    */
-  getRepositorySyncLogs(repoConfigId: number, limit = 20, offset = 0): SyncLog[] {
-    const db = getDatabase();
-    return db
-      .prepare(`
-        SELECT * FROM sync_logs
-        WHERE repo_config_id = ?
-        ORDER BY created_at DESC
-        LIMIT ? OFFSET ?
-      `)
-      .all(repoConfigId, limit, offset) as SyncLog[];
+  async getRepositorySyncLogs(repoConfigId: number, limit = 20, offset = 0): Promise<SyncLog[]> {
+    return query<SyncLog[]>(`
+      SELECT * FROM sync_logs
+      WHERE repo_config_id = ?
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `, [repoConfigId, limit, offset]);
   }
 
   /**
    * 获取仓库同步日志总数
    */
-  getRepositorySyncLogsCount(repoConfigId: number): number {
-    const db = getDatabase();
-    const result = db.prepare('SELECT COUNT(*) as count FROM sync_logs WHERE repo_config_id = ?').get(repoConfigId) as {
-      count: number;
-    };
-    return result.count;
+  async getRepositorySyncLogsCount(repoConfigId: number): Promise<number> {
+    const result = await queryOne<{ count: number }>(
+      'SELECT COUNT(*) as count FROM sync_logs WHERE repo_config_id = ?',
+      [repoConfigId]
+    );
+    return result?.count ?? 0;
   }
 }
 

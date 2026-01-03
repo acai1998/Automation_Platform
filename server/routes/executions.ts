@@ -7,7 +7,7 @@ const router = Router();
  * POST /api/executions/callback
  * Jenkins 执行结果回调接口
  */
-router.post('/callback', (req, res) => {
+router.post('/callback', async (req, res) => {
   try {
     const { executionId, status, results, duration, reportUrl } = req.body;
 
@@ -18,7 +18,7 @@ router.post('/callback', (req, res) => {
       });
     }
 
-    executionService.handleCallback({
+    await executionService.handleCallback({
       executionId,
       status,
       results,
@@ -37,10 +37,10 @@ router.post('/callback', (req, res) => {
  * POST /api/executions/:id/start
  * 标记执行开始运行（Jenkins 开始执行时调用）
  */
-router.post('/:id/start', (req, res) => {
+router.post('/:id/start', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    executionService.markExecutionRunning(id);
+    await executionService.markExecutionRunning(id);
     res.json({ success: true, message: 'Execution marked as running' });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -52,10 +52,10 @@ router.post('/:id/start', (req, res) => {
  * GET /api/executions/:id
  * 获取执行详情
  */
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const data = executionService.getExecutionDetail(id);
+    const data = await executionService.getExecutionDetail(id);
 
     if (!data.execution) {
       return res.status(404).json({ success: false, message: 'Execution not found' });
@@ -72,10 +72,10 @@ router.get('/:id', (req, res) => {
  * GET /api/executions
  * 获取执行记录列表
  */
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 20;
-    const data = executionService.getRecentExecutions(limit);
+    const data = await executionService.getRecentExecutions(limit);
     res.json({ success: true, data });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -87,10 +87,10 @@ router.get('/', (req, res) => {
  * POST /api/executions/:id/cancel
  * 取消执行
  */
-router.post('/:id/cancel', (req, res) => {
+router.post('/:id/cancel', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    executionService.cancelExecution(id);
+    await executionService.cancelExecution(id);
     res.json({ success: true, message: 'Execution cancelled' });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

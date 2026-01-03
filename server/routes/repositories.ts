@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { repositoryService } from '../services/RepositoryService.js';
 import { repositorySyncService } from '../services/RepositorySyncService.js';
+import { schedulerService } from '../services/SchedulerService.js';
 
 const router = Router();
 
@@ -8,13 +9,14 @@ const router = Router();
  * GET /api/repositories
  * 获取仓库配置列表
  */
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { status } = req.query;
-    const configs = repositoryService.getAllRepositoryConfigs(status as string | undefined);
+    const configs = await repositoryService.getAllRepositoryConfigs(status as string | undefined);
     res.json({ success: true, data: configs });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -22,18 +24,19 @@ router.get('/', (req, res) => {
  * GET /api/repositories/:id
  * 获取仓库详情
  */
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const config = repositoryService.getRepositoryConfig(id);
+    const config = await repositoryService.getRepositoryConfig(id);
 
     if (!config) {
       return res.status(404).json({ success: false, message: 'Repository not found' });
     }
 
     res.json({ success: true, data: config });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -41,7 +44,7 @@ router.get('/:id', (req, res) => {
  * POST /api/repositories
  * 创建新仓库配置
  */
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const {
       name,
@@ -61,7 +64,7 @@ router.post('/', (req, res) => {
       return res.status(400).json({ success: false, message: 'name and repo_url are required' });
     }
 
-    const id = repositoryService.createRepositoryConfig({
+    const id = await repositoryService.createRepositoryConfig({
       name,
       description,
       repo_url,
@@ -75,13 +78,19 @@ router.post('/', (req, res) => {
       created_by,
     });
 
+    // 重新加载调度器（如果设置了同步间隔）
+    if (sync_interval && sync_interval > 0) {
+      await schedulerService.loadAndScheduleRepositories();
+    }
+
     res.json({
       success: true,
       data: { id },
       message: 'Repository configuration created successfully',
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -89,20 +98,24 @@ router.post('/', (req, res) => {
  * PUT /api/repositories/:id
  * 更新仓库配置
  */
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const config = repositoryService.getRepositoryConfig(id);
+    const config = await repositoryService.getRepositoryConfig(id);
 
     if (!config) {
       return res.status(404).json({ success: false, message: 'Repository not found' });
     }
 
-    repositoryService.updateRepositoryConfig(id, req.body);
+    await repositoryService.updateRepositoryConfig(id, req.body);
+
+    // 重新加载调度器（同步间隔可能已更改）
+    await schedulerService.loadAndScheduleRepositories();
 
     res.json({ success: true, message: 'Repository configuration updated successfully' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -113,7 +126,7 @@ router.put('/:id', (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const config = repositoryService.getRepositoryConfig(id);
+    const config = await repositoryService.getRepositoryConfig(id);
 
     if (!config) {
       return res.status(404).json({ success: false, message: 'Repository not found' });
@@ -122,8 +135,9 @@ router.delete('/:id', async (req, res) => {
     await repositoryService.deleteRepositoryConfig(id);
 
     res.json({ success: true, message: 'Repository configuration deleted successfully' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -136,7 +150,7 @@ router.post('/:id/sync', async (req, res) => {
     const id = parseInt(req.params.id);
     const { triggeredBy } = req.body;
 
-    const config = repositoryService.getRepositoryConfig(id);
+    const config = await repositoryService.getRepositoryConfig(id);
     if (!config) {
       return res.status(404).json({ success: false, message: 'Repository not found' });
     }
@@ -144,8 +158,9 @@ router.post('/:id/sync', async (req, res) => {
     const result = await repositorySyncService.performSync(id, 'manual', triggeredBy);
 
     res.json({ success: true, data: result });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -153,22 +168,23 @@ router.post('/:id/sync', async (req, res) => {
  * GET /api/repositories/:id/sync-logs
  * 获取同步日志列表
  */
-router.get('/:id/sync-logs', (req, res) => {
+router.get('/:id/sync-logs', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { limit = 20, offset = 0 } = req.query;
 
-    const config = repositoryService.getRepositoryConfig(id);
+    const config = await repositoryService.getRepositoryConfig(id);
     if (!config) {
       return res.status(404).json({ success: false, message: 'Repository not found' });
     }
 
-    const logs = repositorySyncService.getRepositorySyncLogs(id, Number(limit), Number(offset));
-    const total = repositorySyncService.getRepositorySyncLogsCount(id);
+    const logs = await repositorySyncService.getRepositorySyncLogs(id, Number(limit), Number(offset));
+    const total = await repositorySyncService.getRepositorySyncLogsCount(id);
 
     res.json({ success: true, data: logs, total });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -176,18 +192,19 @@ router.get('/:id/sync-logs', (req, res) => {
  * GET /api/repositories/:id/sync-logs/:logId
  * 获取同步日志详情
  */
-router.get('/:id/sync-logs/:logId', (req, res) => {
+router.get('/:id/sync-logs/:logId', async (req, res) => {
   try {
     const logId = parseInt(req.params.logId);
 
-    const log = repositorySyncService.getSyncLog(logId);
+    const log = await repositorySyncService.getSyncLog(logId);
     if (!log) {
       return res.status(404).json({ success: false, message: 'Sync log not found' });
     }
 
     res.json({ success: true, data: log });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -200,7 +217,8 @@ router.post('/:id/test-connection', async (req, res) => {
     const id = parseInt(req.params.id);
     const { repo_url } = req.body;
 
-    const url = repo_url || (repositoryService.getRepositoryConfig(id)?.repo_url as string);
+    const config = await repositoryService.getRepositoryConfig(id);
+    const url = repo_url || config?.repo_url;
     if (!url) {
       return res.status(400).json({ success: false, message: 'repo_url is required' });
     }
@@ -208,8 +226,9 @@ router.post('/:id/test-connection', async (req, res) => {
     const connected = await repositoryService.testConnection(url);
 
     res.json({ success: true, data: { connected } });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -220,7 +239,7 @@ router.post('/:id/test-connection', async (req, res) => {
 router.get('/:id/branches', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const config = repositoryService.getRepositoryConfig(id);
+    const config = await repositoryService.getRepositoryConfig(id);
 
     if (!config) {
       return res.status(404).json({ success: false, message: 'Repository not found' });
@@ -229,8 +248,9 @@ router.get('/:id/branches', async (req, res) => {
     const branches = await repositoryService.getBranches(config.repo_url);
 
     res.json({ success: true, data: branches });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 

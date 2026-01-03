@@ -1,26 +1,62 @@
 import { Router } from 'express';
-import { getDatabase } from '../db/index.js';
+import { query, queryOne, getPool } from '../config/database.js';
 
 const router = Router();
+
+interface Task {
+  id: number;
+  name: string;
+  description?: string;
+  project_id?: number;
+  project_name?: string;
+  case_ids?: string;
+  trigger_type: string;
+  cron_expression?: string;
+  environment_id?: number;
+  environment_name?: string;
+  status: string;
+  created_by?: number;
+  created_by_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TestCase {
+  id: number;
+  name: string;
+  type: string;
+  status: string;
+  priority: string;
+}
+
+interface TaskExecution {
+  id: number;
+  status: string;
+  start_time?: string;
+  end_time?: string;
+  duration?: number;
+  passed_cases: number;
+  failed_cases: number;
+  executed_by_name?: string;
+}
 
 /**
  * GET /api/tasks
  * 获取任务列表
  */
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const db = getDatabase();
     const { projectId, status, limit = 50, offset = 0 } = req.query;
 
     let sql = `
       SELECT t.*, p.name as project_name, u.display_name as created_by_name, e.name as environment_name
       FROM tasks t
       LEFT JOIN projects p ON t.project_id = p.id
-      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN Auto_Users u ON t.created_by = u.id
       LEFT JOIN environments e ON t.environment_id = e.id
       WHERE 1=1
     `;
-    const params: any[] = [];
+    const params: unknown[] = [];
 
     if (projectId) {
       sql += ' AND t.project_id = ?';
@@ -34,11 +70,12 @@ router.get('/', (req, res) => {
     sql += ' ORDER BY t.updated_at DESC LIMIT ? OFFSET ?';
     params.push(Number(limit), Number(offset));
 
-    const data = db.prepare(sql).all(...params);
+    const data = await query<Task[]>(sql, params);
 
     res.json({ success: true, data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -46,44 +83,48 @@ router.get('/', (req, res) => {
  * GET /api/tasks/:id
  * 获取任务详情
  */
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const db = getDatabase();
     const id = parseInt(req.params.id);
 
-    const task = db.prepare(`
+    const task = await queryOne<Task>(`
       SELECT t.*, p.name as project_name, u.display_name as created_by_name, e.name as environment_name
       FROM tasks t
       LEFT JOIN projects p ON t.project_id = p.id
-      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN Auto_Users u ON t.created_by = u.id
       LEFT JOIN environments e ON t.environment_id = e.id
       WHERE t.id = ?
-    `).get(id) as any;
+    `, [id]);
 
     if (!task) {
       return res.status(404).json({ success: false, message: 'Task not found' });
     }
 
     // 获取关联的用例
-    let cases: any[] = [];
+    let cases: TestCase[] = [];
     if (task.case_ids) {
       try {
-        const caseIds = JSON.parse(task.case_ids);
+        const caseIds = JSON.parse(task.case_ids) as number[];
         if (caseIds.length > 0) {
           const placeholders = caseIds.map(() => '?').join(',');
-          cases = db.prepare(`SELECT id, name, type, status, priority FROM test_cases WHERE id IN (${placeholders})`).all(...caseIds);
+          cases = await query<TestCase[]>(
+            `SELECT id, name, type, status, priority FROM Auto_TestCase WHERE id IN (${placeholders})`,
+            caseIds
+          );
         }
-      } catch {}
+      } catch {
+        // ignore parse error
+      }
     }
 
     // 获取最近执行记录
-    const recentExecutions = db.prepare(`
+    const recentExecutions = await query<TaskExecution[]>(`
       SELECT id, status, start_time, end_time, duration, passed_cases, failed_cases
       FROM task_executions
       WHERE task_id = ?
       ORDER BY start_time DESC
       LIMIT 5
-    `).all(id);
+    `, [id]);
 
     res.json({
       success: true,
@@ -93,8 +134,9 @@ router.get('/:id', (req, res) => {
         recentExecutions,
       },
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -102,9 +144,8 @@ router.get('/:id', (req, res) => {
  * POST /api/tasks
  * 创建任务
  */
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const db = getDatabase();
     const {
       name,
       description,
@@ -120,27 +161,32 @@ router.post('/', (req, res) => {
       return res.status(400).json({ success: false, message: 'name is required' });
     }
 
-    const result = db.prepare(`
-      INSERT INTO tasks (name, description, project_id, case_ids, trigger_type, cron_expression, environment_id, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      name,
-      description || null,
-      projectId || null,
-      JSON.stringify(caseIds || []),
-      triggerType,
-      cronExpression || null,
-      environmentId || null,
-      createdBy
+    const pool = getPool();
+    const [result] = await pool.execute(
+      `INSERT INTO tasks (name, description, project_id, case_ids, trigger_type, cron_expression, environment_id, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        name,
+        description || null,
+        projectId || null,
+        JSON.stringify(caseIds || []),
+        triggerType,
+        cronExpression || null,
+        environmentId || null,
+        createdBy,
+      ]
     );
+
+    const insertResult = result as { insertId: number };
 
     res.json({
       success: true,
-      data: { id: result.lastInsertRowid },
+      data: { id: insertResult.insertId },
       message: 'Task created successfully',
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -148,9 +194,8 @@ router.post('/', (req, res) => {
  * PUT /api/tasks/:id
  * 更新任务
  */
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
-    const db = getDatabase();
     const id = parseInt(req.params.id);
     const {
       name,
@@ -164,7 +209,7 @@ router.put('/:id', (req, res) => {
     } = req.body;
 
     const updates: string[] = [];
-    const params: any[] = [];
+    const params: unknown[] = [];
 
     if (name !== undefined) {
       updates.push('name = ?');
@@ -204,11 +249,13 @@ router.put('/:id', (req, res) => {
     }
 
     params.push(id);
-    db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    const pool = getPool();
+    await pool.execute(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, params);
 
     res.json({ success: true, message: 'Task updated successfully' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -216,16 +263,17 @@ router.put('/:id', (req, res) => {
  * DELETE /api/tasks/:id
  * 删除任务
  */
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const db = getDatabase();
     const id = parseInt(req.params.id);
 
-    db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+    const pool = getPool();
+    await pool.execute('DELETE FROM tasks WHERE id = ?', [id]);
 
     res.json({ success: true, message: 'Task deleted successfully' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -233,24 +281,24 @@ router.delete('/:id', (req, res) => {
  * GET /api/tasks/:id/executions
  * 获取任务的执行历史
  */
-router.get('/:id/executions', (req, res) => {
+router.get('/:id/executions', async (req, res) => {
   try {
-    const db = getDatabase();
     const id = parseInt(req.params.id);
     const limit = parseInt(req.query.limit as string) || 20;
 
-    const data = db.prepare(`
+    const data = await query<TaskExecution[]>(`
       SELECT te.*, u.display_name as executed_by_name
       FROM task_executions te
-      LEFT JOIN users u ON te.executed_by = u.id
+      LEFT JOIN Auto_Users u ON te.executed_by = u.id
       WHERE te.task_id = ?
       ORDER BY te.start_time DESC
       LIMIT ?
-    `).all(id, limit);
+    `, [id, limit]);
 
     res.json({ success: true, data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 

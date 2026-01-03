@@ -15,10 +15,19 @@ const columns: CaseColumn[] = [
     label: '用例名称',
   },
   {
+    key: 'script_path',
+    label: '脚本路径',
+    render: (value) => (
+      <span className="text-gray-600 dark:text-gray-400 font-mono text-xs">
+        {(value as string) || '-'}
+      </span>
+    ),
+  },
+  {
     key: 'description',
     label: '用例说明',
     render: (value) => (
-      <span className="line-clamp-2 max-w-md">
+      <span className="text-gray-600 dark:text-gray-400 line-clamp-2 max-w-md">
         {(value as string) || '-'}
       </span>
     ),
@@ -43,7 +52,7 @@ export default function APICases() {
     <BaseCaseList
       type="api"
       title="API 自动化用例"
-      icon={<Code className="w-6 h-6 text-white" />}
+      icon={<Code className="w-6 h-6" />}
       description="管理接口自动化测试用例"
       columns={columns}
     />

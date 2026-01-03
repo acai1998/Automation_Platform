@@ -117,6 +117,29 @@ export class ScriptParserService {
   }
 
   /**
+   * 从 Python 函数/方法中提取 docstring
+   */
+  private extractPythonDocstring(content: string, funcStartIndex: number): string | null {
+    // 查找函数定义后的第一个三引号字符串（docstring）
+    const docstringRegex = /("""|''')([\s\S]*?)\1/;
+    const afterFunc = content.substring(funcStartIndex);
+    const match = docstringRegex.exec(afterFunc);
+    
+    if (match && match[2]) {
+      // 清理 docstring，移除多余空白
+      return match[2].trim().split('\n').map(line => line.trim()).join(' ').substring(0, 200);
+    }
+    
+    // 如果没有三引号，尝试查找单行注释
+    const lines = afterFunc.split('\n');
+    if (lines.length > 1 && lines[1].trim().startsWith('#')) {
+      return lines[1].trim().substring(1).trim().substring(0, 200);
+    }
+    
+    return null;
+  }
+
+  /**
    * 解析 Python 脚本
    * 支持 unittest 和 pytest 语法
    */
@@ -131,14 +154,35 @@ export class ScriptParserService {
     let classMatch;
     while ((classMatch = classRegex.exec(content)) !== null) {
       const className = classMatch[1];
-      const classContent = content.substring(classMatch.index);
+      const classStartIndex = classMatch.index;
+      
+      // 找到类的结束位置（下一个类或文件结束）
+      let classEndIndex = content.length;
+      const nextClassMatch = classRegex.exec(content);
+      if (nextClassMatch) {
+        classEndIndex = nextClassMatch.index;
+        classRegex.lastIndex = classStartIndex + 1; // 重置以便下次继续查找
+      }
+      
+      const classContent = content.substring(classStartIndex, classEndIndex);
 
+      // 重置 defRegex
+      defRegex.lastIndex = 0;
       let defMatch;
       while ((defMatch = defRegex.exec(classContent)) !== null) {
         const methodName = defMatch[1];
+        const methodStartIndex = classStartIndex + defMatch.index;
+        
+        // 提取 docstring 作为描述
+        const description = this.extractPythonDocstring(content, methodStartIndex) || 
+                           `测试用例: ${className}::${methodName}`;
+        
+        // 构建 pytest 格式的完整路径: file_path::ClassName::method_name
+        const fullPath = `${scriptFile.path}::${className}::${methodName}`;
+        
         cases.push({
           name: `${className}::${methodName}`,
-          description: `Test case from ${scriptFile.path}`,
+          description: description,
           module: className,
           type: 'api',
           priority: 'P1',
@@ -146,14 +190,12 @@ export class ScriptParserService {
           configJson: {
             scriptPath: scriptFile.path,
             framework: 'unittest',
+            className: className,
+            methodName: methodName,
+            fullPath: fullPath, // pytest 完整路径
           },
         });
-
-        // 只取第一个方法作为示例
-        break;
       }
-
-      defRegex.lastIndex = 0;
     }
 
     // 如果没有找到 unittest 类，尝试找 pytest 风格的函数
@@ -163,15 +205,26 @@ export class ScriptParserService {
 
       while ((match = pytestRegex.exec(content)) !== null) {
         const funcName = match[1];
+        const funcStartIndex = match.index;
+        
+        // 提取 docstring 作为描述
+        const description = this.extractPythonDocstring(content, funcStartIndex) || 
+                           `测试用例: ${funcName}`;
+        
+        // 构建 pytest 格式的路径: file_path::function_name
+        const fullPath = `${scriptFile.path}::${funcName}`;
+        
         cases.push({
           name: funcName,
-          description: `Test case from ${scriptFile.path}`,
+          description: description,
           type: 'api',
           priority: 'P1',
           tags: ['auto-imported', 'python', 'pytest'],
           configJson: {
             scriptPath: scriptFile.path,
             framework: 'pytest',
+            functionName: funcName,
+            fullPath: fullPath, // pytest 完整路径
           },
         });
       }
@@ -182,7 +235,7 @@ export class ScriptParserService {
       const fileName = scriptFile.path.split('/').pop() || 'unknown';
       cases.push({
         name: `${fileName} - Default Test`,
-        description: `Auto-generated test case from ${scriptFile.path}`,
+        description: `自动生成的测试用例: ${scriptFile.path}`,
         type: 'api',
         priority: 'P2',
         tags: ['auto-imported', 'python', 'generated'],

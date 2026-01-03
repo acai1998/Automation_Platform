@@ -153,49 +153,83 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       );
     }
 
+    if (column.key === 'script_path') {
+      return (
+        <span className="text-gray-600 dark:text-gray-400 font-mono text-xs">
+          {(value as string) || '-'}
+        </span>
+      );
+    }
+
     return value ?? '-';
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 p-4 md:p-8">
-      {/* 页面头部 */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg">
-            {icon}
-          </div>
-          <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">
-              {title}
-            </h1>
-            {description && (
-              <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                {description}
-              </p>
+    <div className="space-y-6">
+      {/* 顶部导航和标题区 */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+            <div className={`p-2 rounded-lg ${
+              type === 'api' ? 'bg-blue-500/10 text-blue-500' :
+              type === 'ui' ? 'bg-purple-500/10 text-purple-500' :
+              'bg-orange-500/10 text-orange-500'
+            }`}>
+              {icon}
+            </div>
+            {title}
+          </h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1 ml-11">
+            {description}
+          </p>
+        </div>
+        
+        {/* 顶部操作按钮 */}
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="outline" 
+            onClick={() => syncCaseMutation.mutate()}
+            disabled={syncCaseMutation.isPending}
+            className="flex items-center gap-2"
+          >
+            {syncCaseMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
             )}
-          </div>
+            同步用例
+          </Button>
         </div>
       </div>
 
-      {/* 顶部操作区 */}
-      <div className="mb-4 flex items-center justify-between">
-        <Button
-          onClick={() => syncCaseMutation.mutate()}
-          disabled={syncCaseMutation.isPending}
-          className="gap-2 bg-green-500 hover:bg-green-600 text-white"
-        >
-          {syncCaseMutation.isPending ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-          同步用例
-        </Button>
+      {/* 二级导航 Tabs */}
+      <div className="border-b border-slate-200 dark:border-[#234833]">
+        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+          {navTabs.map((tab) => {
+            const isActive = location === tab.href;
+            return (
+              <Link key={tab.type} href={tab.href}>
+                <a
+                  className={`
+                    flex items-center gap-2 whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium transition-colors
+                    ${isActive
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200'
+                    }
+                  `}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </a>
+              </Link>
+            );
+          })}
+        </nav>
       </div>
 
-      {/* 搜索区域 */}
-      <Card className="mb-6 p-4 shadow-md">
-        <div className="flex flex-col sm:flex-row gap-4">
+      {/* 筛选和列表区 */}
+      <Card className="border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark">
+        <div className="p-4 border-b border-slate-200 dark:border-[#234833] flex items-center justify-between gap-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <Input

@@ -10,27 +10,20 @@ const router = Router();
  * 此接口创建执行记录并返回 executionId，供 Jenkins 后续回调使用
  * 实际触发 Jenkins Job 的逻辑需要在此处或由调用方完成
  */
-router.post('/trigger', (req, res) => {
+router.post('/trigger', async (req, res) => {
   try {
-    const { taskId, triggeredBy = 1, jenkinsJobName, parameters } = req.body;
+    const { taskId, triggeredBy = 1, jenkinsJobName } = req.body;
 
     if (!taskId) {
       return res.status(400).json({ success: false, message: 'taskId is required' });
     }
 
     // 创建执行记录
-    const execution = executionService.createExecution({
+    const execution = await executionService.createExecution({
       taskId,
       triggeredBy,
       triggerType: 'ci_triggered',
     });
-
-    // TODO: 实际调用 Jenkins API 触发 Job
-    // const jenkinsResult = await triggerJenkinsJob(jenkinsJobName, {
-    //   executionId: execution.executionId,
-    //   taskId,
-    //   ...parameters
-    // });
 
     res.json({
       success: true,
@@ -54,10 +47,10 @@ router.post('/trigger', (req, res) => {
  *
  * Jenkins Job 可以调用此接口获取需要执行的用例信息
  */
-router.get('/tasks/:taskId/cases', (req, res) => {
+router.get('/tasks/:taskId/cases', async (req, res) => {
   try {
     const taskId = parseInt(req.params.taskId);
-    const cases = executionService.getTaskCases(taskId);
+    const cases = await executionService.getTaskCases(taskId);
 
     res.json({
       success: true,
@@ -75,10 +68,10 @@ router.get('/tasks/:taskId/cases', (req, res) => {
  *
  * 用于查询 Jenkins Job 的执行状态
  */
-router.get('/status/:executionId', (req, res) => {
+router.get('/status/:executionId', async (req, res) => {
   try {
     const executionId = parseInt(req.params.executionId);
-    const detail = executionService.getExecutionDetail(executionId);
+    const detail = await executionService.getExecutionDetail(executionId);
 
     if (!detail.execution) {
       return res.status(404).json({ success: false, message: 'Execution not found' });

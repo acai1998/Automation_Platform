@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import { glob } from 'glob';
-import { getDatabase } from '../db/index.js';
+import { query, queryOne, getPool } from '../config/database.js';
 
 export interface RepositoryConfig {
   id: number;
@@ -143,17 +143,15 @@ export class RepositoryService {
   /**
    * 获取仓库信息
    */
-  getRepositoryConfig(id: number): RepositoryConfig | null {
-    const db = getDatabase();
-    const config = db.prepare('SELECT * FROM repository_configs WHERE id = ?').get(id) as RepositoryConfig | undefined;
+  async getRepositoryConfig(id: number): Promise<RepositoryConfig | null> {
+    const config = await queryOne<RepositoryConfig>('SELECT * FROM repository_configs WHERE id = ?', [id]);
     return config || null;
   }
 
   /**
    * 获取所有仓库配置
    */
-  getAllRepositoryConfigs(status?: string): RepositoryConfig[] {
-    const db = getDatabase();
+  async getAllRepositoryConfigs(status?: string): Promise<RepositoryConfig[]> {
     let sql = 'SELECT * FROM repository_configs';
     const params: unknown[] = [];
 
@@ -163,13 +161,13 @@ export class RepositoryService {
     }
 
     sql += ' ORDER BY created_at DESC';
-    return db.prepare(sql).all(...params) as RepositoryConfig[];
+    return query<RepositoryConfig[]>(sql, params);
   }
 
   /**
    * 创建仓库配置
    */
-  createRepositoryConfig(data: {
+  async createRepositoryConfig(data: {
     name: string;
     description?: string;
     repo_url: string;
@@ -181,15 +179,15 @@ export class RepositoryService {
     sync_interval?: number;
     auto_create_cases?: boolean;
     created_by?: number;
-  }): number {
-    const db = getDatabase();
+  }): Promise<number> {
+    const pool = getPool();
 
-    const result = db.prepare(`
+    const [result] = await pool.execute(`
       INSERT INTO repository_configs (
         name, description, repo_url, branch, auth_type, credentials_encrypted,
         script_path_pattern, script_type, sync_interval, auto_create_cases, created_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       data.name,
       data.description || null,
       data.repo_url,
@@ -200,17 +198,17 @@ export class RepositoryService {
       data.script_type || 'javascript',
       data.sync_interval || 0,
       data.auto_create_cases !== false ? 1 : 0,
-      data.created_by || null
-    );
+      data.created_by || null,
+    ]);
 
-    return result.lastInsertRowid as number;
+    const insertResult = result as { insertId: number };
+    return insertResult.insertId;
   }
 
   /**
    * 更新仓库配置
    */
-  updateRepositoryConfig(id: number, data: Partial<RepositoryConfig>): void {
-    const db = getDatabase();
+  async updateRepositoryConfig(id: number, data: Partial<RepositoryConfig>): Promise<void> {
     const updates: string[] = [];
     const params: unknown[] = [];
 
@@ -250,19 +248,28 @@ export class RepositoryService {
       updates.push('auto_create_cases = ?');
       params.push(data.auto_create_cases ? 1 : 0);
     }
+    if (data.last_sync_at !== undefined) {
+      updates.push('last_sync_at = ?');
+      params.push(data.last_sync_at);
+    }
+    if (data.last_sync_status !== undefined) {
+      updates.push('last_sync_status = ?');
+      params.push(data.last_sync_status);
+    }
 
     if (updates.length === 0) return;
 
     params.push(id);
-    db.prepare(`UPDATE repository_configs SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    const pool = getPool();
+    await pool.execute(`UPDATE repository_configs SET ${updates.join(', ')} WHERE id = ?`, params);
   }
 
   /**
    * 删除仓库配置
    */
   async deleteRepositoryConfig(id: number): Promise<void> {
-    const db = getDatabase();
-    db.prepare('DELETE FROM repository_configs WHERE id = ?').run(id);
+    const pool = getPool();
+    await pool.execute('DELETE FROM repository_configs WHERE id = ?', [id]);
 
     // 清理本地克隆的仓库
     const repoPath = this.getRepoPath(id);
