@@ -202,31 +202,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
         </div>
       </div>
 
-      {/* 二级导航 Tabs */}
-      <div className="border-b border-slate-200 dark:border-[#234833]">
-        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-          {navTabs.map((tab) => {
-            const isActive = location === tab.href;
-            return (
-              <Link key={tab.type} href={tab.href}>
-                <a
-                  className={`
-                    flex items-center gap-2 whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium transition-colors
-                    ${isActive
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200'
-                    }
-                  `}
-                >
-                  {tab.icon}
-                  {tab.label}
-                </a>
-              </Link>
-            );
-          })}
-        </nav>
-      </div>
-
       {/* 筛选和列表区 */}
       <Card className="border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark">
         <div className="p-4 border-b border-slate-200 dark:border-[#234833] flex items-center justify-between gap-4">
