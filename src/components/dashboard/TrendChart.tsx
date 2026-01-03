@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { Loader2, TrendingUp, BarChart3, HelpCircle, RefreshCw } from "lucide-react";
 import { dashboardApi } from "@/lib/api";
 import {
@@ -226,25 +226,6 @@ export function TrendChart({ timeRange }: TrendChartProps) {
   const [error, setError] = useState<string | null>(null);
   const [chartType, setChartType] = useState<ChartType>('line');
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isChartVisible, setIsChartVisible] = useState(false);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) {
-          setIsChartVisible(true);
-        }
-      }
-    });
-
-    resizeObserver.observe(containerRef.current);
-    return () => resizeObserver.disconnect();
-  }, []);
-
   const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
 
   // 数据获取函数
@@ -303,6 +284,16 @@ export function TrendChart({ timeRange }: TrendChartProps) {
   // 格式化日期显示
   const formatDate = useCallback((dateStr: string) => {
     if (!dateStr) return '';
+
+    // 处理 ISO 格式日期 (如 2024-12-16T16:00:00.000Z)
+    if (dateStr.includes('T')) {
+      const date = new Date(dateStr);
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${month}-${day}`;
+    }
+
+    // 处理普通格式 (如 2024-12-16)
     const parts = dateStr.split('-');
     if (parts.length >= 3) {
       return `${parts[1]}-${parts[2]}`;
