@@ -71,21 +71,30 @@ async function ensureDatabaseExists(): Promise<void> {
   }
 }
 
-// 测试数据库连接
-export async function testConnection(): Promise<boolean> {
-  try {
-    // 先确保数据库存在
-    await ensureDatabaseExists();
+// 测试数据库连接（带重试机制）
+export async function testConnection(retries = 3, delay = 2000): Promise<boolean> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      // 先确保数据库存在
+      await ensureDatabaseExists();
 
-    const pool = getPool();
-    const connection = await pool.getConnection();
-    console.log('MariaDB connection test successful');
-    connection.release();
-    return true;
-  } catch (error) {
-    console.error('MariaDB connection test failed:', error);
-    return false;
+      const pool = getPool();
+      const connection = await pool.getConnection();
+      console.log('MariaDB connection test successful');
+      connection.release();
+      return true;
+    } catch (error: unknown) {
+      const err = error as { code?: string };
+      if (err.code === 'ER_CON_COUNT_ERROR' && i < retries - 1) {
+        console.log(`Connection failed (Too many connections), retrying in ${delay / 1000}s... (${i + 1}/${retries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      console.error('MariaDB connection test failed:', error);
+      return false;
+    }
   }
+  return false;
 }
 
 // 关闭连接池

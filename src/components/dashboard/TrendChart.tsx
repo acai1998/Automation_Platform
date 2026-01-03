@@ -102,7 +102,8 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   if (!active || !payload || !payload.length) return null;
 
   const data = payload[0].payload;
-  const totalCases = data.passedCases + data.failedCases + data.skippedCases;
+  const totalCases = Number(data.passedCases || 0) + Number(data.failedCases || 0) + Number(data.skippedCases || 0);
+  const successRate = Number(data.successRate) || 0;
 
   return (
     <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-[#234833] rounded-lg shadow-lg p-3 min-w-[180px]">
@@ -124,7 +125,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
         </div>
         <div className="flex justify-between border-t border-slate-100 dark:border-[#234833] pt-1 mt-1">
           <span className="text-slate-500 dark:text-gray-400">成功率</span>
-          <span className="font-bold text-primary">{data.successRate?.toFixed(1) ?? 0}%</span>
+          <span className="font-bold text-primary">{successRate.toFixed(1)}%</span>
         </div>
       </div>
     </div>
