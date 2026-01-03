@@ -37,14 +37,14 @@ export class DashboardService {
    * 获取核心指标卡片数据
    */
   async getStats(): Promise<DashboardStats> {
-    // 自动化用例总数
+    // 自动化用例总数（使用远程 Auto_TestCase 表）
     const totalCases = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM Auto_TestCase WHERE status = 'active'
+      SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
     `);
 
-    // 今日执行总次数
+    // 今日执行总次数（使用远程 Auto_TestRun 表）
     const todayRuns = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM task_executions
+      SELECT COUNT(*) as count FROM Auto_TestRun
       WHERE DATE(start_time) = CURDATE()
     `);
 
@@ -53,7 +53,7 @@ export class DashboardService {
       SELECT
         COALESCE(SUM(passed_cases), 0) as passed,
         COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
-      FROM task_executions
+      FROM Auto_TestRun
       WHERE DATE(start_time) = CURDATE()
     `);
 
@@ -63,7 +63,7 @@ export class DashboardService {
 
     // 当前运行中任务
     const runningTasks = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM task_executions WHERE status = 'running'
+      SELECT COUNT(*) as count FROM Auto_TestRun WHERE status = 'running'
     `);
 
     return {
@@ -89,7 +89,7 @@ export class DashboardService {
         COALESCE(SUM(passed_cases), 0) as passed,
         COALESCE(SUM(failed_cases), 0) as failed,
         COALESCE(SUM(skipped_cases), 0) as skipped
-      FROM task_executions
+      FROM Auto_TestRun
       WHERE DATE(start_time) = CURDATE()
     `);
 
@@ -121,12 +121,14 @@ export class DashboardService {
       ORDER BY summary_date ASC
     `, [days]);
 
-    if (summaries.length > 0) {
-      return summaries;
+    // 确保返回数组
+    const summaryArray = Array.isArray(summaries) ? summaries : [];
+    if (summaryArray.length > 0) {
+      return summaryArray;
     }
 
     // 如果没有汇总数据，从执行记录实时计算（T-1 口径）
-    return query<DailySummary[]>(`
+    const trendData = await query<DailySummary[]>(`
       SELECT
         DATE(start_time) as date,
         COUNT(*) as totalExecutions,
@@ -134,12 +136,15 @@ export class DashboardService {
         COALESCE(SUM(failed_cases), 0) as failedCases,
         COALESCE(SUM(skipped_cases), 0) as skippedCases,
         ROUND(SUM(passed_cases) * 100.0 / NULLIF(SUM(passed_cases + failed_cases + skipped_cases), 0), 2) as successRate
-      FROM task_executions
+      FROM Auto_TestRun
       WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
         AND DATE(start_time) < CURDATE()
       GROUP BY DATE(start_time)
       ORDER BY date ASC
     `, [days]);
+
+    // 确保返回数组
+    return Array.isArray(trendData) ? trendData : [];
   }
 
   /**
@@ -158,7 +163,7 @@ export class DashboardService {
         COALESCE(SUM(passed_cases), 0) as passed,
         COALESCE(SUM(failed_cases), 0) as failed,
         COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
-      FROM task_executions
+      FROM Auto_TestRun
       WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
     `, [days]);
 
@@ -174,7 +179,7 @@ export class DashboardService {
         COALESCE(SUM(passed_cases), 0) as passed,
         COALESCE(SUM(failed_cases), 0) as failed,
         COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
-      FROM task_executions
+      FROM Auto_TestRun
       WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
         AND DATE(start_time) < DATE_SUB(CURDATE(), INTERVAL ? DAY)
     `, [days * 2, days]);
@@ -207,19 +212,19 @@ export class DashboardService {
   async getRecentRuns(limit: number = 10) {
     return query(`
       SELECT
-        te.id,
-        te.task_name as suiteName,
-        te.status,
-        te.duration,
-        te.start_time as startTime,
-        te.total_cases as totalCases,
-        te.passed_cases as passedCases,
-        te.failed_cases as failedCases,
+        r.id,
+        r.jenkins_job as suiteName,
+        r.status,
+        r.duration_ms as duration,
+        r.start_time as startTime,
+        r.total_cases as totalCases,
+        r.passed_cases as passedCases,
+        r.failed_cases as failedCases,
         u.display_name as executedBy,
         u.id as executedById
-      FROM task_executions te
-      LEFT JOIN Auto_Users u ON te.executed_by = u.id
-      ORDER BY te.start_time DESC
+      FROM Auto_TestRun r
+      LEFT JOIN Auto_Users u ON r.trigger_by = u.id
+      ORDER BY r.start_time DESC
       LIMIT ?
     `, [limit]);
   }
@@ -230,7 +235,7 @@ export class DashboardService {
   async refreshDailySummary(date?: string) {
     const targetDate = date || new Date().toISOString().split('T')[0];
 
-    // 计算当日统计
+    // 计算当日统计（使用 Auto_TestRun 表）
     const stats = await queryOne<{
       totalExecutions: number;
       totalCasesRun: number;
@@ -245,13 +250,13 @@ export class DashboardService {
         COALESCE(SUM(passed_cases), 0) as passedCases,
         COALESCE(SUM(failed_cases), 0) as failedCases,
         COALESCE(SUM(skipped_cases), 0) as skippedCases,
-        COALESCE(AVG(duration), 0) as avgDuration
-      FROM task_executions
+        COALESCE(AVG(duration_ms / 1000), 0) as avgDuration
+      FROM Auto_TestRun
       WHERE DATE(start_time) = ?
     `, [targetDate]);
 
     const activeCases = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM Auto_TestCase WHERE status = 'active'
+      SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
     `);
 
     const totalCasesRun = stats?.totalCasesRun ?? 0;

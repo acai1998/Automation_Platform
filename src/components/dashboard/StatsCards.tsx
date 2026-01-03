@@ -150,7 +150,7 @@ export function StatsCards() {
         iconBg={stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "bg-danger/10" : "bg-success/10"}
         iconColor={stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "text-danger" : "text-success"}
         label="今日成功率%"
-        value={stats && stats.todaySuccessRate !== null ? `${stats.todaySuccessRate}%` : '60%'}
+        value={stats && stats.todaySuccessRate !== null ? `${stats.todaySuccessRate}%` : 'N/A'}
         loading={loading}
         description="基于今日完成的测试执行计算的成功率，低于 80% 会显示为警示颜色。"
       />

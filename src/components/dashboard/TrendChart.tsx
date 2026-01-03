@@ -191,20 +191,26 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange }: ChartHeaderPro
 }
 
 /** 统计信息组件 */
-function ChartStats({ avgStability, totalExecutions, totalFailed }: ChartStatsProps) {
+function ChartStats({ avgStability, totalExecutions, totalFailed, hasData }: ChartStatsProps & { hasData: boolean }) {
   return (
     <div className="mt-6 pt-4 border-t border-slate-100 dark:border-[#234833] grid grid-cols-3 gap-4">
       <div className="text-center">
         <p className="text-xs text-slate-500 dark:text-gray-400 mb-1">平均成功率</p>
-        <p className="text-lg font-bold text-primary">{avgStability}%</p>
+        <p className={`text-lg font-bold ${hasData ? 'text-primary' : 'text-slate-400 dark:text-gray-500'}`}>
+          {hasData ? `${avgStability}%` : 'N/A'}
+        </p>
       </div>
       <div className="text-center">
         <p className="text-xs text-slate-500 dark:text-gray-400 mb-1">总执行次数</p>
-        <p className="text-lg font-bold text-slate-900 dark:text-white">{totalExecutions}</p>
+        <p className={`text-lg font-bold ${hasData ? 'text-slate-900 dark:text-white' : 'text-slate-400 dark:text-gray-500'}`}>
+          {hasData ? totalExecutions : 'N/A'}
+        </p>
       </div>
       <div className="text-center">
         <p className="text-xs text-slate-500 dark:text-gray-400 mb-1">总失败次数</p>
-        <p className="text-lg font-bold text-danger">{totalFailed}</p>
+        <p className={`text-lg font-bold ${hasData ? 'text-danger' : 'text-slate-400 dark:text-gray-500'}`}>
+          {hasData ? totalFailed : 'N/A'}
+        </p>
       </div>
     </div>
   );
@@ -422,6 +428,7 @@ export function TrendChart({ timeRange }: TrendChartProps) {
         avgStability={avgStability}
         totalExecutions={totalExecutions}
         totalFailed={totalFailed}
+        hasData={trendData.length > 0}
       />
     </div>
   );

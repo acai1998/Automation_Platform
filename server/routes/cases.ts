@@ -6,16 +6,19 @@ const router = Router();
 
 interface TestCase {
   id: number;
+  case_key?: string;
   name: string;
   description?: string;
   project_id?: number;
   project_name?: string;
+  repo_id?: number;
   module?: string;
   priority: string;
   type: string;
-  status: string;
-  running_status: string;
   tags?: string;
+  source?: string;
+  enabled: boolean;
+  last_sync_commit?: string;
   script_path?: string;
   config_json?: string;
   created_by?: number;
@@ -31,7 +34,7 @@ interface TestCase {
  */
 router.get('/', async (req, res) => {
   try {
-    const { projectId, module, status, type, search, limit = 50, offset = 0 } = req.query;
+    const { projectId, module, enabled, type, search, limit = 50, offset = 0 } = req.query;
 
     let sql = `
       SELECT tc.*, p.name as project_name, u.display_name as created_by_name
@@ -50,9 +53,9 @@ router.get('/', async (req, res) => {
       sql += ' AND tc.module = ?';
       params.push(module);
     }
-    if (status) {
-      sql += ' AND tc.status = ?';
-      params.push(status);
+    if (enabled !== undefined) {
+      sql += ' AND tc.enabled = ?';
+      params.push(enabled === 'true' || enabled === '1' ? 1 : 0);
     }
     if (type) {
       sql += ' AND tc.type = ?';
@@ -75,9 +78,9 @@ router.get('/', async (req, res) => {
       countSql += ' AND tc.project_id = ?';
       countParams.push(projectId);
     }
-    if (status) {
-      countSql += ' AND tc.status = ?';
-      countParams.push(status);
+    if (enabled !== undefined) {
+      countSql += ' AND tc.enabled = ?';
+      countParams.push(enabled === 'true' || enabled === '1' ? 1 : 0);
     }
     if (type) {
       countSql += ' AND tc.type = ?';
@@ -102,7 +105,7 @@ router.get('/', async (req, res) => {
  * GET /api/cases/modules/list
  * 获取所有模块列表
  */
-router.get('/modules/list', async (req, res) => {
+router.get('/modules/list', async (_req, res) => {
   try {
     const data = await query<Array<{ module: string }>>(
       'SELECT DISTINCT module FROM Auto_TestCase WHERE module IS NOT NULL ORDER BY module'
@@ -117,17 +120,13 @@ router.get('/modules/list', async (req, res) => {
 
 /**
  * GET /api/cases/running/list
- * 获取所有正在运行的用例
+ * 获取所有正在运行的用例（注：远程表无此字段，返回空数组）
  */
-router.get('/running/list', async (req, res) => {
+router.get('/running/list', async (_req, res) => {
   try {
-    const data = await query<TestCase[]>(`
-      SELECT id, name, type, running_status
-      FROM Auto_TestCase
-      WHERE running_status = 'running'
-    `);
-
-    res.json({ success: true, data });
+    // 远程 Auto_TestCase 表没有 running_status 字段
+    // 返回空数组以保持 API 兼容性
+    res.json({ success: true, data: [] });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -228,7 +227,7 @@ router.put('/:id', async (req, res) => {
       module,
       priority,
       type,
-      status,
+      enabled,
       tags,
       scriptPath,
       configJson,
@@ -263,9 +262,9 @@ router.put('/:id', async (req, res) => {
       updates.push('type = ?');
       params.push(type);
     }
-    if (status !== undefined) {
-      updates.push('status = ?');
-      params.push(status);
+    if (enabled !== undefined) {
+      updates.push('enabled = ?');
+      params.push(enabled ? 1 : 0);
     }
     if (tags !== undefined) {
       updates.push('tags = ?');
@@ -326,9 +325,9 @@ router.post('/:id/run', async (req, res) => {
       name: string;
       type: string;
       script_path: string;
-      running_status: string;
+      enabled: boolean;
     }>(`
-      SELECT id, name, type, script_path, running_status
+      SELECT id, name, type, script_path, enabled
       FROM Auto_TestCase
       WHERE id = ?
     `, [id]);
@@ -337,9 +336,9 @@ router.post('/:id/run', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Case not found' });
     }
 
-    // 检查是否已在运行
-    if (testCase.running_status === 'running') {
-      return res.status(400).json({ success: false, message: 'Case is already running' });
+    // 检查是否启用
+    if (!testCase.enabled) {
+      return res.status(400).json({ success: false, message: 'Case is disabled' });
     }
 
     // 检查是否有脚本路径
@@ -355,7 +354,7 @@ router.post('/:id/run', async (req, res) => {
     }
 
     // 构建回调 URL
-    const callbackUrl = `${req.protocol}://${req.get('host')}/api/cases/${id}/status`;
+    const callbackUrl = `${req.protocol}://${req.get('host')}/api/cases/${id}/callback`;
 
     // 触发 Jenkins Job
     const result = await jenkinsService.triggerJob(
@@ -371,7 +370,7 @@ router.post('/:id/run', async (req, res) => {
         data: {
           caseId: id,
           caseName: testCase.name,
-          status: 'running',
+          status: 'triggered',
           buildUrl: result.buildUrl,
           queueId: result.queueId,
         },
@@ -390,21 +389,13 @@ router.post('/:id/run', async (req, res) => {
 });
 
 /**
- * PATCH /api/cases/:id/status
- * 更新用例运行状态（供 Jenkins 回调使用）
+ * POST /api/cases/:id/callback
+ * Jenkins 执行回调（预留接口）
  */
-router.patch('/:id/status', async (req, res) => {
+router.post('/:id/callback', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { running_status } = req.body;
-
-    // 验证状态值
-    if (!['idle', 'running'].includes(running_status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid running_status. Must be "idle" or "running"',
-      });
-    }
+    const { status, duration, errorMessage } = req.body;
 
     // 检查用例是否存在
     const testCase = await queryOne<{ id: number }>('SELECT id FROM Auto_TestCase WHERE id = ?', [id]);
@@ -412,13 +403,15 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Case not found' });
     }
 
-    // 更新状态
-    const pool = getPool();
-    await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', [running_status, id]);
+    // 记录执行结果（可以扩展为写入执行记录表）
+    console.log(`Case ${id} execution completed: status=${status}, duration=${duration}ms`);
+    if (errorMessage) {
+      console.log(`Error: ${errorMessage}`);
+    }
 
     res.json({
       success: true,
-      message: 'Case status updated successfully',
+      message: 'Callback received successfully',
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

@@ -76,7 +76,7 @@ export class ExecutionService {
     if (totalCases > 0) {
       const placeholders = caseIds.map(() => '?').join(',');
       const cases = await queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM Auto_TestCase WHERE id IN (${placeholders}) AND status = 'active'`,
+        `SELECT COUNT(*) as count FROM Auto_TestCase WHERE id IN (${placeholders}) AND enabled = 1`,
         caseIds
       );
       totalCases = cases?.count ?? 0;
@@ -250,7 +250,7 @@ export class ExecutionService {
     return query(`
       SELECT id, name, type, module, priority, script_path, config_json
       FROM Auto_TestCase
-      WHERE id IN (${placeholders}) AND status = 'active'
+      WHERE id IN (${placeholders}) AND enabled = 1
     `, caseIds);
   }
 }

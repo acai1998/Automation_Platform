@@ -91,7 +91,7 @@ export class JenkinsService {
 
     try {
       // 更新用例状态为 running
-      await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', ['running', caseId]);
+      await pool.execute('UPDATE test_cases SET running_status = ? WHERE id = ?', ['running', caseId]);
 
       // 调用 Jenkins API
       const response = await fetch(`${triggerUrl}?${params.toString()}`, {
@@ -124,7 +124,7 @@ export class JenkinsService {
       }
     } catch (error) {
       // 发生错误，恢复状态
-      await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', ['idle', caseId]);
+      await pool.execute('UPDATE test_cases SET running_status = ? WHERE id = ?', ['idle', caseId]);
 
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -147,7 +147,7 @@ export class JenkinsService {
    */
   async updateCaseStatus(caseId: number, status: 'idle' | 'running'): Promise<void> {
     const pool = getPool();
-    await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', [status, caseId]);
+    await pool.execute('UPDATE test_cases SET running_status = ? WHERE id = ?', [status, caseId]);
   }
 
   /**
@@ -155,7 +155,7 @@ export class JenkinsService {
    */
   async resetAllRunningStatus(): Promise<void> {
     const pool = getPool();
-    await pool.execute("UPDATE Auto_TestCase SET running_status = 'idle' WHERE running_status = 'running'");
+    await pool.execute("UPDATE test_cases SET running_status = 'idle' WHERE running_status = 'running'");
   }
 
   /**

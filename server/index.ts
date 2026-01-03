@@ -11,7 +11,8 @@ import repositoriesRoutes from './routes/repositories.js';
 import { schedulerService } from './services/SchedulerService.js';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const BASE_PORT = parseInt(process.env.PORT || '3000', 10);
+const MAX_PORT_ATTEMPTS = 10;
 
 // 中间件
 app.use(cors());
@@ -53,14 +54,34 @@ app.use((err: Error, req: express.Request, res: express.Response, _next: express
   });
 });
 
-// 启动服务器
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`API available at http://localhost:${PORT}/api`);
+// 启动服务器（支持端口重试）
+function startServer(port: number, attempt: number = 1): void {
+  const server = app.listen(port, () => {
+    console.log(`Server running on http://localhost:${port}`);
+    console.log(`API available at http://localhost:${port}/api`);
 
-  // 启动定时任务调度器
-  schedulerService.start();
-});
+    // 启动定时任务调度器
+    schedulerService.start();
+  });
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      if (attempt < MAX_PORT_ATTEMPTS) {
+        const nextPort = BASE_PORT + attempt;
+        console.log(`Port ${port} is in use, trying port ${nextPort}...`);
+        startServer(nextPort, attempt + 1);
+      } else {
+        console.error(`Failed to find available port after ${MAX_PORT_ATTEMPTS} attempts`);
+        process.exit(1);
+      }
+    } else {
+      console.error('Server error:', err);
+      process.exit(1);
+    }
+  });
+}
+
+startServer(BASE_PORT);
 
 // 优雅关闭
 process.on('SIGTERM', () => {
