@@ -16,6 +16,7 @@ interface TestCase {
   priority: string;
   type: string;
   tags?: string;
+  owner?: string;
   source?: string;
   enabled: boolean;
   last_sync_commit?: string;

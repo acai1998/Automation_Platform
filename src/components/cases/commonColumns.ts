@@ -1,5 +1,5 @@
 import type { CaseColumn } from './BaseCaseList';
-import { renderScriptPath, renderDescription } from './columnRenderers';
+import { renderScriptPath, renderDescription, renderPriority, renderOwner } from './columnRenderers';
 
 /**
  * 预定义的列配置
@@ -16,6 +16,20 @@ export const COLUMN_DEFINITIONS = {
   name: {
     key: 'name',
     label: '用例名称',
+  },
+  /** 优先级列 */
+  priority: {
+    key: 'priority',
+    label: '优先级',
+    width: '90px',
+    render: renderPriority,
+  },
+  /** 负责人列 */
+  owner: {
+    key: 'owner',
+    label: '负责人',
+    width: '100px',
+    render: renderOwner,
   },
   /** 脚本路径列 */
   scriptPath: {
@@ -50,6 +64,8 @@ export const COLUMN_DEFINITIONS = {
 export const FULL_COLUMNS: CaseColumn[] = [
   COLUMN_DEFINITIONS.index,
   COLUMN_DEFINITIONS.name,
+  COLUMN_DEFINITIONS.priority,
+  COLUMN_DEFINITIONS.owner,
   COLUMN_DEFINITIONS.scriptPath,
   COLUMN_DEFINITIONS.description,
   COLUMN_DEFINITIONS.runningStatus,
@@ -63,6 +79,8 @@ export const FULL_COLUMNS: CaseColumn[] = [
 export const SIMPLE_COLUMNS: CaseColumn[] = [
   COLUMN_DEFINITIONS.index,
   COLUMN_DEFINITIONS.name,
+  COLUMN_DEFINITIONS.priority,
+  COLUMN_DEFINITIONS.owner,
   COLUMN_DEFINITIONS.runningStatus,
   COLUMN_DEFINITIONS.actions,
 ];
