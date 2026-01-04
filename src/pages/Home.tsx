@@ -1,4 +1,3 @@
-import { Layout } from "@/components/Layout";
 import { StatsCards } from "@/components/dashboard/StatsCards";
 import { TodayExecution } from "@/components/dashboard/TodayExecution";
 import { TrendChart } from "@/components/dashboard/TrendChart";
@@ -14,9 +13,8 @@ export default function Home() {
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
 
   return (
-    <Layout>
-      <div className="p-6 md:p-8 lg:p-12">
-        <div className="max-w-7xl mx-auto flex flex-col gap-8">
+    <div className="p-6 md:p-8 lg:p-12">
+      <div className="max-w-7xl mx-auto flex flex-col gap-8">
           {/* Page Heading */}
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div className="flex flex-col gap-1">
@@ -70,6 +68,5 @@ export default function Home() {
           <RecentTests />
         </div>
       </div>
-    </Layout>
-  );
+    );
 }

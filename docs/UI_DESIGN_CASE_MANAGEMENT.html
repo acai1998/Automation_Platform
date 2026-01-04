@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用例管理 UI 设计稿 - V1.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+        .sidebar {
+            background: linear-gradient(180deg, #f8faf9 0%, #f1f5f3 100%);
+        }
+        .card-shadow {
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+        }
+        .badge-idle {
+            background-color: #e5e7eb;
+            color: #374151;
+        }
+        .badge-running {
+            background-color: #dbeafe;
+            color: #1e40af;
+        }
+        .page-section {
+            margin-bottom: 3rem;
+        }
+        .design-note {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 0.375rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="container mx-auto px-4 py-8 max-w-7xl">
+        <!-- 设计稿标题 -->
+        <div class="mb-8">
+            <h1 class="text-4xl font-bold text-gray-900 mb-2">用例管理 UI 设计稿</h1>
+            <p class="text-gray-600">基于 PRD V1.0 - 按 API / UI / 性能拆分</p>
+            <div class="design-note">
+                <strong>设计说明：</strong>本设计稿展示了三个用例管理页面的完整 UI 布局，包括导航结构、页面元素和交互状态。
+            </div>
+        </div>
+
+        <!-- 导航结构设计 -->
+        <section class="page-section">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">1. 导航结构设计</h2>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                <!-- 一级导航 -->
+                <div class="bg-white rounded-lg p-6 card-shadow">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">一级导航</h3>
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-3 px-3 py-3 rounded-lg bg-green-100 text-green-700 border border-green-200">
+                            <i class="fas fa-folder-open w-5 h-5"></i>
+                            <span class="text-sm font-medium">用例管理</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 二级导航 -->
+                <div class="bg-white rounded-lg p-6 card-shadow">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">二级导航</h3>
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
+                            <i class="fas fa-code w-4 h-4"></i>
+                            <span class="text-sm">API 自动化</span>
+                        </div>
+                        <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-gray-700">
+                            <i class="fas fa-desktop w-4 h-4"></i>
+                            <span class="text-sm">UI 自动化</span>
+                        </div>
+                        <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-gray-700">
+                            <i class="fas fa-tachometer-alt w-4 h-4"></i>
+                            <span class="text-sm">性能自动化</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 导航层级图 -->
+                <div class="bg-white rounded-lg p-6 card-shadow">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">导航层级</h3>
+                    <div class="text-sm text-gray-600 space-y-1 font-mono">
+                        <div>用例管理</div>
+                        <div class="pl-4">├── API 自动化</div>
+                        <div class="pl-4">├── UI 自动化</div>
+                        <div class="pl-4">└── 性能自动化</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- API 自动化用例管理页 -->
+        <section class="page-section">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">2. API 自动化用例管理页</h2>
+            
+            <div class="bg-white rounded-lg card-shadow overflow-hidden">
+                <!-- 页面头部 -->
+                <div class="bg-gradient-to-r from-blue-500 to-blue-600 p-6">
+                    <div class="flex items-center gap-4">
+                        <div class="p-3 bg-white/20 rounded-lg">
+                            <i class="fas fa-code text-white text-2xl"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-2xl font-bold text-white">API 自动化用例</h1>
+                            <p class="text-blue-100 text-sm mt-1">管理接口自动化测试用例</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 顶部操作区 -->
+                <div class="p-6 border-b border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <button class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center gap-2">
+                                <i class="fas fa-sync-alt"></i>
+                                <span>同步用例</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 搜索区 -->
+                <div class="p-6 border-b border-gray-200 bg-gray-50">
+                    <div class="flex flex-col sm:flex-row gap-4">
+                        <div class="relative flex-1">
+                            <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                            <input 
+                                type="text" 
+                                placeholder="搜索用例名称或描述..." 
+                                class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                        </div>
+                        <button class="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2">
+                            <i class="fas fa-search"></i>
+                            <span>搜索</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 列表区 -->
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-20">序号</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">用例名称</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">用例说明</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-32">状态</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-32">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <tr class="hover:bg-blue-50 transition-colors">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">1</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">test_user_login</td>
+                                <td class="px-6 py-4 text-sm text-gray-600 max-w-md">测试用户登录接口，验证用户名密码正确性</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="badge-idle px-2 py-1 rounded-full text-xs font-medium">idle</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <button class="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 transition-colors flex items-center gap-1">
+                                        <i class="fas fa-play text-xs"></i>
+                                        <span>运行</span>
+                                    </button>
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-blue-50 transition-colors">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">2</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">test_create_order</td>
+                                <td class="px-6 py-4 text-sm text-gray-600 max-w-md">测试创建订单接口，验证订单创建流程</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="badge-running px-2 py-1 rounded-full text-xs font-medium">running</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <button class="px-3 py-1 bg-gray-300 text-gray-600 rounded text-sm cursor-not-allowed flex items-center gap-1" disabled>
+                                        <i class="fas fa-play text-xs"></i>
+                                        <span>运行中</span>
+                                    </button>
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-blue-50 transition-colors">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">3</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">test_get_user_info</td>
+                                <td class="px-6 py-4 text-sm text-gray-600 max-w-md">测试获取用户信息接口</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="badge-idle px-2 py-1 rounded-full text-xs font-medium">idle</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <button class="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 transition-colors flex items-center gap-1">
+                                        <i class="fas fa-play text-xs"></i>
+                                        <span>运行</span>
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 分页 -->
+                <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+                    <div class="text-sm text-gray-600">
+                        显示 1-10 条，共 25 条
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button class="px-3 py-1 border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                            <i class="fas fa-chevron-left"></i>
+                        </button>
+                        <span class="text-sm text-gray-700 px-3">1 / 3</span>
+                        <button class="px-3 py-1 border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- UI 自动化用例管理页 -->
+        <section class="page-section">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">3. UI 自动化用例管理页</h2>
+            
+            <div class="bg-white rounded-lg card-shadow overflow-hidden">
+                <!-- 页面头部 -->
+                <div class="bg-gradient-to-r from-purple-500 to-purple-600 p-6">
+                    <div class="flex items-center gap-4">
+                        <div class="p-3 bg-white/20 rounded-lg">
+                            <i class="fas fa-desktop text-white text-2xl"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-2xl font-bold text-white">UI 自动化用例</h1>
+                            <p class="text-purple-100 text-sm mt-1">管理 UI 自动化测试用例</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 顶部操作区 -->
+                <div class="p-6 border-b border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <button class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center gap-2">
+                                <i class="fas fa-sync-alt"></i>
+                                <span>同步用例</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 搜索区 -->
+                <div class="p-6 border-b border-gray-200 bg-gray-50">
+                    <div class="flex flex-col sm:flex-row gap-4">
+                        <div class="relative flex-1">
+                            <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                            <input 
+                                type="text" 
+                                placeholder="搜索用例名称或描述..." 
+                                class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            >
+                        </div>
+                        <button class="px-6 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors flex items-center gap-2">
+                            <i class="fas fa-search"></i>
+                            <span>搜索</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 列表区 -->
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-20">序号</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">用例名称</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">用例说明</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-32">状态</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-32">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <tr class="hover:bg-purple-50 transition-colors">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">1</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">test_login_page</td>
+                                <td class="px-6 py-4 text-sm text-gray-600 max-w-md">测试登录页面UI交互，验证表单提交功能</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="badge-idle px-2 py-1 rounded-full text-xs font-medium">idle</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <button class="px-3 py-1 bg-purple-500 text-white rounded text-sm hover:bg-purple-600 transition-colors flex items-center gap-1">
+                                        <i class="fas fa-play text-xs"></i>
+                                        <span>运行</span>
+                                    </button>
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-purple-50 transition-colors">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">2</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">test_shopping_cart</td>
+                                <td class="px-6 py-4 text-sm text-gray-600 max-w-md">测试购物车页面，验证商品添加和删除</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="badge-idle px-2 py-1 rounded-full text-xs font-medium">idle</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <button class="px-3 py-1 bg-purple-500 text-white rounded text-sm hover:bg-purple-600 transition-colors flex items-center gap-1">
+                                        <i class="fas fa-play text-xs"></i>
+                                        <span>运行</span>
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 分页 -->
+                <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+                    <div class="text-sm text-gray-600">
+                        显示 1-10 条，共 15 条
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button class="px-3 py-1 border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                            <i class="fas fa-chevron-left"></i>
+                        </button>
+                        <span class="text-sm text-gray-700 px-3">1 / 2</span>
+                        <button class="px-3 py-1 border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 性能自动化用例管理页 -->
+        <section class="page-section">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">4. 性能自动化用例管理页</h2>
+            
+            <div class="bg-white rounded-lg card-shadow overflow-hidden">
+                <!-- 页面头部 -->
+                <div class="bg-gradient-to-r from-orange-500 to-orange-600 p-6">
+                    <div class="flex items-center gap-4">
+                        <div class="p-3 bg-white/20 rounded-lg">
+                            <i class="fas fa-tachometer-alt text-white text-2xl"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-2xl font-bold text-white">性能自动化用例</h1>
+                            <p class="text-orange-100 text-sm mt-1">管理性能 / 压测相关用例</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 顶部操作区 -->
+                <div class="p-6 border-b border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <button class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center gap-2">
+                                <i class="fas fa-sync-alt"></i>
+                                <span>同步用例</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 列表区（性能页面无搜索区） -->
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-20">序号</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">用例名称</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-32">状态</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-32">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <tr class="hover:bg-orange-50 transition-colors">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">1</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">test_api_load</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="badge-idle px-2 py-1 rounded-full text-xs font-medium">idle</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <button class="px-3 py-1 bg-orange-500 text-white rounded text-sm hover:bg-orange-600 transition-colors flex items-center gap-1">
+                                        <i class="fas fa-play text-xs"></i>
+                                        <span>运行</span>
+                                    </button>
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-orange-50 transition-colors">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">2</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">test_stress_test</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="badge-idle px-2 py-1 rounded-full text-xs font-medium">idle</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <button class="px-3 py-1 bg-orange-500 text-white rounded text-sm hover:bg-orange-600 transition-colors flex items-center gap-1">
+                                        <i class="fas fa-play text-xs"></i>
+                                        <span>运行</span>
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 分页 -->
+                <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+                    <div class="text-sm text-gray-600">
+                        显示 1-10 条，共 8 条
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button class="px-3 py-1 border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                            <i class="fas fa-chevron-left"></i>
+                        </button>
+                        <span class="text-sm text-gray-700 px-3">1 / 1</span>
+                        <button class="px-3 py-1 border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 设计要点说明 -->
+        <section class="page-section">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">5. 设计要点说明</h2>
+            
+            <div class="bg-white rounded-lg p-6 card-shadow">
+                <div class="space-y-4">
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-2">✓ 页面拆分，能力复用</h3>
+                        <p class="text-gray-600 text-sm">三个页面使用相同的 BaseCaseList 组件，通过配置实现不同展示效果</p>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-2">✓ 统一的交互模式</h3>
+                        <p class="text-gray-600 text-sm">所有页面都包含：同步用例按钮、搜索功能（性能页面除外）、列表展示、分页控制</p>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-2">✓ 视觉区分</h3>
+                        <p class="text-gray-600 text-sm">不同页面使用不同的主题色（蓝色-API、紫色-UI、橙色-性能）便于识别</p>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-2">✓ 状态展示</h3>
+                        <p class="text-gray-600 text-sm">用例状态通过徽章展示（idle/running），运行中时按钮禁用</p>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-gray-900 mb-2">✓ 响应式设计</h3>
+                        <p class="text-gray-600 text-sm">支持桌面端和移动端，搜索框和按钮自适应布局</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 字段对比表 -->
+        <section class="page-section">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">6. 字段对比表</h2>
+            
+            <div class="bg-white rounded-lg overflow-hidden card-shadow">
+                <table class="w-full">
+                    <thead class="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">字段</th>
+                            <th class="px-6 py-3 text-center text-xs font-semibold text-gray-700 uppercase">API 自动化</th>
+                            <th class="px-6 py-3 text-center text-xs font-semibold text-gray-700 uppercase">UI 自动化</th>
+                            <th class="px-6 py-3 text-center text-xs font-semibold text-gray-700 uppercase">性能自动化</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                        <tr>
+                            <td class="px-6 py-4 text-sm font-medium text-gray-900">序号</td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-sm font-medium text-gray-900">用例名称</td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-sm font-medium text-gray-900">用例说明</td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-times text-gray-400"></i></td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-sm font-medium text-gray-900">状态</td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-sm font-medium text-gray-900">操作</td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-sm font-medium text-gray-900">搜索功能</td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-check text-green-500"></i></td>
+                            <td class="px-6 py-4 text-center"><i class="fas fa-times text-gray-400"></i></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 页脚 -->
+        <footer class="mt-12 pt-8 border-t border-gray-200 text-center text-gray-500 text-sm">
+            <p>用例管理 UI 设计稿 V1.0 | 基于 PRD V1.0 设计</p>
+        </footer>
+    </div>
+</body>
+</html>

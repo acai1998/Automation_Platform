@@ -127,7 +127,7 @@ export function StatsCards() {
         iconBg="bg-blue-500/10"
         iconColor="text-blue-500"
         label="自动化用例总数"
-        value={stats?.totalCases.toLocaleString() ?? '-'}
+        value={typeof stats?.totalCases === 'number' ? stats.totalCases.toLocaleString() : '-'}
         loading={loading}
         onClick={() => setLocation('/cases')}
         description="统计项目中已创建的自动化用例总数，包含所有状态的用例。"
@@ -139,7 +139,7 @@ export function StatsCards() {
         iconBg="bg-primary/10"
         iconColor="text-primary"
         label="今日执行总次数"
-        value={stats?.todayRuns.toString() ?? '-'}
+        value={typeof stats?.todayRuns === 'number' ? stats.todayRuns.toString() : '-'}
         loading={loading}
         description="显示今天内完成的所有测试执行次数，包括成功和失败的执行。用于评估团队的测试执行频率和工作量。"
       />
@@ -150,7 +150,7 @@ export function StatsCards() {
         iconBg={stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "bg-danger/10" : "bg-success/10"}
         iconColor={stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "text-danger" : "text-success"}
         label="今日成功率%"
-        value={stats && stats.todaySuccessRate !== null ? `${stats.todaySuccessRate}%` : '60%'}
+        value={stats && stats.todaySuccessRate !== null ? `${stats.todaySuccessRate}%` : 'N/A'}
         loading={loading}
         description="基于今日完成的测试执行计算的成功率，低于 80% 会显示为警示颜色。"
       />
@@ -161,7 +161,7 @@ export function StatsCards() {
         iconBg="bg-warning/10"
         iconColor="text-warning"
         label="当前运行中任务"
-        value={stats?.runningTasks.toString() ?? '-'}
+        value={typeof stats?.runningTasks === 'number' ? stats.runningTasks.toString() : '-'}
         loading={loading}
         onClick={() => setLocation('/tasks')}
         description="当前正在执行或调度中的任务数量，用于监控并发执行情况和资源占用。"

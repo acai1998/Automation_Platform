@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.js';
+import { query, queryOne, getPool } from '../config/database.js';
 
 export interface DashboardStats {
   totalCases: number;
@@ -36,67 +36,68 @@ export class DashboardService {
   /**
    * 获取核心指标卡片数据
    */
-  getStats(): DashboardStats {
-    const db = getDatabase();
+  async getStats(): Promise<DashboardStats> {
+    // 自动化用例总数（使用远程 Auto_TestCase 表）
+    const totalCases = await queryOne<{ count: number }>(`
+      SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
+    `);
 
-    // 自动化用例总数
-    const totalCases = db.prepare(`
-      SELECT COUNT(*) as count FROM test_cases WHERE status = 'active'
-    `).get() as { count: number };
-
-    // 今日执行总次数
-    const todayRuns = db.prepare(`
-      SELECT COUNT(*) as count FROM task_executions
-      WHERE DATE(start_time) = DATE('now')
-    `).get() as { count: number };
+    // 今日执行总次数（使用远程 Auto_TestRun 表）
+    const todayRuns = await queryOne<{ count: number }>(`
+      SELECT COUNT(*) as count FROM Auto_TestRun
+      WHERE DATE(start_time) = CURDATE()
+    `);
 
     // 今日成功率
-    const todayStats = db.prepare(`
+    const todayStats = await queryOne<{ passed: number; total: number }>(`
       SELECT
-        SUM(passed_cases) as passed,
-        SUM(passed_cases + failed_cases + skipped_cases) as total
-      FROM task_executions
-      WHERE DATE(start_time) = DATE('now')
-    `).get() as { passed: number; total: number };
+        COALESCE(SUM(passed_cases), 0) as passed,
+        COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
+      FROM Auto_TestRun
+      WHERE DATE(start_time) = CURDATE()
+    `);
 
-    const todaySuccessRate = todayStats.total > 0
+    const todaySuccessRate = todayStats && todayStats.total > 0
       ? Math.round((todayStats.passed / todayStats.total) * 10000) / 100
       : null;
 
     // 当前运行中任务
-    const runningTasks = db.prepare(`
-      SELECT COUNT(*) as count FROM task_executions WHERE status = 'running'
-    `).get() as { count: number };
+    const runningTasks = await queryOne<{ count: number }>(`
+      SELECT COUNT(*) as count FROM Auto_TestRun WHERE status = 'running'
+    `);
 
     return {
-      totalCases: totalCases.count,
-      todayRuns: todayRuns.count,
+      totalCases: totalCases?.count ?? 0,
+      todayRuns: todayRuns?.count ?? 0,
       todaySuccessRate,
-      runningTasks: runningTasks.count,
+      runningTasks: runningTasks?.count ?? 0,
     };
   }
 
   /**
    * 获取今日执行统计
    */
-  getTodayExecution(): TodayExecution {
-    const db = getDatabase();
-
-    const stats = db.prepare(`
+  async getTodayExecution(): Promise<TodayExecution> {
+    const stats = await queryOne<{
+      total: number;
+      passed: number;
+      failed: number;
+      skipped: number;
+    }>(`
       SELECT
-        SUM(passed_cases + failed_cases + skipped_cases) as total,
-        SUM(passed_cases) as passed,
-        SUM(failed_cases) as failed,
-        SUM(skipped_cases) as skipped
-      FROM task_executions
-      WHERE DATE(start_time) = DATE('now')
-    `).get() as any;
+        COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total,
+        COALESCE(SUM(passed_cases), 0) as passed,
+        COALESCE(SUM(failed_cases), 0) as failed,
+        COALESCE(SUM(skipped_cases), 0) as skipped
+      FROM Auto_TestRun
+      WHERE DATE(start_time) = CURDATE()
+    `);
 
     return {
-      total: stats.total || 0,
-      passed: stats.passed || 0,
-      failed: stats.failed || 0,
-      skipped: stats.skipped || 0,
+      total: stats?.total || 0,
+      passed: stats?.passed || 0,
+      failed: stats?.failed || 0,
+      skipped: stats?.skipped || 0,
     };
   }
 
@@ -104,11 +105,9 @@ export class DashboardService {
    * 获取历史趋势数据
    * 采用 T-1 数据口径：不展示当天数据，最新可展示日期 = 当前日期 - 1 天
    */
-  getTrendData(days: number = 30): DailySummary[] {
-    const db = getDatabase();
-
+  async getTrendData(days: number = 30): Promise<DailySummary[]> {
     // 优先从 daily_summaries 表获取（T-1 口径）
-    const summaries = db.prepare(`
+    const summaries = await query<DailySummary[]>(`
       SELECT
         summary_date as date,
         total_executions as totalExecutions,
@@ -117,74 +116,87 @@ export class DashboardService {
         skipped_cases as skippedCases,
         success_rate as successRate
       FROM daily_summaries
-      WHERE summary_date >= DATE('now', '-' || ? || ' days')
-        AND summary_date < DATE('now')
+      WHERE summary_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND summary_date < CURDATE()
       ORDER BY summary_date ASC
-    `).all(days) as DailySummary[];
+    `, [days]);
 
-    if (summaries.length > 0) {
-      return summaries;
+    // 确保返回数组
+    const summaryArray = Array.isArray(summaries) ? summaries : [];
+    if (summaryArray.length > 0) {
+      return summaryArray;
     }
 
     // 如果没有汇总数据，从执行记录实时计算（T-1 口径）
-    return db.prepare(`
+    const trendData = await query<DailySummary[]>(`
       SELECT
         DATE(start_time) as date,
         COUNT(*) as totalExecutions,
-        SUM(passed_cases) as passedCases,
-        SUM(failed_cases) as failedCases,
-        SUM(skipped_cases) as skippedCases,
+        COALESCE(SUM(passed_cases), 0) as passedCases,
+        COALESCE(SUM(failed_cases), 0) as failedCases,
+        COALESCE(SUM(skipped_cases), 0) as skippedCases,
         ROUND(SUM(passed_cases) * 100.0 / NULLIF(SUM(passed_cases + failed_cases + skipped_cases), 0), 2) as successRate
-      FROM task_executions
-      WHERE DATE(start_time) >= DATE('now', '-' || ? || ' days')
-        AND DATE(start_time) < DATE('now')
+      FROM Auto_TestRun
+      WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND DATE(start_time) < CURDATE()
       GROUP BY DATE(start_time)
       ORDER BY date ASC
-    `).all(days) as DailySummary[];
+    `, [days]);
+
+    // 确保返回数组
+    return Array.isArray(trendData) ? trendData : [];
   }
 
   /**
    * 获取环比分析数据
    */
-  getComparison(days: number = 30): ComparisonData {
-    const db = getDatabase();
-
+  async getComparison(days: number = 30): Promise<ComparisonData> {
     // 当前周期数据
-    const current = db.prepare(`
+    const current = await queryOne<{
+      runs: number;
+      passed: number;
+      failed: number;
+      total: number;
+    }>(`
       SELECT
         COUNT(*) as runs,
-        SUM(passed_cases) as passed,
-        SUM(failed_cases) as failed,
-        SUM(passed_cases + failed_cases + skipped_cases) as total
-      FROM task_executions
-      WHERE DATE(start_time) >= DATE('now', '-' || ? || ' days')
-    `).get(days) as any;
+        COALESCE(SUM(passed_cases), 0) as passed,
+        COALESCE(SUM(failed_cases), 0) as failed,
+        COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
+      FROM Auto_TestRun
+      WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+    `, [days]);
 
     // 上一周期数据
-    const previous = db.prepare(`
+    const previous = await queryOne<{
+      runs: number;
+      passed: number;
+      failed: number;
+      total: number;
+    }>(`
       SELECT
         COUNT(*) as runs,
-        SUM(passed_cases) as passed,
-        SUM(failed_cases) as failed,
-        SUM(passed_cases + failed_cases + skipped_cases) as total
-      FROM task_executions
-      WHERE DATE(start_time) >= DATE('now', '-' || ? || ' days')
-        AND DATE(start_time) < DATE('now', '-' || ? || ' days')
-    `).get(days * 2, days) as any;
+        COALESCE(SUM(passed_cases), 0) as passed,
+        COALESCE(SUM(failed_cases), 0) as failed,
+        COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
+      FROM Auto_TestRun
+      WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND DATE(start_time) < DATE_SUB(CURDATE(), INTERVAL ? DAY)
+    `, [days * 2, days]);
 
     // 计算环比
-    const runsComparison = previous.runs > 0
-      ? Math.round((current.runs - previous.runs) / previous.runs * 10000) / 100
+    const runsComparison = previous && previous.runs > 0
+      ? Math.round(((current?.runs ?? 0) - previous.runs) / previous.runs * 10000) / 100
       : null;
 
-    const currentSuccessRate = current.total > 0 ? current.passed / current.total : 0;
-    const previousSuccessRate = previous.total > 0 ? previous.passed / previous.total : 0;
+    const currentSuccessRate = current && current.total > 0 ? current.passed / current.total : 0;
+    const previousSuccessRate = previous && previous.total > 0 ? previous.passed / previous.total : 0;
     const successRateComparison = previousSuccessRate > 0
       ? Math.round((currentSuccessRate - previousSuccessRate) / previousSuccessRate * 10000) / 100
       : null;
 
-    const failureComparison = previous.failed > 0
-      ? Math.round((current.failed - previous.failed) / previous.failed * 10000) / 100
+    const failureComparison = previous && previous.failed > 0
+      ? Math.round(((current?.failed ?? 0) - previous.failed) / previous.failed * 10000) / 100
       : null;
 
     return {
@@ -197,83 +209,89 @@ export class DashboardService {
   /**
    * 获取最近测试运行
    */
-  getRecentRuns(limit: number = 10) {
-    const db = getDatabase();
-
-    return db.prepare(`
+  async getRecentRuns(limit: number = 10) {
+    return query(`
       SELECT
-        te.id,
-        te.task_name as suiteName,
-        te.status,
-        te.duration,
-        te.start_time as startTime,
-        te.total_cases as totalCases,
-        te.passed_cases as passedCases,
-        te.failed_cases as failedCases,
+        r.id,
+        r.jenkins_job as suiteName,
+        r.status,
+        r.duration_ms as duration,
+        r.start_time as startTime,
+        r.total_cases as totalCases,
+        r.passed_cases as passedCases,
+        r.failed_cases as failedCases,
         u.display_name as executedBy,
         u.id as executedById
-      FROM task_executions te
-      LEFT JOIN users u ON te.executed_by = u.id
-      ORDER BY te.start_time DESC
+      FROM Auto_TestRun r
+      LEFT JOIN Auto_Users u ON r.trigger_by = u.id
+      ORDER BY r.start_time DESC
       LIMIT ?
-    `).all(limit);
+    `, [limit]);
   }
 
   /**
    * 刷新每日汇总数据
    */
-  refreshDailySummary(date?: string) {
-    const db = getDatabase();
+  async refreshDailySummary(date?: string) {
     const targetDate = date || new Date().toISOString().split('T')[0];
 
-    // 计算当日统计
-    const stats = db.prepare(`
+    // 计算当日统计（使用 Auto_TestRun 表）
+    const stats = await queryOne<{
+      totalExecutions: number;
+      totalCasesRun: number;
+      passedCases: number;
+      failedCases: number;
+      skippedCases: number;
+      avgDuration: number;
+    }>(`
       SELECT
         COUNT(*) as totalExecutions,
-        SUM(passed_cases + failed_cases + skipped_cases) as totalCasesRun,
-        SUM(passed_cases) as passedCases,
-        SUM(failed_cases) as failedCases,
-        SUM(skipped_cases) as skippedCases,
-        AVG(duration) as avgDuration
-      FROM task_executions
+        COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as totalCasesRun,
+        COALESCE(SUM(passed_cases), 0) as passedCases,
+        COALESCE(SUM(failed_cases), 0) as failedCases,
+        COALESCE(SUM(skipped_cases), 0) as skippedCases,
+        COALESCE(AVG(duration_ms / 1000), 0) as avgDuration
+      FROM Auto_TestRun
       WHERE DATE(start_time) = ?
-    `).get(targetDate) as any;
+    `, [targetDate]);
 
-    const activeCases = db.prepare(`
-      SELECT COUNT(*) as count FROM test_cases WHERE status = 'active'
-    `).get() as { count: number };
+    const activeCases = await queryOne<{ count: number }>(`
+      SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
+    `);
 
-    const successRate = stats.totalCasesRun > 0
-      ? Math.round(stats.passedCases / stats.totalCasesRun * 10000) / 100
+    const totalCasesRun = stats?.totalCasesRun ?? 0;
+    const passedCases = stats?.passedCases ?? 0;
+    const successRate = totalCasesRun > 0
+      ? Math.round(passedCases / totalCasesRun * 10000) / 100
       : 0;
 
-    // 插入或更新汇总记录
-    db.prepare(`
+    // 插入或更新汇总记录 (MariaDB 使用 ON DUPLICATE KEY UPDATE)
+    const pool = getPool();
+    await pool.execute(`
       INSERT INTO daily_summaries (
         summary_date, total_executions, total_cases_run, passed_cases,
         failed_cases, skipped_cases, success_rate, avg_duration, active_cases_count
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(summary_date) DO UPDATE SET
-        total_executions = excluded.total_executions,
-        total_cases_run = excluded.total_cases_run,
-        passed_cases = excluded.passed_cases,
-        failed_cases = excluded.failed_cases,
-        skipped_cases = excluded.skipped_cases,
-        success_rate = excluded.success_rate,
-        avg_duration = excluded.avg_duration,
-        active_cases_count = excluded.active_cases_count,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(
+      ON DUPLICATE KEY UPDATE
+        total_executions = VALUES(total_executions),
+        total_cases_run = VALUES(total_cases_run),
+        passed_cases = VALUES(passed_cases),
+        failed_cases = VALUES(failed_cases),
+        skipped_cases = VALUES(skipped_cases),
+        success_rate = VALUES(success_rate),
+        avg_duration = VALUES(avg_duration),
+        active_cases_count = VALUES(active_cases_count)
+    `, [
       targetDate,
-      stats.totalExecutions || 0,
-      stats.totalCasesRun || 0,
-      stats.passedCases || 0,
-      stats.failedCases || 0,
-      stats.skippedCases || 0,
+      stats?.totalExecutions ?? 0,
+      totalCasesRun,
+      passedCases,
+      stats?.failedCases ?? 0,
+      stats?.skippedCases ?? 0,
       successRate,
-      Math.round(stats.avgDuration) || 0,
-      activeCases.count
-    );
+      Math.round(stats?.avgDuration ?? 0),
+      activeCases?.count ?? 0,
+    ]);
   }
 }
 

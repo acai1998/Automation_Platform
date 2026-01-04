@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS test_cases (
     priority VARCHAR(10) DEFAULT 'P1' CHECK (priority IN ('P0', 'P1', 'P2', 'P3')),
     type VARCHAR(20) DEFAULT 'api' CHECK (type IN ('api', 'ui', 'performance', 'security')),
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'deprecated')),
+    running_status VARCHAR(20) DEFAULT 'idle' CHECK (running_status IN ('idle', 'running')),
     tags VARCHAR(500),
     script_path VARCHAR(500),
     config_json TEXT,
@@ -72,6 +73,8 @@ CREATE INDEX IF NOT EXISTS idx_test_cases_project ON test_cases(project_id);
 CREATE INDEX IF NOT EXISTS idx_test_cases_status ON test_cases(status);
 CREATE INDEX IF NOT EXISTS idx_test_cases_module ON test_cases(module);
 CREATE INDEX IF NOT EXISTS idx_test_cases_priority ON test_cases(priority);
+CREATE INDEX IF NOT EXISTS idx_test_cases_type ON test_cases(type);
+CREATE INDEX IF NOT EXISTS idx_test_cases_running_status ON test_cases(running_status);
 
 -- ============================================
 -- 4. 环境配置表 (environments)
@@ -242,4 +245,94 @@ CREATE TRIGGER IF NOT EXISTS update_daily_summaries_timestamp
 AFTER UPDATE ON daily_summaries
 BEGIN
     UPDATE daily_summaries SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
+-- ============================================
+-- 10. 远程仓库配置表 (repository_configs)
+-- ============================================
+CREATE TABLE IF NOT EXISTS repository_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    repo_url VARCHAR(500) NOT NULL,
+    branch VARCHAR(100) DEFAULT 'main',
+    auth_type VARCHAR(20) DEFAULT 'none' CHECK (auth_type IN ('none', 'ssh', 'token')),
+    credentials_encrypted TEXT,
+    script_path_pattern VARCHAR(255),
+    script_type VARCHAR(50) DEFAULT 'javascript' CHECK (script_type IN ('javascript', 'python', 'java', 'other')),
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'error')),
+    last_sync_at DATETIME,
+    last_sync_status VARCHAR(20),
+    sync_interval INTEGER DEFAULT 0,
+    auto_create_cases BOOLEAN DEFAULT 1,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_repository_configs_status ON repository_configs(status);
+CREATE INDEX IF NOT EXISTS idx_repository_configs_created_by ON repository_configs(created_by);
+
+-- ============================================
+-- 11. 同步日志表 (sync_logs)
+-- ============================================
+CREATE TABLE IF NOT EXISTS sync_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_config_id INTEGER NOT NULL REFERENCES repository_configs(id) ON DELETE CASCADE,
+    sync_type VARCHAR(20) CHECK (sync_type IN ('manual', 'scheduled', 'webhook')),
+    status VARCHAR(20) CHECK (status IN ('pending', 'running', 'success', 'failed')),
+    total_files INTEGER DEFAULT 0,
+    added_files INTEGER DEFAULT 0,
+    modified_files INTEGER DEFAULT 0,
+    deleted_files INTEGER DEFAULT 0,
+    created_cases INTEGER DEFAULT 0,
+    updated_cases INTEGER DEFAULT 0,
+    conflicts_detected INTEGER DEFAULT 0,
+    error_message TEXT,
+    start_time DATETIME,
+    end_time DATETIME,
+    duration INTEGER,
+    triggered_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_logs_repo ON sync_logs(repo_config_id);
+CREATE INDEX IF NOT EXISTS idx_sync_logs_status ON sync_logs(status);
+CREATE INDEX IF NOT EXISTS idx_sync_logs_created ON sync_logs(created_at);
+
+-- ============================================
+-- 12. 脚本与用例映射表 (repository_script_mappings)
+-- ============================================
+CREATE TABLE IF NOT EXISTS repository_script_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_config_id INTEGER NOT NULL REFERENCES repository_configs(id) ON DELETE CASCADE,
+    case_id INTEGER REFERENCES test_cases(id) ON DELETE CASCADE,
+    script_file_path VARCHAR(500) NOT NULL,
+    script_hash VARCHAR(64),
+    last_synced_at DATETIME,
+    status VARCHAR(20) DEFAULT 'synced' CHECK (status IN ('synced', 'modified', 'deleted', 'conflict')),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_repository_script_mappings_repo ON repository_script_mappings(repo_config_id);
+CREATE INDEX IF NOT EXISTS idx_repository_script_mappings_case ON repository_script_mappings(case_id);
+CREATE INDEX IF NOT EXISTS idx_repository_script_mappings_status ON repository_script_mappings(status);
+
+-- ============================================
+-- 触发器：自动更新 repository_configs 的 updated_at
+-- ============================================
+CREATE TRIGGER IF NOT EXISTS update_repository_configs_timestamp
+AFTER UPDATE ON repository_configs
+BEGIN
+    UPDATE repository_configs SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
+-- ============================================
+-- 触发器：自动更新 repository_script_mappings 的 updated_at
+-- ============================================
+CREATE TRIGGER IF NOT EXISTS update_repository_script_mappings_timestamp
+AFTER UPDATE ON repository_script_mappings
+BEGIN
+    UPDATE repository_script_mappings SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;

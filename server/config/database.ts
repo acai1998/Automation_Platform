@@ -9,10 +9,13 @@ const dbConfigWithoutDB = {
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || 'Caijinwei2025',
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 5,  // 减少连接数限制
   queueLimit: 0,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 0,
+  keepAliveInitialDelay: 10000,
+  // 连接超时和空闲超时配置
+  connectTimeout: 10000,  // 连接超时 10 秒
+  idleTimeout: 60000,     // 空闲连接 60 秒后释放
 };
 
 const dbConfig = {
@@ -22,6 +25,7 @@ const dbConfig = {
 
 // 创建连接池
 let pool: mysql.Pool | null = null;
+let dbInitialized = false;
 
 export function getPool(): mysql.Pool {
   if (!pool) {
@@ -50,32 +54,47 @@ export async function queryOne<T>(sql: string, params?: unknown[]): Promise<T | 
   return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
 }
 
-// 确保数据库存在
+// 确保数据库存在（只在首次调用时执行）
 async function ensureDatabaseExists(): Promise<void> {
-  const tempPool = mysql.createPool(dbConfigWithoutDB);
+  if (dbInitialized) return;
+
+  const tempPool = mysql.createPool({
+    ...dbConfigWithoutDB,
+    connectionLimit: 1,  // 临时池只用 1 个连接
+  });
   try {
     await tempPool.execute(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     console.log(`Database '${DB_NAME}' ensured to exist`);
+    dbInitialized = true;
   } finally {
     await tempPool.end();
   }
 }
 
-// 测试数据库连接
-export async function testConnection(): Promise<boolean> {
-  try {
-    // 先确保数据库存在
-    await ensureDatabaseExists();
+// 测试数据库连接（带重试机制）
+export async function testConnection(retries = 3, delay = 2000): Promise<boolean> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      // 先确保数据库存在
+      await ensureDatabaseExists();
 
-    const pool = getPool();
-    const connection = await pool.getConnection();
-    console.log('MariaDB connection test successful');
-    connection.release();
-    return true;
-  } catch (error) {
-    console.error('MariaDB connection test failed:', error);
-    return false;
+      const pool = getPool();
+      const connection = await pool.getConnection();
+      console.log('MariaDB connection test successful');
+      connection.release();
+      return true;
+    } catch (error: unknown) {
+      const err = error as { code?: string };
+      if (err.code === 'ER_CON_COUNT_ERROR' && i < retries - 1) {
+        console.log(`Connection failed (Too many connections), retrying in ${delay / 1000}s... (${i + 1}/${retries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      console.error('MariaDB connection test failed:', error);
+      return false;
+    }
   }
+  return false;
 }
 
 // 关闭连接池
@@ -304,6 +323,83 @@ export async function initMariaDBTables(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统审计日志表 - 记录用户的所有操作行为，用于安全审计'
   `);
   console.log('MariaDB audit_logs table initialized');
+
+  // 10. 创建 repository_configs 表 - 远程仓库配置表
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS repository_configs (
+      id INT PRIMARY KEY AUTO_INCREMENT COMMENT '仓库配置唯一标识',
+      name VARCHAR(100) NOT NULL UNIQUE COMMENT '仓库名称',
+      description TEXT COMMENT '仓库描述',
+      repo_url VARCHAR(500) NOT NULL COMMENT '仓库URL地址',
+      branch VARCHAR(100) DEFAULT 'main' COMMENT '默认分支',
+      auth_type ENUM('none', 'ssh', 'token') DEFAULT 'none' COMMENT '认证方式: none-无需认证, ssh-SSH密钥, token-令牌',
+      credentials_encrypted TEXT COMMENT '加密的认证凭据',
+      script_path_pattern VARCHAR(255) COMMENT '脚本文件匹配模式，如 **/*.spec.js',
+      script_type ENUM('javascript', 'python', 'java', 'other') DEFAULT 'javascript' COMMENT '脚本类型',
+      status ENUM('active', 'inactive', 'error') DEFAULT 'active' COMMENT '仓库状态: active-活跃, inactive-禁用, error-错误',
+      last_sync_at DATETIME COMMENT '最后同步时间',
+      last_sync_status VARCHAR(20) COMMENT '最后同步状态',
+      sync_interval INT DEFAULT 0 COMMENT '同步间隔（分钟），0表示不自动同步',
+      auto_create_cases BOOLEAN DEFAULT TRUE COMMENT '是否自动创建测试用例',
+      created_by INT COMMENT '创建人ID',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+      INDEX idx_repository_configs_status (status) COMMENT '状态索引',
+      INDEX idx_repository_configs_created_by (created_by) COMMENT '创建人索引',
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='远程仓库配置表 - 管理Git仓库的连接和同步配置'
+  `);
+  console.log('MariaDB repository_configs table initialized');
+
+  // 11. 创建 sync_logs 表 - 同步日志表
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS sync_logs (
+      id INT PRIMARY KEY AUTO_INCREMENT COMMENT '日志唯一标识',
+      repo_config_id INT NOT NULL COMMENT '关联的仓库配置ID',
+      sync_type ENUM('manual', 'scheduled', 'webhook') COMMENT '同步类型: manual-手动, scheduled-定时, webhook-钩子触发',
+      status ENUM('pending', 'running', 'success', 'failed') COMMENT '同步状态',
+      total_files INT DEFAULT 0 COMMENT '总文件数',
+      added_files INT DEFAULT 0 COMMENT '新增文件数',
+      modified_files INT DEFAULT 0 COMMENT '修改文件数',
+      deleted_files INT DEFAULT 0 COMMENT '删除文件数',
+      created_cases INT DEFAULT 0 COMMENT '创建的用例数',
+      updated_cases INT DEFAULT 0 COMMENT '更新的用例数',
+      conflicts_detected INT DEFAULT 0 COMMENT '检测到的冲突数',
+      error_message TEXT COMMENT '错误信息',
+      start_time DATETIME COMMENT '开始时间',
+      end_time DATETIME COMMENT '结束时间',
+      duration INT COMMENT '耗时（秒）',
+      triggered_by INT COMMENT '触发人ID',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+      INDEX idx_sync_logs_repo (repo_config_id) COMMENT '仓库索引',
+      INDEX idx_sync_logs_status (status) COMMENT '状态索引',
+      INDEX idx_sync_logs_created (created_at) COMMENT '创建时间索引',
+      FOREIGN KEY (repo_config_id) REFERENCES repository_configs(id) ON DELETE CASCADE,
+      FOREIGN KEY (triggered_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='同步日志表 - 记录仓库同步操作的详细信息'
+  `);
+  console.log('MariaDB sync_logs table initialized');
+
+  // 12. 创建 repository_script_mappings 表 - 脚本与用例映射表
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS repository_script_mappings (
+      id INT PRIMARY KEY AUTO_INCREMENT COMMENT '映射唯一标识',
+      repo_config_id INT NOT NULL COMMENT '关联的仓库配置ID',
+      case_id INT COMMENT '关联的测试用例ID',
+      script_file_path VARCHAR(500) NOT NULL COMMENT '脚本文件路径',
+      script_hash VARCHAR(64) COMMENT '脚本文件哈希值（用于变更检测）',
+      last_synced_at DATETIME COMMENT '最后同步时间',
+      status ENUM('synced', 'modified', 'deleted', 'conflict') DEFAULT 'synced' COMMENT '映射状态',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+      INDEX idx_repository_script_mappings_repo (repo_config_id) COMMENT '仓库索引',
+      INDEX idx_repository_script_mappings_case (case_id) COMMENT '用例索引',
+      INDEX idx_repository_script_mappings_status (status) COMMENT '状态索引',
+      FOREIGN KEY (repo_config_id) REFERENCES repository_configs(id) ON DELETE CASCADE,
+      FOREIGN KEY (case_id) REFERENCES test_cases(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='脚本与用例映射表 - 记录仓库脚本文件与测试用例的关联关系'
+  `);
+  console.log('MariaDB repository_script_mappings table initialized');
 
   console.log('All MariaDB tables initialized successfully');
 }

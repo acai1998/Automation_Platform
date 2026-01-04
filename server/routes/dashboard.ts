@@ -7,12 +7,13 @@ const router = Router();
  * GET /api/dashboard/stats
  * 获取核心指标卡片数据
  */
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
-    const stats = dashboardService.getStats();
+    const stats = await dashboardService.getStats();
     res.json({ success: true, data: stats });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -20,12 +21,13 @@ router.get('/stats', (req, res) => {
  * GET /api/dashboard/today-execution
  * 获取今日执行统计（环形图数据）
  */
-router.get('/today-execution', (req, res) => {
+router.get('/today-execution', async (req, res) => {
   try {
-    const data = dashboardService.getTodayExecution();
+    const data = await dashboardService.getTodayExecution();
     res.json({ success: true, data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -33,13 +35,14 @@ router.get('/today-execution', (req, res) => {
  * GET /api/dashboard/trend?days=30
  * 获取历史趋势数据
  */
-router.get('/trend', (req, res) => {
+router.get('/trend', async (req, res) => {
   try {
     const days = parseInt(req.query.days as string) || 30;
-    const data = dashboardService.getTrendData(days);
+    const data = await dashboardService.getTrendData(days);
     res.json({ success: true, data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -47,13 +50,14 @@ router.get('/trend', (req, res) => {
  * GET /api/dashboard/comparison?days=30
  * 获取环比分析数据
  */
-router.get('/comparison', (req, res) => {
+router.get('/comparison', async (req, res) => {
   try {
     const days = parseInt(req.query.days as string) || 30;
-    const data = dashboardService.getComparison(days);
+    const data = await dashboardService.getComparison(days);
     res.json({ success: true, data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -61,13 +65,14 @@ router.get('/comparison', (req, res) => {
  * GET /api/dashboard/recent-runs?limit=10
  * 获取最近测试运行
  */
-router.get('/recent-runs', (req, res) => {
+router.get('/recent-runs', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 10;
-    const data = dashboardService.getRecentRuns(limit);
+    const data = await dashboardService.getRecentRuns(limit);
     res.json({ success: true, data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -75,13 +80,14 @@ router.get('/recent-runs', (req, res) => {
  * POST /api/dashboard/refresh-summary
  * 刷新每日汇总数据
  */
-router.post('/refresh-summary', (req, res) => {
+router.post('/refresh-summary', async (req, res) => {
   try {
     const { date } = req.body;
-    dashboardService.refreshDailySummary(date);
+    await dashboardService.refreshDailySummary(date);
     res.json({ success: true, message: 'Summary refreshed' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 

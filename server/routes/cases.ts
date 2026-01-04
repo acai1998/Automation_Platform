@@ -1,25 +1,50 @@
 import { Router } from 'express';
-import { getDatabase } from '../db/index.js';
+import { query, queryOne, getPool } from '../config/database.js';
+import { jenkinsService, CaseType } from '../services/JenkinsService.js';
 
 const router = Router();
+
+interface TestCase {
+  id: number;
+  case_key?: string;
+  name: string;
+  description?: string;
+  project_id?: number;
+  project_name?: string;
+  repo_id?: number;
+  module?: string;
+  priority: string;
+  type: string;
+  tags?: string;
+  owner?: string;
+  source?: string;
+  enabled: boolean;
+  last_sync_commit?: string;
+  script_path?: string;
+  config_json?: string;
+  created_by?: number;
+  created_by_name?: string;
+  updated_by?: number;
+  created_at: string;
+  updated_at: string;
+}
 
 /**
  * GET /api/cases
  * 获取用例列表
  */
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const db = getDatabase();
-    const { projectId, module, status, type, search, limit = 50, offset = 0 } = req.query;
+    const { projectId, module, enabled, type, search, limit = 50, offset = 0 } = req.query;
 
     let sql = `
       SELECT tc.*, p.name as project_name, u.display_name as created_by_name
-      FROM test_cases tc
+      FROM Auto_TestCase tc
       LEFT JOIN projects p ON tc.project_id = p.id
-      LEFT JOIN users u ON tc.created_by = u.id
+      LEFT JOIN Auto_Users u ON tc.created_by = u.id
       WHERE 1=1
     `;
-    const params: any[] = [];
+    const params: unknown[] = [];
 
     if (projectId) {
       sql += ' AND tc.project_id = ?';
@@ -29,9 +54,9 @@ router.get('/', (req, res) => {
       sql += ' AND tc.module = ?';
       params.push(module);
     }
-    if (status) {
-      sql += ' AND tc.status = ?';
-      params.push(status);
+    if (enabled !== undefined) {
+      sql += ' AND tc.enabled = ?';
+      params.push(enabled === 'true' || enabled === '1' ? 1 : 0);
     }
     if (type) {
       sql += ' AND tc.type = ?';
@@ -45,25 +70,67 @@ router.get('/', (req, res) => {
     sql += ' ORDER BY tc.updated_at DESC LIMIT ? OFFSET ?';
     params.push(Number(limit), Number(offset));
 
-    const data = db.prepare(sql).all(...params);
+    const data = await query<TestCase[]>(sql, params);
 
     // 获取总数
-    let countSql = 'SELECT COUNT(*) as total FROM test_cases tc WHERE 1=1';
-    const countParams: any[] = [];
+    let countSql = 'SELECT COUNT(*) as total FROM Auto_TestCase tc WHERE 1=1';
+    const countParams: unknown[] = [];
     if (projectId) {
       countSql += ' AND tc.project_id = ?';
       countParams.push(projectId);
     }
-    if (status) {
-      countSql += ' AND tc.status = ?';
-      countParams.push(status);
+    if (enabled !== undefined) {
+      countSql += ' AND tc.enabled = ?';
+      countParams.push(enabled === 'true' || enabled === '1' ? 1 : 0);
+    }
+    if (type) {
+      countSql += ' AND tc.type = ?';
+      countParams.push(type);
+    }
+    if (search) {
+      countSql += ' AND (tc.name LIKE ? OR tc.description LIKE ?)';
+      countParams.push(`%${search}%`, `%${search}%`);
     }
 
-    const total = (db.prepare(countSql).get(...countParams) as any).total;
+    const countResult = await queryOne<{ total: number }>(countSql, countParams);
+    const total = countResult?.total ?? 0;
 
     res.json({ success: true, data, total });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/cases/modules/list
+ * 获取所有模块列表
+ */
+router.get('/modules/list', async (_req, res) => {
+  try {
+    const data = await query<Array<{ module: string }>>(
+      'SELECT DISTINCT module FROM Auto_TestCase WHERE module IS NOT NULL ORDER BY module'
+    );
+
+    res.json({ success: true, data: data.map((d) => d.module) });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/cases/running/list
+ * 获取所有正在运行的用例（注：远程表无此字段，返回空数组）
+ */
+router.get('/running/list', async (_req, res) => {
+  try {
+    // 远程 Auto_TestCase 表没有 running_status 字段
+    // 返回空数组以保持 API 兼容性
+    res.json({ success: true, data: [] });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -71,26 +138,26 @@ router.get('/', (req, res) => {
  * GET /api/cases/:id
  * 获取用例详情
  */
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const db = getDatabase();
     const id = parseInt(req.params.id);
 
-    const data = db.prepare(`
+    const data = await queryOne<TestCase>(`
       SELECT tc.*, p.name as project_name, u.display_name as created_by_name
-      FROM test_cases tc
+      FROM Auto_TestCase tc
       LEFT JOIN projects p ON tc.project_id = p.id
-      LEFT JOIN users u ON tc.created_by = u.id
+      LEFT JOIN Auto_Users u ON tc.created_by = u.id
       WHERE tc.id = ?
-    `).get(id);
+    `, [id]);
 
     if (!data) {
       return res.status(404).json({ success: false, message: 'Case not found' });
     }
 
     res.json({ success: true, data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -98,9 +165,8 @@ router.get('/:id', (req, res) => {
  * POST /api/cases
  * 创建用例
  */
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const db = getDatabase();
     const {
       name,
       description,
@@ -117,29 +183,34 @@ router.post('/', (req, res) => {
       return res.status(400).json({ success: false, message: 'name is required' });
     }
 
-    const result = db.prepare(`
-      INSERT INTO test_cases (name, description, project_id, module, priority, type, tags, config_json, created_by, updated_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      name,
-      description || null,
-      projectId || null,
-      module || null,
-      priority,
-      type,
-      tags || null,
-      typeof configJson === 'string' ? configJson : JSON.stringify(configJson || {}),
-      createdBy,
-      createdBy
+    const pool = getPool();
+    const [result] = await pool.execute(
+      `INSERT INTO Auto_TestCase (name, description, project_id, module, priority, type, tags, config_json, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        name,
+        description || null,
+        projectId || null,
+        module || null,
+        priority,
+        type,
+        tags || null,
+        typeof configJson === 'string' ? configJson : JSON.stringify(configJson || {}),
+        createdBy,
+        createdBy,
+      ]
     );
+
+    const insertResult = result as { insertId: number };
 
     res.json({
       success: true,
-      data: { id: result.lastInsertRowid },
+      data: { id: insertResult.insertId },
       message: 'Case created successfully',
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -147,9 +218,8 @@ router.post('/', (req, res) => {
  * PUT /api/cases/:id
  * 更新用例
  */
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
-    const db = getDatabase();
     const id = parseInt(req.params.id);
     const {
       name,
@@ -158,15 +228,16 @@ router.put('/:id', (req, res) => {
       module,
       priority,
       type,
-      status,
+      enabled,
       tags,
+      scriptPath,
       configJson,
       updatedBy = 1,
     } = req.body;
 
     // 构建更新语句
     const updates: string[] = [];
-    const params: any[] = [];
+    const params: unknown[] = [];
 
     if (name !== undefined) {
       updates.push('name = ?');
@@ -192,13 +263,17 @@ router.put('/:id', (req, res) => {
       updates.push('type = ?');
       params.push(type);
     }
-    if (status !== undefined) {
-      updates.push('status = ?');
-      params.push(status);
+    if (enabled !== undefined) {
+      updates.push('enabled = ?');
+      params.push(enabled ? 1 : 0);
     }
     if (tags !== undefined) {
       updates.push('tags = ?');
       params.push(tags);
+    }
+    if (scriptPath !== undefined) {
+      updates.push('script_path = ?');
+      params.push(scriptPath);
     }
     if (configJson !== undefined) {
       updates.push('config_json = ?');
@@ -209,11 +284,13 @@ router.put('/:id', (req, res) => {
     params.push(updatedBy);
     params.push(id);
 
-    db.prepare(`UPDATE test_cases SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    const pool = getPool();
+    await pool.execute(`UPDATE Auto_TestCase SET ${updates.join(', ')} WHERE id = ?`, params);
 
     res.json({ success: true, message: 'Case updated successfully' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
@@ -221,33 +298,125 @@ router.put('/:id', (req, res) => {
  * DELETE /api/cases/:id
  * 删除用例
  */
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const db = getDatabase();
     const id = parseInt(req.params.id);
 
-    db.prepare('DELETE FROM test_cases WHERE id = ?').run(id);
+    const pool = getPool();
+    await pool.execute('DELETE FROM Auto_TestCase WHERE id = ?', [id]);
 
     res.json({ success: true, message: 'Case deleted successfully' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
 /**
- * GET /api/cases/modules/list
- * 获取所有模块列表
+ * POST /api/cases/:id/run
+ * 触发单用例执行
  */
-router.get('/modules/list', (req, res) => {
+router.post('/:id/run', async (req, res) => {
   try {
-    const db = getDatabase();
-    const data = db.prepare(`
-      SELECT DISTINCT module FROM test_cases WHERE module IS NOT NULL ORDER BY module
-    `).all();
+    const id = parseInt(req.params.id);
 
-    res.json({ success: true, data: data.map((d: any) => d.module) });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+    // 获取用例信息
+    const testCase = await queryOne<{
+      id: number;
+      name: string;
+      type: string;
+      script_path: string;
+      enabled: boolean;
+    }>(`
+      SELECT id, name, type, script_path, enabled
+      FROM Auto_TestCase
+      WHERE id = ?
+    `, [id]);
+
+    if (!testCase) {
+      return res.status(404).json({ success: false, message: 'Case not found' });
+    }
+
+    // 检查是否启用
+    if (!testCase.enabled) {
+      return res.status(400).json({ success: false, message: 'Case is disabled' });
+    }
+
+    // 检查是否有脚本路径
+    if (!testCase.script_path) {
+      return res.status(400).json({ success: false, message: 'Case has no script path configured' });
+    }
+
+    // 验证用例类型
+    const validTypes: CaseType[] = ['api', 'ui', 'performance'];
+    const caseType = testCase.type as CaseType;
+    if (!validTypes.includes(caseType)) {
+      return res.status(400).json({ success: false, message: `Invalid case type: ${testCase.type}` });
+    }
+
+    // 构建回调 URL
+    const callbackUrl = `${req.protocol}://${req.get('host')}/api/cases/${id}/callback`;
+
+    // 触发 Jenkins Job
+    const result = await jenkinsService.triggerJob(
+      id,
+      caseType,
+      testCase.script_path,
+      callbackUrl
+    );
+
+    if (result.success) {
+      res.json({
+        success: true,
+        data: {
+          caseId: id,
+          caseName: testCase.name,
+          status: 'triggered',
+          buildUrl: result.buildUrl,
+          queueId: result.queueId,
+        },
+        message: 'Case execution triggered successfully',
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: result.message,
+      });
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * POST /api/cases/:id/callback
+ * Jenkins 执行回调（预留接口）
+ */
+router.post('/:id/callback', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { status, duration, errorMessage } = req.body;
+
+    // 检查用例是否存在
+    const testCase = await queryOne<{ id: number }>('SELECT id FROM Auto_TestCase WHERE id = ?', [id]);
+    if (!testCase) {
+      return res.status(404).json({ success: false, message: 'Case not found' });
+    }
+
+    // 记录执行结果（可以扩展为写入执行记录表）
+    console.log(`Case ${id} execution completed: status=${status}, duration=${duration}ms`);
+    if (errorMessage) {
+      console.log(`Error: ${errorMessage}`);
+    }
+
+    res.json({
+      success: true,
+      message: 'Callback received successfully',
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 

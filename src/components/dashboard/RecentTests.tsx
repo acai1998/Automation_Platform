@@ -155,7 +155,7 @@ export function RecentTests() {
             <thead>
               <tr className="border-b border-slate-100 dark:border-[#234833] bg-slate-50 dark:bg-black/20">
                 <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">状态</th>
-                <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">套件名称</th>
+                <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">计划名称</th>
                 <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">耗时</th>
                 <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">执行者</th>
                 <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">时间</th>

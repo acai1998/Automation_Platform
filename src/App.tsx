@@ -1,9 +1,10 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, Redirect } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ProtectedRoute from "./components/ProtectedRoute";
+import { Layout } from "./components/Layout";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AuthProvider } from "./contexts/AuthContext";
 import Home from "./pages/Home";
@@ -12,19 +13,24 @@ import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import ComingSoon from "./pages/ComingSoon";
-import { FolderOpen, Boxes, BarChart3, Settings, User } from "lucide-react";
+import GitHubRepositoryManagement from "./pages/GitHubRepositoryManagement";
+import APICases from "./pages/cases/APICases";
+import UICases from "./pages/cases/UICases";
+import PerformanceCases from "./pages/cases/PerformanceCases";
+import { Boxes, BarChart3, Settings, User } from "lucide-react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+// 创建 QueryClient 实例
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 分钟
+      retry: 1,
+    },
+  },
+});
 
 // 开发中页面的包装组件
-function CasesPage() {
-  return (
-    <ComingSoon
-      title="用例管理"
-      description="测试用例的创建、编辑、分组和管理功能正在开发中"
-      icon={<FolderOpen className="h-10 w-10 text-blue-500" />}
-    />
-  );
-}
-
 function TasksPage() {
   return (
     <ComingSoon
@@ -77,32 +83,71 @@ function Router() {
       {/* 受保护路由 */}
       <Route path="/">
         <ProtectedRoute>
-          <Home />
+          <Layout>
+            <Home />
+          </Layout>
         </ProtectedRoute>
       </Route>
+
+      {/* 用例管理路由 */}
       <Route path="/cases">
+        <Redirect to="/cases/api" />
+      </Route>
+      <Route path="/cases/api">
         <ProtectedRoute>
-          <CasesPage />
+          <Layout>
+            <APICases />
+          </Layout>
         </ProtectedRoute>
       </Route>
+      <Route path="/cases/ui">
+        <ProtectedRoute>
+          <Layout>
+            <UICases />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/cases/performance">
+        <ProtectedRoute>
+          <Layout>
+            <PerformanceCases />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+
       <Route path="/tasks">
         <ProtectedRoute>
-          <TasksPage />
+          <Layout>
+            <TasksPage />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/repositories">
+        <ProtectedRoute>
+          <Layout>
+            <GitHubRepositoryManagement />
+          </Layout>
         </ProtectedRoute>
       </Route>
       <Route path="/reports">
         <ProtectedRoute>
-          <ReportsPage />
+          <Layout>
+            <ReportsPage />
+          </Layout>
         </ProtectedRoute>
       </Route>
       <Route path="/settings">
         <ProtectedRoute>
-          <SettingsPage />
+          <Layout>
+            <SettingsPage />
+          </Layout>
         </ProtectedRoute>
       </Route>
       <Route path="/profile">
         <ProtectedRoute>
-          <ProfilePage />
+          <Layout>
+            <ProfilePage />
+          </Layout>
         </ProtectedRoute>
       </Route>
 
@@ -115,14 +160,16 @@ function Router() {
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider defaultTheme="light">
-        <AuthProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Router />
-          </TooltipProvider>
-        </AuthProvider>
-      </ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider defaultTheme="light">
+          <AuthProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Router />
+            </TooltipProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }

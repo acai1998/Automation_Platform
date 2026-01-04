@@ -91,7 +91,7 @@ npx tsc --noEmit -p tsconfig.server.json
 ├── configs/       # 配置文件（tailwind, postcss）
 ├── tests/         # 测试文件
 ├── scripts/       # 工具脚本
-├── docs/          # 项目文档
+├── docs/          # 项目相关文档
 ├── shared/        # 共享类型定义
 ├── public/        # 静态资源
 ├── .aiconfig/     # AI 重构配置和历史
@@ -101,36 +101,37 @@ npx tsc --noEmit -p tsconfig.server.json
 
 ## **请严格遵守以下规则，当生成代码时：**
 
-```bash
-## 代码规范
 - **尽可能减少自行实现的底层与通用逻辑，优先、直接、完整地复用既有成熟仓库与库代码，仅在必要时编写最小业务层与调度代码**
-- ✅ **必须用 TypeScript**，禁止 `any` 类型（用 `unknown` 或具体类型替代）
-- ✅ **路径别名必须使用**：  
+- **必须用 TypeScript**，禁止 `any` 类型（用 `unknown` 或具体类型替代）
+- **路径别名必须使用**：  
   `@/*` → `src/*`（前端）  
   `@shared/*` → `shared/*`（共享类型）
-- ✅ **React 组件**：必须用函数组件 + hooks，文件名与组件名一致（如 `Button.tsx`）
+-  **React 组件**：必须用函数组件 + hooks，文件名与组件名一致（如 `Button.tsx`）
+- **所有说明文件**必须放在对应目录,如 `docs/`文件下
+- **不要生成过多的说明文件，会显得文件结构太杂乱**
+
 
 ## 项目结构
-- 🚀 **前端代码**：仅在 `src/` 目录下修改（Vite + React 18 + Tailwind）
-- 🚀 **后端代码**：仅在 `server/` 目录下修改（Express + TypeScript）
-- ❌ **禁止**在 `src/` 写后端逻辑，或在 `server/` 写前端组件
+- **前端代码**：仅在 `src/` 目录下修改（Vite + React 18 + Tailwind）
+- **后端代码**：仅在 `server/` 目录下修改（Express + TypeScript）
+- **禁止**在 `src/` 写后端逻辑，或在 `server/` 写前端组件
 
 ## 关键功能实现
-- 🔥 **Jenkins 集成**：
+- **Jenkins 集成**：
   通过 `executionService.createExecution()` 创建执行记录，Jenkins 完成后调用回调接口
-- 🔥 **数据库操作**：
+- **数据库操作**：
   通过 `server/db` 中的 `better-sqlite3` 操作，**禁止**在代码中硬编码 SQL
-- 🔥 **API 路由**：
+- **API 路由**：
   严格按 `API Routes` 部分定义（如 `/api/cases` 用于测试用例管理）
-- 🔥 **图表开发**：
+- **图表开发**：
   使用 **Recharts** 库（`recharts`）绑定真实数据，禁止使用静态图片或手写 SVG 模拟图表
 
 ## 数据展示规范
-- ⚠️ **T-1 数据口径**：统计类数据（如趋势图）不展示当天数据，最新可展示日期 = 当前日期 - 1 天
-- ⚠️ **图表交互**：图表必须支持 Hover Tooltip 展示详细数据
+- **T-1 数据口径**：统计类数据（如趋势图）不展示当天数据，最新可展示日期 = 当前日期 - 1 天
+- **图表交互**：图表必须支持 Hover Tooltip 展示详细数据
 
 ## 重要提示
-- ⚠️ **不要修改** `tsconfig.json` 中的路径别名（已配置好）
-- ⚠️ **不要添加** `node_modules` 或 `dist/` 文件到版本控制
-- ⚠️ **所有新文件**必须放在对应目录（如新组件放 `src/components/`）
-```
+- **不要修改** `tsconfig.json` 中的路径别名（已配置好）
+- ️**不要添加** `node_modules` 或 `dist/` 文件到版本控制
+- ️**所有新文件**必须放在对应目录（如新组件放 `src/components/`）
+
