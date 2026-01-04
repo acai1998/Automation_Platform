@@ -40,7 +40,9 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(10);
+
+  const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
   // 获取用例列表
   const { data, isLoading, error, refetch } = useCases({
@@ -446,11 +448,36 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             {/* 分页 */}
             {data && data.total > 0 && (
               <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
-                <div className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 order-2 sm:order-1">
-                  第 <span className="font-medium text-slate-700 dark:text-slate-300">{pagination.startIndex}</span>-
-                  <span className="font-medium text-slate-700 dark:text-slate-300">{pagination.endIndex}</span> 条，
-                  共 <span className="font-medium text-slate-700 dark:text-slate-300">{data.total}</span> 条
+                {/* 左侧：每页数量选择 + 统计信息 */}
+                <div className="flex items-center gap-4 order-2 sm:order-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">每页</span>
+                    <select
+                      aria-label="每页显示条数"
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setPage(1);
+                      }}
+                      className="h-8 w-16 pl-2 pr-6 text-sm text-center rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer appearance-none bg-[length:10px] bg-[right_4px_center] bg-no-repeat bg-[url('data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%2210%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%236b7280%22%20stroke-width%3D%222.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E')]"
+                    >
+                      {PAGE_SIZE_OPTIONS.map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">条</span>
+                  </div>
+                  <div className="hidden sm:block h-4 w-px bg-slate-200 dark:bg-slate-700" />
+                  <div className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+                    第 <span className="font-medium text-slate-700 dark:text-slate-300">{pagination.startIndex}</span>-
+                    <span className="font-medium text-slate-700 dark:text-slate-300">{pagination.endIndex}</span> 条，
+                    共 <span className="font-medium text-slate-700 dark:text-slate-300">{data.total}</span> 条
+                  </div>
                 </div>
+
+                {/* 右侧：分页按钮 */}
                 <div className="flex items-center gap-1.5 order-1 sm:order-2">
                   <Button
                     variant="outline"
