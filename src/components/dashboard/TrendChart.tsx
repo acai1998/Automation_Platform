@@ -85,30 +85,60 @@ interface ChartHeaderProps {
   timeRange: '7d' | '30d' | '90d';
   chartType: ChartType;
   onChartTypeChange: (type: ChartType) => void;
+  isLoading?: boolean;
 }
 
 interface ChartStatsProps {
   avgStability: number;
   totalExecutions: number;
   totalFailed: number;
+  hasData: boolean;
 }
 
 // ============================================
 // 子组件
 // ============================================
 
+/** 格式化 Tooltip 中的日期显示（完整日期，如 2026-01-04） */
+function formatTooltipDate(dateStr: string): string {
+  if (!dateStr) return '';
+
+  try {
+    // 处理 ISO 格式日期 (如 2024-12-16T16:00:00.000Z)
+    if (dateStr.includes('T')) {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return dateStr;
+
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    // 处理普通格式，已经是 YYYY-MM-DD 格式
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return dateStr;
+    }
+
+    return dateStr;
+  } catch {
+    return dateStr;
+  }
+}
+
 /** 自定义 Tooltip 组件 */
 function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   if (!active || !payload || !payload.length) return null;
 
   const data = payload[0].payload;
-  const totalCases = Number(data.passedCases || 0) + Number(data.failedCases || 0) + Number(data.skippedCases || 0);
+  const totalCases = (data.passedCases ?? 0) + (data.failedCases ?? 0) + (data.skippedCases ?? 0);
   const successRate = Number(data.successRate) || 0;
+  const formattedDate = formatTooltipDate(label || '');
 
   return (
     <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-[#234833] rounded-lg shadow-lg p-3 min-w-[180px]">
       <p className="text-sm font-semibold text-slate-900 dark:text-white mb-2">
-        {label}
+        {formattedDate}
       </p>
       <div className="space-y-1 text-sm">
         <div className="flex justify-between">
@@ -117,11 +147,11 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
         </div>
         <div className="flex justify-between">
           <span className="text-slate-500 dark:text-gray-400">成功用例数</span>
-          <span className="font-medium text-success">{data.passedCases}</span>
+          <span className="font-medium text-success">{data.passedCases ?? 0}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-slate-500 dark:text-gray-400">失败用例数</span>
-          <span className="font-medium text-danger">{data.failedCases}</span>
+          <span className="font-medium text-danger">{data.failedCases ?? 0}</span>
         </div>
         <div className="flex justify-between border-t border-slate-100 dark:border-[#234833] pt-1 mt-1">
           <span className="text-slate-500 dark:text-gray-400">成功率</span>
@@ -133,7 +163,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 }
 
 /** 图表头部组件 */
-function ChartHeader({ timeRange, chartType, onChartTypeChange }: ChartHeaderProps) {
+function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = false }: ChartHeaderProps) {
   return (
     <div className="flex justify-between items-start mb-6">
       <div>
@@ -146,7 +176,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange }: ChartHeaderPro
               <button
                 type="button"
                 className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-                title="查看说明"
+                aria-label="查看趋势图说明"
               >
                 <HelpCircle className="h-4 w-4" />
               </button>
@@ -165,24 +195,28 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange }: ChartHeaderPro
         <button
           type="button"
           onClick={() => onChartTypeChange('line')}
-          className={`p-2 rounded-lg transition-colors focus:outline-none ${
+          disabled={isLoading}
+          aria-label="切换为折线图"
+          aria-pressed={chartType === 'line' ? 'true' : 'false'}
+          className={`p-2 rounded-lg transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
             chartType === 'line'
               ? 'bg-primary/10 text-primary'
               : 'text-slate-400 hover:text-slate-600 dark:hover:text-gray-300'
           }`}
-          title="折线图"
         >
           <TrendingUp className="h-4 w-4" />
         </button>
         <button
           type="button"
           onClick={() => onChartTypeChange('bar')}
-          className={`p-2 rounded-lg transition-colors focus:outline-none ${
+          disabled={isLoading}
+          aria-label="切换为柱状图"
+          aria-pressed={chartType === 'bar' ? 'true' : 'false'}
+          className={`p-2 rounded-lg transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
             chartType === 'bar'
               ? 'bg-primary/10 text-primary'
               : 'text-slate-400 hover:text-slate-600 dark:hover:text-gray-300'
           }`}
-          title="柱状图"
         >
           <BarChart3 className="h-4 w-4" />
         </button>
@@ -192,7 +226,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange }: ChartHeaderPro
 }
 
 /** 统计信息组件 */
-function ChartStats({ avgStability, totalExecutions, totalFailed, hasData }: ChartStatsProps & { hasData: boolean }) {
+function ChartStats({ avgStability, totalExecutions, totalFailed, hasData }: ChartStatsProps) {
   return (
     <div className="mt-6 pt-4 border-t border-slate-100 dark:border-[#234833] grid grid-cols-3 gap-4">
       <div className="text-center">
@@ -242,7 +276,10 @@ export function TrendChart({ timeRange }: TrendChartProps) {
       }
     } catch (err) {
       console.error('Failed to fetch trend data:', err);
-      setError('获取趋势数据失败，请稍后重试');
+      const errorMessage = err instanceof Error
+        ? `获取趋势数据失败: ${err.message}`
+        : '获取趋势数据失败，请稍后重试';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -267,38 +304,49 @@ export function TrendChart({ timeRange }: TrendChartProps) {
     return trendData.reduce((acc, d) => acc + (d.failedCases || 0), 0);
   }, [trendData]);
 
-  // X轴配置
+  // X轴配置 - 根据数据量动态计算 interval
   const xAxisConfig = useMemo(() => {
     switch (timeRange) {
       case '7d':
         return { angle: 0, textAnchor: 'middle' as const, interval: 0 };
       case '30d':
         return { angle: -45, textAnchor: 'end' as const, interval: 0 };
-      case '90d':
-        return { angle: -45, textAnchor: 'end' as const, interval: 6 };
+      case '90d': {
+        // 动态计算 interval，确保最多显示约 12 个标签
+        const dataLength = trendData.length || 90;
+        const interval = Math.max(0, Math.ceil(dataLength / 12) - 1);
+        return { angle: -45, textAnchor: 'end' as const, interval };
+      }
       default:
         return { angle: -45, textAnchor: 'end' as const, interval: 0 };
     }
-  }, [timeRange]);
+  }, [timeRange, trendData.length]);
 
   // 格式化日期显示
   const formatDate = useCallback((dateStr: string) => {
     if (!dateStr) return '';
 
-    // 处理 ISO 格式日期 (如 2024-12-16T16:00:00.000Z)
-    if (dateStr.includes('T')) {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      return `${month}-${day}`;
-    }
+    try {
+      // 处理 ISO 格式日期 (如 2024-12-16T16:00:00.000Z)
+      if (dateStr.includes('T')) {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
 
-    // 处理普通格式 (如 2024-12-16)
-    const parts = dateStr.split('-');
-    if (parts.length >= 3) {
-      return `${parts[1]}-${parts[2]}`;
+        // 使用 UTC 时间避免时区偏移
+        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(date.getUTCDate()).padStart(2, '0');
+        return `${month}-${day}`;
+      }
+
+      // 处理普通格式 (如 2024-12-16)
+      const parts = dateStr.split('-');
+      if (parts.length >= 3) {
+        return `${parts[1]}-${parts[2]}`;
+      }
+      return dateStr;
+    } catch {
+      return dateStr;
     }
-    return dateStr;
   }, []);
 
   // 渲染图表内容
@@ -405,11 +453,16 @@ export function TrendChart({ timeRange }: TrendChartProps) {
   };
 
   return (
-    <div className="xl:col-span-2 rounded-xl border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark p-6 flex flex-col">
+    <div
+      className="xl:col-span-2 rounded-xl border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark p-6 flex flex-col"
+      role="region"
+      aria-label={TIME_RANGE_LABELS[timeRange]}
+    >
       <ChartHeader
         timeRange={timeRange}
         chartType={chartType}
         onChartTypeChange={setChartType}
+        isLoading={loading}
       />
 
       <div className="flex-1 w-full min-h-[250px] relative">
