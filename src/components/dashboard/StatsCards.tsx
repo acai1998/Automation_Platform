@@ -31,10 +31,10 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
   return (
     <div
       onClick={onClick}
-      className={`flex flex-col gap-3 rounded-xl p-6 border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark shadow-sm stat-card ${onClick ? 'cursor-pointer' : ''}`}
+      className={`group flex flex-col gap-3 rounded-xl p-6 border border-slate-200/80 dark:border-slate-700/50 bg-white dark:bg-slate-900 shadow-sm transition-all duration-200 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-600 ${onClick ? 'cursor-pointer hover:scale-[1.02] active:scale-[0.98]' : ''}`}
     >
       <div className="flex justify-between items-start">
-        <div className={`p-2 ${iconBg} rounded-lg ${iconColor}`}>
+        <div className={`p-2.5 ${iconBg} rounded-xl ${iconColor} shadow-sm transition-transform duration-200 group-hover:scale-110`}>
           {icon}
         </div>
         <div className="flex items-center gap-2">
@@ -44,8 +44,7 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
                 <button
                   onClick={(e) => e.stopPropagation()}
                   className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-                  aria-label={`${label} 说明`
-                  }
+                  aria-label={`${label} 说明`}
                 >
                   <HelpCircle className="h-4 w-4" />
                 </button>
@@ -60,7 +59,7 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
 
           {trend && !loading && (
             <span
-              className={`text-xs font-bold px-2 py-1 rounded flex items-center gap-1 ${
+              className={`text-xs font-bold px-2 py-1 rounded-lg flex items-center gap-1 ${
                 trend.isPositive
                   ? "text-success bg-success/10"
                   : "text-danger bg-danger/10"
@@ -77,7 +76,7 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
         </div>
       </div>
       <div>
-        <p className="text-slate-500 dark:text-gray-400 text-sm font-medium mb-1">{label}</p>
+        <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">{label}</p>
         {loading ? (
           <div className="flex items-center gap-2">
             <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
