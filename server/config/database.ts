@@ -1,15 +1,20 @@
 import mysql from 'mysql2/promise';
+import dotenv from 'dotenv';
+import path from 'path';
+
+// 加载环境变量
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 // MariaDB 连接配置
 const DB_NAME = process.env.DB_NAME || 'autotest';
 
 const dbConfigWithoutDB = {
-  host: process.env.DB_HOST || '117.72.182.23',
+  host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '3306'),
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'Caijinwei2025',
+  password: process.env.DB_PASSWORD || '',
   waitForConnections: true,
-  connectionLimit: 5,  // 减少连接数限制
+  connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT || '10'),
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 10000,
