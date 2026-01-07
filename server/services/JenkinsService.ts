@@ -1,5 +1,3 @@
-import { getPool } from '../config/database.js';
-
 /**
  * Jenkins 配置接口
  */
@@ -66,33 +64,29 @@ export class JenkinsService {
   }
 
   /**
-   * 触发 Jenkins Job 执行单个用例
+   * 触发 Jenkins Job 执行
+   * @param type 用例类型
+   * @param scriptPath 测试脚本路径
+   * @param executionId 执行记录ID（用于回调关联）
+   * @param callbackUrl 回调地址
    */
   async triggerJob(
-    caseId: number,
     type: CaseType,
     scriptPath: string,
-    callbackUrl?: string
+    executionId: number,
+    callbackUrl: string
   ): Promise<JenkinsTriggerResult> {
-    const pool = getPool();
     const jobName = this.getJobName(type);
     const triggerUrl = `${this.config.baseUrl}/job/${jobName}/buildWithParameters`;
 
-    // 构建参数
+    // 构建参数 - 与 Jenkinsfile 中定义的参数对应
     const params = new URLSearchParams({
       SCRIPT_PATH: scriptPath,
-      CASE_ID: caseId.toString(),
-      CASE_TYPE: type,
+      EXECUTION_ID: executionId.toString(),
+      CALLBACK_URL: callbackUrl,
     });
 
-    if (callbackUrl) {
-      params.append('CALLBACK_URL', callbackUrl);
-    }
-
     try {
-      // 更新用例状态为 running
-      await pool.execute('UPDATE test_cases SET running_status = ? WHERE id = ?', ['running', caseId]);
-
       // 调用 Jenkins API
       const response = await fetch(`${triggerUrl}?${params.toString()}`, {
         method: 'POST',
@@ -114,18 +108,12 @@ export class JenkinsService {
           message: 'Job triggered successfully',
         };
       } else {
-        // 触发失败，恢复状态
-        await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', ['idle', caseId]);
-
         return {
           success: false,
           message: `Failed to trigger job: ${response.status} ${response.statusText}`,
         };
       }
     } catch (error) {
-      // 发生错误，恢复状态
-      await pool.execute('UPDATE test_cases SET running_status = ? WHERE id = ?', ['idle', caseId]);
-
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
@@ -140,22 +128,6 @@ export class JenkinsService {
   private extractQueueId(location: string): number | undefined {
     const match = location.match(/\/queue\/item\/(\d+)/);
     return match ? parseInt(match[1], 10) : undefined;
-  }
-
-  /**
-   * 更新用例运行状态
-   */
-  async updateCaseStatus(caseId: number, status: 'idle' | 'running'): Promise<void> {
-    const pool = getPool();
-    await pool.execute('UPDATE test_cases SET running_status = ? WHERE id = ?', [status, caseId]);
-  }
-
-  /**
-   * 批量更新用例状态为 idle（用于清理）
-   */
-  async resetAllRunningStatus(): Promise<void> {
-    const pool = getPool();
-    await pool.execute("UPDATE test_cases SET running_status = 'idle' WHERE running_status = 'running'");
   }
 
   /**

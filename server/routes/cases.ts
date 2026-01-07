@@ -354,23 +354,41 @@ router.post('/:id/run', async (req, res) => {
       return res.status(400).json({ success: false, message: `Invalid case type: ${testCase.type}` });
     }
 
-    // 构建回调 URL
-    const callbackUrl = `${req.protocol}://${req.get('host')}/api/cases/${id}/callback`;
+    // 1. 创建执行记录
+    const pool = getPool();
+    const [insertResult] = await pool.execute(`
+      INSERT INTO task_executions (
+        task_id, task_name, trigger_type, status, total_cases,
+        passed_cases, failed_cases, skipped_cases, start_time, executed_by
+      ) VALUES (NULL, ?, 'manual', 'pending', 1, 0, 0, 0, NOW(), 1)
+    `, [`单用例执行: ${testCase.name}`]);
 
-    // 触发 Jenkins Job
+    const executionId = (insertResult as { insertId: number }).insertId;
+
+    // 2. 构建回调 URL
+    const callbackUrl = `${req.protocol}://${req.get('host')}/api/executions/callback`;
+
+    // 3. 触发 Jenkins Job
     const result = await jenkinsService.triggerJob(
-      id,
       caseType,
       testCase.script_path,
+      executionId,
       callbackUrl
     );
 
     if (result.success) {
+      // 更新执行记录为 running
+      await pool.execute(
+        `UPDATE task_executions SET status = 'running', jenkins_build_url = ? WHERE id = ?`,
+        [result.buildUrl || null, executionId]
+      );
+
       res.json({
         success: true,
         data: {
           caseId: id,
           caseName: testCase.name,
+          executionId,
           status: 'triggered',
           buildUrl: result.buildUrl,
           queueId: result.queueId,
@@ -378,6 +396,12 @@ router.post('/:id/run', async (req, res) => {
         message: 'Case execution triggered successfully',
       });
     } else {
+      // 触发失败，更新执行记录状态
+      await pool.execute(
+        `UPDATE task_executions SET status = 'failed', error_message = ?, end_time = NOW() WHERE id = ?`,
+        [result.message, executionId]
+      );
+
       res.status(500).json({
         success: false,
         message: result.message,
