@@ -6,7 +6,6 @@ __pycache__/
 *.so
 
 .agent/
-.github/
 .cursor/
 .claude/
 .vscode/
