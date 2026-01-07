@@ -5,8 +5,15 @@ __pycache__/
 # C extensions
 *.so
 
+.agent/
+.github/
+.cursor/
 .claude/
 .vscode/
+.kiro/
+.shared/
+.windsurf
+
 # C extensions
 *.so
 
