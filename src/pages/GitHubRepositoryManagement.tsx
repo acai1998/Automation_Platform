@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, Search, RefreshCw, Github, Trash2, Edit, Copy, Check, ExternalLink } from 'lucide-react';
+import { Plus, Search, RefreshCw, Github, Trash2, Edit, Copy, Check, ExternalLink, Package, CheckCircle, PauseCircle, Archive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -182,22 +182,22 @@ export default function GitHubRepositoryManagement() {
           <StatCard
             label="总仓库数"
             value={repositories.length}
-            icon="📦"
+            icon={<Package className="w-6 h-6 text-blue-600" />}
           />
           <StatCard
             label="活跃仓库"
             value={repositories.filter(r => r.status === 'active').length}
-            icon="✅"
+            icon={<CheckCircle className="w-6 h-6 text-green-600" />}
           />
           <StatCard
             label="不活跃"
             value={repositories.filter(r => r.status === 'inactive').length}
-            icon="⏸️"
+            icon={<PauseCircle className="w-6 h-6 text-yellow-600" />}
           />
           <StatCard
             label="已归档"
             value={repositories.filter(r => r.status === 'archived').length}
-            icon="📁"
+            icon={<Archive className="w-6 h-6 text-gray-600" />}
           />
         </div>
       </div>
@@ -326,10 +326,10 @@ export default function GitHubRepositoryManagement() {
 }
 
 // 统计卡片组件
-function StatCard({ label, value, icon }: { label: string; value: number; icon: string }) {
+function StatCard({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
   return (
-    <Card className="p-4 text-center hover:shadow-lg transition-shadow">
-      <div className="text-2xl mb-2">{icon}</div>
+    <Card className="p-4 text-center hover:shadow-lg transition-shadow cursor-pointer">
+      <div className="flex justify-center mb-2">{icon}</div>
       <div className="text-2xl font-bold text-gray-900 dark:text-white">{value}</div>
       <div className="text-sm text-gray-600 dark:text-gray-400">{label}</div>
     </Card>

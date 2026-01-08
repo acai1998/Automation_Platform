@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo } from 'react';
 import { 
   Boxes, 
   Play, 
@@ -29,6 +29,20 @@ import { cn } from '@/lib/utils';
 export default function Tasks() {
   const { data: tasks, isLoading, error, refetch } = useTasks();
   const runTaskMutation = useRunTask();
+
+  // 优化统计计算,使用useMemo避免每次渲染都重新计算
+  const stats = useMemo(() => {
+    if (!tasks) return { total: 0, active: 0, todayRuns: 0 };
+
+    const today = new Date().toISOString().split('T')[0];
+    return {
+      total: tasks.length,
+      active: tasks.filter(t => t.status === 'active').length,
+      todayRuns: tasks.reduce((acc, t) => 
+        acc + (t.recentExecutions?.filter(e => e.start_time?.startsWith(today)).length || 0), 0
+      )
+    };
+  }, [tasks]);
 
   const handleRunTask = async (taskId: number, taskName: string) => {
     try {
@@ -84,26 +98,19 @@ export default function Tasks() {
         <Card className="bg-gradient-to-br from-blue-500/10 to-transparent border-blue-100 dark:border-blue-900/30">
           <CardHeader className="pb-2">
             <CardDescription className="text-blue-600 dark:text-blue-400 font-medium">总任务数</CardDescription>
-            <CardTitle className="text-3xl font-bold">{tasks?.length || 0}</CardTitle>
+            <CardTitle className="text-3xl font-bold">{stats.total}</CardTitle>
           </CardHeader>
         </Card>
         <Card className="bg-gradient-to-br from-green-500/10 to-transparent border-green-100 dark:border-green-900/30">
           <CardHeader className="pb-2">
             <CardDescription className="text-green-600 dark:text-green-400 font-medium">活跃任务</CardDescription>
-            <CardTitle className="text-3xl font-bold">
-              {tasks?.filter(t => t.status === 'active').length || 0}
-            </CardTitle>
+            <CardTitle className="text-3xl font-bold">{stats.active}</CardTitle>
           </CardHeader>
         </Card>
         <Card className="bg-gradient-to-br from-purple-500/10 to-transparent border-purple-100 dark:border-purple-900/30">
           <CardHeader className="pb-2">
             <CardDescription className="text-purple-600 dark:text-purple-400 font-medium">今日运行</CardDescription>
-            <CardTitle className="text-3xl font-bold">
-              {tasks?.reduce((acc, t) => acc + (t.recentExecutions?.filter(e => {
-                const today = new Date().toISOString().split('T')[0];
-                return e.start_time?.startsWith(today);
-              }).length || 0), 0)}
-            </CardTitle>
+            <CardTitle className="text-3xl font-bold">{stats.todayRuns}</CardTitle>
           </CardHeader>
         </Card>
       </div>
