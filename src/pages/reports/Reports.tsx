@@ -1,4 +1,4 @@
-import { useState, ReactNode } from 'react';
+import { useState } from 'react';
 import { Link } from 'wouter';
 import { 
   BarChart3, 
@@ -14,17 +14,14 @@ import {
   ExternalLink,
   FileText,
   History,
-  Calendar,
-  User,
-  Play
+  Calendar
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { useTestRuns, type TestRunRecord } from '@/hooks/useExecutions';
+import { useTestRuns } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-
 /**
  * 报告中心页面
  * 采用与用例管理一致的现代化 SaaS Dashboard 风格

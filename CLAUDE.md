@@ -47,8 +47,8 @@ npx tsc --noEmit -p tsconfig.server.json
 
 ### 后端（`server/`）
 - 通过 tsx 运行的 Express 服务器
-- 使用 better-sqlite3 的 SQLite 数据库
-- 数据库文件位于 `server/db/`（包括 schema.sql、seed.sql 和 autotest.db）
+- 使用 mysql2 的 MariaDB 数据库
+- 数据库配置位于 `server/config/database.ts`，表结构自动初始化
 - 路径别名：`@shared/*` 映射到 `shared/*`
 
 ### API 路由
@@ -68,7 +68,7 @@ npx tsc --noEmit -p tsconfig.server.json
 
 ## 数据库结构
 
-关键表定义位于 `server/db/schema.sql`：
+关键表定义位于 `server/config/database.ts` (自动初始化)：
 - `test_cases` — 测试用例定义（含配置 JSON）
 - `tasks` — 定时或手动触发的测试任务
 - `task_executions` — 执行历史记录
@@ -120,7 +120,7 @@ npx tsc --noEmit -p tsconfig.server.json
 - **Jenkins 集成**：
   通过 `executionService.createExecution()` 创建执行记录，Jenkins 完成后调用回调接口
 - **数据库操作**：
-  通过 `server/db` 中的 `better-sqlite3` 操作，**禁止**在代码中硬编码 SQL
+  通过 `server/config/database.ts` 中的 `mysql2` 连接池操作，**禁止**在代码中硬编码 SQL
 - **API 路由**：
   严格按 `API Routes` 部分定义（如 `/api/cases` 用于测试用例管理）
 - **图表开发**：
@@ -134,4 +134,3 @@ npx tsc --noEmit -p tsconfig.server.json
 - **不要修改** `tsconfig.json` 中的路径别名（已配置好）
 - ️**不要添加** `node_modules` 或 `dist/` 文件到版本控制
 - ️**所有新文件**必须放在对应目录（如新组件放 `src/components/`）
-

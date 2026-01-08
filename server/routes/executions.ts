@@ -80,6 +80,37 @@ router.get('/:id/results', async (req, res) => {
 });
 
 /**
+ * GET /api/executions/test-runs
+ * 获取 Auto_TestRun 表的运行记录列表
+ */
+router.get('/test-runs', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const result = await executionService.getAllTestRuns(limit, offset);
+    res.json({ success: true, ...result });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/executions/:id/results
+ * 获取执行批次的用例结果列表
+ */
+router.get('/:id/results', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const results = await executionService.getBatchExecutionResults(id);
+    res.json({ success: true, data: results });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
  * GET /api/executions/:id
  * 获取执行详情
  */
@@ -99,7 +130,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-/**
+ /**
  * GET /api/executions
  * 获取执行记录列表
  */

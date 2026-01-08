@@ -4,10 +4,10 @@ import mysql from 'mysql2/promise';
 const DB_NAME = process.env.DB_NAME || 'autotest';
 
 const dbConfigWithoutDB = {
-  host: process.env.DB_HOST || '117.72.182.23',
+  host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '3306'),
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'Caijinwei2025',
+  password: process.env.DB_PASSWORD,
   waitForConnections: true,
   connectionLimit: 5,  // 减少连接数限制
   queueLimit: 0,
@@ -181,6 +181,7 @@ export async function initMariaDBTables(): Promise<void> {
       priority ENUM('P0', 'P1', 'P2', 'P3') DEFAULT 'P1' COMMENT '优先级: P0-最高, P1-高, P2-中, P3-低',
       type ENUM('api', 'ui', 'performance', 'security') DEFAULT 'api' COMMENT '用例类型: api-接口测试, ui-界面测试, performance-性能测试, security-安全测试',
       status ENUM('active', 'inactive', 'deprecated') DEFAULT 'active' COMMENT '用例状态: active-启用, inactive-禁用, deprecated-已废弃',
+      running_status ENUM('idle', 'running') DEFAULT 'idle' COMMENT '运行状态: idle-空闲, running-运行中',
       tags VARCHAR(500) COMMENT '标签，多个标签用逗号分隔',
       script_path VARCHAR(500) COMMENT '测试脚本文件路径',
       config_json TEXT COMMENT '用例配置JSON，存储请求参数、断言规则等',
@@ -190,6 +191,7 @@ export async function initMariaDBTables(): Promise<void> {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
       INDEX idx_cases_project (project_id) COMMENT '项目索引',
       INDEX idx_cases_status (status) COMMENT '状态索引',
+      INDEX idx_cases_running_status (running_status) COMMENT '运行状态索引',
       INDEX idx_cases_module (module) COMMENT '模块索引',
       INDEX idx_cases_priority (priority) COMMENT '优先级索引',
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -283,9 +285,9 @@ export async function initMariaDBTables(): Promise<void> {
   `);
   console.log('MariaDB case_results table initialized');
 
-  // 8. 创建 daily_summaries 表 - 每日统计汇总表
+  // 8. 创建 Auto_TestCaseDailySummaries 表 - 每日统计汇总表
   await pool.execute(`
-    CREATE TABLE IF NOT EXISTS daily_summaries (
+    CREATE TABLE IF NOT EXISTS Auto_TestCaseDailySummaries (
       id INT PRIMARY KEY AUTO_INCREMENT COMMENT '记录唯一标识',
       summary_date DATE UNIQUE NOT NULL COMMENT '统计日期，唯一索引',
       total_executions INT DEFAULT 0 COMMENT '当日执行总次数',
@@ -301,7 +303,7 @@ export async function initMariaDBTables(): Promise<void> {
       INDEX idx_summary_date (summary_date) COMMENT '日期索引-用于趋势查询'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='每日统计汇总表 - 按天聚合的测试执行统计数据，用于趋势图展示'
   `);
-  console.log('MariaDB daily_summaries table initialized');
+  console.log('MariaDB Auto_TestCaseDailySummaries table initialized');
 
   // 9. 创建 audit_logs 表 - 系统审计日志表
   await pool.execute(`

@@ -1,7 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { testConnection, initMariaDBTables } from './config/database.js';
 import dashboardRoutes from './routes/dashboard.js';
 import executionRoutes from './routes/executions.js';
@@ -41,21 +39,6 @@ app.use('/api/cases', casesRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/jenkins', jenkinsRoutes);
 app.use('/api/repositories', repositoriesRoutes);
-
-// 静态文件托管 (生产环境)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const distPath = path.join(__dirname, '../dist');
-
-app.use(express.static(distPath));
-
-// 所有非 API 请求返回 index.html (SPA 支持)
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api')) {
-    return next();
-  }
-  res.sendFile(path.join(distPath, 'index.html'));
-});
 
 // 健康检查
 app.get('/api/health', (req, res) => {

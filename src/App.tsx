@@ -17,23 +17,20 @@ import GitHubRepositoryManagement from "./pages/GitHubRepositoryManagement";
 import APICases from "./pages/cases/APICases";
 import UICases from "./pages/cases/UICases";
 import PerformanceCases from "./pages/cases/PerformanceCases";
-import Tasks from "./pages/tasks/Tasks";
 import Reports from "./pages/reports/Reports";
 import ReportDetail from "./pages/reports/ReportDetail";
-import { Boxes, BarChart3, Settings, User } from "lucide-react";
+import { Boxes, Settings, User } from "lucide-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-// 创建 QueryClient 实例
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 5, // 5 分钟
+      staleTime: 1000 * 60 * 5,
       retry: 1,
     },
   },
 });
 
-// 开发中页面的包装组件
 function TasksPage() {
   return (
     <ComingSoon
@@ -75,13 +72,11 @@ function ProfilePage() {
 function Router() {
   return (
     <Switch>
-      {/* 公开路由 */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/reset-password" component={ResetPassword} />
 
-      {/* 受保护路由 */}
       <Route path="/">
         <ProtectedRoute>
           <Layout>
@@ -90,7 +85,6 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
-      {/* 用例管理路由 */}
       <Route path="/cases">
         <Redirect to="/cases/api" />
       </Route>
