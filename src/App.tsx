@@ -17,6 +17,8 @@ import GitHubRepositoryManagement from "./pages/GitHubRepositoryManagement";
 import APICases from "./pages/cases/APICases";
 import UICases from "./pages/cases/UICases";
 import PerformanceCases from "./pages/cases/PerformanceCases";
+import Tasks from "./pages/tasks/Tasks";
+import Reports from "./pages/reports/Reports";
 import { Boxes, BarChart3, Settings, User } from "lucide-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -42,13 +44,7 @@ function TasksPage() {
 }
 
 function ReportsPage() {
-  return (
-    <ComingSoon
-      title="报告中心"
-      description="测试报告的生成、查看和导出功能正在开发中"
-      icon={<BarChart3 className="h-10 w-10 text-blue-500" />}
-    />
-  );
+  return <Reports />;
 }
 
 function SettingsPage() {

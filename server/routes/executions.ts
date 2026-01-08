@@ -49,6 +49,22 @@ router.post('/:id/start', async (req, res) => {
 });
 
 /**
+ * GET /api/executions/test-runs
+ * 获取 Auto_TestRun 表的运行记录列表
+ */
+router.get('/test-runs', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const result = await executionService.getAllTestRuns(limit, offset);
+    res.json({ success: true, ...result });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
  * GET /api/executions/:id
  * 获取执行详情
  */

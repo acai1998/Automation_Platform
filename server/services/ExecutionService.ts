@@ -6,6 +6,15 @@ export interface TaskExecutionInput {
   triggerType: 'manual' | 'scheduled' | 'ci_triggered';
 }
 
+export interface CaseExecutionInput {
+  caseIds: number[];
+  projectId: number;
+  triggeredBy: number;
+  triggerType: 'manual' | 'jenkins' | 'schedule';
+  jenkinsJob?: string;
+  runConfig?: Record<string, unknown>;
+}
+
 export interface ExecutionProgress {
   executionId: number;
   totalCases: number;
@@ -221,6 +230,150 @@ export class ExecutionService {
       SET status = 'cancelled', end_time = NOW()
       WHERE id = ? AND status IN ('pending', 'running')
     `, [executionId]);
+  }
+
+  /**
+   * 触发用例执行，向 Auto_TestRun 表写入运行记录
+   */
+  async triggerTestExecution(input: CaseExecutionInput): Promise<{ runId: number; totalCases: number }> {
+    const pool = getPool();
+
+    // 1. 验证用例是否存在并获取用例信息
+    if (input.caseIds.length === 0) {
+      throw new Error('Case IDs cannot be empty');
+    }
+
+    const placeholders = input.caseIds.map(() => '?').join(',');
+    const cases = await query<{ id: number; name: string; type: string; script_path: string | null }[]>(
+      `SELECT id, name, type, script_path FROM Auto_TestCase WHERE id IN (${placeholders}) AND enabled = 1`,
+      input.caseIds
+    );
+
+    if (!cases || cases.length === 0) {
+      throw new Error(`No active test cases found with IDs: ${input.caseIds.join(',')}`);
+    }
+
+    // 2. 创建运行记录到 Auto_TestRun 表
+    const runConfig = input.runConfig ? JSON.stringify(input.runConfig) : null;
+    const [result] = await pool.execute(`
+      INSERT INTO Auto_TestRun (
+        project_id, trigger_type, trigger_by, jenkins_job, status,
+        run_config, total_cases, created_at
+      ) VALUES (?, ?, ?, ?, 'pending', ?, ?, NOW())
+    `, [
+      input.projectId,
+      input.triggerType,
+      input.triggeredBy,
+      input.jenkinsJob || null,
+      runConfig,
+      cases.length,
+    ]);
+
+    const insertResult = result as { insertId: number };
+
+    return {
+      runId: insertResult.insertId,
+      totalCases: cases.length,
+    };
+  }
+
+  /**
+   * 获取批次执行详情
+   */
+  async getBatchExecution(runId: number) {
+    const execution = await queryOne(`
+      SELECT atr.*, u.display_name as trigger_by_name
+      FROM Auto_TestRun atr
+      LEFT JOIN Auto_Users u ON atr.trigger_by = u.id
+      WHERE atr.id = ?
+    `, [runId]);
+
+    if (!execution) {
+      throw new Error(`Execution not found: ${runId}`);
+    }
+
+    return { execution };
+  }
+
+  /**
+   * 更新执行批次的Jenkins信息
+   */
+  async updateBatchJenkinsInfo(runId: number, jenkinsInfo: {
+    buildId: string;
+    buildUrl: string;
+  }): Promise<void> {
+    const pool = getPool();
+    await pool.execute(`
+      UPDATE Auto_TestRun
+      SET jenkins_build_id = ?, jenkins_url = ?, status = 'running', start_time = NOW()
+      WHERE id = ?
+    `, [jenkinsInfo.buildId, jenkinsInfo.buildUrl, runId]);
+  }
+
+  /**
+   * 完成执行批次
+   */
+  async completeBatchExecution(runId: number, results: {
+    status: 'success' | 'failed' | 'aborted';
+    passedCases: number;
+    failedCases: number;
+    skippedCases: number;
+    durationMs: number;
+  }): Promise<void> {
+    const pool = getPool();
+    await pool.execute(`
+      UPDATE Auto_TestRun
+      SET status = ?, passed_cases = ?, failed_cases = ?, skipped_cases = ?,
+          duration_ms = ?, end_time = NOW()
+      WHERE id = ?
+    `, [
+      results.status,
+      results.passedCases,
+      results.failedCases,
+      results.skippedCases,
+      results.durationMs,
+      runId,
+    ]);
+  }
+
+  /**
+   * 获取执行批次的用例列表
+   */
+  async getBatchCases(runId: number) {
+    const batch = await queryOne<{ total_cases: number }>(`
+      SELECT total_cases FROM Auto_TestRun WHERE id = ?
+    `, [runId]);
+
+    if (!batch) {
+      throw new Error(`Batch not found: ${runId}`);
+    }
+
+    // 注意：这里需要补充存储关联用例ID的逻辑
+    // 如果在 Auto_TestRun 中添加 case_ids 字段，可以解析获取用例
+    return { totalCases: batch.total_cases };
+  }
+
+  /**
+   * 获取所有测试运行记录（Auto_TestRun 表）
+   */
+  async getAllTestRuns(limit = 50, offset = 0) {
+    const sql = `
+      SELECT atr.*, p.name as project_name, u.display_name as trigger_by_name
+      FROM Auto_TestRun atr
+      LEFT JOIN projects p ON atr.project_id = p.id
+      LEFT JOIN Auto_Users u ON atr.trigger_by = u.id
+      ORDER BY atr.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    const data = await query(sql, [limit, offset]);
+    
+    const countSql = 'SELECT COUNT(*) as total FROM Auto_TestRun';
+    const countResult = await queryOne<{ total: number }>(countSql);
+    
+    return {
+      data,
+      total: countResult?.total ?? 0
+    };
   }
 
   /**

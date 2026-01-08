@@ -2,8 +2,9 @@ import { useState, ReactNode } from 'react';
 import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { CaseStatusBadge } from './CaseStatusBadge';
-import { useCases, useRunCase, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
+import { useCases, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
+import { useTestExecution } from '@/hooks/useExecuteCase';
+import { ExecutionProgress } from './ExecutionProgress';
 import { repositoriesApi } from '@/api/repositories';
 import { toast } from 'sonner';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -41,6 +42,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [isProgressOpen, setIsProgressOpen] = useState(false);
 
   const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
@@ -52,8 +54,15 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     pageSize,
   });
 
-  // 运行用例
-  const runCaseMutation = useRunCase();
+  // 执行管理
+  const {
+    executeCase,
+    isExecuting,
+    batchInfo,
+    isFetchingBatch,
+    batchError,
+    reset: resetExecution,
+  } = useTestExecution();
 
   // 分页信息
   const pagination = usePagination(data?.total || 0, page, pageSize);
@@ -107,9 +116,13 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   };
 
   // 处理运行用例
-  const handleRunCase = async (caseId: number, caseName: string) => {
+  const handleRunCase = async (caseId: number, caseName: string, projectId: number | null) => {
+    // 如果没有项目ID，使用默认项目ID 1
+    const finalProjectId = projectId || 1;
+    
     try {
-      await runCaseMutation.mutateAsync(caseId);
+      await executeCase(caseId, finalProjectId);
+      setIsProgressOpen(true);
       toast.success(`用例 "${caseName}" 已开始执行`);
     } catch (err) {
       const message = err instanceof Error ? err.message : '执行失败';
@@ -133,26 +146,21 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       );
     }
 
-    if (column.key === 'running_status') {
-      return <CaseStatusBadge status={record.running_status} />;
-    }
-
     if (column.key === 'actions') {
-      const isRunning = record.running_status === 'running';
       return (
         <Button
           size="sm"
-          variant={isRunning ? 'outline' : 'default'}
-          disabled={isRunning || runCaseMutation.isPending}
-          onClick={() => handleRunCase(record.id, record.name)}
+          variant="default"
+          disabled={isExecuting || isFetchingBatch}
+          onClick={() => handleRunCase(record.id, record.name, record.project_id)}
           className="gap-1.5 h-8 px-3 transition-all duration-200 hover:scale-105 active:scale-95"
         >
-          {runCaseMutation.isPending ? (
+          {isExecuting ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <Play className="h-3.5 w-3.5" />
           )}
-          {isRunning ? '运行中' : '运行'}
+          运行
         </Button>
       );
     }
@@ -366,15 +374,12 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                       <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-400">
                         {record.owner || '-'}
                       </td>
-                      <td className="px-4 py-3">
-                        <CaseStatusBadge status={record.running_status} />
-                      </td>
                       <td className="px-4 py-3 text-right">
                         <Button
                           size="sm"
-                          variant={record.running_status === 'running' ? 'outline' : 'default'}
-                          disabled={record.running_status === 'running' || runCaseMutation.isPending}
-                          onClick={() => handleRunCase(record.id, record.name)}
+                          variant="default"
+                          disabled={isExecuting || isFetchingBatch}
+                          onClick={() => handleRunCase(record.id, record.name, record.project_id)}
                           className="h-8 px-3"
                         >
                           <Play className="h-3.5 w-3.5" />
@@ -401,7 +406,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">
                             {(page - 1) * pageSize + index + 1}
                           </span>
-                          <CaseStatusBadge status={record.running_status} />
                           {columns.find(c => c.key === 'priority')?.render?.(record.priority, record, index)}
                         </div>
                         <h3 className="font-medium text-slate-900 dark:text-white text-sm leading-snug line-clamp-2">
@@ -410,12 +414,12 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                       </div>
                       <Button
                         size="sm"
-                        variant={record.running_status === 'running' ? 'outline' : 'default'}
-                        disabled={record.running_status === 'running' || runCaseMutation.isPending}
-                        onClick={() => handleRunCase(record.id, record.name)}
+                        variant="default"
+                        disabled={isExecuting || isFetchingBatch}
+                        onClick={() => handleRunCase(record.id, record.name, record.project_id)}
                         className="shrink-0 h-8 w-8 p-0"
                       >
-                        {runCaseMutation.isPending ? (
+                        {isExecuting ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <Play className="h-4 w-4" />
@@ -531,6 +535,21 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
           </div>
         )}
       </div>
+
+      {/* 执行进度弹窗 */}
+      <ExecutionProgress
+        isOpen={isProgressOpen}
+        onClose={() => {
+          setIsProgressOpen(false);
+          if (batchInfo?.status !== 'running' && batchInfo?.status !== 'pending') {
+            resetExecution();
+          }
+        }}
+        batchInfo={batchInfo}
+        isLoading={isFetchingBatch}
+        error={batchError as Error}
+        buildUrl={batchInfo?.jenkins_build_url}
+      />
     </div>
   );
 }

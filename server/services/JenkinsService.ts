@@ -90,9 +90,6 @@ export class JenkinsService {
     }
 
     try {
-      // 更新用例状态为 running
-      await pool.execute('UPDATE test_cases SET running_status = ? WHERE id = ?', ['running', caseId]);
-
       // 调用 Jenkins API
       const response = await fetch(`${triggerUrl}?${params.toString()}`, {
         method: 'POST',
@@ -114,22 +111,78 @@ export class JenkinsService {
           message: 'Job triggered successfully',
         };
       } else {
-        // 触发失败，恢复状态
-        await pool.execute('UPDATE Auto_TestCase SET running_status = ? WHERE id = ?', ['idle', caseId]);
-
         return {
           success: false,
           message: `Failed to trigger job: ${response.status} ${response.statusText}`,
         };
       }
     } catch (error) {
-      // 发生错误，恢复状态
-      await pool.execute('UPDATE test_cases SET running_status = ? WHERE id = ?', ['idle', caseId]);
-
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
         message: `Error triggering job: ${errorMessage}`,
+      };
+    }
+  }
+
+  /**
+   * 触发 Jenkins Job 执行批量用例
+   */
+  async triggerBatchJob(
+    runId: number,
+    caseIds: number[],
+    scriptPaths: string[],
+    callbackUrl?: string
+  ): Promise<JenkinsTriggerResult> {
+    const jobName = this.config.jobs.api; // 使用默认API Job
+    const triggerUrl = `${this.config.baseUrl}/job/${jobName}/buildWithParameters`;
+
+    // 构建参数
+    const params = new URLSearchParams({
+      RUN_ID: runId.toString(),
+      CASE_IDS: JSON.stringify(caseIds),
+      SCRIPT_PATHS: scriptPaths.join(','),
+    });
+
+    if (callbackUrl) {
+      params.append('CALLBACK_URL', callbackUrl);
+    }
+
+    try {
+      // 调用 Jenkins API
+      const response = await fetch(`${triggerUrl}?${params.toString()}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': this.getAuthHeader(),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      });
+
+      if (response.status === 201 || response.status === 200) {
+        // 从 Location header 获取 queue ID
+        const location = response.headers.get('Location');
+        const queueId = location ? this.extractQueueId(location) : undefined;
+
+        // 获取最新构建信息
+        const buildInfo = await this.getLatestBuildInfo(jobName);
+
+        return {
+          success: true,
+          queueId,
+          buildUrl: buildInfo?.buildUrl,
+          message: 'Batch job triggered successfully',
+        };
+      } else {
+        return {
+          success: false,
+          message: `Failed to trigger batch job: ${response.status} ${response.statusText}`,
+        };
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        message: `Error triggering batch job: ${errorMessage}`,
       };
     }
   }
@@ -143,19 +196,28 @@ export class JenkinsService {
   }
 
   /**
-   * 更新用例运行状态
+   * 获取最新构建信息
    */
-  async updateCaseStatus(caseId: number, status: 'idle' | 'running'): Promise<void> {
-    const pool = getPool();
-    await pool.execute('UPDATE test_cases SET running_status = ? WHERE id = ?', [status, caseId]);
-  }
+  private async getLatestBuildInfo(jobName: string): Promise<{ buildNumber: number; buildUrl: string } | null> {
+    try {
+      const response = await fetch(`${this.config.baseUrl}/job/${jobName}/lastBuild/api/json`, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.getAuthHeader(),
+        },
+      });
 
-  /**
-   * 批量更新用例状态为 idle（用于清理）
-   */
-  async resetAllRunningStatus(): Promise<void> {
-    const pool = getPool();
-    await pool.execute("UPDATE test_cases SET running_status = 'idle' WHERE running_status = 'running'");
+      if (response.ok) {
+        const data = await response.json() as { number: number; url: string };
+        return {
+          buildNumber: data.number,
+          buildUrl: data.url,
+        };
+      }
+    } catch (error) {
+      console.error('Failed to get latest build info:', error);
+    }
+    return null;
   }
 
   /**
