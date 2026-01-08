@@ -58,16 +58,34 @@ export async function queryOne<T>(sql: string, params?: unknown[]): Promise<T | 
 async function ensureDatabaseExists(): Promise<void> {
   if (dbInitialized) return;
 
-  const tempPool = mysql.createPool({
-    ...dbConfigWithoutDB,
-    connectionLimit: 1,  // 临时池只用 1 个连接
-  });
   try {
-    await tempPool.execute(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    console.log(`Database '${DB_NAME}' ensured to exist`);
+    // 先尝试直接连接到指定的数据库（适用于远程数据库）
+    const testPool = mysql.createPool({
+      ...dbConfig,
+      connectionLimit: 1,
+    });
+    await testPool.execute('SELECT 1');
+    await testPool.end();
+    console.log(`✓ Database '${DB_NAME}' exists and is accessible`);
     dbInitialized = true;
-  } finally {
-    await tempPool.end();
+  } catch (error: unknown) {
+    // 如果连接失败,尝试创建数据库（适用于本地开发环境）
+    const err = error as { code?: string };
+    if (err.code === 'ER_BAD_DB_ERROR') {
+      const tempPool = mysql.createPool({
+        ...dbConfigWithoutDB,
+        connectionLimit: 1,
+      });
+      try {
+        await tempPool.execute(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+        console.log(`✓ Database '${DB_NAME}' created`);
+        dbInitialized = true;
+      } finally {
+        await tempPool.end();
+      }
+    } else {
+      throw error;
+    }
   }
 }
 
