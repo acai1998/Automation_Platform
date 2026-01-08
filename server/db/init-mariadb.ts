@@ -67,18 +67,26 @@ async function main() {
     });
     console.log('   ✓ 连接成功');
 
-    // 4. 检查是否已有表存在
-    console.log(`${isReset ? '5' : '4'}. 检查数据库是否已有表...`);
-    const [tables] = await pool.execute('SHOW TABLES');
-    const tableCount = (tables as unknown[]).length;
+    // 4. 检查关键表是否存在
+    console.log(`${isReset ? '5' : '4'}. 检查数据库关键表是否存在...`);
+    const [keyTablesResult] = await pool.execute(`
+      SELECT COUNT(*) as count 
+      FROM information_schema.tables 
+      WHERE table_schema = ? 
+      AND table_name IN ('users', 'test_cases', 'tasks', 'task_executions', 'Auto_TestCaseDailySummaries')
+    `, [DB_NAME]);
     
-    if (tableCount > 0 && !isReset) {
-      console.log(`   ✓ 数据库中已存在 ${tableCount} 张表，跳过表创建和数据插入`);
+    const keyTableCount = (keyTablesResult as Array<{count: number}>)[0]?.count || 0;
+    
+    if (keyTableCount >= 5 && !isReset) {
+      console.log(`   ✓ 数据库中已存在所有 ${keyTableCount} 张关键表，跳过表创建和数据插入`);
       
       // 直接验证结果
       console.log('');
       console.log(`${isReset ? '7' : '6'}. 验证数据...`);
-      console.log(`   ✓ 共 ${tableCount} 张表`);
+      
+      const [tables] = await pool.execute('SHOW TABLES');
+      console.log(`   ✓ 共 ${(tables as unknown[]).length} 张表`);
       
       const [users] = await pool.execute('SELECT COUNT(*) as count FROM users');
       const [projects] = await pool.execute('SELECT COUNT(*) as count FROM projects');
@@ -92,9 +100,11 @@ async function main() {
       
       console.log('');
       console.log('========================================');
-      console.log('✅ MariaDB 数据库初始化成功！');
+      console.log('✅ MariaDB 数据库已存在，无需初始化！');
       console.log('========================================');
       return;
+    } else if (keyTableCount > 0) {
+      console.log(`   ⚠️  数据库中只有 ${keyTableCount}/5 个关键表，将创建缺失的表...`);
     }
     
     // 5. 创建表结构 (仅当没有表或重置时执行)

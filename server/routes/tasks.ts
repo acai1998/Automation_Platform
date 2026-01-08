@@ -52,7 +52,7 @@ router.get('/', async (req, res) => {
       SELECT t.*, p.name as project_name, u.display_name as created_by_name, e.name as environment_name
       FROM tasks t
       LEFT JOIN projects p ON t.project_id = p.id
-      LEFT JOIN Auto_Users u ON t.created_by = u.id
+      LEFT JOIN users u ON t.created_by = u.id
       LEFT JOIN environments e ON t.environment_id = e.id
       WHERE 1=1
     `;
@@ -91,7 +91,7 @@ router.get('/:id', async (req, res) => {
       SELECT t.*, p.name as project_name, u.display_name as created_by_name, e.name as environment_name
       FROM tasks t
       LEFT JOIN projects p ON t.project_id = p.id
-      LEFT JOIN Auto_Users u ON t.created_by = u.id
+      LEFT JOIN users u ON t.created_by = u.id
       LEFT JOIN environments e ON t.environment_id = e.id
       WHERE t.id = ?
     `, [id]);
@@ -108,7 +108,7 @@ router.get('/:id', async (req, res) => {
         if (caseIds.length > 0) {
           const placeholders = caseIds.map(() => '?').join(',');
           cases = await query<TestCase[]>(
-            `SELECT id, name, type, status, priority FROM Auto_TestCase WHERE id IN (${placeholders})`,
+            `SELECT id, name, type, status, priority FROM test_cases WHERE id IN (${placeholders})`,
             caseIds
           );
         }
@@ -289,7 +289,7 @@ router.get('/:id/executions', async (req, res) => {
     const data = await query<TaskExecution[]>(`
       SELECT te.*, u.display_name as executed_by_name
       FROM task_executions te
-      LEFT JOIN Auto_Users u ON te.executed_by = u.id
+      LEFT JOIN users u ON te.executed_by = u.id
       WHERE te.task_id = ?
       ORDER BY te.start_time DESC
       LIMIT ?
