@@ -1,9 +1,8 @@
 import { useState, useMemo } from 'react';
-import { Plus, Search, RefreshCw, Github, Trash2, Edit, Copy, Check, ExternalLink, Package, CheckCircle, PauseCircle, Archive } from 'lucide-react';
+import { Plus, Search, RefreshCw, Github, Trash2, Package, CheckCircle, PauseCircle, Archive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Tooltip } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import GitHubRepositoryForm from '@/components/GitHubRepositoryForm';
 import GitHubRepositoryTable from '@/components/GitHubRepositoryTable';
