@@ -65,6 +65,21 @@ router.get('/test-runs', async (req, res) => {
 });
 
 /**
+ * GET /api/executions/:id/results
+ * 获取执行批次的用例结果列表
+ */
+router.get('/:id/results', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const results = await executionService.getBatchExecutionResults(id);
+    res.json({ success: true, data: results });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
  * GET /api/executions/:id
  * 获取执行详情
  */

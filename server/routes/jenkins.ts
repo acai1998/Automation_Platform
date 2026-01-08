@@ -228,7 +228,7 @@ router.get('/status/:executionId', async (req, res) => {
  */
 router.post('/callback', async (req, res) => {
   try {
-    const { runId, status, passedCases = 0, failedCases = 0, skippedCases = 0, durationMs = 0 } = req.body;
+    const { runId, status, passedCases = 0, failedCases = 0, skippedCases = 0, durationMs = 0, results = [] } = req.body;
 
     if (!runId || !status) {
       return res.status(400).json({
@@ -244,6 +244,7 @@ router.post('/callback', async (req, res) => {
       failedCases,
       skippedCases,
       durationMs,
+      results,
     });
 
     res.json({ success: true, message: 'Callback processed successfully' });

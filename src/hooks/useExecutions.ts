@@ -21,6 +21,24 @@ export interface TestRunRecord {
   created_at: string;
 }
 
+export interface Auto_TestRunResults {
+  id: number;
+  execution_id: number;
+  case_id: number;
+  case_name: string;
+  module: string;
+  priority: string;
+  type: string;
+  status: 'passed' | 'failed' | 'skipped' | 'error' | 'pending';
+  start_time: string;
+  end_time: string;
+  duration: number;
+  error_message: string;
+  error_stack: string;
+  screenshot_path: string;
+  log_path: string;
+}
+
 interface TestRunsResponse {
   success: boolean;
   data: TestRunRecord[];
@@ -38,5 +56,31 @@ export function useTestRuns(page = 1, pageSize = 10) {
       return result;
     },
     keepPreviousData: true,
+  });
+}
+
+export function useTestRunDetail(id: number) {
+  return useQuery<{ success: boolean; data: TestRunRecord }>({
+    queryKey: ['test-run', id],
+    queryFn: async () => {
+      const response = await fetch(`/api/jenkins/batch/${id}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || '获取详情失败');
+      return result;
+    },
+    enabled: !!id,
+  });
+}
+
+export function useTestRunResults(id: number) {
+  return useQuery<{ success: boolean; data: Auto_TestRunResults[] }>({
+    queryKey: ['test-run-results', id],
+    queryFn: async () => {
+      const response = await fetch(`/api/executions/${id}/results`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || '获取结果失败');
+      return result;
+    },
+    enabled: !!id,
   });
 }

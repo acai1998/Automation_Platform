@@ -19,6 +19,7 @@ import UICases from "./pages/cases/UICases";
 import PerformanceCases from "./pages/cases/PerformanceCases";
 import Tasks from "./pages/tasks/Tasks";
 import Reports from "./pages/reports/Reports";
+import ReportDetail from "./pages/reports/ReportDetail";
 import { Boxes, BarChart3, Settings, User } from "lucide-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -45,6 +46,10 @@ function TasksPage() {
 
 function ReportsPage() {
   return <Reports />;
+}
+
+function ReportDetailPage() {
+  return <ReportDetail />;
 }
 
 function SettingsPage() {
@@ -129,6 +134,13 @@ function Router() {
         <ProtectedRoute>
           <Layout>
             <ReportsPage />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/reports/:id">
+        <ProtectedRoute>
+          <Layout>
+            <ReportDetailPage />
           </Layout>
         </ProtectedRoute>
       </Route>

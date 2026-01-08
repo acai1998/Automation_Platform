@@ -1,4 +1,5 @@
 import { useState, ReactNode } from 'react';
+import { Link } from 'wouter';
 import { 
   BarChart3, 
   Search, 
@@ -180,9 +181,11 @@ export default function Reports() {
                               </a>
                             </Button>
                           )}
-                          <Button variant="outline" size="sm" className="h-8 gap-1.5">
-                            <FileText className="h-3.5 w-3.5" />
-                            详情
+                          <Button variant="outline" size="sm" className="h-8 gap-1.5" asChild>
+                            <Link href={`/reports/${record.id}`}>
+                              <FileText className="h-3.5 w-3.5" />
+                              详情
+                            </Link>
                           </Button>
                         </div>
                       </td>
@@ -207,8 +210,10 @@ export default function Reports() {
                           {record.project_name || '未分类'}
                         </h3>
                       </div>
-                      <Button variant="outline" size="icon" className="h-8 w-8 shrink-0">
-                        <FileText className="h-4 w-4" />
+                      <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" asChild>
+                        <Link href={`/reports/${record.id}`}>
+                          <FileText className="h-4 w-4" />
+                        </Link>
                       </Button>
                     </div>
                     <div className="grid grid-cols-2 gap-y-2 text-xs text-slate-500 dark:text-slate-400">

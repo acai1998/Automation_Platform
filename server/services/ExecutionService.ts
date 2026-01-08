@@ -25,7 +25,7 @@ export interface ExecutionProgress {
   status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 }
 
-export interface CaseResultInput {
+export interface Auto_TestRunResultsInput {
   caseId: number;
   caseName: string;
   status: 'passed' | 'failed' | 'skipped' | 'error';
@@ -36,7 +36,7 @@ export interface CaseResultInput {
 export interface ExecutionCallbackInput {
   executionId: number;
   status: 'success' | 'failed' | 'cancelled';
-  results: CaseResultInput[];
+  results: Auto_TestRunResultsInput[];
   duration: number;
   reportUrl?: string;
 }
@@ -200,11 +200,11 @@ export class ExecutionService {
       WHERE te.id = ?
     `, [executionId]);
 
-    const caseResults = await query(`
+    const Auto_TestRunResultss = await query(`
       SELECT * FROM case_results WHERE execution_id = ? ORDER BY id
     `, [executionId]);
 
-    return { execution, caseResults };
+    return { execution, Auto_TestRunResultss };
   }
 
   /**
@@ -270,9 +270,23 @@ export class ExecutionService {
     ]);
 
     const insertResult = result as { insertId: number };
+    const runId = insertResult.insertId;
+
+    // 3. 批量插入 Auto_TestRunResults 记录（状态为 pending）
+    for (const testCase of cases) {
+      await pool.execute(`
+        INSERT INTO case_results (
+          execution_id, case_id, case_name, status, created_at
+        ) VALUES (?, ?, ?, 'pending', NOW())
+      `, [
+        runId,
+        testCase.id,
+        testCase.name
+      ]);
+    }
 
     return {
-      runId: insertResult.insertId,
+      runId,
       totalCases: cases.length,
     };
   }
@@ -293,6 +307,21 @@ export class ExecutionService {
     }
 
     return { execution };
+  }
+
+  /**
+   * 获取批次执行结果列表
+   */
+  async getBatchExecutionResults(runId: number) {
+    const results = await query(`
+      SELECT cr.*, atc.module, atc.priority, atc.type
+      FROM case_results cr
+      LEFT JOIN Auto_TestCase atc ON cr.case_id = atc.id
+      WHERE cr.execution_id = ?
+      ORDER BY cr.id
+    `, [runId]);
+
+    return results;
   }
 
   /**
@@ -319,8 +348,11 @@ export class ExecutionService {
     failedCases: number;
     skippedCases: number;
     durationMs: number;
+    results?: Auto_TestRunResultsInput[];
   }): Promise<void> {
     const pool = getPool();
+    
+    // 1. 更新 Auto_TestRun
     await pool.execute(`
       UPDATE Auto_TestRun
       SET status = ?, passed_cases = ?, failed_cases = ?, skipped_cases = ?,
@@ -334,6 +366,44 @@ export class ExecutionService {
       results.durationMs,
       runId,
     ]);
+
+    // 2. 如果有详细结果，更新 case_results
+    if (results.results && results.results.length > 0) {
+      for (const result of results.results) {
+        // 尝试更新
+        const [updateResult] = await pool.execute(`
+          UPDATE case_results
+          SET status = ?, duration = ?, error_message = ?, 
+              start_time = NOW(), end_time = NOW()
+          WHERE execution_id = ? AND case_id = ?
+        `, [
+          result.status,
+          result.duration,
+          result.errorMessage || null,
+          runId,
+          result.caseId
+        ]);
+
+        const affectedRows = (updateResult as any).affectedRows;
+
+        // 如果没有更新到记录（可能是新用例，或者之前没有插入），则插入
+        if (affectedRows === 0) {
+          await pool.execute(`
+            INSERT INTO case_results (
+              execution_id, case_id, case_name, status, duration, error_message,
+              start_time, end_time, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
+          `, [
+            runId,
+            result.caseId,
+            result.caseName,
+            result.status,
+            result.duration,
+            result.errorMessage || null
+          ]);
+        }
+      }
+    }
   }
 
   /**
