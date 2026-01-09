@@ -210,23 +210,31 @@ export class DashboardService {
    * 获取最近测试运行
    */
   async getRecentRuns(limit: number = 10) {
-    return query(`
-      SELECT
-        r.id,
-        r.task_name as suiteName,
-        r.status,
-        r.duration * 1000 as duration,
-        r.start_time as startTime,
-        r.total_cases as totalCases,
-        r.passed_cases as passedCases,
-        r.failed_cases as failedCases,
-        u.display_name as executedBy,
-        u.id as executedById
-      FROM Auto_TestCaseTaskExecutions r
-      LEFT JOIN users u ON r.executed_by = u.id
-      ORDER BY r.start_time DESC
-      LIMIT ?
-    `, [limit]);
+    try {
+      return query(`
+        SELECT
+          r.id,
+          r.task_name as suiteName,
+          r.status,
+          r.duration * 1000 as duration,
+          r.start_time as startTime,
+          r.total_cases as totalCases,
+          r.passed_cases as passedCases,
+          r.failed_cases as failedCases,
+          u.display_name as executedBy,
+          u.id as executedById
+        FROM Auto_TestCaseTaskExecutions r
+        LEFT JOIN Auto_Users u ON r.executed_by = u.id
+        ORDER BY r.start_time DESC
+        LIMIT ?
+      `, [limit]);
+    } catch (error: unknown) {
+      console.error('DashboardService.getRecentRuns failed:', {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw error;
+    }
   }
 
   /**
@@ -256,7 +264,7 @@ export class DashboardService {
     `, [targetDate]);
 
     const activeCases = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM test_cases WHERE status = 'active'
+      SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
     `);
 
     const totalCasesRun = stats?.totalCasesRun ?? 0;

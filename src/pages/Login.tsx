@@ -231,6 +231,8 @@ export default function Login() {
         <div className="flex items-center justify-between">
           <label className="flex items-center gap-2.5 cursor-pointer transition-colors hover:text-slate-900 dark:hover:text-white">
             <input
+              id="remember"
+              name="remember"
               type="checkbox"
               className="h-4 w-4 cursor-pointer rounded border-slate-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0 dark:border-slate-600 dark:bg-slate-700 dark:checked:bg-blue-600"
               checked={remember}
