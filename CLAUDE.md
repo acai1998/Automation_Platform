@@ -17,9 +17,6 @@ npm run server
 # 构建生产环境的前端代码
 npm run build
 
-# 数据库管理
-npm run db:init    # 使用 schema 和种子数据初始化数据库
-npm run db:reset   # 重置数据库（删除并重新创建）
 ```
 
 ## 类型检查
@@ -67,12 +64,15 @@ npx tsc --noEmit -p tsconfig.server.json
 - `POST /api/executions/:id/start` — 标记执行开始运行
 
 ## 数据库结构
-关键表定义位于 `server/config/database.ts` ：
-- `Auto_TestCase` — 测试用例资产表
-- `Auto_TestRun` — 测试执行批次表
-- `Auto_TestRunResults` — 测试用例执行结果表
-- `Auto_TestCaseTaskExecutions` — 测试任务执行记录表
-- `Auto_TestCaseDailySummaries` — 测试用例每日统计汇总表
+远程 MariaDB 数据库中的关键表：
+- `Auto_TestCase` — 测试用例资产表（远程表）
+- `Auto_Users` — 用户表（远程表）
+- `Auto_TestRun` — 测试执行批次表（远程表）
+- `Auto_TestRunResults` — 测试用例执行结果表（远程表）
+- `Auto_TestCaseTaskExecutions` — 测试任务执行记录表（远程表）
+- `Auto_TestCaseDailySummaries` — 测试用例每日统计汇总表（远程表）
+
+**注意**：数据库表结构由 DBA 统一管理，本地不进行表结构初始化。
 
 ## 路径别名配置
 

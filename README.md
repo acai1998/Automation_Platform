@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/TypeScript-5.3-3178C6?logo=typescript" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Vite-5.0-646CFF?logo=vite" alt="Vite" />
   <img src="https://img.shields.io/badge/Express-4.18-000000?logo=express" alt="Express" />
-  <img src="https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite" alt="SQLite" />
+  <img src="https://img.shields.io/badge/MariaDB-10.x-003545?logo=mariadb" alt="MariaDB" />
   <img src="https://img.shields.io/badge/TailwindCSS-3.4-06B6D4?logo=tailwindcss" alt="TailwindCSS" />
 </p>
 
@@ -37,7 +37,7 @@
 | 技术 | 说明 |
 |------|------|
 | Express | Node.js Web 框架 |
-| SQLite | 轻量级数据库 (better-sqlite3) |
+| MariaDB | 企业级关系数据库 (mysql2) |
 | tsx | TypeScript 运行时 |
 
 ## 🚀 快速开始
