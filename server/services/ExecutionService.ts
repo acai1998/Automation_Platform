@@ -6,6 +6,15 @@ export interface TaskExecutionInput {
   triggerType: 'manual' | 'scheduled' | 'ci_triggered';
 }
 
+export interface CaseExecutionInput {
+  caseIds: number[];
+  projectId: number;
+  triggeredBy: number;
+  triggerType: 'manual' | 'jenkins' | 'schedule';
+  jenkinsJob?: string;
+  runConfig?: Record<string, unknown>;
+}
+
 export interface ExecutionProgress {
   executionId: number;
   totalCases: number;
@@ -16,7 +25,7 @@ export interface ExecutionProgress {
   status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 }
 
-export interface CaseResultInput {
+export interface Auto_TestRunResultsInput {
   caseId: number;
   caseName: string;
   status: 'passed' | 'failed' | 'skipped' | 'error';
@@ -27,7 +36,7 @@ export interface CaseResultInput {
 export interface ExecutionCallbackInput {
   executionId: number;
   status: 'success' | 'failed' | 'cancelled';
-  results: CaseResultInput[];
+  results: Auto_TestRunResultsInput[];
   duration: number;
   reportUrl?: string;
 }
@@ -191,11 +200,11 @@ export class ExecutionService {
       WHERE te.id = ?
     `, [executionId]);
 
-    const caseResults = await query(`
+    const Auto_TestRunResultss = await query(`
       SELECT * FROM case_results WHERE execution_id = ? ORDER BY id
     `, [executionId]);
 
-    return { execution, caseResults };
+    return { execution, Auto_TestRunResultss };
   }
 
   /**
@@ -221,6 +230,220 @@ export class ExecutionService {
       SET status = 'cancelled', end_time = NOW()
       WHERE id = ? AND status IN ('pending', 'running')
     `, [executionId]);
+  }
+
+  /**
+   * 触发用例执行，向 Auto_TestRun 表写入运行记录
+   */
+  async triggerTestExecution(input: CaseExecutionInput): Promise<{ runId: number; totalCases: number }> {
+    const pool = getPool();
+
+    // 1. 验证用例是否存在并获取用例信息
+    if (input.caseIds.length === 0) {
+      throw new Error('Case IDs cannot be empty');
+    }
+
+    const placeholders = input.caseIds.map(() => '?').join(',');
+    const cases = await query<{ id: number; name: string; type: string; script_path: string | null }[]>(
+      `SELECT id, name, type, script_path FROM Auto_TestCase WHERE id IN (${placeholders}) AND enabled = 1`,
+      input.caseIds
+    );
+
+    if (!cases || cases.length === 0) {
+      throw new Error(`No active test cases found with IDs: ${input.caseIds.join(',')}`);
+    }
+
+    // 2. 创建运行记录到 Auto_TestRun 表
+    const runConfig = input.runConfig ? JSON.stringify(input.runConfig) : null;
+    const [result] = await pool.execute(`
+      INSERT INTO Auto_TestRun (
+        project_id, trigger_type, trigger_by, jenkins_job, status,
+        run_config, total_cases, created_at
+      ) VALUES (?, ?, ?, ?, 'pending', ?, ?, NOW())
+    `, [
+      input.projectId,
+      input.triggerType,
+      input.triggeredBy,
+      input.jenkinsJob || null,
+      runConfig,
+      cases.length,
+    ]);
+
+    const insertResult = result as { insertId: number };
+    const runId = insertResult.insertId;
+
+    // 3. 批量插入 Auto_TestRunResults 记录（状态为 pending）
+    for (const testCase of cases) {
+      await pool.execute(`
+        INSERT INTO case_results (
+          execution_id, case_id, case_name, status, created_at
+        ) VALUES (?, ?, ?, 'pending', NOW())
+      `, [
+        runId,
+        testCase.id,
+        testCase.name
+      ]);
+    }
+
+    return {
+      runId,
+      totalCases: cases.length,
+    };
+  }
+
+  /**
+   * 获取批次执行详情
+   */
+  async getBatchExecution(runId: number) {
+    const execution = await queryOne(`
+      SELECT atr.*, u.display_name as trigger_by_name
+      FROM Auto_TestRun atr
+      LEFT JOIN Auto_Users u ON atr.trigger_by = u.id
+      WHERE atr.id = ?
+    `, [runId]);
+
+    if (!execution) {
+      throw new Error(`Execution not found: ${runId}`);
+    }
+
+    return { execution };
+  }
+
+  /**
+   * 获取批次执行结果列表
+   */
+  async getBatchExecutionResults(runId: number) {
+    const results = await query(`
+      SELECT cr.*, atc.module, atc.priority, atc.type
+      FROM case_results cr
+      LEFT JOIN Auto_TestCase atc ON cr.case_id = atc.id
+      WHERE cr.execution_id = ?
+      ORDER BY cr.id
+    `, [runId]);
+
+    return results;
+  }
+
+  /**
+   * 更新执行批次的Jenkins信息
+   */
+  async updateBatchJenkinsInfo(runId: number, jenkinsInfo: {
+    buildId: string;
+    buildUrl: string;
+  }): Promise<void> {
+    const pool = getPool();
+    await pool.execute(`
+      UPDATE Auto_TestRun
+      SET jenkins_build_id = ?, jenkins_url = ?, status = 'running', start_time = NOW()
+      WHERE id = ?
+    `, [jenkinsInfo.buildId, jenkinsInfo.buildUrl, runId]);
+  }
+
+  /**
+   * 完成执行批次
+   */
+  async completeBatchExecution(runId: number, results: {
+    status: 'success' | 'failed' | 'aborted';
+    passedCases: number;
+    failedCases: number;
+    skippedCases: number;
+    durationMs: number;
+    results?: Auto_TestRunResultsInput[];
+  }): Promise<void> {
+    const pool = getPool();
+    
+    // 1. 更新 Auto_TestRun
+    await pool.execute(`
+      UPDATE Auto_TestRun
+      SET status = ?, passed_cases = ?, failed_cases = ?, skipped_cases = ?,
+          duration_ms = ?, end_time = NOW()
+      WHERE id = ?
+    `, [
+      results.status,
+      results.passedCases,
+      results.failedCases,
+      results.skippedCases,
+      results.durationMs,
+      runId,
+    ]);
+
+    // 2. 如果有详细结果，更新 case_results
+    if (results.results && results.results.length > 0) {
+      for (const result of results.results) {
+        // 尝试更新
+        const [updateResult] = await pool.execute(`
+          UPDATE case_results
+          SET status = ?, duration = ?, error_message = ?, 
+              start_time = NOW(), end_time = NOW()
+          WHERE execution_id = ? AND case_id = ?
+        `, [
+          result.status,
+          result.duration,
+          result.errorMessage || null,
+          runId,
+          result.caseId
+        ]);
+
+        const affectedRows = (updateResult as any).affectedRows;
+
+        // 如果没有更新到记录（可能是新用例，或者之前没有插入），则插入
+        if (affectedRows === 0) {
+          await pool.execute(`
+            INSERT INTO case_results (
+              execution_id, case_id, case_name, status, duration, error_message,
+              start_time, end_time, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
+          `, [
+            runId,
+            result.caseId,
+            result.caseName,
+            result.status,
+            result.duration,
+            result.errorMessage || null
+          ]);
+        }
+      }
+    }
+  }
+
+  /**
+   * 获取执行批次的用例列表
+   */
+  async getBatchCases(runId: number) {
+    const batch = await queryOne<{ total_cases: number }>(`
+      SELECT total_cases FROM Auto_TestRun WHERE id = ?
+    `, [runId]);
+
+    if (!batch) {
+      throw new Error(`Batch not found: ${runId}`);
+    }
+
+    // 注意：这里需要补充存储关联用例ID的逻辑
+    // 如果在 Auto_TestRun 中添加 case_ids 字段，可以解析获取用例
+    return { totalCases: batch.total_cases };
+  }
+
+  /**
+   * 获取所有测试运行记录（Auto_TestRun 表）
+   */
+  async getAllTestRuns(limit = 50, offset = 0) {
+    const sql = `
+      SELECT atr.*, p.name as project_name, u.display_name as trigger_by_name
+      FROM Auto_TestRun atr
+      LEFT JOIN projects p ON atr.project_id = p.id
+      LEFT JOIN Auto_Users u ON atr.trigger_by = u.id
+      ORDER BY atr.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    const data = await query(sql, [limit, offset]);
+    
+    const countSql = 'SELECT COUNT(*) as total FROM Auto_TestRun';
+    const countResult = await queryOne<{ total: number }>(countSql);
+    
+    return {
+      data,
+      total: countResult?.total ?? 0
+    };
   }
 
   /**

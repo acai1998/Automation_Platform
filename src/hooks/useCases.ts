@@ -6,11 +6,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 export type CaseType = 'api' | 'ui' | 'performance';
 
 /**
- * 用例运行状态
- */
-export type RunningStatus = 'idle' | 'running';
-
-/**
  * 用例数据接口
  */
 export interface TestCase {
@@ -23,7 +18,6 @@ export interface TestCase {
   priority: 'P0' | 'P1' | 'P2' | 'P3';
   type: CaseType;
   status: 'active' | 'inactive' | 'deprecated';
-  running_status: RunningStatus;
   tags: string | null;
   owner: string | null;
   script_path: string | null;
@@ -127,51 +121,6 @@ export function useRunCase() {
       // 刷新用例列表以更新状态
       queryClient.invalidateQueries({ queryKey: ['cases'] });
     },
-  });
-}
-
-/**
- * 更新用例状态 Hook
- */
-export function useUpdateCaseStatus() {
-  const queryClient = useQueryClient();
-
-  return useMutation<{ success: boolean }, Error, { caseId: number; status: RunningStatus }>({
-    mutationFn: async ({ caseId, status }) => {
-      const response = await fetch(`/api/cases/${caseId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ running_status: status }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to update case status');
-      }
-
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cases'] });
-    },
-  });
-}
-
-/**
- * 获取正在运行的用例 Hook
- */
-export function useRunningCases() {
-  return useQuery<{ success: boolean; data: Pick<TestCase, 'id' | 'name' | 'type' | 'running_status'>[] }>({
-    queryKey: ['cases', 'running'],
-    queryFn: async () => {
-      const response = await fetch('/api/cases/running/list');
-      if (!response.ok) {
-        throw new Error('Failed to fetch running cases');
-      }
-      return response.json();
-    },
-    refetchInterval: 5000, // 每 5 秒轮询一次
   });
 }
 

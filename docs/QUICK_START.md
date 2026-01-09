@@ -1,324 +1,271 @@
-# 🚀 远程仓库同步功能 - 快速开始指南
+# 快速开始指南
 
-## 📱 访问方式
+## 5分钟快速部署
 
-### 前端界面
-```
-http://localhost:5173/repositories
-```
+### 步骤 1: 验证后端配置
 
-### 后端 API
-```
-http://localhost:3000/api/repositories
-```
-
----
-
-## 🎯 核心功能
-
-### 1️⃣ 创建仓库配置
-
-**通过 UI**:
-1. 点击"新建仓库"按钮
-2. 填写以下信息：
-   - 仓库名称 ✓
-   - 仓库地址 ✓
-   - 脚本类型（JavaScript/Python/Java）
-   - 分支（默认 main）
-   - 脚本路径模式（可选，默认 `**/*.{js,ts,py,java}`）
-3. 点击"测试"验证连接
-4. 点击"创建"保存
-
-**通过 API**:
 ```bash
-curl -X POST http://localhost:3000/api/repositories \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "我的测试仓库",
-    "repo_url": "https://github.com/user/test-scripts.git",
-    "branch": "main",
-    "script_type": "javascript"
-  }'
+# 确认 .env 文件中的 Jenkins 配置
+cat .env | grep JENKINS
+
+# 输出应该包含:
+# JENKINS_URL=https://jenkins.wiac.xyz
+# JENKINS_USER=root
+# JENKINS_TOKEN=your_token
+# JENKINS_JOB_API=SeleniumBaseCi-AutoTest
 ```
 
-### 2️⃣ 同步脚本
+### 步骤 2: 启动后端服务
 
-**通过 UI**:
-1. 在仓库列表中找到要同步的仓库
-2. 点击闪电⚡图标
-
-**通过 API**:
 ```bash
-curl -X POST http://localhost:3000/api/repositories/1/sync \
-  -H "Content-Type: application/json" \
-  -d '{"triggeredBy": 1}'
+# 从项目根目录
+npm run server
+
+# 输出应该显示:
+# Server listening on http://localhost:3000
 ```
 
-### 3️⃣ 查看同步结果
+### 步骤 3: 启动前端开发服务器
 
-**通过 UI**:
-- 查看"最后同步"列显示的时间和状态
-- 点击仓库查看详细的同步日志
-
-**通过 API**:
 ```bash
-curl http://localhost:3000/api/repositories/1/sync-logs
+# 新开一个终端窗口
+npm run dev
+
+# 输出应该显示:
+# VITE v... ready in ... ms
+# ➜ Local: http://localhost:5173
 ```
 
----
+### 步骤 4: 验证API连接
 
-## 📋 支持的脚本类型
+```bash
+# 测试 Jenkins 连接
+curl -X POST http://localhost:3000/api/health
 
-### JavaScript/TypeScript
-```javascript
-describe('登录功能', () => {
-  it('应该成功登录', () => {
-    // 测试代码
-  });
-});
+# 应该返回:
+# {"status": "ok"}
 ```
 
-### Python
-```python
-class TestLogin(unittest.TestCase):
-    def test_login_success(self):
-        # 测试代码
-        pass
-```
+### 步骤 5: 在前端集成执行功能
 
-### Java
-```java
-public class LoginTest {
-    @Test
-    public void testLoginSuccess() {
-        // 测试代码
+在您的用例管理页面中添加以下代码:
+
+```tsx
+import { useTestExecution } from '@/hooks/useExecuteCase';
+import { ExecutionModal } from '@/components/cases/ExecutionModal';
+import { ExecutionProgress } from '@/components/cases/ExecutionProgress';
+
+export function MyTestCasesPage() {
+  const [showModal, setShowModal] = useState(false);
+  const [showProgress, setShowProgress] = useState(false);
+  const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
+
+  const { runId, executeCase, batchInfo, isFetchingBatch } = useTestExecution();
+
+  const handleExecute = (caseId: number) => {
+    setSelectedCaseId(caseId);
+    setShowModal(true);
+  };
+
+  const handleConfirm = async () => {
+    if (selectedCaseId) {
+      await executeCase(selectedCaseId, 1); // projectId = 1
+      setShowModal(false);
+      setShowProgress(true);
     }
+  };
+
+  return (
+    <>
+      <button onClick={() => handleExecute(1)}>执行用例1</button>
+
+      <ExecutionModal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        onConfirm={handleConfirm}
+        caseCount={1}
+      />
+
+      <ExecutionProgress
+        isOpen={showProgress}
+        onClose={() => setShowProgress(false)}
+        batchInfo={batchInfo}
+        isLoading={isFetchingBatch}
+      />
+    </>
+  );
 }
 ```
 
----
+## 测试流程
 
-## 🔄 工作流程
-
-```
-┌─────────────────────────────────────────┐
-│ 1. 创建仓库配置                          │
-│    (输入 Git URL、选择脚本类型)          │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│ 2. 测试连接                             │
-│    (验证 Git URL 有效性)                │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│ 3. 触发同步                             │
-│    (克隆/拉取仓库代码)                  │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│ 4. 扫描脚本文件                         │
-│    (按路径模式查找脚本)                 │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│ 5. 解析脚本                             │
-│    (提取测试用例信息)                   │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│ 6. 创建/更新用例                        │
-│    (保存到数据库)                       │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│ 7. 完成同步                             │
-│    (记录日志，更新状态)                 │
-└─────────────────────────────────────────┘
-```
-
----
-
-## 💡 使用示例
-
-### 示例 1: 同步 JavaScript 测试脚本
+### 测试1: 单用例执行
 
 ```bash
-# 1. 创建仓库配置
-curl -X POST http://localhost:3000/api/repositories \
+curl -X POST http://localhost:3000/api/jenkins/run-case \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "前端测试脚本",
-    "repo_url": "https://github.com/user/frontend-tests.git",
-    "branch": "main",
-    "script_type": "javascript",
-    "script_path_pattern": "tests/**/*.test.js"
-  }'
-
-# 2. 同步脚本
-curl -X POST http://localhost:3000/api/repositories/1/sync
-
-# 3. 查看结果
-curl http://localhost:3000/api/repositories/1/sync-logs
-```
-
-### 示例 2: 同步 Python 测试脚本
-
-```bash
-# 创建 Python 脚本仓库配置
-curl -X POST http://localhost:3000/api/repositories \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Python 测试脚本",
-    "repo_url": "https://github.com/user/python-tests.git",
-    "branch": "develop",
-    "script_type": "python",
-    "script_path_pattern": "tests/**/*.py"
+    "caseId": 1,
+    "projectId": 1,
+    "triggeredBy": 1
   }'
 ```
 
----
-
-## ⚙️ 配置选项
-
-| 选项 | 说明 | 示例 |
-|------|------|------|
-| `name` | 仓库配置名称 | "我的测试脚本库" |
-| `repo_url` | Git 仓库地址 | "https://github.com/user/repo.git" |
-| `branch` | 分支名称 | "main", "develop" |
-| `script_type` | 脚本类型 | "javascript", "python", "java" |
-| `script_path_pattern` | 文件匹配模式 | "tests/**/*.js" |
-| `auto_create_cases` | 自动创建用例 | true / false |
-| `sync_interval` | 同步间隔（秒） | 0 = 手动, 3600 = 每小时 |
-
----
-
-## 🎨 UI 界面说明
-
-### 仓库列表
-
-| 列 | 说明 |
-|----|------|
-| 仓库名称 | 配置的仓库名称和描述 |
-| 仓库地址 | Git 仓库 URL |
-| 脚本类型 | javascript/python/java/other |
-| 状态 | 活跃/停用/错误 |
-| 最后同步 | 上次同步时间和结果 |
-| 操作 | 同步/编辑/删除 |
-
-### 操作按钮
-
-- ⚡ **同步** - 手动触发脚本同步
-- ✏️ **编辑** - 修改仓库配置
-- 🗑️ **删除** - 删除仓库配置
-
----
-
-## 📊 同步结果示例
-
+预期返回:
 ```json
 {
-  "syncLogId": 1,
-  "status": "success",
-  "totalFiles": 42,
-  "addedFiles": 10,
-  "modifiedFiles": 5,
-  "deletedFiles": 2,
-  "createdCases": 8,
-  "updatedCases": 3,
-  "conflicts": 0,
-  "duration": 15,
-  "message": "Sync completed successfully"
+  "success": true,
+  "data": {
+    "runId": 123,
+    "buildUrl": "http://jenkins.wiac.xyz/job/.../45/"
+  }
 }
 ```
 
----
+### 测试2: 查询执行进度
 
-## 🔧 常见操作
-
-### 查看所有仓库
 ```bash
-curl http://localhost:3000/api/repositories
+curl http://localhost:3000/api/jenkins/batch/123
 ```
 
-### 查看特定仓库
-```bash
-curl http://localhost:3000/api/repositories/1
-```
-
-### 编辑仓库配置
-```bash
-curl -X PUT http://localhost:3000/api/repositories/1 \
-  -H "Content-Type: application/json" \
-  -d '{"branch": "develop"}'
-```
-
-### 删除仓库配置
-```bash
-curl -X DELETE http://localhost:3000/api/repositories/1
-```
-
-### 测试连接
-```bash
-curl -X POST http://localhost:3000/api/repositories/1/test-connection \
-  -H "Content-Type: application/json" \
-  -d '{"repo_url":"https://github.com/user/repo.git"}'
-```
-
-### 获取分支列表
-```bash
-curl http://localhost:3000/api/repositories/1/branches
-```
-
----
-
-## ⚠️ 常见问题
-
-### Q: 同步失败了怎么办？
-A: 检查以下几点：
-1. Git 仓库 URL 是否正确
-2. 网络连接是否正常
-3. 查看同步日志中的错误信息
-4. 确保有足够的磁盘空间
-
-### Q: 如何只同步特定目录的脚本？
-A: 使用 `script_path_pattern` 配置：
+预期返回:
 ```json
 {
-  "script_path_pattern": "tests/**/*.js"
+  "success": true,
+  "data": {
+    "id": 123,
+    "status": "running",
+    "total_cases": 1,
+    "passed_cases": 0,
+    "failed_cases": 0,
+    "start_time": "2024-01-08 10:00:00"
+  }
 }
 ```
 
-### Q: 支持哪些 Git 认证方式？
-A: 目前支持：
-- ✅ HTTPS (无认证)
-- ✅ SSH (预留支持)
-- ✅ Token (预留支持)
+### 测试3: 批量执行
 
-### Q: 同步会删除本地的测试用例吗？
-A: 不会。同步只会创建或更新用例，不会删除已存在的用例。
+```bash
+curl -X POST http://localhost:3000/api/jenkins/run-batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "caseIds": [1, 2, 3],
+    "projectId": 1,
+    "triggeredBy": 1
+  }'
+```
 
-### Q: 可以同时同步多个仓库吗？
-A: 可以。每个仓库配置是独立的，可以分别触发同步。
+## 故障排查
+
+### 问题1: API 返回 "Jenkins connection failed"
+
+```bash
+# 检查 Jenkins URL 是否正确
+echo $JENKINS_URL
+
+# 测试 Jenkins 连接
+curl -u root:$JENKINS_TOKEN $JENKINS_URL/api/json
+
+# 如果失败，更新 .env 中的 JENKINS_URL
+```
+
+### 问题2: 执行后一直显示 "loading"
+
+```bash
+# 检查后台轮询日志
+# 查看浏览器控制台
+# 应该看到间隔3秒的 API 请求
+
+# 手动查询执行状态
+curl http://localhost:3000/api/jenkins/batch/123
+
+# 如果返回 404，说明 runId 错误
+```
+
+### 问题3: Jenkins 回调失败
+
+```bash
+# 检查回调 URL 是否可访问
+curl -X POST http://localhost:3000/api/jenkins/callback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "runId": 123,
+    "status": "success",
+    "passedCases": 1,
+    "failedCases": 0
+  }'
+
+# 应该返回: {"success": true}
+```
+
+## 下一步
+
+1. **集成到页面**: 在用例列表页面添加执行按钮
+2. **自定义样式**: 修改组件的颜色和文案
+3. **添加权限**: 实现 API 认证
+4. **监控告警**: 添加执行失败告警
+5. **定时任务**: 配置定时执行计划
+
+## 常用命令
+
+```bash
+# 启动完整应用(前端+后端)
+npm run start
+
+# 仅启动前端
+npm run dev
+
+# 仅启动后端
+npm run server
+
+# 类型检查
+npx tsc --noEmit -p tsconfig.json  # 前端
+npx tsc --noEmit -p tsconfig.server.json  # 后端
+
+# 重置数据库
+npm run db:reset
+
+# 构建生产版本
+npm run build
+```
+
+## 环境变量模板
+
+创建 `.env` 文件:
+
+```env
+# 应用配置
+NODE_ENV=development
+PORT=3000
+
+# 数据库配置
+DB_HOST=117.72.182.23
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=autotest
+
+# Jenkins 配置
+JENKINS_URL=https://jenkins.wiac.xyz
+JENKINS_USER=root
+JENKINS_TOKEN=your_api_token
+JENKINS_JOB_API=SeleniumBaseCi-AutoTest
+JENKINS_JOB_UI=ui-automation
+JENKINS_JOB_PERF=performance-automation
+
+# 回调配置
+API_CALLBACK_URL=http://localhost:3000/api/jenkins/callback
+```
+
+## 支持
+
+遇到问题？
+
+1. 查看 [完整集成指南](./JENKINS_INTEGRATION.md)
+2. 查看 [前端集成指南](./FRONTEND_INTEGRATION_GUIDE.md)
+3. 查看 [实现总结](./IMPLEMENTATION_SUMMARY.md)
+4. 查看 [技术清单](./TECHNICAL_CHECKLIST.md)
 
 ---
 
-## 📚 更多资源
-
-- 📖 [完整规划文档](./REPOSITORY_SYNC_PLAN.md)
-- 🔍 [实现细节](./IMPLEMENTATION_SUMMARY.md)
-- 🧪 [API 测试指南](./API_TESTING_GUIDE.md)
-- ✅ [完成报告](../FEATURE_COMPLETE.md)
-
----
-
-## 🎓 学习路径
-
-1. **初级** - 通过 UI 创建仓库和同步脚本
-2. **中级** - 使用 API 实现自动化同步
-3. **高级** - 定制脚本解析器和同步逻辑
-
----
-
-**最后更新**: 2026年1月1日  
-**版本**: 1.0.0
+**需要帮助?** 联系开发团队或提交 Issue

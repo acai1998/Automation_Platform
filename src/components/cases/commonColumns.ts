@@ -43,17 +43,12 @@ export const COLUMN_DEFINITIONS = {
     label: '用例说明',
     render: renderDescription,
   },
-  /** 运行状态列 - 显示用例的执行状态（idle/running/success/failed） */
-  runningStatus: {
-    key: 'running_status',
-    label: '状态',
-    width: '100px',
-  },
   /** 操作列 - 包含运行按钮等操作 */
   actions: {
     key: 'actions',
     label: '操作',
     width: '100px',
+    render: undefined, // 显式指定 render 为 undefined 以符合 CaseColumn 接口
   },
 } as const satisfies Record<string, CaseColumn>;
 
@@ -68,7 +63,6 @@ export const FULL_COLUMNS: CaseColumn[] = [
   COLUMN_DEFINITIONS.owner,
   COLUMN_DEFINITIONS.scriptPath,
   COLUMN_DEFINITIONS.description,
-  COLUMN_DEFINITIONS.runningStatus,
   COLUMN_DEFINITIONS.actions,
 ];
 
@@ -81,6 +75,5 @@ export const SIMPLE_COLUMNS: CaseColumn[] = [
   COLUMN_DEFINITIONS.name,
   COLUMN_DEFINITIONS.priority,
   COLUMN_DEFINITIONS.owner,
-  COLUMN_DEFINITIONS.runningStatus,
   COLUMN_DEFINITIONS.actions,
 ];

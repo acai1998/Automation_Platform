@@ -106,7 +106,7 @@ export class DashboardService {
    * 采用 T-1 数据口径：不展示当天数据，最新可展示日期 = 当前日期 - 1 天
    */
   async getTrendData(days: number = 30): Promise<DailySummary[]> {
-    // 优先从 daily_summaries 表获取（T-1 口径）
+    // 优先从 Auto_TestCaseDailySummaries 表获取（T-1 口径）
     const summaries = await query<DailySummary[]>(`
       SELECT
         summary_date as date,
@@ -115,7 +115,7 @@ export class DashboardService {
         failed_cases as failedCases,
         skipped_cases as skippedCases,
         success_rate as successRate
-      FROM daily_summaries
+      FROM Auto_TestCaseDailySummaries
       WHERE summary_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
         AND summary_date < CURDATE()
       ORDER BY summary_date ASC
@@ -136,7 +136,7 @@ export class DashboardService {
         COALESCE(SUM(failed_cases), 0) as failedCases,
         COALESCE(SUM(skipped_cases), 0) as skippedCases,
         ROUND(SUM(passed_cases) * 100.0 / NULLIF(SUM(passed_cases + failed_cases + skipped_cases), 0), 2) as successRate
-      FROM Auto_TestRun
+      FROM Auto_TestCaseTaskExecutions
       WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
         AND DATE(start_time) < CURDATE()
       GROUP BY DATE(start_time)
@@ -163,7 +163,7 @@ export class DashboardService {
         COALESCE(SUM(passed_cases), 0) as passed,
         COALESCE(SUM(failed_cases), 0) as failed,
         COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
-      FROM Auto_TestRun
+      FROM Auto_TestCaseTaskExecutions
       WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
     `, [days]);
 
@@ -179,7 +179,7 @@ export class DashboardService {
         COALESCE(SUM(passed_cases), 0) as passed,
         COALESCE(SUM(failed_cases), 0) as failed,
         COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
-      FROM Auto_TestRun
+      FROM Auto_TestCaseTaskExecutions
       WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
         AND DATE(start_time) < DATE_SUB(CURDATE(), INTERVAL ? DAY)
     `, [days * 2, days]);
@@ -213,17 +213,17 @@ export class DashboardService {
     return query(`
       SELECT
         r.id,
-        r.jenkins_job as suiteName,
+        r.task_name as suiteName,
         r.status,
-        r.duration_ms as duration,
+        r.duration * 1000 as duration,
         r.start_time as startTime,
         r.total_cases as totalCases,
         r.passed_cases as passedCases,
         r.failed_cases as failedCases,
         u.display_name as executedBy,
         u.id as executedById
-      FROM Auto_TestRun r
-      LEFT JOIN Auto_Users u ON r.trigger_by = u.id
+      FROM Auto_TestCaseTaskExecutions r
+      LEFT JOIN users u ON r.executed_by = u.id
       ORDER BY r.start_time DESC
       LIMIT ?
     `, [limit]);
@@ -250,13 +250,13 @@ export class DashboardService {
         COALESCE(SUM(passed_cases), 0) as passedCases,
         COALESCE(SUM(failed_cases), 0) as failedCases,
         COALESCE(SUM(skipped_cases), 0) as skippedCases,
-        COALESCE(AVG(duration_ms / 1000), 0) as avgDuration
-      FROM Auto_TestRun
+        COALESCE(AVG(duration), 0) as avgDuration
+      FROM Auto_TestCaseTaskExecutions
       WHERE DATE(start_time) = ?
     `, [targetDate]);
 
     const activeCases = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
+      SELECT COUNT(*) as count FROM test_cases WHERE status = 'active'
     `);
 
     const totalCasesRun = stats?.totalCasesRun ?? 0;
@@ -268,7 +268,7 @@ export class DashboardService {
     // 插入或更新汇总记录 (MariaDB 使用 ON DUPLICATE KEY UPDATE)
     const pool = getPool();
     await pool.execute(`
-      INSERT INTO daily_summaries (
+      INSERT INTO Auto_TestCaseDailySummaries (
         summary_date, total_executions, total_cases_run, passed_cases,
         failed_cases, skipped_cases, success_rate, avg_duration, active_cases_count
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

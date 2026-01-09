@@ -67,8 +67,48 @@ async function main() {
     });
     console.log('   ✓ 连接成功');
 
-    // 4. 创建表结构
-    console.log(`${isReset ? '5' : '4'}. 创建表结构...`);
+    // 4. 检查关键表是否存在
+    console.log(`${isReset ? '5' : '4'}. 检查数据库关键表是否存在...`);
+    const [keyTablesResult] = await pool.execute(`
+      SELECT COUNT(*) as count 
+      FROM information_schema.tables 
+      WHERE table_schema = ? 
+      AND table_name IN ('users', 'test_cases', 'tasks', 'task_executions', 'Auto_TestCaseDailySummaries')
+    `, [DB_NAME]);
+    
+    const keyTableCount = (keyTablesResult as Array<{count: number}>)[0]?.count || 0;
+    
+    if (keyTableCount >= 5 && !isReset) {
+      console.log(`   ✓ 数据库中已存在所有 ${keyTableCount} 张关键表，跳过表创建和数据插入`);
+      
+      // 直接验证结果
+      console.log('');
+      console.log(`${isReset ? '7' : '6'}. 验证数据...`);
+      
+      const [tables] = await pool.execute('SHOW TABLES');
+      console.log(`   ✓ 共 ${(tables as unknown[]).length} 张表`);
+      
+      const [users] = await pool.execute('SELECT COUNT(*) as count FROM users');
+      const [projects] = await pool.execute('SELECT COUNT(*) as count FROM projects');
+      const [cases] = await pool.execute('SELECT COUNT(*) as count FROM test_cases');
+      const [tasks] = await pool.execute('SELECT COUNT(*) as count FROM tasks');
+
+      console.log(`   ✓ users: ${(users as Array<{count: number}>)[0].count} 条记录`);
+      console.log(`   ✓ projects: ${(projects as Array<{count: number}>)[0].count} 条记录`);
+      console.log(`   ✓ test_cases: ${(cases as Array<{count: number}>)[0].count} 条记录`);
+      console.log(`   ✓ tasks: ${(tasks as Array<{count: number}>)[0].count} 条记录`);
+      
+      console.log('');
+      console.log('========================================');
+      console.log('✅ MariaDB 数据库已存在，无需初始化！');
+      console.log('========================================');
+      return;
+    } else if (keyTableCount > 0) {
+      console.log(`   ⚠️  数据库中只有 ${keyTableCount}/5 个关键表，将创建缺失的表...`);
+    }
+    
+    // 5. 创建表结构 (仅当没有表或重置时执行)
+    console.log(`${isReset ? '6' : '5'}. 创建表结构...`);
 
     // 4.1 users 表
     await pool.execute(`
@@ -141,6 +181,7 @@ async function main() {
         priority ENUM('P0', 'P1', 'P2', 'P3') DEFAULT 'P1' COMMENT '优先级',
         type ENUM('api', 'ui', 'performance', 'security') DEFAULT 'api' COMMENT '用例类型',
         status ENUM('active', 'inactive', 'deprecated') DEFAULT 'active' COMMENT '用例状态',
+        running_status ENUM('idle', 'running') DEFAULT 'idle' COMMENT '运行状态',
         tags VARCHAR(500) COMMENT '标签',
         script_path VARCHAR(500) COMMENT '测试脚本文件路径',
         config_json TEXT COMMENT '用例配置JSON',
@@ -150,6 +191,7 @@ async function main() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
         INDEX idx_cases_project (project_id),
         INDEX idx_cases_status (status),
+        INDEX idx_cases_running_status (running_status),
         INDEX idx_cases_module (module),
         INDEX idx_cases_priority (priority),
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -243,9 +285,9 @@ async function main() {
     `);
     console.log('   ✓ case_results 表已创建');
 
-    // 4.8 daily_summaries 表
+    // 4.8 Auto_TestCaseDailySummaries 表
     await pool.execute(`
-      CREATE TABLE IF NOT EXISTS daily_summaries (
+      CREATE TABLE IF NOT EXISTS Auto_TestCaseDailySummaries (
         id INT PRIMARY KEY AUTO_INCREMENT COMMENT '记录唯一标识',
         summary_date DATE UNIQUE NOT NULL COMMENT '统计日期',
         total_executions INT DEFAULT 0 COMMENT '当日执行总次数',
@@ -261,7 +303,7 @@ async function main() {
         INDEX idx_summary_date (summary_date)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='每日统计汇总表'
     `);
-    console.log('   ✓ daily_summaries 表已创建');
+    console.log('   ✓ Auto_TestCaseDailySummaries 表已创建');
 
     // 4.9 audit_logs 表
     await pool.execute(`
@@ -287,8 +329,8 @@ async function main() {
     console.log('');
     console.log('   所有表结构创建完成！');
 
-    // 5. 插入测试数据
-    console.log(`${isReset ? '6' : '5'}. 插入测试数据...`);
+    // 6. 插入测试数据
+    console.log(`${isReset ? '7' : '6'}. 插入测试数据...`);
 
     // 5.1 插入用户数据
     await pool.execute(`
@@ -381,7 +423,7 @@ async function main() {
 
     // 5.7 插入每日汇总数据
     await pool.execute(`
-      INSERT IGNORE INTO daily_summaries (summary_date, total_executions, total_cases_run, passed_cases, failed_cases, skipped_cases, success_rate, avg_duration, active_cases_count) VALUES
+      INSERT IGNORE INTO Auto_TestCaseDailySummaries (summary_date, total_executions, total_cases_run, passed_cases, failed_cases, skipped_cases, success_rate, avg_duration, active_cases_count) VALUES
       (CURDATE(), 5, 20, 5, 15, 0, 25.00, 193, 27),
       (DATE_SUB(CURDATE(), INTERVAL 1 DAY), 3, 20, 7, 13, 0, 35.00, 240, 27),
       (DATE_SUB(CURDATE(), INTERVAL 2 DAY), 2, 20, 9, 11, 0, 45.00, 240, 27),
@@ -403,12 +445,12 @@ async function main() {
     console.log('');
     console.log('   所有测试数据插入完成！');
 
-    // 6. 验证结果
+    // 7. 验证结果
     console.log('');
-    console.log(`${isReset ? '7' : '6'}. 验证数据...`);
+    console.log(`${isReset ? '8' : '7'}. 验证数据...`);
 
-    const [tables] = await pool.execute('SHOW TABLES');
-    console.log(`   ✓ 共创建 ${(tables as unknown[]).length} 张表`);
+    const [finalTables] = await pool.execute('SHOW TABLES');
+    console.log(`   ✓ 共创建 ${(finalTables as unknown[]).length} 张表`);
 
     const [users] = await pool.execute('SELECT COUNT(*) as count FROM users');
     const [projects] = await pool.execute('SELECT COUNT(*) as count FROM projects');
