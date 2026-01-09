@@ -428,9 +428,8 @@ export class ExecutionService {
    */
   async getAllTestRuns(limit = 50, offset = 0) {
     const sql = `
-      SELECT atr.*, p.name as project_name, u.display_name as trigger_by_name
+      SELECT atr.*, u.display_name as trigger_by_name
       FROM Auto_TestRun atr
-      LEFT JOIN projects p ON atr.project_id = p.id
       LEFT JOIN Auto_Users u ON atr.trigger_by = u.id
       ORDER BY atr.created_at DESC
       LIMIT ? OFFSET ?
