@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { Link, useLocation } from 'wouter';
 import { CheckCircle2, Zap, Shield, BarChart3, Clock, Users, GitBranch } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -12,47 +12,50 @@ import {
 } from '@/components/auth';
 
 /**
- * 特性卡片组件
+ * 特性卡片组件 - 使用 memo 优化性能
  */
-function FeatureCard({ 
-  icon: Icon, 
-  title, 
-  description, 
-  delay 
-}: { 
+const FeatureCard = memo(({
+  icon: Icon,
+  title,
+  description,
+  delay
+}: {
   icon: React.ElementType;
   title: string;
   description: string;
   delay: number;
-}) {
+}) => {
+  const delayClass = delay === 0.1 ? 'animate-delay-100' :
+                     delay === 0.2 ? 'animate-delay-200' :
+                     delay === 0.3 ? 'animate-delay-300' :
+                     'animate-delay-400';
+
   return (
-    <div 
-      className="group relative overflow-hidden rounded-2xl bg-white/90 dark:bg-slate-800/90 p-6 shadow-xl backdrop-blur-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl"
-      style={{ 
-        animation: `fadeInUp 0.6s ease-out ${delay}s both`,
-        animationFillMode: 'both'
-      }}
+    <div
+      className={`group relative overflow-hidden rounded-2xl bg-white/90 dark:bg-slate-800/90 p-6 shadow-xl backdrop-blur-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl animate-fade-in-up ${delayClass}`}
     >
       {/* Gradient overlay on hover */}
       <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-indigo-500/5 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-      
+
       <div className="relative">
         {/* Icon container with gradient */}
         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-500 text-white shadow-lg transition-transform duration-300 group-hover:scale-110">
           <Icon className="h-7 w-7" strokeWidth={2} />
         </div>
-        
+
         <h3 className="mb-2 text-lg font-semibold text-slate-900 dark:text-white">
           {title}
         </h3>
-        
+
         <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
           {description}
         </p>
       </div>
     </div>
   );
-}
+});
+
+FeatureCard.displayName = 'FeatureCard';
 
 /**
  * 登录页面右侧营销内容
@@ -98,29 +101,29 @@ function LoginRightPanel() {
 
       {/* Features Grid - Bento Style */}
       <div className="grid gap-4 md:grid-cols-2">
-        <FeatureCard 
+        <FeatureCard
           icon={Zap}
           title="快速执行"
           description="Jenkins 深度集成，一键触发测试任务，实时监控执行进度"
-          delay="0.1"
+          delay={0.1}
         />
-        <FeatureCard 
+        <FeatureCard
           icon={Shield}
           title="稳定可靠"
           description="完善的用例管理和调度机制，确保测试任务按时准确执行"
-          delay="0.2"
+          delay={0.2}
         />
-        <FeatureCard 
+        <FeatureCard
           icon={BarChart3}
           title="可视化报告"
           description="丰富的图表展示和数据分析，快速定位问题，提升测试效率"
-          delay="0.3"
+          delay={0.3}
         />
-        <FeatureCard 
+        <FeatureCard
           icon={Clock}
           title="灵活调度"
           description="支持定时任务、手动触发和 CI 集成，满足不同场景需求"
-          delay="0.4"
+          delay={0.4}
         />
       </div>
 
