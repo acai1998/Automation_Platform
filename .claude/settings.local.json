@@ -1,5 +1,4 @@
 {
-  "enableAllProjectMcpServers": true,
   "permissions": {
     "allow": [
       "Bash(dir:*)",
@@ -15,7 +14,9 @@
       "Bash(npm run build:*)",
       "Bash(npm run start:*)",
       "Bash(netstat:*)",
-      "Bash(taskkill //F //PID 161748)"
+      "Bash(taskkill //F //PID 161748)",
+      "Bash(jq:*)"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true
 }

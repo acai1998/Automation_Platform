@@ -199,9 +199,20 @@
 }
 
 /* ============================================
- * 工具类
+ * 动画关键帧
  * ============================================ */
 @layer utilities {
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   .text-balance {
     text-wrap: balance;
   }

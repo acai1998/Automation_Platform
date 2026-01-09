@@ -38,9 +38,8 @@ router.get('/', async (req, res) => {
     const { projectId, module, enabled, type, search, limit = 50, offset = 0 } = req.query;
 
     let sql = `
-      SELECT tc.*, p.name as project_name, u.display_name as created_by_name
+      SELECT tc.*, u.display_name as created_by_name
       FROM Auto_TestCase tc
-      LEFT JOIN projects p ON tc.project_id = p.id
       LEFT JOIN Auto_Users u ON tc.created_by = u.id
       WHERE 1=1
     `;
@@ -71,6 +70,16 @@ router.get('/', async (req, res) => {
     params.push(Number(limit), Number(offset));
 
     const data = await query<TestCase[]>(sql, params);
+
+    // 如果没有数据，返回空数组和友善提示
+    if (!Array.isArray(data) || data.length === 0) {
+      return res.json({
+        success: true,
+        data: [],
+        total: 0,
+        message: '暂无测试用例数据，请检查筛选条件或联系管理员添加用例'
+      });
+    }
 
     // 获取总数
     let countSql = 'SELECT COUNT(*) as total FROM Auto_TestCase tc WHERE 1=1';
@@ -143,9 +152,8 @@ router.get('/:id', async (req, res) => {
     const id = parseInt(req.params.id);
 
     const data = await queryOne<TestCase>(`
-      SELECT tc.*, p.name as project_name, u.display_name as created_by_name
+      SELECT tc.*, u.display_name as created_by_name
       FROM Auto_TestCase tc
-      LEFT JOIN projects p ON tc.project_id = p.id
       LEFT JOIN Auto_Users u ON tc.created_by = u.id
       WHERE tc.id = ?
     `, [id]);
