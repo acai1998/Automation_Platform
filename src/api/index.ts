@@ -98,6 +98,9 @@ export const dashboardApi = {
       method: 'POST',
       body: JSON.stringify({ date }),
     }),
+
+  getAll: (timeRange: string = '30d') =>
+    request<any>(`/dashboard/all?timeRange=${timeRange}`),
 };
 
 // ==================== Execution API ====================

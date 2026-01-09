@@ -5,12 +5,58 @@ import { RecentTests } from "@/components/dashboard/RecentTests";
 import { Button } from "@/components/ui/button";
 import { Play, ChevronDown } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { dashboardApi } from "@/lib/api";
+import type { DashboardResponse } from "@/types/dashboard";
 
 type TimeRange = '7d' | '30d' | '90d';
 
 export default function Home() {
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
+  const [dashboardData, setDashboardData] = useState<DashboardResponse | null>(null);
+  const [, setLoading] = useState(true);
+
+  const fetchAllData = async () => {
+    try {
+      setLoading(true);
+      const response = await dashboardApi.getAll(timeRange);
+      if (response.success && response.data) {
+        setDashboardData(response.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch dashboard data:', error);
+      // 如果获取所有数据失败，至少获取最近运行的记录
+      try {
+        const recentRunsResponse = await dashboardApi.getRecentRuns(10);
+        if (recentRunsResponse.success && recentRunsResponse.data) {
+          setDashboardData(prev => ({
+            stats: prev?.stats || {
+              totalCases: 0,
+              todayRuns: 0,
+              todaySuccessRate: null,
+              runningTasks: 0
+            },
+            todayExecution: prev?.todayExecution || {
+              total: 0,
+              passed: 0,
+              failed: 0,
+              skipped: 0
+            },
+            trendData: prev?.trendData || [],
+            recentRuns: recentRunsResponse.data || []
+          }));
+        }
+      } catch (recentError) {
+        console.error('Failed to fetch recent runs:', recentError);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAllData();
+  }, [timeRange]);
 
   return (
     <div className="p-6 md:p-8 lg:p-12">
@@ -52,20 +98,33 @@ export default function Home() {
 
           {/* Stats Cards */}
           <TooltipProvider>
-            <StatsCards />
+            <StatsCards
+              data={dashboardData || undefined}
+              onRefresh={fetchAllData}
+            />
 
             {/* Charts Section */}
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               {/* Today's Execution Donut Chart */}
-              <TodayExecution />
+              <TodayExecution
+                data={dashboardData || undefined}
+                onRefresh={fetchAllData}
+              />
 
               {/* Trend Line Chart */}
-              <TrendChart timeRange={timeRange} />
+              <TrendChart
+                timeRange={timeRange}
+                data={dashboardData || undefined}
+                onRefresh={fetchAllData}
+              />
             </div>
           </TooltipProvider>
 
           {/* Recent Test Runs */}
-          <RecentTests />
+          <RecentTests
+            data={dashboardData || undefined}
+            onRefresh={fetchAllData}
+          />
         </div>
       </div>
     );

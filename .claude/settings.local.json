@@ -15,7 +15,8 @@
       "Bash(npm run start:*)",
       "Bash(netstat:*)",
       "Bash(taskkill //F //PID 161748)",
-      "Bash(jq:*)"
+      "Bash(jq:*)",
+      "Bash(npm install:*)"
     ]
   },
   "enableAllProjectMcpServers": true

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { MoreVertical, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
-import { dashboardApi } from "@/lib/api";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import type { DashboardResponse } from "@/types/dashboard";
 
 interface RecentRun {
   id: number;
@@ -102,29 +103,43 @@ function getInitials(name: string): string {
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 }
 
-export function RecentTests() {
+interface RecentTestsProps {
+  data?: DashboardResponse;
+  initialData?: RecentRun[];
+  onRefresh?: () => Promise<void>;
+}
+
+export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) {
   const [, setLocation] = useLocation();
-  const [runs, setRuns] = useState<RecentRun[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [runs, setRuns] = useState<RecentRun[]>(() => initialData || []);
+  const [loading, setLoading] = useState(() => !initialData);
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  // 使用虚拟滚动优化性能 - 确保只在有数据时初始化
+  const rowVirtualizer = useVirtualizer({
+    count: runs.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 60, // 每行高度估计值
+    overscan: 5, // 预渲染额外行数
+  });
 
   useEffect(() => {
-    const fetchData = async () => {
+    if (data?.recentRuns) {
+      setRuns(data.recentRuns);
+      setLoading(false);
+    }
+  }, [data]);
+
+  const handleRefresh = async () => {
+    if (onRefresh) {
+      setLoading(true);
       try {
-        const response = await dashboardApi.getRecentRuns(10);
-        if (response.success && response.data) {
-          setRuns(response.data);
-        }
-      } catch (err) {
-        console.error('Failed to fetch recent runs:', err);
+        await onRefresh();
       } finally {
         setLoading(false);
       }
-    };
-
-    fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -132,13 +147,29 @@ export function RecentTests() {
         <h2 className="text-slate-900 dark:text-white text-xl font-bold tracking-tight">
           最近测试运行
         </h2>
-        <button
-          type="button"
-          onClick={() => setLocation('/reports')}
-          className="text-primary text-sm font-semibold hover:text-primary/80 transition-colors"
-        >
-          查看所有报告
-        </button>
+        <div className="flex items-center gap-3">
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={loading}
+              className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors disabled:opacity-50"
+            >
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <span>刷新</span>
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setLocation('/reports')}
+            className="text-primary text-sm font-semibold hover:text-primary/80 transition-colors"
+          >
+            查看所有报告
+          </button>
+        </div>
       </div>
 
       <div className="w-full overflow-x-auto rounded-xl border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark">
@@ -151,53 +182,86 @@ export function RecentTests() {
             暂无测试运行记录
           </div>
         ) : (
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-100 dark:border-[#234833] bg-slate-50 dark:bg-black/20">
-                <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">状态</th>
-                <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">计划名称</th>
-                <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">耗时</th>
-                <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">执行者</th>
-                <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">时间</th>
-                <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-[#234833]">
-              {runs.map((run, index) => (
-                <tr key={run.id} className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
-                  <td className="p-4">
-                    <StatusBadge status={run.status} />
-                  </td>
-                  <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
-                    {run.suiteName}
-                  </td>
-                  <td className="p-4 text-sm text-slate-500 dark:text-gray-400">
-                    {formatDuration(run.duration)}
-                  </td>
-                  <td className="p-4">
-                    <div className="flex items-center gap-2">
-                      <div className={`size-6 rounded-full ${ownerColors[index % ownerColors.length]} flex items-center justify-center text-[10px] text-white font-bold`}>
-                        {getInitials(run.executedBy || '系统')}
-                      </div>
-                      <span className="text-sm text-slate-600 dark:text-gray-300">{run.executedBy || '系统'}</span>
-                    </div>
-                  </td>
-                  <td className="p-4 text-sm text-slate-500 dark:text-gray-400">
-                    {formatTime(run.startTime)}
-                  </td>
-                  <td className="p-4 text-right">
-                    <button
-                      type="button"
-                      title="更多操作"
-                      className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors"
-                    >
-                      <MoreVertical className="h-5 w-5" />
-                    </button>
-                  </td>
+          <div className="relative">
+            {/* 固定的表头 */}
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 dark:border-[#234833] bg-slate-50 dark:bg-black/20">
+                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">状态</th>
+                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">计划名称</th>
+                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">耗时</th>
+                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">执行者</th>
+                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">时间</th>
+                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400 text-right">操作</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+            </table>
+
+            {/* 虚拟滚动的表体 */}
+            <div
+              ref={parentRef}
+              className="h-[600px] overflow-auto"
+              style={{
+                contain: 'strict'
+              }}
+            >
+              <div
+                style={{
+                  height: `${rowVirtualizer.getTotalSize()}px`,
+                  width: '100%',
+                  position: 'relative',
+                }}
+              >
+                <table className="w-full text-left border-collapse">
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#234833]">
+                    {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+                      const run = runs[virtualItem.index];
+                      return (
+                        <tr
+                          key={run.id}
+                          className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-colors absolute top-0 left-0 right-0"
+                          style={{
+                            height: `${virtualItem.size}px`,
+                            transform: `translateY(${virtualItem.start}px)`,
+                          }}
+                        >
+                          <td className="p-4">
+                            <StatusBadge status={run.status} />
+                          </td>
+                          <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
+                            {run.suiteName}
+                          </td>
+                          <td className="p-4 text-sm text-slate-500 dark:text-gray-400">
+                            {formatDuration(run.duration)}
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              <div className={`size-6 rounded-full ${ownerColors[virtualItem.index % ownerColors.length]} flex items-center justify-center text-[10px] text-white font-bold`}>
+                                {getInitials(run.executedBy || '系统')}
+                              </div>
+                              <span className="text-sm text-slate-600 dark:text-gray-300">{run.executedBy || '系统'}</span>
+                            </div>
+                          </td>
+                          <td className="p-4 text-sm text-slate-500 dark:text-gray-400">
+                            {formatTime(run.startTime)}
+                          </td>
+                          <td className="p-4 text-right">
+                            <button
+                              type="button"
+                              title="更多操作"
+                              className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors"
+                            >
+                              <MoreVertical className="h-5 w-5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

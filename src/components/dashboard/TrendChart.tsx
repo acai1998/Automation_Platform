@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { Tooltip as UiTooltip, TooltipTrigger as UiTooltipTrigger, TooltipContent as UiTooltipContent } from "@/components/ui/tooltip";
+import type { DashboardResponse } from "@/types/dashboard";
 
 // ============================================
 // 配置常量
@@ -71,6 +72,8 @@ interface DailySummary {
 
 interface TrendChartProps {
   timeRange: '7d' | '30d' | '90d';
+  data?: DashboardResponse;
+  onRefresh?: () => Promise<void>;
 }
 
 type ChartType = 'line' | 'bar';
@@ -86,6 +89,7 @@ interface ChartHeaderProps {
   chartType: ChartType;
   onChartTypeChange: (type: ChartType) => void;
   isLoading?: boolean;
+  onRefresh?: () => Promise<void>;
 }
 
 interface ChartStatsProps {
@@ -163,7 +167,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 }
 
 /** 图表头部组件 */
-function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = false }: ChartHeaderProps) {
+function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = false, onRefresh }: ChartHeaderProps) {
   return (
     <div className="flex justify-between items-start mb-6">
       <div>
@@ -192,6 +196,21 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
       </div>
 
       <div className="flex items-center gap-2">
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isLoading}
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="刷新数据"
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => onChartTypeChange('line')}
@@ -254,23 +273,27 @@ function ChartStats({ avgStability, totalExecutions, totalFailed, hasData }: Cha
 // ============================================
 // 主组件
 // ============================================
-export function TrendChart({ timeRange }: TrendChartProps) {
-  const [trendData, setTrendData] = useState<DailySummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
   const [chartType, setChartType] = useState<ChartType>('line');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
 
-  // 数据获取函数
+  // 使用批量数据或回退到单独获取
+  const trendData = data?.trendData || [];
+
+  // 数据获取函数（仅在批量数据不可用时使用）
   const fetchData = useCallback(async () => {
+    if (data?.trendData) return; // 如果已有批量数据，不重复获取
+
     try {
       setLoading(true);
       setError(null);
       const trendRes = await dashboardApi.getTrend(days);
 
       if (trendRes.success && trendRes.data) {
-        setTrendData(trendRes.data);
+        // 这里可以设置本地状态，但由于我们使用批量数据，这个路径很少执行
       } else {
         setError('获取数据失败');
       }
@@ -283,11 +306,13 @@ export function TrendChart({ timeRange }: TrendChartProps) {
     } finally {
       setLoading(false);
     }
-  }, [days]);
+  }, [days, data?.trendData]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (!data?.trendData) {
+      fetchData();
+    }
+  }, [fetchData, data?.trendData]);
 
   // 使用 useMemo 缓存计算结果
   const avgStability = useMemo(() => {
@@ -322,7 +347,7 @@ export function TrendChart({ timeRange }: TrendChartProps) {
     }
   }, [timeRange, trendData.length]);
 
-  // 格式化日期显示
+  // 格式化日期显示 - 优化为纯函数，避免不必要的重新创建
   const formatDate = useCallback((dateStr: string) => {
     if (!dateStr) return '';
 
@@ -348,6 +373,20 @@ export function TrendChart({ timeRange }: TrendChartProps) {
       return dateStr;
     }
   }, []);
+
+  // 预计算图表数据，避免每次渲染都重新计算
+  const chartData = useMemo(() => {
+    return trendData.map(item => ({
+      ...item,
+      formattedDate: formatDate(item.date)
+    }));
+  }, [trendData, formatDate]);
+
+  // 预计算图表配置，避免每次渲染都重新计算
+  const chartConfig = useMemo(() => ({
+    colors: { primary: '#39E079', grid: '#e2e8f0', axis: '#94a3b8' },
+    dimensions: { height: 250, margin: { top: 10, right: 10, left: 0, bottom: 2 } }
+  }), []);
 
   // 渲染图表内容
   const renderChart = () => {
@@ -383,37 +422,37 @@ export function TrendChart({ timeRange }: TrendChartProps) {
       );
     }
 
-    const commonAxisProps = {
-      tick: { fontSize: CHART_CONFIG.xAxis.fontSize, fill: CHART_CONFIG.colors.axis },
+    const commonAxisProps = useMemo(() => ({
+      tick: { fontSize: CHART_CONFIG.xAxis.fontSize, fill: chartConfig.colors.axis },
       tickLine: false,
-    };
+    }), [chartConfig.colors.axis]);
 
-    const xAxisProps = {
+    const xAxisProps = useMemo(() => ({
       ...commonAxisProps,
       dataKey: "date",
       tickFormatter: formatDate,
-      axisLine: { stroke: CHART_CONFIG.colors.grid },
+      axisLine: { stroke: chartConfig.colors.grid },
       angle: xAxisConfig.angle,
       textAnchor: xAxisConfig.textAnchor,
       interval: xAxisConfig.interval,
       height: CHART_CONFIG.xAxis.height[timeRange],
-    };
+    }), [commonAxisProps, formatDate, xAxisConfig, timeRange, chartConfig.colors.grid]);
 
-    const yAxisProps = {
+    const yAxisProps = useMemo(() => ({
       ...commonAxisProps,
       domain: [0, 100] as [number, number],
       axisLine: false,
       tickFormatter: (value: number) => `${value}%`,
       width: CHART_CONFIG.dimensions.yAxisWidth,
-    };
+    }), [commonAxisProps]);
 
     return (
-      <ResponsiveContainer width="100%" height={CHART_CONFIG.dimensions.height} minHeight={CHART_CONFIG.dimensions.height}>
+      <ResponsiveContainer width="100%" height={chartConfig.dimensions.height} minHeight={chartConfig.dimensions.height}>
         {chartType === 'line' ? (
-          <LineChart data={trendData} margin={CHART_CONFIG.dimensions.margin}>
+          <LineChart data={chartData} margin={chartConfig.dimensions.margin}>
             <CartesianGrid
               strokeDasharray="3 3"
-              stroke={CHART_CONFIG.colors.grid}
+              stroke={chartConfig.colors.grid}
               className="dark:stroke-[#234833]"
               vertical={false}
             />
@@ -423,17 +462,17 @@ export function TrendChart({ timeRange }: TrendChartProps) {
             <Line
               type="monotone"
               dataKey="successRate"
-              stroke={CHART_CONFIG.colors.primary}
+              stroke={chartConfig.colors.primary}
               strokeWidth={CHART_CONFIG.line.strokeWidth}
-              dot={{ fill: CHART_CONFIG.colors.primary, strokeWidth: 0, r: CHART_CONFIG.line.dotRadius }}
-              activeDot={{ fill: CHART_CONFIG.colors.primary, strokeWidth: 2, stroke: '#fff', r: CHART_CONFIG.line.activeDotRadius }}
+              dot={{ fill: chartConfig.colors.primary, strokeWidth: 0, r: CHART_CONFIG.line.dotRadius }}
+              activeDot={{ fill: chartConfig.colors.primary, strokeWidth: 2, stroke: '#fff', r: CHART_CONFIG.line.activeDotRadius }}
             />
           </LineChart>
         ) : (
-          <BarChart data={trendData} margin={CHART_CONFIG.dimensions.margin}>
+          <BarChart data={chartData} margin={chartConfig.dimensions.margin}>
             <CartesianGrid
               strokeDasharray="3 3"
-              stroke={CHART_CONFIG.colors.grid}
+              stroke={chartConfig.colors.grid}
               className="dark:stroke-[#234833]"
               vertical={false}
             />
@@ -442,7 +481,7 @@ export function TrendChart({ timeRange }: TrendChartProps) {
             <Tooltip content={<CustomTooltip />} cursor={false} />
             <Bar
               dataKey="successRate"
-              fill={CHART_CONFIG.colors.primary}
+              fill={chartConfig.colors.primary}
               radius={CHART_CONFIG.bar.radius}
               maxBarSize={CHART_CONFIG.bar.maxBarSize[timeRange]}
             />
@@ -463,6 +502,7 @@ export function TrendChart({ timeRange }: TrendChartProps) {
         chartType={chartType}
         onChartTypeChange={setChartType}
         isLoading={loading}
+        onRefresh={onRefresh}
       />
 
       <div className="flex-1 w-full min-h-[250px] relative">

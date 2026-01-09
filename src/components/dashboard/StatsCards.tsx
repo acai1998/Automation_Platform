@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { CheckCircle, Terminal, AlertCircle, Timer, TrendingUp, TrendingDown, Loader2, HelpCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { dashboardApi } from "@/lib/api";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import type { DashboardResponse } from "@/types/dashboard";
 
 interface DashboardStats {
   totalCases: number;
@@ -90,82 +91,92 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
   );
 }
 
-export function StatsCards() {
+interface StatsCardsProps {
+  data?: DashboardResponse;
+  onRefresh?: () => Promise<void>;
+}
+
+export function StatsCards({ data, onRefresh }: StatsCardsProps) {
   const [, setLocation] = useLocation();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        setLoading(true);
-        const response = await dashboardApi.getStats();
-        if (response.success && response.data) {
-          setStats(response.data);
-        }
-      } catch (err: any) {
-        setError(err.message);
-        console.error('Failed to fetch stats:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
+  // 使用批量数据或回退到单独获取
+  const stats = data?.stats;
 
-    fetchStats();
-    // 每30秒刷新一次
-    const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
-  }, []);
+  // 数据获取函数（仅在批量数据不可用时使用）
+  const fetchStats = async () => {
+    if (data?.stats) return; // 如果已有批量数据，不重复获取
+
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await dashboardApi.getStats();
+      if (response.success && response.data) {
+        // 这里可以设置本地状态，但由于我们使用批量数据，这个路径很少执行
+      }
+    } catch (err: any) {
+      setError(err.message);
+      console.error('Failed to fetch stats:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!data?.stats) {
+      fetchStats();
+    }
+  }, [data?.stats]);
+
+  // 使用 useMemo 缓存卡片配置，避免每次渲染都重新创建
+  const cardsConfig = useMemo(() => [
+    {
+      icon: <Terminal className="h-5 w-5" />,
+      iconBg: "bg-blue-500/10",
+      iconColor: "text-blue-500",
+      label: "自动化用例总数",
+      value: typeof stats?.totalCases === 'number' ? stats.totalCases.toLocaleString() : '-',
+      onClick: () => setLocation('/cases'),
+      description: "统计项目中已创建的自动化用例总数，包含所有状态的用例。",
+    },
+    {
+      icon: <CheckCircle className="h-5 w-5" />,
+      iconBg: "bg-primary/10",
+      iconColor: "text-primary",
+      label: "今日执行总次数",
+      value: typeof stats?.todayRuns === 'number' ? stats.todayRuns.toString() : '-',
+      description: "显示今天内完成的所有测试执行次数，包括成功和失败的执行。用于评估团队的测试执行频率和工作量。",
+    },
+    {
+      icon: <AlertCircle className="h-5 w-5" />,
+      iconBg: stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "bg-danger/10" : "bg-success/10",
+      iconColor: stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "text-danger" : "text-success",
+      label: "今日成功率%",
+      value: stats && stats.todaySuccessRate !== null ? `${stats.todaySuccessRate}%` : 'N/A',
+      description: "基于今日完成的测试执行计算的成功率，低于 80% 会显示为警示颜色。",
+    },
+    {
+      icon: <Timer className="h-5 w-5" />,
+      iconBg: "bg-warning/10",
+      iconColor: "text-warning",
+      label: "当前运行中任务",
+      value: typeof stats?.runningTasks === 'number' ? stats.runningTasks.toString() : '-',
+      onClick: () => setLocation('/tasks'),
+      description: "当前正在执行或调度中的任务数量，用于监控并发执行情况和资源占用。",
+    },
+  ], [stats, setLocation]);
 
   return (
     <TooltipProvider>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      {/* Total Cases */}
-      <StatCard
-        icon={<Terminal className="h-5 w-5" />}
-        iconBg="bg-blue-500/10"
-        iconColor="text-blue-500"
-        label="自动化用例总数"
-        value={typeof stats?.totalCases === 'number' ? stats.totalCases.toLocaleString() : '-'}
-        loading={loading}
-        onClick={() => setLocation('/cases')}
-        description="统计项目中已创建的自动化用例总数，包含所有状态的用例。"
-      />
-
-      {/* Today Runs */}
-      <StatCard
-        icon={<CheckCircle className="h-5 w-5" />}
-        iconBg="bg-primary/10"
-        iconColor="text-primary"
-        label="今日执行总次数"
-        value={typeof stats?.todayRuns === 'number' ? stats.todayRuns.toString() : '-'}
-        loading={loading}
-        description="显示今天内完成的所有测试执行次数，包括成功和失败的执行。用于评估团队的测试执行频率和工作量。"
-      />
-
-      {/* Success Rate */}
-      <StatCard
-        icon={<AlertCircle className="h-5 w-5" />}
-        iconBg={stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "bg-danger/10" : "bg-success/10"}
-        iconColor={stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "text-danger" : "text-success"}
-        label="今日成功率%"
-        value={stats && stats.todaySuccessRate !== null ? `${stats.todaySuccessRate}%` : 'N/A'}
-        loading={loading}
-        description="基于今日完成的测试执行计算的成功率，低于 80% 会显示为警示颜色。"
-      />
-
-      {/* Running Tasks */}
-      <StatCard
-        icon={<Timer className="h-5 w-5" />}
-        iconBg="bg-warning/10"
-        iconColor="text-warning"
-        label="当前运行中任务"
-        value={typeof stats?.runningTasks === 'number' ? stats.runningTasks.toString() : '-'}
-        loading={loading}
-        onClick={() => setLocation('/tasks')}
-        description="当前正在执行或调度中的任务数量，用于监控并发执行情况和资源占用。"
-      />
+        {cardsConfig.map((config, index) => (
+          <StatCard
+            key={index}
+            {...config}
+            loading={loading}
+          />
+        ))}
       </div>
     </TooltipProvider>
   );
