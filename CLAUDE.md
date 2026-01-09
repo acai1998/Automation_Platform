@@ -67,13 +67,12 @@ npx tsc --noEmit -p tsconfig.server.json
 - `POST /api/executions/:id/start` — 标记执行开始运行
 
 ## 数据库结构
-
-关键表定义位于 `server/config/database.ts` (自动初始化)：
-- `test_cases` — 测试用例定义（含配置 JSON）
-- `tasks` — 定时或手动触发的测试任务
-- `task_executions` — 执行历史记录
-- `case_results` — 单个测试结果
-- `daily_summaries` — 汇总统计信息
+关键表定义位于 `server/config/database.ts` ：
+- `Auto_TestCase` — 测试用例资产表
+- `Auto_TestRun` — 测试执行批次表
+- `Auto_TestRunResults` — 测试用例执行结果表
+- `Auto_TestCaseTaskExecutions` — 测试任务执行记录表
+- `Auto_TestCaseDailySummaries` — 测试用例每日统计汇总表
 
 ## 路径别名配置
 

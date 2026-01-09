@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { testConnection, initMariaDBTables } from './config/database.js';
+import { testConnection } from './config/database.js';
 import dashboardRoutes from './routes/dashboard.js';
 import executionRoutes from './routes/executions.js';
 import casesRoutes from './routes/cases.js';
@@ -24,8 +24,6 @@ console.log('Connecting to MariaDB...');
 testConnection().then(async (connected) => {
   if (connected) {
     console.log('MariaDB connected successfully');
-    await initMariaDBTables();
-    console.log('MariaDB tables initialized');
   } else {
     console.error('MariaDB connection failed!');
     process.exit(1);
