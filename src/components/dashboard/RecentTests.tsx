@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { MoreVertical, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -14,6 +14,61 @@ interface RecentRun {
 }
 
 type TestStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+
+// Grid 布局配置常量
+const GRID_CONFIG = {
+  // 列宽配置（基于内容需求设计）
+  columns: {
+    status: {
+      medium: '90px',    // 中屏：标准状态徽章
+      large: '100px',    // 大屏：更宽松的状态徽章
+      ultrawide: '110px' // 超宽屏：更充足的空间
+    },
+    name: '1fr',         // 名称列：始终自适应剩余空间
+    duration: {
+      medium: '100px',   // 中屏：容纳"99m 59s"
+      large: '110px',    // 大屏：更宽松的数字显示
+      ultrawide: '120px' // 超宽屏：更充足的数字空间
+    },
+    executor: {
+      medium: '130px',   // 中屏：容纳头像+姓名
+      large: '140px',    // 大屏：更宽松的执行者信息
+      ultrawide: '160px' // 超宽屏：更充足的执行者空间
+    },
+    time: {
+      medium: '120px',   // 中屏：容纳相对时间
+      large: '130px',    // 大屏：更宽松的时间显示
+      ultrawide: '140px' // 超宽屏：更充足的时间空间
+    },
+    actions: {
+      medium: '70px',    // 中屏：基本操作按钮
+      large: '80px',     // 大屏：更宽松的操作区域
+      ultrawide: '90px'  // 超宽屏：更充足的操作空间
+    }
+  },
+  // Grid 模板字符串（平均分配间距）
+  templates: {
+    medium: '1fr 2fr 1fr 1.5fr 1fr',                    // 中屏PC (768px-1279px): 5列平均分配
+    large: '1fr 2fr 1fr 1.5fr 1fr 1fr',                 // 大屏PC (1280px-1919px): 6列平均分配
+    ultrawide: '1fr 2fr 1fr 1.5fr 1fr 1fr'              // 超宽屏 (1920px+): 6列平均分配
+  },
+  // 响应式断点
+  breakpoints: {
+    medium: '768px',     // 中屏PC起始点
+    large: '1280px',     // 大屏PC起始点
+    ultrawide: '1920px'  // 超宽屏起始点
+  }
+} as const;
+
+// 列标题配置（支持国际化）
+const COLUMN_LABELS = {
+  status: '状态',
+  name: '计划名称',
+  duration: '耗时',
+  executor: '执行者',
+  time: '时间',
+  actions: '操作'
+} as const;
 
 const statusConfig: Record<TestStatus, { label: string; bgColor: string; textColor: string; dotColor: string }> = {
   pending: {
@@ -103,6 +158,39 @@ function getInitials(name: string): string {
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 }
 
+// 响应式Grid模板Hook
+function useResponsiveGrid() {
+  const [screenSize, setScreenSize] = useState<'medium' | 'large' | 'ultrawide'>('large');
+
+  useEffect(() => {
+    const updateScreenSize = () => {
+      const width = window.innerWidth;
+      if (width >= 1920) {
+        setScreenSize('ultrawide');
+      } else if (width >= 1280) {
+        setScreenSize('large');
+      } else {
+        setScreenSize('medium');
+      }
+    };
+
+    // 初始化
+    updateScreenSize();
+
+    // 监听窗口大小变化
+    window.addEventListener('resize', updateScreenSize);
+    return () => window.removeEventListener('resize', updateScreenSize);
+  }, []);
+
+  const gridTemplate = useMemo(() => {
+    return GRID_CONFIG.templates[screenSize];
+  }, [screenSize]);
+
+  const showTimeColumn = screenSize !== 'medium';
+
+  return { gridTemplate, showTimeColumn, screenSize };
+}
+
 interface RecentTestsProps {
   data?: DashboardResponse;
   initialData?: RecentRun[];
@@ -115,11 +203,14 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
   const [loading, setLoading] = useState(() => !initialData);
   const parentRef = useRef<HTMLDivElement>(null);
 
-  // 使用虚拟滚动优化性能 - 确保只在有数据时初始化
+  // 响应式Grid布局
+  const { gridTemplate, showTimeColumn } = useResponsiveGrid();
+
+  // 使用虚拟滚动优化性能 - PC端专用
   const rowVirtualizer = useVirtualizer({
     count: runs.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 76, // 每行高度估计值，增加以适应移动端的额外信息
+    estimateSize: () => 72, // PC端行高估计值
     overscan: 5, // 预渲染额外行数
   });
 
@@ -183,31 +274,50 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
           </div>
         ) : (
           <div className="relative">
-            {/* 固定的表头 */}
-            <div className="grid grid-cols-[auto_1fr_auto_auto] sm:grid-cols-[auto_2fr_auto_auto_auto] md:grid-cols-[auto_2fr_auto_auto_auto_auto] border-b border-slate-100 dark:border-border-dark bg-slate-50 dark:bg-black/20 gap-2 sm:gap-3">
+            {/* 固定的表头 - PC端专用 */}
+            <div
+              className="grid border-b border-slate-100 dark:border-border-dark bg-slate-50 dark:bg-black/20"
+              style={{ gridTemplateColumns: gridTemplate }}
+              role="row"
+              aria-label="表格标题行"
+            >
               {/* 状态列 */}
-              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[70px]">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">状态</div>
+              <div className="px-4 py-3" role="columnheader" aria-sort="none">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">
+                  {COLUMN_LABELS.status}
+                </div>
               </div>
               {/* 计划名称列 */}
-              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-0">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">计划名称</div>
+              <div className="px-4 py-3" role="columnheader" aria-sort="none">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">
+                  {COLUMN_LABELS.name}
+                </div>
               </div>
               {/* 耗时列 */}
-              <div className="px-2 py-2 sm:px-3 sm:py-3 w-20 hidden sm:block">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">耗时</div>
+              <div className="px-4 py-3 flex justify-center" role="columnheader" aria-sort="none">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">
+                  {COLUMN_LABELS.duration}
+                </div>
               </div>
               {/* 执行者列 */}
-              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[80px]">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">执行者</div>
+              <div className="px-4 py-3" role="columnheader" aria-sort="none">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">
+                  {COLUMN_LABELS.executor}
+                </div>
               </div>
-              {/* 时间列 - 中屏以下隐藏 */}
-              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[70px] hidden md:block">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">时间</div>
-              </div>
+              {/* 时间列 - 根据屏幕尺寸动态显示 */}
+              {showTimeColumn && (
+                <div className="px-4 py-3 flex justify-center" role="columnheader" aria-sort="none">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">
+                    {COLUMN_LABELS.time}
+                  </div>
+                </div>
+              )}
               {/* 操作列 */}
-              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[50px] flex justify-end">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">操作</div>
+              <div className="px-4 py-3 flex justify-end" role="columnheader">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">
+                  {COLUMN_LABELS.actions}
+                </div>
               </div>
             </div>
 
@@ -218,6 +328,8 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
               style={{
                 contain: 'strict'
               }}
+              role="rowgroup"
+              aria-label="测试运行记录列表"
             >
               <div
                 style={{
@@ -231,56 +343,59 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
                   return (
                     <div
                       key={run.id}
-                      className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-colors absolute top-0 left-0 right-0 grid grid-cols-[auto_1fr_auto_auto] sm:grid-cols-[auto_2fr_auto_auto_auto] md:grid-cols-[auto_2fr_auto_auto_auto_auto] gap-2 sm:gap-3 items-center border-b border-slate-100 dark:divide-border-dark"
+                      className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-all duration-150 ease-in-out absolute top-0 left-0 right-0 grid items-center border-b border-slate-100 dark:border-border-dark"
                       style={{
+                        gridTemplateColumns: gridTemplate,
                         height: `${virtualItem.size}px`,
                         transform: `translateY(${virtualItem.start}px)`,
                       }}
+                      role="row"
+                      aria-label={`测试运行: ${run.suiteName}`}
                     >
                       {/* 状态列 */}
-                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[70px]">
+                      <div className="px-4 py-3" role="cell" aria-label={`状态: ${statusConfig[run.status].label}`}>
                         <StatusBadge status={run.status} />
                       </div>
                       {/* 计划名称列 */}
-                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-0">
+                      <div className="px-4 py-3" role="cell" aria-label={`计划名称: ${run.suiteName}`}>
                         <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
                           {run.suiteName}
                         </div>
-                        {/* 在小屏幕上显示耗时和时间信息 */}
-                        <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-gray-400 mt-1 sm:hidden">
-                          <span>{formatDuration(run.duration)}</span>
-                          <span className="md:hidden">{formatTime(run.startTime)}</span>
-                        </div>
                       </div>
                       {/* 耗时列 */}
-                      <div className="px-2 py-2 sm:px-3 sm:py-3 w-20 hidden sm:block">
-                        <div className="text-sm text-slate-500 dark:text-gray-400 truncate">
+                      <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`耗时: ${formatDuration(run.duration)}`}>
+                        <div className="text-sm text-slate-500 dark:text-gray-400">
                           {formatDuration(run.duration)}
                         </div>
                       </div>
                       {/* 执行者列 */}
-                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[80px]">
+                      <div className="px-4 py-3" role="cell" aria-label={`执行者: ${run.executedBy || '系统'}`}>
                         <div className="flex items-center gap-2">
-                          <div className={`size-5 sm:size-6 rounded-full ${ownerColors[virtualItem.index % ownerColors.length]} flex items-center justify-center text-[9px] sm:text-[10px] text-white font-bold`}>
+                          <div
+                            className={`size-6 rounded-full ${ownerColors[virtualItem.index % ownerColors.length]} flex items-center justify-center text-[10px] text-white font-bold`}
+                            aria-hidden="true"
+                          >
                             {getInitials(run.executedBy || '系统')}
                           </div>
-                          <span className="text-sm text-slate-600 dark:text-gray-300 truncate hidden sm:inline">{run.executedBy || '系统'}</span>
+                          <span className="text-sm text-slate-600 dark:text-gray-300 truncate">{run.executedBy || '系统'}</span>
                         </div>
                       </div>
-                      {/* 时间列 - 中屏以下隐藏 */}
-                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[70px] hidden md:block">
-                        <div className="text-sm text-slate-500 dark:text-gray-400">
-                          {formatTime(run.startTime)}
+                      {/* 时间列 - 根据屏幕尺寸动态显示 */}
+                      {showTimeColumn && (
+                        <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`时间: ${formatTime(run.startTime)}`}>
+                          <div className="text-sm text-slate-500 dark:text-gray-400">
+                            {formatTime(run.startTime)}
+                          </div>
                         </div>
-                      </div>
+                      )}
                       {/* 操作列 */}
-                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[50px] flex justify-end">
+                      <div className="px-4 py-3 flex justify-end" role="cell">
                         <button
                           type="button"
-                          title="更多操作"
-                          className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors"
+                          aria-label={`${run.suiteName}的更多操作`}
+                          className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                         >
-                          <MoreVertical className="h-4 w-4 sm:h-5 sm:w-5" />
+                          <MoreVertical className="h-5 w-5" aria-hidden="true" />
                         </button>
                       </div>
                     </div>
