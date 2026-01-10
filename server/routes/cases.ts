@@ -110,8 +110,8 @@ router.get('/', async (req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      query: sql || 'N/A',
-      params: params || 'N/A'
+      endpoint: req.path,
+      method: req.method
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -135,8 +135,8 @@ router.get('/modules/list', async (_req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      query: sql || 'N/A',
-      params: params || 'N/A'
+      endpoint: '/api/cases/modules/list',
+      method: 'GET'
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -158,8 +158,8 @@ router.get('/running/list', async (_req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      query: sql || 'N/A',
-      params: params || 'N/A'
+      endpoint: '/api/cases/running/list',
+      method: 'GET'
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -192,8 +192,8 @@ router.get('/:id', async (req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      query: sql || 'N/A',
-      params: params || 'N/A'
+      endpoint: req.path,
+      method: req.method
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -253,8 +253,8 @@ router.post('/', async (req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      query: sql || 'N/A',
-      params: params || 'N/A'
+      endpoint: req.path,
+      method: req.method
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -341,8 +341,8 @@ router.put('/:id', async (req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      query: sql || 'N/A',
-      params: params || 'N/A'
+      endpoint: req.path,
+      method: req.method
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -367,8 +367,8 @@ router.delete('/:id', async (req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      query: sql || 'N/A',
-      params: params || 'N/A'
+      endpoint: req.path,
+      method: req.method
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -452,8 +452,8 @@ router.post('/:id/run', async (req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      query: sql || 'N/A',
-      params: params || 'N/A'
+      endpoint: req.path,
+      method: req.method
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -491,8 +491,8 @@ router.post('/:id/callback', async (req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      query: sql || 'N/A',
-      params: params || 'N/A'
+      endpoint: req.path,
+      method: req.method
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';

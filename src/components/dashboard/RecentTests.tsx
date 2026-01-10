@@ -184,29 +184,29 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
         ) : (
           <div className="relative">
             {/* 固定的表头 */}
-            <div className="grid grid-cols-[auto_1fr_auto_auto_auto] sm:grid-cols-[auto_1fr_auto_auto_auto_auto] md:grid-cols-[auto_1fr_auto_auto_auto_auto] border-b border-slate-100 dark:border-border-dark bg-slate-50 dark:bg-black/20 gap-2">
+            <div className="grid grid-cols-[auto_1fr_auto_auto] sm:grid-cols-[auto_2fr_auto_auto_auto] md:grid-cols-[auto_2fr_auto_auto_auto_auto] border-b border-slate-100 dark:border-border-dark bg-slate-50 dark:bg-black/20 gap-2 sm:gap-3">
               {/* 状态列 */}
-              <div className="p-2 sm:p-4 min-w-[80px]">
+              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[70px]">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">状态</div>
               </div>
-              {/* 计划名称列 - 自适应 */}
-              <div className="p-2 sm:p-4 min-w-0">
+              {/* 计划名称列 */}
+              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-0">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">计划名称</div>
               </div>
-              {/* 耗时列 - 小屏隐藏 */}
-              <div className="p-2 sm:p-4 min-w-[60px] hidden sm:block">
+              {/* 耗时列 */}
+              <div className="px-2 py-2 sm:px-3 sm:py-3 w-20 hidden sm:block">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">耗时</div>
               </div>
               {/* 执行者列 */}
-              <div className="p-2 sm:p-4 min-w-[100px]">
+              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[80px]">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">执行者</div>
               </div>
               {/* 时间列 - 中屏以下隐藏 */}
-              <div className="p-2 sm:p-4 min-w-[80px] hidden md:block">
+              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[70px] hidden md:block">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">时间</div>
               </div>
               {/* 操作列 */}
-              <div className="p-2 sm:p-4 min-w-[60px] flex justify-end">
+              <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[50px] flex justify-end">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">操作</div>
               </div>
             </div>
@@ -231,18 +231,18 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
                   return (
                     <div
                       key={run.id}
-                      className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-colors absolute top-0 left-0 right-0 grid grid-cols-[auto_1fr_auto_auto_auto] sm:grid-cols-[auto_1fr_auto_auto_auto_auto] md:grid-cols-[auto_1fr_auto_auto_auto_auto] gap-2 items-center border-b border-slate-100 dark:divide-border-dark"
+                      className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-colors absolute top-0 left-0 right-0 grid grid-cols-[auto_1fr_auto_auto] sm:grid-cols-[auto_2fr_auto_auto_auto] md:grid-cols-[auto_2fr_auto_auto_auto_auto] gap-2 sm:gap-3 items-center border-b border-slate-100 dark:divide-border-dark"
                       style={{
                         height: `${virtualItem.size}px`,
                         transform: `translateY(${virtualItem.start}px)`,
                       }}
                     >
                       {/* 状态列 */}
-                      <div className="p-2 sm:p-4 min-w-[80px]">
+                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[70px]">
                         <StatusBadge status={run.status} />
                       </div>
-                      {/* 计划名称列 - 自适应 */}
-                      <div className="p-2 sm:p-4 min-w-0">
+                      {/* 计划名称列 */}
+                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-0">
                         <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
                           {run.suiteName}
                         </div>
@@ -252,14 +252,14 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
                           <span className="md:hidden">{formatTime(run.startTime)}</span>
                         </div>
                       </div>
-                      {/* 耗时列 - 小屏隐藏 */}
-                      <div className="p-2 sm:p-4 min-w-[60px] hidden sm:block">
-                        <div className="text-sm text-slate-500 dark:text-gray-400">
+                      {/* 耗时列 */}
+                      <div className="px-2 py-2 sm:px-3 sm:py-3 w-20 hidden sm:block">
+                        <div className="text-sm text-slate-500 dark:text-gray-400 truncate">
                           {formatDuration(run.duration)}
                         </div>
                       </div>
                       {/* 执行者列 */}
-                      <div className="p-2 sm:p-4 min-w-[100px]">
+                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[80px]">
                         <div className="flex items-center gap-2">
                           <div className={`size-5 sm:size-6 rounded-full ${ownerColors[virtualItem.index % ownerColors.length]} flex items-center justify-center text-[9px] sm:text-[10px] text-white font-bold`}>
                             {getInitials(run.executedBy || '系统')}
@@ -268,13 +268,13 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
                         </div>
                       </div>
                       {/* 时间列 - 中屏以下隐藏 */}
-                      <div className="p-2 sm:p-4 min-w-[80px] hidden md:block">
+                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[70px] hidden md:block">
                         <div className="text-sm text-slate-500 dark:text-gray-400">
                           {formatTime(run.startTime)}
                         </div>
                       </div>
                       {/* 操作列 */}
-                      <div className="p-2 sm:p-4 min-w-[60px] flex justify-end">
+                      <div className="px-2 py-2 sm:px-3 sm:py-3 min-w-[50px] flex justify-end">
                         <button
                           type="button"
                           title="更多操作"
