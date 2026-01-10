@@ -16,7 +16,7 @@ export function Layout({ children }: LayoutProps) {
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Mobile Header */}
-        <div className="lg:hidden flex items-center justify-between p-4 bg-white dark:bg-[#122017] border-b border-slate-200 dark:border-[#234833]">
+        <div className="lg:hidden flex items-center justify-between p-4 bg-white dark:bg-sidebar-dark border-b border-slate-200 dark:border-border-dark">
           <button className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-white/5">
             <Menu className="h-5 w-5 text-slate-600 dark:text-white" />
           </button>

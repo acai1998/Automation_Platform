@@ -62,7 +62,7 @@ export default function Home() {
     <div className="p-6 md:p-8 lg:p-12">
       <div className="max-w-7xl mx-auto flex flex-col gap-8">
           {/* Page Heading */}
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 animate-fade-in-up">
             <div className="flex flex-col gap-1">
               <h2 className="text-slate-900 dark:text-white text-3xl md:text-4xl font-black tracking-tight">
                 仪表盘
@@ -79,7 +79,7 @@ export default function Home() {
                   onChange={(e) => setTimeRange(e.target.value as TimeRange)}
                   title="选择时间范围"
                   aria-label="选择时间范围"
-                  className="appearance-none flex items-center bg-white dark:bg-surface-dark border border-slate-200 dark:border-[#234833] rounded-lg px-4 py-2.5 pr-10 text-sm text-slate-700 dark:text-gray-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="appearance-none flex items-center bg-white dark:bg-surface-dark border border-slate-200 dark:border-border-dark rounded-lg px-4 py-2.5 pr-10 text-sm text-slate-700 dark:text-gray-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50"
                 >
                   <option value="7d">近 7 天</option>
                   <option value="30d">近 30 天</option>
@@ -97,34 +97,38 @@ export default function Home() {
           </div>
 
           {/* Stats Cards */}
-          <TooltipProvider>
-            <StatsCards
+          <div className="animate-fade-in-up animate-delay-200">
+            <TooltipProvider>
+              <StatsCards
+                data={dashboardData || undefined}
+                onRefresh={fetchAllData}
+              />
+            </TooltipProvider>
+          </div>
+
+          {/* Charts Section */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 animate-fade-in-up animate-delay-300">
+            {/* Today's Execution Donut Chart */}
+            <TodayExecution
               data={dashboardData || undefined}
               onRefresh={fetchAllData}
             />
 
-            {/* Charts Section */}
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-              {/* Today's Execution Donut Chart */}
-              <TodayExecution
-                data={dashboardData || undefined}
-                onRefresh={fetchAllData}
-              />
-
-              {/* Trend Line Chart */}
-              <TrendChart
-                timeRange={timeRange}
-                data={dashboardData || undefined}
-                onRefresh={fetchAllData}
-              />
-            </div>
-          </TooltipProvider>
+            {/* Trend Line Chart */}
+            <TrendChart
+              timeRange={timeRange}
+              data={dashboardData || undefined}
+              onRefresh={fetchAllData}
+            />
+          </div>
 
           {/* Recent Test Runs */}
-          <RecentTests
-            data={dashboardData || undefined}
-            onRefresh={fetchAllData}
-          />
+          <div className="animate-fade-in-up animate-delay-400">
+            <RecentTests
+              data={dashboardData || undefined}
+              onRefresh={fetchAllData}
+            />
+          </div>
         </div>
       </div>
     );

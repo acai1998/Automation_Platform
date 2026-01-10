@@ -3,6 +3,7 @@ import { CheckCircle, Terminal, AlertCircle, Timer, TrendingUp, TrendingDown, Lo
 import { useLocation } from "wouter";
 import { dashboardApi } from "@/lib/api";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import { StatCardSkeleton } from "@/components/ui/StatCardSkeleton";
 import type { DashboardResponse } from "@/types/dashboard";
 
 interface DashboardStats {
@@ -32,10 +33,10 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
   return (
     <div
       onClick={onClick}
-      className={`flex flex-col gap-3 rounded-xl p-6 border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark shadow-sm stat-card ${onClick ? 'cursor-pointer' : ''}`}
+      className={`flex flex-col gap-4 rounded-xl p-6 border border-slate-200 dark:border-border-dark bg-gradient-to-br from-white to-slate-50/50 dark:from-surface-dark dark:to-surface-dark/80 shadow-sm transition-all duration-200 ${onClick ? 'cursor-pointer hover:shadow-lg hover:scale-[1.02] hover:border-primary/20 hover:from-primary/5 hover:to-primary/10' : ''}`}
     >
       <div className="flex justify-between items-start">
-        <div className={`p-2 ${iconBg} rounded-lg ${iconColor}`}>
+        <div className={`p-3 ${iconBg} rounded-xl shadow-sm ${iconColor} transition-transform duration-200 hover:scale-110`}>
           {icon}
         </div>
         <div className="flex items-center gap-2">
@@ -58,33 +59,37 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
               </TooltipContent>
             </Tooltip>
           )}
-
-          {trend && !loading && (
-            <span
-              className={`text-xs font-bold px-2 py-1 rounded flex items-center gap-1 ${
-                trend.isPositive
-                  ? "text-success bg-success/10"
-                  : "text-danger bg-danger/10"
-              }`}
-            >
-              {trend.value}
-              {trend.isPositive ? (
-                <TrendingUp className="h-3 w-3" />
-              ) : (
-                <TrendingDown className="h-3 w-3" />
-              )}
-            </span>
-          )}
         </div>
       </div>
-      <div>
-        <p className="text-slate-500 dark:text-gray-400 text-sm font-medium mb-1">{label}</p>
+      <div className="space-y-2">
+        <p className="text-slate-500 dark:text-gray-400 text-sm font-medium">{label}</p>
         {loading ? (
           <div className="flex items-center gap-2">
             <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+            <span className="text-slate-400 text-sm">加载中...</span>
           </div>
         ) : (
-          <p className="text-slate-900 dark:text-white text-3xl font-bold tracking-tight">{value}</p>
+          <div className="space-y-1">
+            <p className="text-slate-900 dark:text-white text-3xl font-bold tracking-tight leading-none">{value}</p>
+            {trend && (
+              <div className="flex items-center gap-1">
+                <span
+                  className={`text-xs font-medium px-2 py-1 rounded-full flex items-center gap-1 ${
+                    trend.isPositive
+                      ? "text-success bg-success/10"
+                      : "text-danger bg-danger/10"
+                  }`}
+                >
+                  {trend.isPositive ? (
+                    <TrendingUp className="h-3 w-3" />
+                  ) : (
+                    <TrendingDown className="h-3 w-3" />
+                  )}
+                  {trend.value}
+                </span>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -167,15 +172,29 @@ export function StatsCards({ data, onRefresh }: StatsCardsProps) {
     },
   ], [stats, setLocation]);
 
+  // Show skeleton when no data is available
+  if (!data || !stats) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="animate-fade-in-up" style={{ animationDelay: `${index * 100}ms` }}>
+            <StatCardSkeleton />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <TooltipProvider>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {cardsConfig.map((config, index) => (
-          <StatCard
-            key={index}
-            {...config}
-            loading={loading}
-          />
+          <div key={index} className="animate-fade-in-up" style={{ animationDelay: `${index * 100}ms` }}>
+            <StatCard
+              {...config}
+              loading={loading}
+            />
+          </div>
         ))}
       </div>
     </TooltipProvider>

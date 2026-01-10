@@ -119,7 +119,7 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
   const rowVirtualizer = useVirtualizer({
     count: runs.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 60, // 每行高度估计值
+    estimateSize: () => 76, // 每行高度估计值，增加以适应移动端的额外信息
     overscan: 5, // 预渲染额外行数
   });
 
@@ -172,7 +172,7 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
         </div>
       </div>
 
-      <div className="w-full overflow-x-auto rounded-xl border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark">
+      <div className="w-full overflow-hidden rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark transition-all duration-200 hover:shadow-lg hover:border-primary/10">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -184,18 +184,32 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
         ) : (
           <div className="relative">
             {/* 固定的表头 */}
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-100 dark:border-[#234833] bg-slate-50 dark:bg-black/20">
-                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">状态</th>
-                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">计划名称</th>
-                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">耗时</th>
-                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">执行者</th>
-                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">时间</th>
-                  <th className="p-4 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400 text-right">操作</th>
-                </tr>
-              </thead>
-            </table>
+            <div className="grid grid-cols-[auto_1fr_auto_auto_auto] sm:grid-cols-[auto_1fr_auto_auto_auto_auto] md:grid-cols-[auto_1fr_auto_auto_auto_auto] border-b border-slate-100 dark:border-border-dark bg-slate-50 dark:bg-black/20 gap-2">
+              {/* 状态列 */}
+              <div className="p-2 sm:p-4 min-w-[80px]">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">状态</div>
+              </div>
+              {/* 计划名称列 - 自适应 */}
+              <div className="p-2 sm:p-4 min-w-0">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">计划名称</div>
+              </div>
+              {/* 耗时列 - 小屏隐藏 */}
+              <div className="p-2 sm:p-4 min-w-[60px] hidden sm:block">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">耗时</div>
+              </div>
+              {/* 执行者列 */}
+              <div className="p-2 sm:p-4 min-w-[100px]">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">执行者</div>
+              </div>
+              {/* 时间列 - 中屏以下隐藏 */}
+              <div className="p-2 sm:p-4 min-w-[80px] hidden md:block">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">时间</div>
+              </div>
+              {/* 操作列 */}
+              <div className="p-2 sm:p-4 min-w-[60px] flex justify-end">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-gray-400">操作</div>
+              </div>
+            </div>
 
             {/* 虚拟滚动的表体 */}
             <div
@@ -212,53 +226,66 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
                   position: 'relative',
                 }}
               >
-                <table className="w-full text-left border-collapse">
-                  <tbody className="divide-y divide-slate-100 dark:divide-[#234833]">
-                    {rowVirtualizer.getVirtualItems().map((virtualItem) => {
-                      const run = runs[virtualItem.index];
-                      return (
-                        <tr
-                          key={run.id}
-                          className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-colors absolute top-0 left-0 right-0"
-                          style={{
-                            height: `${virtualItem.size}px`,
-                            transform: `translateY(${virtualItem.start}px)`,
-                          }}
+                {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+                  const run = runs[virtualItem.index];
+                  return (
+                    <div
+                      key={run.id}
+                      className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-colors absolute top-0 left-0 right-0 grid grid-cols-[auto_1fr_auto_auto_auto] sm:grid-cols-[auto_1fr_auto_auto_auto_auto] md:grid-cols-[auto_1fr_auto_auto_auto_auto] gap-2 items-center border-b border-slate-100 dark:divide-border-dark"
+                      style={{
+                        height: `${virtualItem.size}px`,
+                        transform: `translateY(${virtualItem.start}px)`,
+                      }}
+                    >
+                      {/* 状态列 */}
+                      <div className="p-2 sm:p-4 min-w-[80px]">
+                        <StatusBadge status={run.status} />
+                      </div>
+                      {/* 计划名称列 - 自适应 */}
+                      <div className="p-2 sm:p-4 min-w-0">
+                        <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                          {run.suiteName}
+                        </div>
+                        {/* 在小屏幕上显示耗时和时间信息 */}
+                        <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-gray-400 mt-1 sm:hidden">
+                          <span>{formatDuration(run.duration)}</span>
+                          <span className="md:hidden">{formatTime(run.startTime)}</span>
+                        </div>
+                      </div>
+                      {/* 耗时列 - 小屏隐藏 */}
+                      <div className="p-2 sm:p-4 min-w-[60px] hidden sm:block">
+                        <div className="text-sm text-slate-500 dark:text-gray-400">
+                          {formatDuration(run.duration)}
+                        </div>
+                      </div>
+                      {/* 执行者列 */}
+                      <div className="p-2 sm:p-4 min-w-[100px]">
+                        <div className="flex items-center gap-2">
+                          <div className={`size-5 sm:size-6 rounded-full ${ownerColors[virtualItem.index % ownerColors.length]} flex items-center justify-center text-[9px] sm:text-[10px] text-white font-bold`}>
+                            {getInitials(run.executedBy || '系统')}
+                          </div>
+                          <span className="text-sm text-slate-600 dark:text-gray-300 truncate hidden sm:inline">{run.executedBy || '系统'}</span>
+                        </div>
+                      </div>
+                      {/* 时间列 - 中屏以下隐藏 */}
+                      <div className="p-2 sm:p-4 min-w-[80px] hidden md:block">
+                        <div className="text-sm text-slate-500 dark:text-gray-400">
+                          {formatTime(run.startTime)}
+                        </div>
+                      </div>
+                      {/* 操作列 */}
+                      <div className="p-2 sm:p-4 min-w-[60px] flex justify-end">
+                        <button
+                          type="button"
+                          title="更多操作"
+                          className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors"
                         >
-                          <td className="p-4">
-                            <StatusBadge status={run.status} />
-                          </td>
-                          <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
-                            {run.suiteName}
-                          </td>
-                          <td className="p-4 text-sm text-slate-500 dark:text-gray-400">
-                            {formatDuration(run.duration)}
-                          </td>
-                          <td className="p-4">
-                            <div className="flex items-center gap-2">
-                              <div className={`size-6 rounded-full ${ownerColors[virtualItem.index % ownerColors.length]} flex items-center justify-center text-[10px] text-white font-bold`}>
-                                {getInitials(run.executedBy || '系统')}
-                              </div>
-                              <span className="text-sm text-slate-600 dark:text-gray-300">{run.executedBy || '系统'}</span>
-                            </div>
-                          </td>
-                          <td className="p-4 text-sm text-slate-500 dark:text-gray-400">
-                            {formatTime(run.startTime)}
-                          </td>
-                          <td className="p-4 text-right">
-                            <button
-                              type="button"
-                              title="更多操作"
-                              className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors"
-                            >
-                              <MoreVertical className="h-5 w-5" />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          <MoreVertical className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

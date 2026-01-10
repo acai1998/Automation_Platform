@@ -75,7 +75,7 @@ export function TodayExecution({ data, onRefresh }: TodayExecutionProps) {
   }, [todayData]);
 
   return (
-    <div className="xl:col-span-1 rounded-xl border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark p-6 flex flex-col">
+    <div className="xl:col-span-1 rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark p-6 flex flex-col transition-all duration-200 hover:shadow-lg hover:border-primary/10">
       <div className="mb-6">
         <div className="flex items-center gap-2">
           <h3 className="text-slate-900 dark:text-white text-lg font-bold">今日执行统计</h3>

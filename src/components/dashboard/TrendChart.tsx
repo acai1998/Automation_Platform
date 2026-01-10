@@ -140,7 +140,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   const formattedDate = formatTooltipDate(label || '');
 
   return (
-    <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-[#234833] rounded-lg shadow-lg p-3 min-w-[180px]">
+    <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-border-dark rounded-lg shadow-lg p-3 min-w-[180px]">
       <p className="text-sm font-semibold text-slate-900 dark:text-white mb-2">
         {formattedDate}
       </p>
@@ -157,7 +157,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
           <span className="text-slate-500 dark:text-gray-400">失败用例数</span>
           <span className="font-medium text-danger">{data.failedCases ?? 0}</span>
         </div>
-        <div className="flex justify-between border-t border-slate-100 dark:border-[#234833] pt-1 mt-1">
+        <div className="flex justify-between border-t border-slate-100 dark:border-border-dark pt-1 mt-1">
           <span className="text-slate-500 dark:text-gray-400">成功率</span>
           <span className="font-bold text-primary">{successRate.toFixed(1)}%</span>
         </div>
@@ -247,7 +247,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
 /** 统计信息组件 */
 function ChartStats({ avgStability, totalExecutions, totalFailed, hasData }: ChartStatsProps) {
   return (
-    <div className="mt-6 pt-4 border-t border-slate-100 dark:border-[#234833] grid grid-cols-3 gap-4">
+    <div className="mt-6 pt-4 border-t border-slate-100 dark:border-border-dark grid grid-cols-3 gap-4">
       <div className="text-center">
         <p className="text-xs text-slate-500 dark:text-gray-400 mb-1">平均成功率</p>
         <p className={`text-lg font-bold ${hasData ? 'text-primary' : 'text-slate-400 dark:text-gray-500'}`}>
@@ -388,6 +388,31 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
     dimensions: { height: 250, margin: { top: 10, right: 10, left: 0, bottom: 2 } }
   }), []);
 
+  // 预计算图表属性，避免在渲染函数中调用 hooks
+  const commonAxisProps = useMemo(() => ({
+    tick: { fontSize: CHART_CONFIG.xAxis.fontSize, fill: chartConfig.colors.axis },
+    tickLine: false,
+  }), [chartConfig.colors.axis]);
+
+  const xAxisProps = useMemo(() => ({
+    ...commonAxisProps,
+    dataKey: "date",
+    tickFormatter: formatDate,
+    axisLine: { stroke: chartConfig.colors.grid },
+    angle: xAxisConfig.angle,
+    textAnchor: xAxisConfig.textAnchor,
+    interval: xAxisConfig.interval,
+    height: CHART_CONFIG.xAxis.height[timeRange],
+  }), [commonAxisProps, formatDate, xAxisConfig, timeRange, chartConfig.colors.grid]);
+
+  const yAxisProps = useMemo(() => ({
+    ...commonAxisProps,
+    domain: [0, 100] as [number, number],
+    axisLine: false,
+    tickFormatter: (value: number) => `${value}%`,
+    width: CHART_CONFIG.dimensions.yAxisWidth,
+  }), [commonAxisProps]);
+
   // 渲染图表内容
   const renderChart = () => {
     if (loading) {
@@ -422,30 +447,6 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
       );
     }
 
-    const commonAxisProps = useMemo(() => ({
-      tick: { fontSize: CHART_CONFIG.xAxis.fontSize, fill: chartConfig.colors.axis },
-      tickLine: false,
-    }), [chartConfig.colors.axis]);
-
-    const xAxisProps = useMemo(() => ({
-      ...commonAxisProps,
-      dataKey: "date",
-      tickFormatter: formatDate,
-      axisLine: { stroke: chartConfig.colors.grid },
-      angle: xAxisConfig.angle,
-      textAnchor: xAxisConfig.textAnchor,
-      interval: xAxisConfig.interval,
-      height: CHART_CONFIG.xAxis.height[timeRange],
-    }), [commonAxisProps, formatDate, xAxisConfig, timeRange, chartConfig.colors.grid]);
-
-    const yAxisProps = useMemo(() => ({
-      ...commonAxisProps,
-      domain: [0, 100] as [number, number],
-      axisLine: false,
-      tickFormatter: (value: number) => `${value}%`,
-      width: CHART_CONFIG.dimensions.yAxisWidth,
-    }), [commonAxisProps]);
-
     return (
       <ResponsiveContainer width="100%" height={chartConfig.dimensions.height} minHeight={chartConfig.dimensions.height}>
         {chartType === 'line' ? (
@@ -453,7 +454,7 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
             <CartesianGrid
               strokeDasharray="3 3"
               stroke={chartConfig.colors.grid}
-              className="dark:stroke-[#234833]"
+              className="dark:stroke-border-dark"
               vertical={false}
             />
             <XAxis {...xAxisProps} />
@@ -473,7 +474,7 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
             <CartesianGrid
               strokeDasharray="3 3"
               stroke={chartConfig.colors.grid}
-              className="dark:stroke-[#234833]"
+              className="dark:stroke-border-dark"
               vertical={false}
             />
             <XAxis {...xAxisProps} />
@@ -493,7 +494,7 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
 
   return (
     <div
-      className="xl:col-span-2 rounded-xl border border-slate-200 dark:border-[#234833] bg-white dark:bg-surface-dark p-6 flex flex-col"
+      className="xl:col-span-2 rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark p-6 flex flex-col transition-all duration-200 hover:shadow-lg hover:border-primary/10"
       role="region"
       aria-label={TIME_RANGE_LABELS[timeRange]}
     >

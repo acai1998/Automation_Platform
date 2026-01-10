@@ -51,6 +51,16 @@
     --text-primary: 15 23 42;
     --text-secondary: 100 116 139;
     --text-muted: 148 163 184;
+
+    /* Enhanced Color Variables for Components */
+    --color-surface-light: #ffffff;
+    --color-surface-dark: #162e21;
+    --color-sidebar-light: #f8faf9;
+    --color-sidebar-dark: #122017;
+    --color-border-light: #e2e8f0;
+    --color-border-dark: #234833;
+    --color-text-muted-light: #64748b;
+    --color-text-muted-dark: #94a3b8;
   }
 
   /* Dark Theme */
@@ -82,6 +92,16 @@
     --text-primary: 255 255 255;
     --text-secondary: 150 30% 70%;
     --text-muted: 150 30% 50%;
+
+    /* Enhanced Color Variables for Components */
+    --color-surface-light: #ffffff;
+    --color-surface-dark: #162e21;
+    --color-sidebar-light: #f8faf9;
+    --color-sidebar-dark: #122017;
+    --color-border-light: #e2e8f0;
+    --color-border-dark: #234833;
+    --color-text-muted-light: #64748b;
+    --color-text-muted-dark: #94a3b8;
   }
 }
 
