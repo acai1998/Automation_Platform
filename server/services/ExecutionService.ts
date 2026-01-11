@@ -95,7 +95,7 @@ export class ExecutionService {
     for (const result of input.results) {
       await pool.execute(`
         INSERT INTO Auto_TestRunResults (
-          run_id, case_id, case_name, status, start_time, end_time,
+          execution_id, case_id, case_name, status, start_time, end_time,
           duration, error_message, created_at
         ) VALUES (?, ?, ?, ?, NOW(), NOW(), ?, ?, NOW())
       `, [
@@ -140,7 +140,7 @@ export class ExecutionService {
     `, [executionId]);
 
     const results = await query(`
-      SELECT * FROM Auto_TestRunResults WHERE run_id = ? ORDER BY id
+      SELECT * FROM Auto_TestRunResults WHERE execution_id = ? ORDER BY id
     `, [executionId]);
 
     return { execution, results };
@@ -211,16 +211,31 @@ export class ExecutionService {
     const insertResult = result as { insertId: number };
     const runId = insertResult.insertId;
 
+    // 2.5. 创建对应的执行记录到 Auto_TestCaseTaskExecutions 表（为了满足外键约束）
+    const [executionResult] = await pool.execute(`
+      INSERT INTO Auto_TestCaseTaskExecutions (
+        task_id, status, total_cases, executed_by, start_time, created_at
+      ) VALUES (?, 'pending', ?, ?, NOW(), NOW())
+    `, [
+      null, // 设置为 NULL 以避免外键约束
+      cases.length,
+      input.triggeredBy,
+    ]);
+
+    const executionInsertResult = executionResult as { insertId: number };
+    const executionId = executionInsertResult.insertId;
+
     // 3. 批量插入 Auto_TestRunResults 记录（状态为 pending）
     for (const testCase of cases) {
       await pool.execute(`
         INSERT INTO Auto_TestRunResults (
-          run_id, case_id, case_name, status, created_at
-        ) VALUES (?, ?, ?, 'pending', NOW())
+          execution_id, case_id, case_name, status, created_at
+        ) VALUES (?, ?, ?, ?, NOW())
       `, [
-        runId,
+        executionId,
         testCase.id,
-        testCase.name
+        testCase.name,
+        'error'
       ]);
     }
 
@@ -256,7 +271,7 @@ export class ExecutionService {
       SELECT atrr.*, atc.module, atc.priority, atc.type
       FROM Auto_TestRunResults atrr
       LEFT JOIN Auto_TestCase atc ON atrr.case_id = atc.id
-      WHERE atrr.run_id = ?
+      WHERE atrr.execution_id = ?
       ORDER BY atrr.id
     `, [runId]);
 
@@ -314,7 +329,7 @@ export class ExecutionService {
           UPDATE Auto_TestRunResults
           SET status = ?, duration = ?, error_message = ?,
               start_time = NOW(), end_time = NOW()
-          WHERE run_id = ? AND case_id = ?
+          WHERE execution_id = ? AND case_id = ?
         `, [
           result.status,
           result.duration,
@@ -329,7 +344,7 @@ export class ExecutionService {
         if (affectedRows === 0) {
           await pool.execute(`
             INSERT INTO Auto_TestRunResults (
-              run_id, case_id, case_name, status, duration, error_message,
+              execution_id, case_id, case_name, status, duration, error_message,
               start_time, end_time, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
           `, [
@@ -393,7 +408,7 @@ export class ExecutionService {
     const results = await query<{ case_id: number }[]>(`
       SELECT DISTINCT atrr.case_id
       FROM Auto_TestRunResults atrr
-      WHERE atrr.run_id = ?
+      WHERE atrr.execution_id = ?
     `, [runId]);
 
     if (!results || results.length === 0) {
