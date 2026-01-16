@@ -85,13 +85,13 @@ export function Sidebar() {
     <aside className="hidden lg:flex w-64 flex-col bg-white dark:bg-slate-900 border-r border-slate-200/80 dark:border-slate-800 h-full">
       <div className="flex flex-col h-full">
         {/* Logo */}
-        <div className="px-5 py-6 border-b border-slate-100 dark:border-slate-800">
+        <div className="h-20 px-5 border-b border-slate-100 dark:border-slate-800 flex items-center">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/25">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/25">
                 <Boxes className="h-5 w-5 text-white" />
               </div>
-              <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-white dark:border-slate-900" />
+              <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border-2 border-white dark:border-slate-900" />
             </div>
             <div>
               <h1 className="text-slate-900 dark:text-white text-base font-bold tracking-tight">
@@ -121,12 +121,12 @@ export function Sidebar() {
                       onClick={() => toggleMenu(item.label)}
                       className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group ${
                         isActive
-                          ? "bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                          ? "bg-primary/10 text-primary"
                           : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white"
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className={`transition-colors ${isActive ? 'text-blue-500' : 'text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300'}`}>
+                        <span className={`transition-colors ${isActive ? 'text-primary' : 'text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300'}`}>
                           {item.icon}
                         </span>
                         <span className="text-sm font-medium">{item.label}</span>
@@ -154,7 +154,7 @@ export function Sidebar() {
                               onClick={() => setLocation(child.href)}
                               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150 ${
                                 isChildItemActive
-                                  ? "bg-blue-500 text-white shadow-sm shadow-blue-500/25"
+                                  ? "bg-primary text-white shadow-sm shadow-primary/25"
                                   : "text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white"
                               }`}
                             >
@@ -179,7 +179,7 @@ export function Sidebar() {
                   onClick={() => item.href && setLocation(item.href)}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group ${
                     isActive
-                      ? "bg-blue-500 text-white shadow-sm shadow-blue-500/25"
+                      ? "bg-primary text-white shadow-sm shadow-primary/25"
                       : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white"
                   }`}
                 >

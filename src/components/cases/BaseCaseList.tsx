@@ -1,12 +1,12 @@
 import { useState, ReactNode } from 'react';
-import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User } from 'lucide-react';
+import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { CaseStatusBadge } from './CaseStatusBadge';
-import { useCases, useRunCase, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
-import { repositoriesApi } from '@/api/repositories';
+import { useCases, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
+import { useTestExecution } from '@/hooks/useExecuteCase';
+import { ExecutionProgress } from './ExecutionProgress';
 import { toast } from 'sonner';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 
 /**
  * 列配置
@@ -41,6 +41,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [isProgressOpen, setIsProgressOpen] = useState(false);
 
   const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
@@ -52,53 +53,34 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     pageSize,
   });
 
-  // 运行用例
-  const runCaseMutation = useRunCase();
+  // 执行管理
+  const {
+    executeCase,
+    isExecuting,
+    batchInfo,
+    isFetchingBatch,
+    batchError,
+    reset: resetExecution,
+  } = useTestExecution();
 
   // 分页信息
   const pagination = usePagination(data?.total || 0, page, pageSize);
 
-  // 同步用例
+  // 刷新页面数据
   const queryClient = useQueryClient();
-  const syncCaseMutation = useMutation({
-    mutationFn: async () => {
-      const repos = await repositoriesApi.getRepositories('active');
-      if (!repos.success || !repos.data) {
-        throw new Error('无法获取仓库配置');
-      }
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-      const typeKeywords: Record<CaseType, string[]> = {
-        api: ['api', '接口', '接口测试'],
-        ui: ['ui', '界面', 'UI测试', 'ui测试'],
-        performance: ['performance', '性能', '压测', '性能测试'],
-      };
-
-      const keywords = typeKeywords[type] || [];
-      const matchedRepo = repos.data.find((repo) => {
-        const repoName = repo.name.toLowerCase();
-        return keywords.some((keyword) => repoName.includes(keyword.toLowerCase()));
-      }) || repos.data[0];
-
-      if (!matchedRepo) {
-        throw new Error(`未找到可用的仓库配置，请先在仓库管理页面创建 ${type} 类型的仓库`);
-      }
-
-      const result = await repositoriesApi.syncRepository(matchedRepo.id);
-      if (!result.success) {
-        throw new Error(result.message || '同步失败');
-      }
-      return result;
-    },
-    onSuccess: () => {
-      toast.success('同步用例已启动，请稍候刷新查看结果');
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['cases'] });
-      }, 2000);
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || '同步失败');
-    },
-  });
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ['cases'] });
+      toast.success('页面数据已刷新');
+    } catch (error) {
+      toast.error('刷新失败，请重试');
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  };
 
   // 处理搜索
   const handleSearch = () => {
@@ -107,9 +89,13 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   };
 
   // 处理运行用例
-  const handleRunCase = async (caseId: number, caseName: string) => {
+  const handleRunCase = async (caseId: number, caseName: string, projectId: number | null) => {
+    // 如果没有项目ID，使用默认项目ID 1
+    const finalProjectId = projectId || 1;
+    
     try {
-      await runCaseMutation.mutateAsync(caseId);
+      await executeCase(caseId, finalProjectId);
+      setIsProgressOpen(true);
       toast.success(`用例 "${caseName}" 已开始执行`);
     } catch (err) {
       const message = err instanceof Error ? err.message : '执行失败';
@@ -133,26 +119,21 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       );
     }
 
-    if (column.key === 'running_status') {
-      return <CaseStatusBadge status={record.running_status} />;
-    }
-
     if (column.key === 'actions') {
-      const isRunning = record.running_status === 'running';
       return (
         <Button
           size="sm"
-          variant={isRunning ? 'outline' : 'default'}
-          disabled={isRunning || runCaseMutation.isPending}
-          onClick={() => handleRunCase(record.id, record.name)}
+          variant="default"
+          disabled={isExecuting || isFetchingBatch}
+          onClick={() => handleRunCase(record.id, record.name, record.project_id)}
           className="gap-1.5 h-8 px-3 transition-all duration-200 hover:scale-105 active:scale-95"
         >
-          {runCaseMutation.isPending ? (
+          {isExecuting ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <Play className="h-3.5 w-3.5" />
           )}
-          {isRunning ? '运行中' : '运行'}
+          运行
         </Button>
       );
     }
@@ -197,8 +178,8 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   return (
     <div className="h-full flex flex-col min-h-0">
       {/* 顶部标题区 - 带渐变背景 */}
-      <div className={`relative px-4 sm:px-6 py-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl`}>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className={`relative h-20 px-4 sm:px-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl flex items-center`}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between w-full">
           <div className="flex items-center gap-3">
             <div className={`p-2.5 rounded-xl ${theme.iconBg} shadow-sm`}>
               {icon}
@@ -215,20 +196,28 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             </div>
           </div>
 
-          {/* 操作按钮 */}
-          <Button
-            variant="outline"
-            onClick={() => syncCaseMutation.mutate()}
-            disabled={syncCaseMutation.isPending}
-            className="gap-2 h-9 px-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 hover:shadow-md"
-          >
-            {syncCaseMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            同步用例
-          </Button>
+          {/* 操作按钮和提示 */}
+          <div className="flex flex-col items-end gap-2">
+            <Button
+              variant="outline"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="gap-2 h-9 px-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 hover:shadow-md"
+            >
+              {isRefreshing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              刷新页面
+            </Button>
+
+            {/* 数据同步提示 */}
+            <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 bg-blue-50/80 dark:bg-blue-900/20 px-2 py-1 rounded-md border border-blue-200/50 dark:border-blue-800/50">
+              <Info className="h-3 w-3 text-blue-500" />
+              <span>脚本更新后约1分钟自动同步，如数据未更新可刷新页面</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -366,15 +355,12 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                       <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-400">
                         {record.owner || '-'}
                       </td>
-                      <td className="px-4 py-3">
-                        <CaseStatusBadge status={record.running_status} />
-                      </td>
                       <td className="px-4 py-3 text-right">
                         <Button
                           size="sm"
-                          variant={record.running_status === 'running' ? 'outline' : 'default'}
-                          disabled={record.running_status === 'running' || runCaseMutation.isPending}
-                          onClick={() => handleRunCase(record.id, record.name)}
+                          variant="default"
+                          disabled={isExecuting || isFetchingBatch}
+                          onClick={() => handleRunCase(record.id, record.name, record.project_id)}
                           className="h-8 px-3"
                         >
                           <Play className="h-3.5 w-3.5" />
@@ -401,7 +387,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">
                             {(page - 1) * pageSize + index + 1}
                           </span>
-                          <CaseStatusBadge status={record.running_status} />
                           {columns.find(c => c.key === 'priority')?.render?.(record.priority, record, index)}
                         </div>
                         <h3 className="font-medium text-slate-900 dark:text-white text-sm leading-snug line-clamp-2">
@@ -410,12 +395,12 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                       </div>
                       <Button
                         size="sm"
-                        variant={record.running_status === 'running' ? 'outline' : 'default'}
-                        disabled={record.running_status === 'running' || runCaseMutation.isPending}
-                        onClick={() => handleRunCase(record.id, record.name)}
+                        variant="default"
+                        disabled={isExecuting || isFetchingBatch}
+                        onClick={() => handleRunCase(record.id, record.name, record.project_id)}
                         className="shrink-0 h-8 w-8 p-0"
                       >
-                        {runCaseMutation.isPending ? (
+                        {isExecuting ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <Play className="h-4 w-4" />
@@ -531,6 +516,21 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
           </div>
         )}
       </div>
+
+      {/* 执行进度弹窗 */}
+      <ExecutionProgress
+        isOpen={isProgressOpen}
+        onClose={() => {
+          setIsProgressOpen(false);
+          if (batchInfo?.status !== 'running' && batchInfo?.status !== 'pending') {
+            resetExecution();
+          }
+        }}
+        batchInfo={batchInfo || undefined}
+        isLoading={isFetchingBatch}
+        error={batchError as Error}
+        buildUrl={batchInfo?.jenkins_build_url}
+      />
     </div>
   );
 }

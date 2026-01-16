@@ -17,9 +17,6 @@ npm run server
 # 构建生产环境的前端代码
 npm run build
 
-# 数据库管理
-npm run db:init    # 使用 schema 和种子数据初始化数据库
-npm run db:reset   # 重置数据库（删除并重新创建）
 ```
 
 ## 类型检查
@@ -47,8 +44,8 @@ npx tsc --noEmit -p tsconfig.server.json
 
 ### 后端（`server/`）
 - 通过 tsx 运行的 Express 服务器
-- 使用 better-sqlite3 的 SQLite 数据库
-- 数据库文件位于 `server/db/`（包括 schema.sql、seed.sql 和 autotest.db）
+- 使用 mysql2 的 MariaDB 数据库
+- 数据库配置位于 `server/config/database.ts`，表结构自动初始化
 - 路径别名：`@shared/*` 映射到 `shared/*`
 
 ### API 路由
@@ -67,13 +64,15 @@ npx tsc --noEmit -p tsconfig.server.json
 - `POST /api/executions/:id/start` — 标记执行开始运行
 
 ## 数据库结构
+远程 MariaDB 数据库中的关键表：
+- `Auto_Users` — 用户表（远程表）
+- `Auto_TestCase` — 测试用例资产表（远程表）
+- `Auto_TestRun` — 测试执行批次表（远程表）
+- `Auto_TestRunResults` — 测试用例执行结果表（远程表）
+- `Auto_TestCaseTaskExecutions` — 测试任务执行记录表（远程表）
+- `Auto_TestCaseDailySummaries` — 测试用例每日统计汇总表（远程表）
 
-关键表定义位于 `server/db/schema.sql`：
-- `test_cases` — 测试用例定义（含配置 JSON）
-- `tasks` — 定时或手动触发的测试任务
-- `task_executions` — 执行历史记录
-- `case_results` — 单个测试结果
-- `daily_summaries` — 汇总统计信息
+**注意**：数据库表结构由 DBA 统一管理，本地不进行表结构初始化。
 
 ## 路径别名配置
 
@@ -120,7 +119,7 @@ npx tsc --noEmit -p tsconfig.server.json
 - **Jenkins 集成**：
   通过 `executionService.createExecution()` 创建执行记录，Jenkins 完成后调用回调接口
 - **数据库操作**：
-  通过 `server/db` 中的 `better-sqlite3` 操作，**禁止**在代码中硬编码 SQL
+  通过 `server/config/database.ts` 中的 `mysql2` 连接池操作，**禁止**在代码中硬编码 SQL
 - **API 路由**：
   严格按 `API Routes` 部分定义（如 `/api/cases` 用于测试用例管理）
 - **图表开发**：
@@ -134,4 +133,3 @@ npx tsc --noEmit -p tsconfig.server.json
 - **不要修改** `tsconfig.json` 中的路径别名（已配置好）
 - ️**不要添加** `node_modules` 或 `dist/` 文件到版本控制
 - ️**所有新文件**必须放在对应目录（如新组件放 `src/components/`）
-

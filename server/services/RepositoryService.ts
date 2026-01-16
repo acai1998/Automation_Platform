@@ -144,7 +144,7 @@ export class RepositoryService {
    * 获取仓库信息
    */
   async getRepositoryConfig(id: number): Promise<RepositoryConfig | null> {
-    const config = await queryOne<RepositoryConfig>('SELECT * FROM repository_configs WHERE id = ?', [id]);
+    const config = await queryOne<RepositoryConfig>('SELECT * FROM Auto_RepositoryConfigs WHERE id = ?', [id]);
     return config || null;
   }
 
@@ -152,7 +152,7 @@ export class RepositoryService {
    * 获取所有仓库配置
    */
   async getAllRepositoryConfigs(status?: string): Promise<RepositoryConfig[]> {
-    let sql = 'SELECT * FROM repository_configs';
+    let sql = 'SELECT * FROM Auto_RepositoryConfigs';
     const params: unknown[] = [];
 
     if (status) {
@@ -183,7 +183,7 @@ export class RepositoryService {
     const pool = getPool();
 
     const [result] = await pool.execute(`
-      INSERT INTO repository_configs (
+      INSERT INTO Auto_RepositoryConfigs (
         name, description, repo_url, branch, auth_type, credentials_encrypted,
         script_path_pattern, script_type, sync_interval, auto_create_cases, created_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -261,7 +261,7 @@ export class RepositoryService {
 
     params.push(id);
     const pool = getPool();
-    await pool.execute(`UPDATE repository_configs SET ${updates.join(', ')} WHERE id = ?`, params);
+    await pool.execute(`UPDATE Auto_RepositoryConfigs SET ${updates.join(', ')} WHERE id = ?`, params);
   }
 
   /**
@@ -269,7 +269,7 @@ export class RepositoryService {
    */
   async deleteRepositoryConfig(id: number): Promise<void> {
     const pool = getPool();
-    await pool.execute('DELETE FROM repository_configs WHERE id = ?', [id]);
+    await pool.execute('DELETE FROM Auto_RepositoryConfigs WHERE id = ?', [id]);
 
     // 清理本地克隆的仓库
     const repoPath = this.getRepoPath(id);

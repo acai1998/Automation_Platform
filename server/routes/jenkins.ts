@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { executionService } from '../services/ExecutionService.js';
+import { jenkinsService } from '../services/JenkinsService.js';
 
 const router = Router();
 
@@ -34,6 +35,124 @@ router.post('/trigger', async (req, res) => {
         jenkinsJobName: jenkinsJobName || null,
         message: 'Execution created. Waiting for Jenkins to start.'
       }
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * POST /api/jenkins/run-case
+ * 触发单个用例执行
+ */
+router.post('/run-case', async (req, res) => {
+  try {
+    const { caseId, projectId, triggeredBy = 1 } = req.body;
+
+    if (!caseId || !projectId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'caseId and projectId are required' 
+      });
+    }
+
+    // 创建执行批次记录
+    const execution = await executionService.triggerTestExecution({
+      caseIds: [caseId],
+      projectId,
+      triggeredBy,
+      triggerType: 'manual',
+    });
+
+    // 触发Jenkins Job
+    const triggerResult = await jenkinsService.triggerBatchJob(
+      execution.runId,
+      [caseId],
+      [],
+      `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`
+    );
+
+    if (triggerResult.success) {
+      // 更新Jenkins构建信息
+      if (triggerResult.buildUrl) {
+        // 解析Jenkins URL获取build ID
+        const buildIdMatch = triggerResult.buildUrl.match(/\/(\d+)\/$/);
+        const buildId = buildIdMatch ? buildIdMatch[1] : 'unknown';
+        
+        await executionService.updateBatchJenkinsInfo(execution.runId, {
+          buildId,
+          buildUrl: triggerResult.buildUrl,
+        });
+      }
+    }
+
+    res.json({
+      success: triggerResult.success,
+      data: {
+        runId: execution.runId,
+        buildUrl: triggerResult.buildUrl,
+      },
+      message: triggerResult.message,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * POST /api/jenkins/run-batch
+ * 触发批量用例执行
+ */
+router.post('/run-batch', async (req, res) => {
+  try {
+    const { caseIds, projectId, triggeredBy = 1 } = req.body;
+
+    if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0 || !projectId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'caseIds (array) and projectId are required' 
+      });
+    }
+
+    // 创建执行批次记录
+    const execution = await executionService.triggerTestExecution({
+      caseIds,
+      projectId,
+      triggeredBy,
+      triggerType: 'manual',
+    });
+
+    // 触发Jenkins Job
+    const triggerResult = await jenkinsService.triggerBatchJob(
+      execution.runId,
+      caseIds,
+      [],
+      `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`
+    );
+
+    if (triggerResult.success) {
+      // 更新Jenkins构建信息
+      if (triggerResult.buildUrl) {
+        const buildIdMatch = triggerResult.buildUrl.match(/\/(\d+)\/$/);
+        const buildId = buildIdMatch ? buildIdMatch[1] : 'unknown';
+        
+        await executionService.updateBatchJenkinsInfo(execution.runId, {
+          buildId,
+          buildUrl: triggerResult.buildUrl,
+        });
+      }
+    }
+
+    res.json({
+      success: triggerResult.success,
+      data: {
+        runId: execution.runId,
+        totalCases: execution.totalCases,
+        buildUrl: triggerResult.buildUrl,
+      },
+      message: triggerResult.message,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -96,6 +215,57 @@ router.get('/status/:executionId', async (req, res) => {
         buildNumber: null,
         consoleUrl: null
       }
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * POST /api/jenkins/callback
+ * Jenkins 执行结果回调接口
+ */
+router.post('/callback', async (req, res) => {
+  try {
+    const { runId, status, passedCases = 0, failedCases = 0, skippedCases = 0, durationMs = 0, results = [] } = req.body;
+
+    if (!runId || !status) {
+      return res.status(400).json({
+        success: false,
+        message: 'runId and status are required'
+      });
+    }
+
+    // 完成执行批次
+    await executionService.completeBatchExecution(runId, {
+      status,
+      passedCases,
+      failedCases,
+      skippedCases,
+      durationMs,
+      results,
+    });
+
+    res.json({ success: true, message: 'Callback processed successfully' });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/jenkins/batch/:runId
+ * 获取执行批次详情
+ */
+router.get('/batch/:runId', async (req, res) => {
+  try {
+    const runId = parseInt(req.params.runId);
+    const batch = await executionService.getBatchExecution(runId);
+
+    res.json({
+      success: true,
+      data: batch.execution
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

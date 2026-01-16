@@ -5,10 +5,16 @@ __pycache__/
 # C extensions
 *.so
 
-.claude/
-.vscode/
 # C extensions
 *.so
+
+# Project specific
+.claude/
+.venv/
+.venv/
+.env
+.env.example
+
 
 # Distribution / packaging
 .Python
