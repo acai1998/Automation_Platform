@@ -124,38 +124,6 @@ export async function closePool(): Promise<void> {
   }
 }
 
-// 初始化数据库表(仅检查,不创建表)
-export async function initMariaDBTables(): Promise<void> {
-  const pool = getPool();
-
-  // 检查关键表是否存在
-  try {
-    const [result] = await pool.execute(`
-      SELECT COUNT(*) as count 
-      FROM information_schema.tables 
-      WHERE table_schema = ? 
-      AND table_name IN ('users', 'test_cases', 'tasks', 'task_executions', 'Auto_TestCaseDailySummaries')
-    `, [DB_NAME]);
-    
-    const keyTableCount = (result as Array<{count: number}>)[0]?.count || 0;
-    if (keyTableCount >= 5) {
-      console.log(`✓ MariaDB database contains all ${keyTableCount} key tables`);
-      return;
-    } else if (keyTableCount > 0) {
-      console.warn(`⚠️  MariaDB database contains only ${keyTableCount}/5 key tables`);
-      console.warn(`   Please run 'npm run db:init' to initialize missing tables`);
-      return;
-    } else {
-      console.warn(`⚠️  MariaDB database is empty`);
-      console.warn(`   Please run 'npm run db:init' to initialize all tables`);
-      return;
-    }
-  } catch (error) {
-    console.error('❌ Failed to check existing tables:', error);
-    throw error;
-  }
-}
-
 export default {
   getPool,
   getConnection,
@@ -163,5 +131,4 @@ export default {
   queryOne,
   testConnection,
   closePool,
-  initMariaDBTables,
 };

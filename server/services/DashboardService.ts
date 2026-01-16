@@ -37,40 +37,34 @@ export class DashboardService {
    * 获取核心指标卡片数据
    */
   async getStats(): Promise<DashboardStats> {
-    // 自动化用例总数（使用远程 Auto_TestCase 表）
-    const totalCases = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
-    `);
-
-    // 今日执行总次数（使用远程 Auto_TestRun 表）
-    const todayRuns = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM Auto_TestRun
-      WHERE DATE(start_time) = CURDATE()
-    `);
-
-    // 今日成功率
-    const todayStats = await queryOne<{ passed: number; total: number }>(`
+    // 使用单次查询获取所有统计数据
+    const stats = await queryOne<{
+      totalCases: number;
+      todayRuns: number;
+      passedCases: number;
+      totalCasesRun: number;
+      runningTasks: number;
+    }>(`
       SELECT
-        COALESCE(SUM(passed_cases), 0) as passed,
-        COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
-      FROM Auto_TestRun
-      WHERE DATE(start_time) = CURDATE()
+        COUNT(CASE WHEN tc.enabled = 1 THEN 1 END) as totalCases,
+        COUNT(CASE WHEN DATE(tr.start_time) = CURDATE() THEN 1 END) as todayRuns,
+        COALESCE(SUM(CASE WHEN DATE(tr.start_time) = CURDATE() THEN tr.passed_cases END), 0) as passedCases,
+        COALESCE(SUM(CASE WHEN DATE(tr.start_time) = CURDATE() THEN tr.passed_cases + tr.failed_cases + tr.skipped_cases END), 0) as totalCasesRun,
+        SUM(CASE WHEN tr.status = 'running' THEN 1 ELSE 0 END) as runningTasks
+      FROM Auto_TestCase tc
+      LEFT JOIN Auto_TestRun tr ON DATE(tr.start_time) = CURDATE()
+      WHERE tc.enabled = 1 OR tr.id IS NOT NULL
     `);
 
-    const todaySuccessRate = todayStats && todayStats.total > 0
-      ? Math.round((todayStats.passed / todayStats.total) * 10000) / 100
+    const todaySuccessRate = stats && stats.totalCasesRun > 0
+      ? Math.round((stats.passedCases / stats.totalCasesRun) * 10000) / 100
       : null;
 
-    // 当前运行中任务
-    const runningTasks = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM Auto_TestRun WHERE status = 'running'
-    `);
-
     return {
-      totalCases: totalCases?.count ?? 0,
-      todayRuns: todayRuns?.count ?? 0,
+      totalCases: stats?.totalCases ?? 0,
+      todayRuns: stats?.todayRuns ?? 0,
       todaySuccessRate,
-      runningTasks: runningTasks?.count ?? 0,
+      runningTasks: stats?.runningTasks ?? 0,
     };
   }
 
@@ -210,23 +204,31 @@ export class DashboardService {
    * 获取最近测试运行
    */
   async getRecentRuns(limit: number = 10) {
-    return query(`
-      SELECT
-        r.id,
-        r.task_name as suiteName,
-        r.status,
-        r.duration * 1000 as duration,
-        r.start_time as startTime,
-        r.total_cases as totalCases,
-        r.passed_cases as passedCases,
-        r.failed_cases as failedCases,
-        u.display_name as executedBy,
-        u.id as executedById
-      FROM Auto_TestCaseTaskExecutions r
-      LEFT JOIN users u ON r.executed_by = u.id
-      ORDER BY r.start_time DESC
-      LIMIT ?
-    `, [limit]);
+    try {
+      return query(`
+        SELECT
+          r.id,
+          r.task_name as suiteName,
+          r.status,
+          r.duration * 1000 as duration,
+          r.start_time as startTime,
+          r.total_cases as totalCases,
+          r.passed_cases as passedCases,
+          r.failed_cases as failedCases,
+          u.display_name as executedBy,
+          u.id as executedById
+        FROM Auto_TestCaseTaskExecutions r
+        LEFT JOIN Auto_Users u ON r.executed_by = u.id
+        ORDER BY r.start_time DESC
+        LIMIT ?
+      `, [limit]);
+    } catch (error: unknown) {
+      console.error('DashboardService.getRecentRuns failed:', {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw error;
+    }
   }
 
   /**
@@ -256,7 +258,7 @@ export class DashboardService {
     `, [targetDate]);
 
     const activeCases = await queryOne<{ count: number }>(`
-      SELECT COUNT(*) as count FROM test_cases WHERE status = 'active'
+      SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
     `);
 
     const totalCasesRun = stats?.totalCasesRun ?? 0;

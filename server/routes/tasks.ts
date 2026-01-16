@@ -49,10 +49,9 @@ router.get('/', async (req, res) => {
     const { projectId, status, limit = 50, offset = 0 } = req.query;
 
     let sql = `
-      SELECT t.*, p.name as project_name, u.display_name as created_by_name, e.name as environment_name
+      SELECT t.*, u.display_name as created_by_name, e.name as environment_name
       FROM tasks t
-      LEFT JOIN projects p ON t.project_id = p.id
-      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN Auto_Users u ON t.created_by = u.id
       LEFT JOIN environments e ON t.environment_id = e.id
       WHERE 1=1
     `;
@@ -88,10 +87,9 @@ router.get('/:id', async (req, res) => {
     const id = parseInt(req.params.id);
 
     const task = await queryOne<Task>(`
-      SELECT t.*, p.name as project_name, u.display_name as created_by_name, e.name as environment_name
+      SELECT t.*, u.display_name as created_by_name, e.name as environment_name
       FROM tasks t
-      LEFT JOIN projects p ON t.project_id = p.id
-      LEFT JOIN users u ON t.created_by = u.id
+      LEFT JOIN Auto_Users u ON t.created_by = u.id
       LEFT JOIN environments e ON t.environment_id = e.id
       WHERE t.id = ?
     `, [id]);

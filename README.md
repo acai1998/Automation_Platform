@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/TypeScript-5.3-3178C6?logo=typescript" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Vite-5.0-646CFF?logo=vite" alt="Vite" />
   <img src="https://img.shields.io/badge/Express-4.18-000000?logo=express" alt="Express" />
-  <img src="https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite" alt="SQLite" />
+  <img src="https://img.shields.io/badge/MariaDB-10.x-003545?logo=mariadb" alt="MariaDB" />
   <img src="https://img.shields.io/badge/TailwindCSS-3.4-06B6D4?logo=tailwindcss" alt="TailwindCSS" />
 </p>
 
@@ -37,7 +37,7 @@
 | 技术 | 说明 |
 |------|------|
 | Express | Node.js Web 框架 |
-| SQLite | 轻量级数据库 (better-sqlite3) |
+| MariaDB | 企业级关系数据库 (mysql2) |
 | tsx | TypeScript 运行时 |
 
 ## 🚀 快速开始
@@ -71,9 +71,6 @@ cd automation-platform
 
 # 安装依赖
 npm install
-
-# 初始化数据库
-npm run db:init
 ```
 
 ### 开发
@@ -152,7 +149,7 @@ automation-platform/
                                  │◀──────回调结果────────┘
                                  ▼
                         ┌─────────────────┐
-                        │   SQLite 数据库  │
+                        │  MariaDB 数据库  │
                         └─────────────────┘
 ```
 
@@ -185,22 +182,18 @@ curl -X POST http://localhost:3000/api/executions/callback \
 
 ## 💾 数据库
 
-使用 SQLite 作为数据存储，主要表结构：
+使用远程 MariaDB 数据库，主要表结构：
 
 | 表名 | 说明 |
 |------|------|
-| `users` | 用户信息 |
-| `projects` | 项目管理 |
-| `test_cases` | 测试用例 |
-| `tasks` | 测试任务 |
-| `task_executions` | 执行记录 |
-| `case_results` | 用例结果 |
-| `daily_summaries` | 每日统计 |
+| `Auto_TestCase` | 测试用例资产表 |
+| `Auto_Users` | 用户表 |
+| `Auto_TestRun` | 测试执行批次表 |
+| `Auto_TestRunResults` | 测试用例执行结果表 |
+| `Auto_TestCaseTaskExecutions` | 测试任务执行记录表 |
+| `Auto_TestCaseDailySummaries` | 测试用例每日统计汇总表 |
 
-```bash
-# 重置数据库（清空并重新初始化）
-npm run db:reset
-```
+**注意**：数据库表结构由 DBA 统一管理，本地不进行表结构初始化。
 
 ## 📋 开发命令
 
@@ -210,8 +203,6 @@ npm run db:reset
 | `npm run dev` | 仅启动前端 |
 | `npm run server` | 仅启动后端 |
 | `npm run build` | 构建生产版本 |
-| `npm run db:init` | 初始化数据库 |
-| `npm run db:reset` | 重置数据库 |
 
 ## 🔍 类型检查
 

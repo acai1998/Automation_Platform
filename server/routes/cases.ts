@@ -38,9 +38,8 @@ router.get('/', async (req, res) => {
     const { projectId, module, enabled, type, search, limit = 50, offset = 0 } = req.query;
 
     let sql = `
-      SELECT tc.*, p.name as project_name, u.display_name as created_by_name
+      SELECT tc.*, u.display_name as created_by_name
       FROM Auto_TestCase tc
-      LEFT JOIN projects p ON tc.project_id = p.id
       LEFT JOIN Auto_Users u ON tc.created_by = u.id
       WHERE 1=1
     `;
@@ -72,6 +71,16 @@ router.get('/', async (req, res) => {
 
     const data = await query<TestCase[]>(sql, params);
 
+    // 如果没有数据，返回空数组和友善提示
+    if (!Array.isArray(data) || data.length === 0) {
+      return res.json({
+        success: true,
+        data: [],
+        total: 0,
+        message: '暂无测试用例数据，请检查筛选条件或联系管理员添加用例'
+      });
+    }
+
     // 获取总数
     let countSql = 'SELECT COUNT(*) as total FROM Auto_TestCase tc WHERE 1=1';
     const countParams: unknown[] = [];
@@ -97,6 +106,14 @@ router.get('/', async (req, res) => {
 
     res.json({ success: true, data, total });
   } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: req.path,
+      method: req.method
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -114,6 +131,14 @@ router.get('/modules/list', async (_req, res) => {
 
     res.json({ success: true, data: data.map((d) => d.module) });
   } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: '/api/cases/modules/list',
+      method: 'GET'
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -129,6 +154,14 @@ router.get('/running/list', async (_req, res) => {
     // 返回空数组以保持 API 兼容性
     res.json({ success: true, data: [] });
   } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: '/api/cases/running/list',
+      method: 'GET'
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -143,9 +176,8 @@ router.get('/:id', async (req, res) => {
     const id = parseInt(req.params.id);
 
     const data = await queryOne<TestCase>(`
-      SELECT tc.*, p.name as project_name, u.display_name as created_by_name
+      SELECT tc.*, u.display_name as created_by_name
       FROM Auto_TestCase tc
-      LEFT JOIN projects p ON tc.project_id = p.id
       LEFT JOIN Auto_Users u ON tc.created_by = u.id
       WHERE tc.id = ?
     `, [id]);
@@ -156,6 +188,14 @@ router.get('/:id', async (req, res) => {
 
     res.json({ success: true, data });
   } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: req.path,
+      method: req.method
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -209,6 +249,14 @@ router.post('/', async (req, res) => {
       message: 'Case created successfully',
     });
   } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: req.path,
+      method: req.method
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -289,6 +337,14 @@ router.put('/:id', async (req, res) => {
 
     res.json({ success: true, message: 'Case updated successfully' });
   } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: req.path,
+      method: req.method
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -307,6 +363,14 @@ router.delete('/:id', async (req, res) => {
 
     res.json({ success: true, message: 'Case deleted successfully' });
   } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: req.path,
+      method: req.method
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -384,6 +448,14 @@ router.post('/:id/run', async (req, res) => {
       });
     }
   } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: req.path,
+      method: req.method
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -415,6 +487,14 @@ router.post('/:id/callback', async (req, res) => {
       message: 'Callback received successfully',
     });
   } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: req.path,
+      method: req.method
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
