@@ -85,7 +85,7 @@ export function Sidebar() {
     <aside className="hidden lg:flex w-64 flex-col bg-white dark:bg-slate-900 border-r border-slate-200/80 dark:border-slate-800 h-full">
       <div className="flex flex-col h-full">
         {/* Logo */}
-        <div className="px-5 py-6 border-b border-slate-100 dark:border-slate-800">
+        <div className="h-20 px-5 border-b border-slate-100 dark:border-slate-800 flex items-center">
           <div className="flex items-center gap-3">
             <div className="relative">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/25">

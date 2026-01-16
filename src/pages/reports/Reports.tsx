@@ -57,8 +57,8 @@ export default function Reports() {
   return (
     <div className="h-full flex flex-col min-h-0">
       {/* 顶部标题区 - 带渐变背景 */}
-      <div className={`relative px-4 sm:px-6 py-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl`}>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className={`relative h-20 px-4 sm:px-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl flex items-center`}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between w-full">
           <div className="flex items-center gap-3">
             <div className={`p-2.5 rounded-xl ${theme.iconBg} shadow-sm`}>
               <BarChart3 className="w-6 h-6" />

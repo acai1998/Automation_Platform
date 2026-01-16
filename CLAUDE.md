@@ -65,8 +65,8 @@ npx tsc --noEmit -p tsconfig.server.json
 
 ## 数据库结构
 远程 MariaDB 数据库中的关键表：
-- `Auto_TestCase` — 测试用例资产表（远程表）
 - `Auto_Users` — 用户表（远程表）
+- `Auto_TestCase` — 测试用例资产表（远程表）
 - `Auto_TestRun` — 测试执行批次表（远程表）
 - `Auto_TestRunResults` — 测试用例执行结果表（远程表）
 - `Auto_TestCaseTaskExecutions` — 测试任务执行记录表（远程表）
