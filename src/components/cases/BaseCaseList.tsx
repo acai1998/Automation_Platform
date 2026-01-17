@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useCases, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
 import { useTestExecution } from '@/hooks/useExecuteCase';
-import { ExecutionProgress } from './ExecutionProgress';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -41,7 +40,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [isProgressOpen, setIsProgressOpen] = useState(false);
 
   const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
@@ -57,10 +55,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const {
     executeCase,
     isExecuting,
-    batchInfo,
-    isFetchingBatch,
-    batchError,
-    reset: resetExecution,
   } = useTestExecution();
 
   // 分页信息
@@ -94,12 +88,25 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     const finalProjectId = projectId || 1;
     
     try {
-      await executeCase(caseId, finalProjectId);
-      setIsProgressOpen(true);
-      toast.success(`用例 "${caseName}" 已开始执行`);
+      const result = await executeCase(caseId, finalProjectId);
+      
+      // 显示成功提示,包含 Jenkins 链接
+      toast.success(`用例 "${caseName}" 已开始执行`, {
+        description: result?.buildUrl 
+          ? '点击下方按钮查看 Jenkins 执行详情' 
+          : '执行任务已创建,请稍后在执行记录页面查看结果',
+        duration: 5000,
+        action: result?.buildUrl ? {
+          label: '查看 Jenkins',
+          onClick: () => window.open(result.buildUrl, '_blank')
+        } : undefined,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : '执行失败';
-      toast.error(message);
+      toast.error(message, {
+        description: '请检查 Jenkins 连接或稍后重试',
+        duration: 4000,
+      });
     }
   };
 
@@ -124,7 +131,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
         <Button
           size="sm"
           variant="default"
-          disabled={isExecuting || isFetchingBatch}
+          disabled={isExecuting}
           onClick={() => handleRunCase(record.id, record.name, record.project_id)}
           className="gap-1.5 h-8 px-3 transition-all duration-200 hover:scale-105 active:scale-95"
         >
@@ -359,7 +366,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                         <Button
                           size="sm"
                           variant="default"
-                          disabled={isExecuting || isFetchingBatch}
+                          disabled={isExecuting}
                           onClick={() => handleRunCase(record.id, record.name, record.project_id)}
                           className="h-8 px-3"
                         >
@@ -396,7 +403,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                       <Button
                         size="sm"
                         variant="default"
-                        disabled={isExecuting || isFetchingBatch}
+                        disabled={isExecuting}
                         onClick={() => handleRunCase(record.id, record.name, record.project_id)}
                         className="shrink-0 h-8 w-8 p-0"
                       >
@@ -516,21 +523,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
           </div>
         )}
       </div>
-
-      {/* 执行进度弹窗 */}
-      <ExecutionProgress
-        isOpen={isProgressOpen}
-        onClose={() => {
-          setIsProgressOpen(false);
-          if (batchInfo?.status !== 'running' && batchInfo?.status !== 'pending') {
-            resetExecution();
-          }
-        }}
-        batchInfo={batchInfo || undefined}
-        isLoading={isFetchingBatch}
-        error={batchError as Error}
-        buildUrl={batchInfo?.jenkins_build_url}
-      />
     </div>
   );
 }
