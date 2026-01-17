@@ -1,4 +1,5 @@
 import { query, queryOne, getPool } from '../config/database.js';
+import { jenkinsStatusService, TestResults } from './JenkinsStatusService.js';
 
 // 已废弃：由于没有远程 tasks 表，建议使用 CaseExecutionInput
 export interface TaskExecutionInput {
@@ -423,6 +424,401 @@ export class ExecutionService {
       FROM Auto_TestCase
       WHERE id IN (${placeholders}) AND enabled = 1
     `, caseIds);
+  }
+
+  // ============ 新增：混合状态同步功能 ============
+
+  /**
+   * 通过Jenkins API查询并同步执行状态
+   * 作为回调机制的备用方案
+   */
+  async syncExecutionStatusFromJenkins(runId: number): Promise<{
+    success: boolean;
+    updated: boolean;
+    message: string;
+    currentStatus?: string;
+    jenkinsStatus?: string;
+  }> {
+    try {
+      // 1. 获取执行记录
+      const execution = await queryOne<{
+        id: number;
+        status: string;
+        jenkins_job: string;
+        jenkins_build_id: string;
+        jenkins_url: string;
+        start_time: Date;
+      }>(`
+        SELECT id, status, jenkins_job, jenkins_build_id, jenkins_url, start_time
+        FROM Auto_TestRun
+        WHERE id = ?
+      `, [runId]);
+
+      if (!execution) {
+        return {
+          success: false,
+          updated: false,
+          message: `Execution not found: ${runId}`
+        };
+      }
+
+      // 2. 检查是否有Jenkins信息
+      if (!execution.jenkins_job || !execution.jenkins_build_id) {
+        return {
+          success: false,
+          updated: false,
+          message: 'No Jenkins job information available for this execution'
+        };
+      }
+
+      // 3. 查询Jenkins构建状态
+      const buildStatus = await jenkinsStatusService.getBuildStatus(
+        execution.jenkins_job,
+        execution.jenkins_build_id
+      );
+
+      if (!buildStatus) {
+        return {
+          success: false,
+          updated: false,
+          message: `Failed to get Jenkins build status for ${execution.jenkins_job}/${execution.jenkins_build_id}`
+        };
+      }
+
+      // 4. 映射Jenkins状态到内部状态
+      const jenkinsStatusMapped = this.mapJenkinsStatusToInternal(buildStatus.result, buildStatus.building);
+
+      console.log(`Jenkins status sync for runId ${runId}:`, {
+        currentStatus: execution.status,
+        jenkinsBuilding: buildStatus.building,
+        jenkinsResult: buildStatus.result,
+        jenkinsStatusMapped,
+        buildNumber: buildStatus.number
+      });
+
+      // 5. 检查状态是否需要更新
+      if (execution.status === jenkinsStatusMapped) {
+        return {
+          success: true,
+          updated: false,
+          message: 'Status already up to date',
+          currentStatus: execution.status,
+          jenkinsStatus: jenkinsStatusMapped
+        };
+      }
+
+      // 6. 如果状态不一致，尝试获取详细测试结果
+      let testResults: TestResults | null = null;
+      if (!buildStatus.building && buildStatus.result) {
+        testResults = await jenkinsStatusService.parseBuildResults(
+          execution.jenkins_job,
+          execution.jenkins_build_id
+        );
+      }
+
+      // 7. 更新状态
+      const updated = await this.updateExecutionStatusFromJenkins(runId, {
+        status: jenkinsStatusMapped,
+        building: buildStatus.building,
+        duration: buildStatus.duration,
+        testResults
+      });
+
+      return {
+        success: true,
+        updated,
+        message: updated ? 'Status updated successfully' : 'No update needed',
+        currentStatus: execution.status,
+        jenkinsStatus: jenkinsStatusMapped
+      };
+
+    } catch (error) {
+      console.error(`Failed to sync status for runId ${runId}:`, error);
+      return {
+        success: false,
+        updated: false,
+        message: `Sync failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
+  /**
+   * 映射Jenkins状态到内部状态
+   */
+  private mapJenkinsStatusToInternal(result: string | null, building: boolean): string {
+    if (building) {
+      return 'running';
+    }
+
+    switch (result) {
+      case 'SUCCESS':
+        return 'success';
+      case 'FAILURE':
+      case 'UNSTABLE':
+        return 'failed';
+      case 'ABORTED':
+        return 'aborted';
+      default:
+        return 'pending';
+    }
+  }
+
+  /**
+   * 根据Jenkins状态更新执行记录
+   */
+  private async updateExecutionStatusFromJenkins(runId: number, jenkinsData: {
+    status: string;
+    building: boolean;
+    duration: number;
+    testResults?: TestResults | null;
+  }): Promise<boolean> {
+    const pool = getPool();
+
+    try {
+      // 1. 更新Auto_TestRun状态
+      if (jenkinsData.building) {
+        // 如果还在构建中，只更新为running状态
+        await pool.execute(`
+          UPDATE Auto_TestRun
+          SET status = 'running'
+          WHERE id = ? AND status IN ('pending', 'running')
+        `, [runId]);
+      } else {
+        // 构建完成，更新最终状态
+        const updateFields = [
+          'status = ?',
+          'end_time = NOW()',
+          'duration_ms = ?'
+        ];
+
+        const updateValues = [jenkinsData.status, jenkinsData.duration, runId];
+
+        // 如果有测试结果，更新用例统计
+        if (jenkinsData.testResults) {
+          updateFields.push('passed_cases = ?', 'failed_cases = ?', 'skipped_cases = ?');
+          updateValues.splice(-1, 0,
+            jenkinsData.testResults.passedCases,
+            jenkinsData.testResults.failedCases,
+            jenkinsData.testResults.skippedCases
+          );
+        }
+
+        await pool.execute(`
+          UPDATE Auto_TestRun
+          SET ${updateFields.join(', ')}
+          WHERE id = ?
+        `, updateValues);
+
+        // 2. 如果有详细测试结果，更新Auto_TestRunResults
+        if (jenkinsData.testResults && jenkinsData.testResults.results.length > 0) {
+          await this.updateTestResultsFromJenkins(runId, jenkinsData.testResults);
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`Failed to update execution status for runId ${runId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * 更新测试用例结果
+   */
+  private async updateTestResultsFromJenkins(runId: number, testResults: TestResults): Promise<void> {
+    const pool = getPool();
+
+    for (const result of testResults.results) {
+      try {
+        // 尝试更新现有记录
+        const [updateResult] = await pool.execute(`
+          UPDATE Auto_TestRunResults
+          SET status = ?, duration = ?, error_message = ?,
+              start_time = FROM_UNIXTIME(?), end_time = FROM_UNIXTIME(?)
+          WHERE execution_id = ? AND case_id = ?
+        `, [
+          result.status,
+          result.duration,
+          result.errorMessage || null,
+          result.startTime ? Math.floor(result.startTime / 1000) : Math.floor(Date.now() / 1000),
+          result.endTime ? Math.floor(result.endTime / 1000) : Math.floor(Date.now() / 1000),
+          runId,
+          result.caseId
+        ]);
+
+        const affectedRows = (updateResult as any).affectedRows;
+
+        // 如果没有找到记录，插入新记录
+        if (affectedRows === 0 && result.caseId > 0) {
+          await pool.execute(`
+            INSERT INTO Auto_TestRunResults (
+              execution_id, case_id, case_name, status, duration, error_message,
+              start_time, end_time, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), NOW())
+          `, [
+            runId,
+            result.caseId,
+            result.caseName,
+            result.status,
+            result.duration,
+            result.errorMessage || null,
+            result.startTime ? Math.floor(result.startTime / 1000) : Math.floor(Date.now() / 1000),
+            result.endTime ? Math.floor(result.endTime / 1000) : Math.floor(Date.now() / 1000)
+          ]);
+        }
+      } catch (error) {
+        console.error(`Failed to update test result for case ${result.caseId}:`, error);
+      }
+    }
+  }
+
+  /**
+   * 检查并处理超时的执行
+   * 超过指定时间仍在运行状态的执行将被标记为超时
+   */
+  async checkAndHandleTimeouts(timeoutMs: number = 10 * 60 * 1000): Promise<{
+    checked: number;
+    timedOut: number;
+    updated: number;
+  }> {
+    try {
+      // 查找可能超时的执行
+      const timeoutThreshold = new Date(Date.now() - timeoutMs);
+      const runningExecutions = await query<{
+        id: number;
+        jenkins_job: string;
+        jenkins_build_id: string;
+        start_time: Date;
+      }[]>(`
+        SELECT id, jenkins_job, jenkins_build_id, start_time
+        FROM Auto_TestRun
+        WHERE status IN ('pending', 'running') AND start_time < ?
+      `, [timeoutThreshold]);
+
+      console.log(`Checking ${runningExecutions.length} potentially timed out executions`);
+
+      let timedOutCount = 0;
+      let updatedCount = 0;
+
+      for (const execution of runningExecutions) {
+        try {
+          // 先尝试从Jenkins同步状态
+          const syncResult = await this.syncExecutionStatusFromJenkins(execution.id);
+
+          if (syncResult.success && syncResult.updated) {
+            updatedCount++;
+            console.log(`Updated execution ${execution.id} from Jenkins: ${syncResult.message}`);
+            continue;
+          }
+
+          // 如果同步失败或没有更新，且确实超时，标记为超时
+          if (!syncResult.success) {
+            await this.markExecutionAsTimedOut(execution.id);
+            timedOutCount++;
+            console.log(`Marked execution ${execution.id} as timed out: ${syncResult.message}`);
+          }
+        } catch (error) {
+          console.error(`Failed to handle timeout for execution ${execution.id}:`, error);
+        }
+      }
+
+      return {
+        checked: runningExecutions.length,
+        timedOut: timedOutCount,
+        updated: updatedCount
+      };
+    } catch (error) {
+      console.error('Failed to check timeouts:', error);
+      return { checked: 0, timedOut: 0, updated: 0 };
+    }
+  }
+
+  /**
+   * 标记执行为超时状态
+   */
+  private async markExecutionAsTimedOut(runId: number): Promise<void> {
+    const pool = getPool();
+
+    await pool.execute(`
+      UPDATE Auto_TestRun
+      SET status = 'aborted', end_time = NOW(),
+          duration_ms = TIMESTAMPDIFF(MICROSECOND, start_time, NOW()) / 1000
+      WHERE id = ? AND status IN ('pending', 'running')
+    `, [runId]);
+
+    console.log(`Execution ${runId} marked as timed out`);
+  }
+
+  /**
+   * 验证执行状态一致性
+   * 比较平台状态与Jenkins状态，返回不一致的执行列表
+   */
+  async verifyStatusConsistency(limit: number = 50): Promise<{
+    total: number;
+    inconsistent: Array<{
+      runId: number;
+      platformStatus: string;
+      jenkinsStatus: string;
+      buildId: string;
+      jobName: string;
+    }>;
+  }> {
+    try {
+      // 获取最近的有Jenkins信息的执行记录
+      const executions = await query<{
+        id: number;
+        status: string;
+        jenkins_job: string;
+        jenkins_build_id: string;
+      }[]>(`
+        SELECT id, status, jenkins_job, jenkins_build_id
+        FROM Auto_TestRun
+        WHERE jenkins_job IS NOT NULL AND jenkins_build_id IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT ?
+      `, [limit]);
+
+      const inconsistent: Array<{
+        runId: number;
+        platformStatus: string;
+        jenkinsStatus: string;
+        buildId: string;
+        jobName: string;
+      }> = [];
+
+      for (const execution of executions) {
+        try {
+          const buildStatus = await jenkinsStatusService.getBuildStatus(
+            execution.jenkins_job,
+            execution.jenkins_build_id
+          );
+
+          if (buildStatus) {
+            const jenkinsStatus = this.mapJenkinsStatusToInternal(buildStatus.result, buildStatus.building);
+
+            if (execution.status !== jenkinsStatus) {
+              inconsistent.push({
+                runId: execution.id,
+                platformStatus: execution.status,
+                jenkinsStatus,
+                buildId: execution.jenkins_build_id,
+                jobName: execution.jenkins_job
+              });
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to verify consistency for execution ${execution.id}:`, error);
+        }
+      }
+
+      return {
+        total: executions.length,
+        inconsistent
+      };
+    } catch (error) {
+      console.error('Failed to verify status consistency:', error);
+      return { total: 0, inconsistent: [] };
+    }
   }
 }
 

@@ -69,6 +69,9 @@ export function useTestRunDetail(id: number) {
       return result;
     },
     enabled: !!id,
+    staleTime: 30000, // 30秒缓存，详情页数据不需要频繁刷新
+    refetchOnWindowFocus: false, // 禁用窗口聚焦刷新
+    refetchInterval: false, // 禁用自动轮询（详情页不需要轮询，状态已确定）
   });
 }
 

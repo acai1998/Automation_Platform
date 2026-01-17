@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { executionService } from '../services/ExecutionService.js';
 import { jenkinsService } from '../services/JenkinsService.js';
+import { jenkinsAuthMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware.js';
+import { requestValidator } from '../middleware/RequestValidator.js';
 
 const router = Router();
 
@@ -46,16 +48,12 @@ router.post('/trigger', async (req, res) => {
  * POST /api/jenkins/run-case
  * 触发单个用例执行
  */
-router.post('/run-case', async (req, res) => {
+router.post('/run-case', [
+  rateLimitMiddleware.limit,
+  requestValidator.validateSingleExecution
+], async (req, res) => {
   try {
     const { caseId, projectId, triggeredBy = 1 } = req.body;
-
-    if (!caseId || !projectId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'caseId and projectId are required' 
-      });
-    }
 
     // 创建执行批次记录
     const execution = await executionService.triggerTestExecution({
@@ -105,16 +103,12 @@ router.post('/run-case', async (req, res) => {
  * POST /api/jenkins/run-batch
  * 触发批量用例执行
  */
-router.post('/run-batch', async (req, res) => {
+router.post('/run-batch', [
+  rateLimitMiddleware.limit,
+  requestValidator.validateBatchExecution
+], async (req, res) => {
   try {
     const { caseIds, projectId, triggeredBy = 1 } = req.body;
-
-    if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0 || !projectId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'caseIds (array) and projectId are required' 
-      });
-    }
 
     // 创建执行批次记录
     const execution = await executionService.triggerTestExecution({
@@ -226,16 +220,25 @@ router.get('/status/:executionId', async (req, res) => {
  * POST /api/jenkins/callback
  * Jenkins 执行结果回调接口
  */
-router.post('/callback', async (req, res) => {
+router.post('/callback', [
+  jenkinsAuthMiddleware.verify,
+  rateLimitMiddleware.limit,
+  requestValidator.validateCallback
+], async (req, res) => {
   try {
     const { runId, status, passedCases = 0, failedCases = 0, skippedCases = 0, durationMs = 0, results = [] } = req.body;
 
-    if (!runId || !status) {
-      return res.status(400).json({
-        success: false,
-        message: 'runId and status are required'
-      });
-    }
+    // 记录回调日志
+    console.log(`Jenkins callback received for runId: ${runId}`, {
+      status,
+      passedCases,
+      failedCases,
+      skippedCases,
+      durationMs,
+      resultsCount: results.length,
+      timestamp: new Date().toISOString(),
+      authSource: req.jenkinsAuth?.source
+    });
 
     // 完成执行批次
     await executionService.completeBatchExecution(runId, {

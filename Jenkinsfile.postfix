@@ -7,10 +7,10 @@ pipeline {
         string(name: 'SCRIPT_PATHS', description: '脚本路径(逗号分隔)', defaultValue: '')
         string(name: 'CALLBACK_URL', description: '回调URL', defaultValue: '')
         string(name: 'MARKER', description: 'Pytest marker标记', defaultValue: '')
-        string(name: 'REPO_URL', description: '测试用例仓库URL', defaultValue: '')
     }
     
     environment {
+        REPO_URL = credentials('test-repo-url')
         GIT_CREDENTIALS = credentials('git-credentials')
         PLATFORM_API_URL = 'http://localhost:3000'
         PYTHON_ENV = "${WORKSPACE}/venv"
@@ -48,7 +48,7 @@ pipeline {
                             sh 'git pull origin main'
                         }
                     } else {
-                        sh 'git clone ${params.REPO_URL} test-cases'
+                        sh 'git clone ${REPO_URL} test-cases'
                     }
                 }
             }
@@ -194,18 +194,17 @@ pipeline {
             script {
                 echo "清理环境..."
                 
-                try {
-                    archiveArtifacts artifacts: 'test-cases/test-report.json', allowEmptyArchive: true, fingerprint: true
-                    echo "测试报告已归档"
-                } catch (Exception e) {
-                    echo "归档测试报告失败: ${e.message}"
-                }
+                // 保存测试报告
+                sh '''
+                    cd test-cases
+                    if [ -f "test-report.json" ]; then
+                        mkdir -p ../test-reports
+                        cp test-report.json ../test-reports/report-${BUILD_ID}.json
+                    fi
+                '''
                 
-                try {
-                    junit allowEmptyResults: true, testResults: '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
-                } catch (Exception e) {
-                    echo "JUnit报告处理失败: ${e.message}"
-                }
+                // 保存JUnit XML报告（如果存在）
+                junit allowEmptyResults: true, testResults: '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
             }
         }
         
