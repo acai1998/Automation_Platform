@@ -43,12 +43,17 @@ pipeline {
                 script {
                     echo "正在克隆/更新测试用例仓库..."
                     
-                    if (fileExists('test-cases')) {
-                        dir('test-cases') {
-                            sh 'git pull origin main'
+                    if (params.REPO_URL) {
+                        if (fileExists('test-cases')) {
+                            dir('test-cases') {
+                                sh 'git pull origin main'
+                            }
+                        } else {
+                            sh 'git clone ${params.REPO_URL} test-cases'
                         }
                     } else {
-                        sh 'git clone ${params.REPO_URL} test-cases'
+                        echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出"
+                        echo "使用默认的测试用例目录"
                     }
                 }
             }
@@ -191,30 +196,61 @@ pipeline {
     
     post {
         always {
-            script {
-                echo "清理环境..."
-                
-                try {
-                    archiveArtifacts artifacts: 'test-cases/test-report.json', allowEmptyArchive: true, fingerprint: true
-                    echo "测试报告已归档"
-                } catch (Exception e) {
-                    echo "归档测试报告失败: ${e.message}"
-                }
-                
-                try {
-                    junit allowEmptyResults: true, testResults: '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
-                } catch (Exception e) {
-                    echo "JUnit报告处理失败: ${e.message}"
+            node {
+                script {
+                    echo "清理环境..."
+                    
+                    try {
+                        archiveArtifacts artifacts: 'test-cases/test-report.json', allowEmptyArchive: true, fingerprint: true
+                        echo "测试报告已归档"
+                    } catch (Exception e) {
+                        echo "归档测试报告失败: ${e.message}"
+                    }
+                    
+                    try {
+                        junit allowEmptyResults: true, testResults: '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
+                    } catch (Exception e) {
+                        echo "JUnit报告处理失败: ${e.message}"
+                    }
                 }
             }
         }
         
         success {
-            echo "✅ Pipeline执行成功"
+            node {
+                script {
+                    echo "✅ Pipeline执行成功"
+                }
+            }
         }
         
         failure {
-            echo "❌ Pipeline执行失败"
+            node {
+                script {
+                    echo "❌ Pipeline执行失败"
+                    
+                    // 回调平台，标记为失败
+                    if (params.RUN_ID && params.CALLBACK_URL) {
+                        sh '''
+                            BUILD_DURATION_MS=$((BUILD_DURATION * 1000))
+                            
+                            echo "正在回调失败状态到平台..."
+                            curl -X POST "${CALLBACK_URL}" \
+                                -H "Content-Type: application/json" \
+                                -d "{
+                                    \"runId\": ${RUN_ID},
+                                    \"status\": \"failed\",
+                                    \"passedCases\": 0,
+                                    \"failedCases\": 0,
+                                    \"skippedCases\": 0,
+                                    \"durationMs\": $BUILD_DURATION_MS,
+                                    \"buildUrl\": \"${BUILD_URL}\"
+                                }" \
+                                || echo "失败回调请求失败，但继续处理"
+                        '''
+                    }
+                }
+            }
         }
     }
 }

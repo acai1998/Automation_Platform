@@ -21,28 +21,6 @@ export interface BatchExecution {
   duration_ms?: number;
 }
 
-export interface SyncStatus {
-  runId: number;
-  status: 'waiting_callback' | 'polling' | 'completed' | 'failed' | 'timeout';
-  lastUpdate: string;
-  attempts: number;
-  method: 'callback' | 'polling' | 'timeout';
-  message: string;
-}
-
-export interface MonitoringStatus {
-  isMonitoring: boolean;
-  strategy?: {
-    callbackTimeout: number;
-    pollInterval: number;
-    maxPollAttempts: number;
-    priority: 'low' | 'normal' | 'high';
-    description: string;
-  };
-  startTime?: string;
-  duration?: number;
-  syncStatus?: SyncStatus;
-}
 
 /**
  * 执行单个用例
@@ -108,37 +86,53 @@ export function useBatchExecution(runId: number | null, options?: {
     refetchInterval: (data) => {
       if (!data) return false;
 
-      // 检查是否超过最大轮询时长 (基于 start_time)
-      if (data.start_time) {
-        const startTime = new Date(data.start_time).getTime();
-        const MAX_POLL_DURATION = 10 * 60 * 1000; // 10分钟
-        if (Date.now() - startTime > MAX_POLL_DURATION) {
-          console.log('[Polling] 已达到最大轮询时长（10分钟），停止轮询');
-          return false;
-        }
+      const status = data.status;
+
+      // 检查是否已完成或失败
+      if (['success', 'failed', 'aborted'].includes(status)) {
+        console.log(`[Polling] Execution completed with status: ${status}, stopping polling`);
+        return false;
       }
 
-      // 智能轮询间隔调整
-      if (enableSmartPolling && (data.status === 'running' || data.status === 'pending')) {
-        let duration = 0;
+      // 对于 pending 和 running 状态继续轮询
+      if (status === 'pending' || status === 'running') {
+        // 检查是否超过最大轮询时长 (基于 start_time)
         if (data.start_time) {
-          duration = Date.now() - new Date(data.start_time).getTime();
+          const startTime = new Date(data.start_time).getTime();
+          const MAX_POLL_DURATION = 10 * 60 * 1000; // 10分钟
+          const elapsedTime = Date.now() - startTime;
+          if (elapsedTime > MAX_POLL_DURATION) {
+            console.log('[Polling] 已达到最大轮询时长（10分钟），停止轮询');
+            return false;
+          }
         }
-        
-        // 根据执行时长动态调整轮询间隔
-        if (duration < 2 * 60 * 1000) return 5000; // 5秒
-        if (duration < 5 * 60 * 1000) return 10000; // 10秒
-        return 30000; // 30秒
-      }
 
-      // 传统轮询逻辑
-      if (data.status === 'running' || data.status === 'pending') {
+        // 智能轮询间隔调整
+        if (enableSmartPolling) {
+          let duration = 0;
+          if (data.start_time) {
+            duration = Date.now() - new Date(data.start_time).getTime();
+          }
+          
+          // pending 状态下快速轮询（等待 Jenkins 接收）
+          if (status === 'pending' && duration < 30 * 1000) {
+            console.log('[Polling] In pending state, fast polling (3 seconds)');
+            return 3000; // 3秒快速轮询
+          }
+
+          // 根据执行时长动态调整轮询间隔
+          if (duration < 2 * 60 * 1000) return 5000; // 5秒
+          if (duration < 5 * 60 * 1000) return 10000; // 10秒
+          return 30000; // 30秒
+        }
+
+        // 传统轮询逻辑
         return pollInterval;
       }
 
       return false;
     },
-    staleTime: 3000, // 3秒缓存
+    staleTime: 0, // 禁用缓存以获得最新数据
     refetchOnWindowFocus: false,
     refetchOnMount: false,
   });
@@ -157,36 +151,6 @@ export function useBatchExecution(runId: number | null, options?: {
   return query;
 }
 
-/**
- * 获取执行监控状态
- */
-export function useMonitoringStatus(runId: number | null) {
-  return useQuery({
-    queryKey: ['monitoring-status', runId],
-    queryFn: async () => {
-      if (!runId) return null;
-      const result = await request<MonitoringStatus>(`/monitoring/status/${runId}`);
-      return result.data as MonitoringStatus;
-    },
-    enabled: !!runId,
-    refetchInterval: 15000, // 15秒轮询监控状态
-    staleTime: 10000,
-    refetchOnWindowFocus: false,
-  });
-}
-
-/**
- * 手动状态同步
- */
-export function useManualSync() {
-  return useMutation({
-    mutationFn: async (runId: number) => {
-      return request(`/monitoring/sync/${runId}`, {
-        method: 'POST',
-      });
-    },
-  });
-}
 
 /**
  * 完整的执行管理 hook（增强版）
@@ -204,10 +168,6 @@ export function useTestExecution(options?: {
 
   const executeCase = useExecuteCase();
   const executeBatch = useExecuteBatch();
-  const manualSync = useManualSync();
-
-  // 执行监控状态
-  const monitoringStatus = useMonitoringStatus(runId);
 
   // 批次执行状态（带智能轮询）
   const batchExecution = useBatchExecution(runId, {
@@ -261,39 +221,11 @@ export function useTestExecution(options?: {
     [executeBatch.mutateAsync]
   );
 
-  const handleManualSync = useCallback(async () => {
-    if (!runId) return;
-
-    try {
-      const result = await manualSync.mutateAsync(runId);
-
-      // 手动同步成功后，刷新批次状态
-      batchExecution.refetch();
-      monitoringStatus.refetch();
-
-      // 清除同步问题（如果同步成功）
-      if (result.success && (result as any).updated) {
-        setSyncIssues([]);
-      }
-
-      return result;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '手动同步失败';
-      setSyncIssues(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`]);
-      throw err;
-    }
-  }, [runId, manualSync.mutateAsync, batchExecution.refetch, monitoringStatus.refetch]);
-
   const reset = useCallback(() => {
     setRunId(null);
     setError(null);
     setSyncIssues([]);
   }, []);
-
-  // 检测同步异常
-  const hasSyncIssues = syncIssues.length > 0 ||
-    (monitoringStatus.data?.syncStatus?.status === 'failed') ||
-    (monitoringStatus.data?.syncStatus?.status === 'timeout');
 
   // 检测长时间运行
   const isLongRunning = batchExecution.data &&
@@ -312,92 +244,13 @@ export function useTestExecution(options?: {
     isFetchingBatch: batchExecution.isFetching,
     batchError: batchExecution.error,
 
-    // 监控状态
-    monitoringStatus: monitoringStatus.data,
-    isMonitoring: monitoringStatus.data?.isMonitoring || false,
-    syncStatus: monitoringStatus.data?.syncStatus,
-
     // 同步状态
     syncIssues,
-    hasSyncIssues,
     isLongRunning,
-    canManualSync: !!runId && !manualSync.isPending,
 
     // 执行函数
     executeCase: handleExecuteCase,
     executeBatch: handleExecuteBatch,
-    manualSync: handleManualSync,
     reset,
-
-    // 状态检查
-    isManualSyncing: manualSync.isPending,
-    manualSyncError: manualSync.error,
-  };
-}
-
-/**
- * 执行状态监控面板 hook
- * 提供监控统计和系统健康状态
- */
-export function useExecutionMonitoring() {
-  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
-
-  // 获取监控统计
-  const monitoringStats = useQuery({
-    queryKey: ['monitoring-stats'],
-    queryFn: async () => {
-      const result = await request<any>('/monitoring/stats');
-      return result.data;
-    },
-    refetchInterval: 30000, // 30秒刷新一次
-    staleTime: 20000,
-  });
-
-  // 获取活跃监控列表
-  const activeMonitoring = useQuery({
-    queryKey: ['active-monitoring'],
-    queryFn: async () => {
-      const result = await request<any>('/monitoring/active');
-      return result.data;
-    },
-    refetchInterval: 15000, // 15秒刷新一次
-    staleTime: 10000,
-  });
-
-  // 健康检查
-  const healthCheck = useQuery({
-    queryKey: ['monitoring-health'],
-    queryFn: async () => {
-      const result = await request<any>('/monitoring/health');
-      return result.data;
-    },
-    refetchInterval: 60000, // 1分钟检查一次
-    staleTime: 45000,
-  });
-
-  return {
-    // 统计数据
-    stats: monitoringStats.data,
-    activeList: activeMonitoring.data,
-    health: healthCheck.data,
-
-    // 加载状态
-    isLoadingStats: monitoringStats.isLoading,
-    isLoadingActive: activeMonitoring.isLoading,
-    isLoadingHealth: healthCheck.isLoading,
-
-    // 错误状态
-    statsError: monitoringStats.error,
-    activeError: activeMonitoring.error,
-    healthError: healthCheck.error,
-
-    // 选中状态
-    selectedRunId,
-    setSelectedRunId,
-
-    // 刷新函数
-    refreshStats: monitoringStats.refetch,
-    refreshActive: activeMonitoring.refetch,
-    refreshHealth: healthCheck.refetch,
   };
 }

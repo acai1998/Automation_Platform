@@ -149,8 +149,19 @@ export class JenkinsService {
     }
 
     try {
+      console.log(`[JenkinsService.triggerBatchJob] Starting:`, {
+        runId,
+        jobName,
+        caseCount: caseIds.length,
+        baseUrl: this.config.baseUrl,
+        triggerUrl
+      });
+
       // 调用 Jenkins API
-      const response = await fetch(`${triggerUrl}?${params.toString()}`, {
+      const fullUrl = `${triggerUrl}?${params.toString()}`;
+      console.log(`[JenkinsService.triggerBatchJob] Making request to:`, fullUrl.split('?')[0] + '?[PARAMS]');
+      
+      const response = await fetch(fullUrl, {
         method: 'POST',
         headers: {
           'Authorization': this.getAuthHeader(),
@@ -158,13 +169,23 @@ export class JenkinsService {
         },
       });
 
+      console.log(`[JenkinsService.triggerBatchJob] Response status:`, {
+        status: response.status,
+        statusText: response.statusText,
+        location: response.headers.get('Location')
+      });
+
       if (response.status === 201 || response.status === 200) {
         // 从 Location header 获取 queue ID
         const location = response.headers.get('Location');
         const queueId = location ? this.extractQueueId(location) : undefined;
 
+        console.log(`[JenkinsService.triggerBatchJob] Queue ID extracted:`, queueId);
+
         // 获取最新构建信息
         const buildInfo = await this.getLatestBuildInfo(jobName);
+        
+        console.log(`[JenkinsService.triggerBatchJob] Build info:`, buildInfo);
 
         return {
           success: true,
@@ -173,6 +194,9 @@ export class JenkinsService {
           message: 'Batch job triggered successfully',
         };
       } else {
+        const errorText = await response.text().catch(() => 'Unable to read response');
+        console.error(`[JenkinsService.triggerBatchJob] Failed with status ${response.status}:`, errorText);
+        
         return {
           success: false,
           message: `Failed to trigger batch job: ${response.status} ${response.statusText}`,
@@ -180,6 +204,12 @@ export class JenkinsService {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : 'N/A';
+      console.error(`[JenkinsService.triggerBatchJob] Exception:`, {
+        message: errorMessage,
+        stack: errorStack
+      });
+      
       return {
         success: false,
         message: `Error triggering batch job: ${errorMessage}`,
