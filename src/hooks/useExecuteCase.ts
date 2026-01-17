@@ -346,11 +346,7 @@ export function useExecutionMonitoring() {
   const monitoringStats = useQuery({
     queryKey: ['monitoring-stats'],
     queryFn: async () => {
-      const response = await fetch('/api/monitoring/stats');
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.message || '获取监控统计失败');
-      }
+      const result = await request<any>('/monitoring/stats');
       return result.data;
     },
     refetchInterval: 30000, // 30秒刷新一次
@@ -361,11 +357,7 @@ export function useExecutionMonitoring() {
   const activeMonitoring = useQuery({
     queryKey: ['active-monitoring'],
     queryFn: async () => {
-      const response = await fetch('/api/monitoring/active');
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.message || '获取活跃监控失败');
-      }
+      const result = await request<any>('/monitoring/active');
       return result.data;
     },
     refetchInterval: 15000, // 15秒刷新一次
@@ -376,11 +368,7 @@ export function useExecutionMonitoring() {
   const healthCheck = useQuery({
     queryKey: ['monitoring-health'],
     queryFn: async () => {
-      const response = await fetch('/api/monitoring/health');
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.message || '健康检查失败');
-      }
+      const result = await request<any>('/monitoring/health');
       return result.data;
     },
     refetchInterval: 60000, // 1分钟检查一次

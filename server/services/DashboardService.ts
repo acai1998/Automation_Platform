@@ -210,7 +210,7 @@ export class DashboardService {
           r.id,
           r.task_name as suiteName,
           r.status,
-          r.duration * 1000 as duration,
+          r.duration as duration,
           r.start_time as startTime,
           r.total_cases as totalCases,
           r.passed_cases as passedCases,
