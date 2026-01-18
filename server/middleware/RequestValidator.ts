@@ -394,6 +394,38 @@ export class RequestValidator {
       if (result.errorMessage !== undefined && typeof result.errorMessage !== 'string') {
         errors.push(`${prefix}.errorMessage must be a string`);
       }
+
+      // 新增诊断字段校验 (可选)
+      if (result.stackTrace !== undefined && typeof result.stackTrace !== 'string') {
+        errors.push(`${prefix}.stackTrace must be a string`);
+      }
+
+      if (result.screenshotPath !== undefined && typeof result.screenshotPath !== 'string') {
+        errors.push(`${prefix}.screenshotPath must be a string`);
+      }
+
+      if (result.logPath !== undefined && typeof result.logPath !== 'string') {
+        errors.push(`${prefix}.logPath must be a string`);
+      }
+
+      if (result.assertionsTotal !== undefined && (typeof result.assertionsTotal !== 'number' || result.assertionsTotal < 0)) {
+        errors.push(`${prefix}.assertionsTotal must be a non-negative number`);
+      }
+
+      if (result.assertionsPassed !== undefined && (typeof result.assertionsPassed !== 'number' || result.assertionsPassed < 0)) {
+        errors.push(`${prefix}.assertionsPassed must be a non-negative number`);
+      }
+
+      if (result.responseData !== undefined && typeof result.responseData !== 'string') {
+        errors.push(`${prefix}.responseData must be a string`);
+      }
+
+      // 逻辑校验：通过的断言数不能超过总断言数
+      if (result.assertionsTotal !== undefined && result.assertionsPassed !== undefined) {
+        if (result.assertionsPassed > result.assertionsTotal) {
+          errors.push(`${prefix}.assertionsPassed cannot exceed assertionsTotal`);
+        }
+      }
     }
 
     return {

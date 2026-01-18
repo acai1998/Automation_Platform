@@ -61,6 +61,12 @@ export interface TestCaseResult {
   stackTrace?: string;
   startTime?: number;
   endTime?: number;
+  // New diagnostic fields for enhanced test result tracking
+  screenshotPath?: string;      // Path to failure screenshot
+  logPath?: string;             // Path to execution log file
+  assertionsTotal?: number;     // Total number of assertions in the test
+  assertionsPassed?: number;    // Number of assertions that passed
+  responseData?: string;        // API response data as JSON string
 }
 
 /**
@@ -94,46 +100,82 @@ export class JenkinsStatusService {
   /**
    * 查询构建状态
    */
-  async getBuildStatus(jobName: string, buildId: string): Promise<BuildStatus | null> {
-    try {
-      const url = `${this.config.baseUrl}/job/${jobName}/${buildId}/api/json`;
+  async getBuildStatus(jobName: string, buildId: string, retryCount: number = 3): Promise<BuildStatus | null> {
+    let lastError: Error | null = null;
 
-      console.log(`Querying build status: ${url}`);
+    for (let attempt = 1; attempt <= retryCount; attempt++) {
+      try {
+        const url = `${this.config.baseUrl}/job/${jobName}/${buildId}/api/json`;
 
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': this.getAuthHeader(),
-          'Accept': 'application/json',
-        },
-        timeout: 10000, // 10秒超时
-      });
+        console.log(`Querying build status (attempt ${attempt}/${retryCount}): ${url}`);
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          console.warn(`Build not found: ${jobName}/${buildId}`);
-          return null;
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': this.getAuthHeader(),
+            'Accept': 'application/json',
+          },
+          timeout: 10000, // 10秒超时
+        });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            console.warn(`Build not found: ${jobName}/${buildId}`);
+            return null;
+          }
+
+          // For server errors (5xx), retry; for client errors (4xx), don't retry
+          if (response.status >= 500 && attempt < retryCount) {
+            console.warn(`Server error ${response.status}, retrying in ${attempt * 1000}ms...`);
+            await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+            continue;
+          }
+
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+        const data = await response.json();
+
+        // Validate essential fields
+        if (typeof data.building !== 'boolean') {
+          console.warn(`Invalid building status for ${jobName}/${buildId}: ${data.building}`);
+          data.building = false; // Default to not building
+        }
+
+        // Log status for debugging
+        console.log(`Build status for ${jobName}/${buildId}:`, {
+          building: data.building,
+          result: data.result,
+          number: data.number,
+          duration: data.duration
+        });
+
+        return {
+          building: data.building,
+          result: data.result,
+          number: data.number,
+          url: data.url,
+          timestamp: data.timestamp,
+          duration: data.duration || 0,
+          estimatedDuration: data.estimatedDuration || 0,
+          actions: data.actions || [],
+          changeSet: data.changeSet
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.error(`Failed to get build status for ${jobName}/${buildId} (attempt ${attempt}):`, lastError.message);
+
+        // If this is not the last attempt, wait before retrying
+        if (attempt < retryCount) {
+          const delay = Math.min(attempt * 2000, 10000); // Exponential backoff, max 10s
+          console.log(`Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       }
-
-      const data = await response.json();
-
-      return {
-        building: data.building,
-        result: data.result,
-        number: data.number,
-        url: data.url,
-        timestamp: data.timestamp,
-        duration: data.duration,
-        estimatedDuration: data.estimatedDuration,
-        actions: data.actions || [],
-        changeSet: data.changeSet
-      };
-    } catch (error) {
-      console.error(`Failed to get build status for ${jobName}/${buildId}:`, error);
-      return null;
     }
+
+    console.error(`All ${retryCount} attempts failed for ${jobName}/${buildId}. Last error:`, lastError?.message);
+    return null;
   }
 
   /**

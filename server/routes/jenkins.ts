@@ -284,11 +284,15 @@ router.post('/callback', [
   rateLimitMiddleware.limit,
   requestValidator.validateCallback
 ], async (req, res) => {
+  const startTime = Date.now();
+  let callbackStatus = 'unknown';
+
   try {
     const { runId, status, passedCases = 0, failedCases = 0, skippedCases = 0, durationMs = 0, results = [] } = req.body;
+    callbackStatus = status;
 
-    // 记录回调日志
-    console.log(`Jenkins callback received for runId: ${runId}`, {
+    // Enhanced logging with more context
+    console.log(`[CALLBACK] Jenkins callback received for runId: ${runId}`, {
       status,
       passedCases,
       failedCases,
@@ -296,12 +300,26 @@ router.post('/callback', [
       durationMs,
       resultsCount: results.length,
       timestamp: new Date().toISOString(),
-      authSource: req.jenkinsAuth?.source
+      authSource: req.jenkinsAuth?.source,
+      userAgent: req.get('User-Agent'),
+      remoteIP: req.ip
     });
+
+    // Validate data consistency
+    const totalReportedCases = passedCases + failedCases + skippedCases;
+    if (results.length > 0 && totalReportedCases !== results.length) {
+      console.warn(`[CALLBACK] Data inconsistency for runId ${runId}: reported total=${totalReportedCases}, actual results=${results.length}`);
+    }
+
+    // Validate status value
+    const validStatuses = ['success', 'failed', 'aborted'];
+    if (!validStatuses.includes(status)) {
+      console.warn(`[CALLBACK] Invalid status '${status}' for runId ${runId}, treating as 'failed'`);
+    }
 
     // 完成执行批次
     await executionService.completeBatchExecution(runId, {
-      status,
+      status: validStatuses.includes(status) ? status : 'failed',
       passedCases,
       failedCases,
       skippedCases,
@@ -309,10 +327,54 @@ router.post('/callback', [
       results,
     });
 
-    res.json({ success: true, message: 'Callback processed successfully' });
+    const processingTime = Date.now() - startTime;
+    console.log(`[CALLBACK] Successfully processed callback for runId ${runId} in ${processingTime}ms`);
+
+    res.json({
+      success: true,
+      message: 'Callback processed successfully',
+      processingTimeMs: processingTime
+    });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    res.status(500).json({ success: false, message });
+    const processingTime = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    console.error(`[CALLBACK] Failed to process callback for runId ${req.body?.runId || 'unknown'}:`, {
+      error: errorMessage,
+      status: callbackStatus,
+      processingTimeMs: processingTime,
+      stack: error instanceof Error ? error.stack : undefined
+    });
+
+    // Try to update execution status to failed if we have a runId
+    if (req.body?.runId) {
+      try {
+        console.log(`[CALLBACK] Attempting to mark execution ${req.body.runId} as failed due to callback processing error`);
+        await executionService.completeBatchExecution(req.body.runId, {
+          status: 'failed',
+          passedCases: 0,
+          failedCases: 1,
+          skippedCases: 0,
+          durationMs: 0,
+          results: [{
+            caseId: 0,
+            caseName: 'Callback Processing Error',
+            status: 'failed',
+            duration: 0,
+            errorMessage: `Callback processing failed: ${errorMessage}`
+          }],
+        });
+        console.log(`[CALLBACK] Successfully marked execution ${req.body.runId} as failed`);
+      } catch (fallbackError) {
+        console.error(`[CALLBACK] Failed to mark execution as failed:`, fallbackError);
+      }
+    }
+
+    res.status(500).json({
+      success: false,
+      message: errorMessage,
+      processingTimeMs: processingTime
+    });
   }
 });
 
@@ -336,23 +398,199 @@ router.get('/batch/:runId', async (req, res) => {
 });
 
 /**
+ * POST /api/jenkins/callback/test
+ * 测试回调连接和认证 - 包括详细的诊断信息
+ */
+router.post('/callback/test', [
+  jenkinsAuthMiddleware.verify,
+  rateLimitMiddleware.limit
+], async (req, res) => {
+  try {
+    const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
+    const timestamp = new Date().toISOString();
+    
+    console.log(`[CALLBACK-TEST] ✅ Test callback received from ${clientIP}`, {
+      authSource: req.jenkinsAuth?.source,
+      timestamp,
+      headers: {
+        contentType: req.headers['content-type'],
+        hasAuth: !!req.headers.authorization,
+        hasApiKey: !!req.headers['x-api-key'],
+        hasSignature: !!req.headers['x-jenkins-signature'],
+      }
+    });
+
+    const { testMessage = 'test' } = req.body;
+
+    res.json({
+      success: true,
+      message: 'Callback test successful - 回调连接测试通过',
+      details: {
+        receivedAt: timestamp,
+        authenticationMethod: req.jenkinsAuth?.source || 'unknown',
+        clientIP,
+        testMessage,
+        metadata: req.jenkinsAuth?.metadata,
+      },
+      diagnostics: {
+        platform: process.env.NODE_ENV,
+        jenkinsUrl: process.env.JENKINS_URL,
+        callbackReceived: true,
+        authenticationPassed: true,
+        networkConnectivity: 'OK',
+        timestamp,
+      },
+      recommendations: [
+        '✅ 认证配置正确',
+        '✅ 网络连接正常',
+        '✅ 可以开始集成 Jenkins'
+      ]
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[CALLBACK-TEST] ❌ Test failed:`, message);
+    res.status(500).json({ 
+      success: false, 
+      message,
+      details: {
+        error: message,
+        timestamp: new Date().toISOString(),
+        suggestions: [
+          '检查请求头中的认证信息',
+          '验证 IP 地址是否在白名单中',
+          '确保请求格式正确'
+        ]
+      }
+    });
+  }
+});
+
+/**
+ * POST /api/jenkins/callback/diagnose
+ * 诊断回调连接问题 - 无需认证，用于排查配置问题
+ */
+router.post('/callback/diagnose', async (req, res) => {
+  try {
+    const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
+    const timestamp = new Date().toISOString();
+
+    console.log(`[CALLBACK-DIAGNOSE] Diagnostic request from ${clientIP}`, {
+      timestamp,
+      headers: Object.keys(req.headers).filter(k => k.toLowerCase().includes('auth') || k.toLowerCase().includes('jenkins'))
+    });
+
+    // 分析请求中的认证信息
+    const diagnostics: any = {
+      timestamp,
+      clientIP,
+      environmentVariablesConfigured: {
+        jenkins_url: !!process.env.JENKINS_URL,
+        jenkins_user: !!process.env.JENKINS_USER,
+        jenkins_token: !!process.env.JENKINS_TOKEN,
+        jenkins_api_key: !!process.env.JENKINS_API_KEY,
+        jenkins_jwt_secret: !!process.env.JENKINS_JWT_SECRET,
+        jenkins_signature_secret: !!process.env.JENKINS_SIGNATURE_SECRET,
+        jenkins_allowed_ips: !!process.env.JENKINS_ALLOWED_IPS,
+      },
+      requestHeaders: {
+        hasAuthorization: !!req.headers.authorization,
+        hasApiKey: !!req.headers['x-api-key'],
+        hasSignature: !!req.headers['x-jenkins-signature'],
+        hasTimestamp: !!req.headers['x-jenkins-timestamp'],
+        hasContentType: !!req.headers['content-type'],
+      },
+      suggestions: [] as string[],
+    };
+
+    // 分析问题并给出建议
+    if (!diagnostics.environmentVariablesConfigured.jenkins_api_key) {
+      diagnostics.suggestions.push('❌ 未配置 JENKINS_API_KEY');
+    }
+    if (!diagnostics.environmentVariablesConfigured.jenkins_jwt_secret) {
+      diagnostics.suggestions.push('❌ 未配置 JENKINS_JWT_SECRET');
+    }
+    if (!diagnostics.environmentVariablesConfigured.jenkins_signature_secret) {
+      diagnostics.suggestions.push('❌ 未配置 JENKINS_SIGNATURE_SECRET');
+    }
+
+    if (!diagnostics.requestHeaders.hasApiKey && 
+        !diagnostics.requestHeaders.hasAuthorization && 
+        !diagnostics.requestHeaders.hasSignature) {
+      diagnostics.suggestions.push('⚠️  请求中没有任何认证信息（API Key、JWT 或签名）');
+    }
+
+    if (diagnostics.suggestions.length === 0) {
+      diagnostics.suggestions.push('✅ 所有必需的环境变量已配置');
+      diagnostics.suggestions.push('✅ 请求包含认证信息');
+    }
+
+    // 提供配置步骤
+    diagnostics.nextSteps = [
+      '1️⃣ 确保 .env 文件中配置了所有必需的环境变量',
+      '2️⃣ 选择认证方式：API Key（最简单）、JWT 或签名',
+      '3️⃣ 使用 curl 测试回调：',
+      '   curl -X POST http://localhost:3000/api/jenkins/callback/test \\',
+      '     -H "X-Api-Key: your-api-key" \\',
+      '     -H "Content-Type: application/json" \\',
+      '     -d \'{"testMessage": "hello"}\'',
+      '4️⃣ 如果收到成功响应，可以开始集成 Jenkins',
+      '📚 详细文档：docs/JENKINS_AUTH_QUICK_START.md'
+    ];
+
+    res.json({
+      success: true,
+      data: diagnostics,
+      message: 'Diagnostic report generated'
+    });
+
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[CALLBACK-DIAGNOSE] Error:`, message);
+    res.status(500).json({
+      success: false,
+      message: `Diagnostic failed: ${message}`
+    });
+  }
+});
+
+/**
  * GET /api/jenkins/health
- * Jenkins 连接健康检查
+ * Jenkins 连接健康检查 - 包括详细的诊断信息
  */
 router.get('/health', async (req, res) => {
+  const startTime = Date.now();
+
   try {
-    console.log(`[/api/jenkins/health] Performing Jenkins health check...`);
-    
+    console.log(`[/api/jenkins/health] Starting Jenkins health check...`);
+
     // 测试 Jenkins 连接
     const jenkinsUrl = process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/';
     const jenkinsUser = process.env.JENKINS_USER || 'root';
     const jenkinsToken = process.env.JENKINS_TOKEN || '';
     
-    console.log(`[/api/jenkins/health] Config:`, {
-      baseUrl: jenkinsUrl,
-      user: jenkinsUser,
-      hasToken: !!jenkinsToken
-    });
+    // 健康检查数据
+    const healthCheckData: any = {
+      timestamp: new Date().toISOString(),
+      duration: 0,
+      checks: {
+        connectionTest: { success: false, duration: 0 },
+        authenticationTest: { success: false, duration: 0 },
+        apiResponseTest: { success: false, duration: 0 },
+      },
+      diagnostics: {
+        configPresent: {
+          url: !!jenkinsUrl,
+          user: !!jenkinsUser,
+          token: !!jenkinsToken,
+        }
+      },
+      issues: [] as string[],
+      recommendations: [] as string[],
+    };
+
+    // 1. 测试基础连接
+    console.log(`[/api/jenkins/health] Testing connection to:`, jenkinsUrl);
+    const connStartTime = Date.now();
     
     // 构建 API URL（处理 URL 尾部斜杠）
     let apiUrl = jenkinsUrl;
@@ -361,54 +599,126 @@ router.get('/health', async (req, res) => {
     }
     apiUrl += 'api/json';
     
-    console.log(`[/api/jenkins/health] Connecting to:`, apiUrl);
+    console.log(`[/api/jenkins/health] Final API URL:`, apiUrl);
     
     const credentials = Buffer.from(`${jenkinsUser}:${jenkinsToken}`).toString('base64');
     
-    const response = await fetch(apiUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Basic ${credentials}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    console.log(`[/api/jenkins/health] Response status:`, response.status);
-
-    if (response.ok) {
-      const data = await response.json();
-      res.json({
-        success: true,
-        data: {
-          connected: true,
-          jenkinsUrl,
-          version: data.version || 'unknown',
-          timestamp: new Date().toISOString()
+    // 设置超时
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+    
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${credentials}`,
+          'Content-Type': 'application/json',
         },
-        message: 'Jenkins is healthy'
+        signal: controller.signal,
       });
-    } else {
-      console.error(`[/api/jenkins/health] Failed:`, response.status, response.statusText);
-      res.status(response.status).json({
-        success: false,
-        data: {
-          connected: false,
-          status: response.status,
-          statusText: response.statusText
-        },
-        message: `Jenkins returned ${response.status}: ${response.statusText}`
-      });
+
+      clearTimeout(timeoutId);
+      healthCheckData.checks.connectionTest.duration = Date.now() - connStartTime;
+      healthCheckData.checks.connectionTest.success = response.ok;
+      healthCheckData.diagnostics.connectionStatus = response.status;
+      healthCheckData.diagnostics.statusText = response.statusText;
+
+      console.log(`[/api/jenkins/health] Response status:`, response.status);
+
+      if (response.ok) {
+        const data = await response.json() as any;
+        healthCheckData.checks.authenticationTest.success = true;
+        healthCheckData.checks.apiResponseTest.success = true;
+        
+        res.json({
+          success: true,
+          data: {
+            connected: true,
+            jenkinsUrl,
+            version: data.version || 'unknown',
+            timestamp: new Date().toISOString(),
+            details: healthCheckData,
+          },
+          message: 'Jenkins is healthy'
+        });
+      } else if (response.status === 401 || response.status === 403) {
+        healthCheckData.issues.push('❌ 认证失败：API Token 或用户名可能不正确');
+        healthCheckData.recommendations.push('检查 JENKINS_USER 和 JENKINS_TOKEN 环境变量');
+        
+        res.status(response.status).json({
+          success: false,
+          data: {
+            connected: false,
+            status: response.status,
+            statusText: response.statusText,
+            details: healthCheckData,
+          },
+          message: 'Authentication failed. Check Jenkins credentials.'
+        });
+      } else {
+        healthCheckData.issues.push(`❌ Jenkins 返回错误状态: ${response.status} ${response.statusText}`);
+        healthCheckData.recommendations.push('检查 Jenkins 服务是否正常运行');
+        healthCheckData.recommendations.push('检查 JENKINS_URL 是否正确');
+        
+        res.status(response.status).json({
+          success: false,
+          data: {
+            connected: false,
+            status: response.status,
+            statusText: response.statusText,
+            details: healthCheckData,
+          },
+          message: `Jenkins returned ${response.status}: ${response.statusText}`
+        });
+      }
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      
+      const fetchErrorMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
+      healthCheckData.checks.connectionTest.duration = Date.now() - connStartTime;
+      
+      if (fetchErrorMsg.includes('ECONNREFUSED')) {
+        healthCheckData.issues.push('❌ 连接被拒绝：Jenkins 服务可能未运行');
+        healthCheckData.recommendations.push('确保 Jenkins 服务已启动');
+      } else if (fetchErrorMsg.includes('ENOTFOUND')) {
+        healthCheckData.issues.push('❌ DNS 解析失败：无法解析 Jenkins 域名');
+        healthCheckData.recommendations.push('检查 JENKINS_URL 中的域名是否正确');
+        healthCheckData.recommendations.push('检查网络连接和 DNS 配置');
+      } else if (fetchErrorMsg.includes('Aborted')) {
+        healthCheckData.issues.push('❌ 请求超时：Jenkins 响应时间过长（> 10秒）');
+        healthCheckData.recommendations.push('检查 Jenkins 服务状态和网络连接');
+        healthCheckData.recommendations.push('考虑增加超时时间');
+      } else {
+        healthCheckData.issues.push(`❌ 网络错误：${fetchErrorMsg}`);
+      }
+      
+      throw fetchError;
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     const stack = error instanceof Error ? error.stack : '';
     console.error(`[/api/jenkins/health] Error:`, { message, stack });
+    
     res.status(500).json({
       success: false,
       data: {
         connected: false,
         error: message,
-        details: process.env.NODE_ENV === 'development' ? stack : undefined
+        details: {
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime,
+          issues: [
+            '❌ 无法连接到 Jenkins',
+            `错误: ${message}`
+          ],
+          recommendations: [
+            '检查 Jenkins 服务是否运行',
+            '检查网络连接',
+            '验证 Jenkins URL 配置',
+            '查看应用日志获取详细错误信息'
+          ]
+        },
+        stack: process.env.NODE_ENV === 'development' ? stack : undefined
       },
       message: `Failed to connect to Jenkins: ${message}`
     });
@@ -436,6 +746,37 @@ router.get('/diagnose', async (req, res) => {
     const batch = await executionService.getBatchExecution(runId);
     const execution = batch.execution as Record<string, unknown>;
 
+    // 计算执行时长
+    const startTime = execution.start_time ? new Date(execution.start_time as string).getTime() : null;
+    const currentTime = Date.now();
+    const executionDuration = startTime ? currentTime - startTime : 0;
+
+    // 检查Jenkins连接状态
+    let jenkinsConnectivity: any = null;
+    if (execution.jenkins_job && execution.jenkins_build_id) {
+      try {
+        const { jenkinsStatusService } = await import('../services/JenkinsStatusService.js');
+        const buildStatus = await jenkinsStatusService.getBuildStatus(
+          execution.jenkins_job as string,
+          execution.jenkins_build_id as string
+        );
+        jenkinsConnectivity = {
+          canConnect: !!buildStatus,
+          buildStatus: buildStatus ? {
+            building: buildStatus.building,
+            result: buildStatus.result,
+            duration: buildStatus.duration,
+            url: buildStatus.url
+          } : null
+        };
+      } catch (error) {
+        jenkinsConnectivity = {
+          canConnect: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+
     // 收集诊断信息
     const diagnostics = {
       executionId: execution.id,
@@ -449,14 +790,27 @@ router.get('/diagnose', async (req, res) => {
       passedCases: execution.passed_cases,
       failedCases: execution.failed_cases,
       skippedCases: execution.skipped_cases,
-      
+      executionDuration,
+
       // 诊断信息
       diagnostics: {
         jenkinsInfoMissing: !execution.jenkins_job || !execution.jenkins_build_id || !execution.jenkins_url,
         startTimeMissing: !execution.start_time,
         stillPending: execution.status === 'pending',
+        stillRunning: execution.status === 'running',
         noTestResults: execution.passed_cases === 0 && execution.failed_cases === 0 && execution.skipped_cases === 0,
-        
+        longRunning: executionDuration > 5 * 60 * 1000, // 超过5分钟
+        veryLongRunning: executionDuration > 10 * 60 * 1000, // 超过10分钟
+        jenkinsConnectivity,
+
+        // 时间分析
+        timeAnalysis: {
+          executionAge: executionDuration,
+          executionAgeMinutes: Math.round(executionDuration / 60000),
+          isOld: executionDuration > 30 * 60 * 1000, // 超过30分钟
+          createdRecently: startTime ? (currentTime - new Date(execution.created_at as string).getTime()) < 60 * 1000 : false
+        },
+
         // 建议
         suggestions: [] as string[]
       }
@@ -464,25 +818,56 @@ router.get('/diagnose', async (req, res) => {
 
     // 生成建议
     const sugg = diagnostics.diagnostics.suggestions;
-    
+
     if (diagnostics.diagnostics.jenkinsInfoMissing) {
-      sugg.push('Jenkins 信息未被填充。这通常表示 Jenkins 触发失败。请检查后端日志查找错误信息。');
+      sugg.push('🚨 Jenkins 信息未被填充。这通常表示 Jenkins 触发失败。请检查后端日志查找错误信息。');
     }
-    
+
     if (diagnostics.diagnostics.startTimeMissing) {
-      sugg.push('执行开始时间为空。这表示 Jenkins 尚未开始构建。请等待几秒后重试。');
+      sugg.push('⏳ 执行开始时间为空。这表示 Jenkins 尚未开始构建。请等待几秒后重试。');
     }
-    
+
     if (diagnostics.diagnostics.stillPending) {
-      sugg.push('执行仍处于 pending 状态。这是正常的，系统正在等待 Jenkins 接收任务。前端应该继续轮询。');
+      if (diagnostics.diagnostics.timeAnalysis.executionAgeMinutes > 2) {
+        sugg.push('⚠️ 执行已处于 pending 状态超过2分钟，可能存在问题。建议手动同步状态。');
+      } else {
+        sugg.push('⏳ 执行仍处于 pending 状态。这是正常的，系统正在等待 Jenkins 接收任务。');
+      }
     }
-    
-    if (diagnostics.diagnostics.noTestResults) {
-      sugg.push('测试结果为空。这可能表示 Jenkins 任务尚未完成或回调失败。请检查 Jenkins 的执行日志。');
+
+    if (diagnostics.diagnostics.stillRunning) {
+      if (diagnostics.diagnostics.veryLongRunning) {
+        sugg.push('🚨 执行已运行超过10分钟，可能卡住了。建议检查Jenkins构建状态或手动同步。');
+      } else if (diagnostics.diagnostics.longRunning) {
+        sugg.push('⚠️ 执行已运行超过5分钟，请检查是否正常。可以尝试手动同步状态。');
+      }
+    }
+
+    if (diagnostics.diagnostics.noTestResults && !diagnostics.diagnostics.stillPending) {
+      sugg.push('❌ 测试结果为空。这可能表示 Jenkins 任务失败或回调未到达。请检查 Jenkins 的执行日志。');
+    }
+
+    // Jenkins连接性建议
+    if (jenkinsConnectivity) {
+      if (!jenkinsConnectivity.canConnect) {
+        sugg.push('🔌 无法连接到Jenkins获取构建状态。请检查Jenkins服务器状态和网络连接。');
+      } else if (jenkinsConnectivity.buildStatus) {
+        const buildStatus = jenkinsConnectivity.buildStatus;
+        if (!buildStatus.building && buildStatus.result) {
+          if (execution.status === 'running') {
+            sugg.push(`🔄 Jenkins显示构建已完成(${buildStatus.result})，但平台状态仍为running。建议立即手动同步。`);
+          }
+        }
+      }
+    }
+
+    // 基于时间的建议
+    if (diagnostics.diagnostics.timeAnalysis.isOld) {
+      sugg.push('🕐 执行时间过长(超过30分钟)，建议检查或取消该执行。');
     }
 
     if (sugg.length === 0) {
-      sugg.push('执行状态良好，无明显问题。');
+      sugg.push('✅ 执行状态良好，无明显问题。');
     }
 
     res.json({
@@ -496,6 +881,129 @@ router.get('/diagnose', async (req, res) => {
     res.status(500).json({
       success: false,
       message: `Diagnosis failed: ${message}`
+    });
+  }
+});
+
+/**
+ * GET /api/jenkins/monitoring/stats
+ * 获取监控统计信息
+ */
+router.get('/monitoring/stats', async (_req, res) => {
+  try {
+    console.log(`[MONITORING] Getting monitoring statistics...`);
+
+    // 获取混合同步服务的统计信息
+    const { hybridSyncService } = await import('../services/HybridSyncService.js');
+    const syncStats = hybridSyncService.getMonitoringStats();
+
+    // 获取最近的执行统计
+    const recentExecutions = await executionService.getRecentExecutions(50) as any[];
+    const statusCounts = recentExecutions.reduce((acc: Record<string, number>, exec: any) => {
+      acc[exec.status] = (acc[exec.status] || 0) + 1;
+      return acc;
+    }, {});
+
+    // 计算卡住的执行数量
+    const stuckExecutions = recentExecutions.filter((exec: any) => {
+      if (!['running', 'pending'].includes(exec.status) || !exec.start_time) return false;
+      const duration = Date.now() - new Date(exec.start_time).getTime();
+      return duration > 5 * 60 * 1000; // 超过5分钟
+    });
+
+    const stats = {
+      timestamp: new Date().toISOString(),
+      syncService: syncStats,
+      executions: {
+        total: recentExecutions.length,
+        byStatus: statusCounts,
+        stuck: stuckExecutions.length,
+        stuckList: stuckExecutions.map((exec: any) => ({
+          id: exec.id,
+          status: exec.status,
+          duration: Date.now() - new Date(exec.start_time).getTime(),
+          jenkins_job: exec.jenkins_job,
+          jenkins_build_id: exec.jenkins_build_id
+        }))
+      },
+      health: {
+        totalIssues: syncStats.failed + syncStats.timeout + stuckExecutions.length,
+        hasIssues: (syncStats.failed + syncStats.timeout + stuckExecutions.length) > 0
+      }
+    };
+
+    res.json({
+      success: true,
+      data: stats
+    });
+
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[MONITORING] Failed to get stats:`, message);
+    res.status(500).json({
+      success: false,
+      message: `Failed to get monitoring stats: ${message}`
+    });
+  }
+});
+
+/**
+ * POST /api/jenkins/monitoring/fix-stuck
+ * 修复卡住的执行
+ */
+router.post('/monitoring/fix-stuck', async (req, res) => {
+  try {
+    const { timeoutMinutes = 5, dryRun = false } = req.body;
+
+    console.log(`[MONITORING] ${dryRun ? 'Simulating' : 'Starting'} fix for stuck executions (timeout: ${timeoutMinutes}min)`);
+
+    if (dryRun) {
+      // 只查询，不修复
+      const timeoutMs = timeoutMinutes * 60 * 1000;
+      const timeoutThreshold = new Date(Date.now() - timeoutMs);
+
+      const { query } = await import('../config/database.js');
+      const stuckExecutions = await query(`
+        SELECT id, status, jenkins_job, jenkins_build_id, jenkins_url,
+               start_time, TIMESTAMPDIFF(MINUTE, start_time, NOW()) as duration_minutes
+        FROM Auto_TestRun
+        WHERE status IN ('pending', 'running')
+          AND start_time < ?
+        ORDER BY start_time ASC
+        LIMIT 20
+      `, [timeoutThreshold]) as any[];
+
+      res.json({
+        success: true,
+        data: {
+          dryRun: true,
+          wouldFix: stuckExecutions.length,
+          executions: stuckExecutions
+        }
+      });
+    } else {
+      // 实际修复
+      const timeoutMs = timeoutMinutes * 60 * 1000;
+      const result = await executionService.checkAndHandleTimeouts(timeoutMs);
+
+      res.json({
+        success: true,
+        data: {
+          dryRun: false,
+          checked: result.checked,
+          updated: result.updated,
+          timedOut: result.timedOut,
+          message: `Fixed ${result.updated} executions, marked ${result.timedOut} as timed out`
+        }
+      });
+    }
+
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[MONITORING] Failed to fix stuck executions:`, message);
+    res.status(500).json({
+      success: false,
+      message: `Failed to fix stuck executions: ${message}`
     });
   }
 });

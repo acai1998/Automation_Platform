@@ -226,6 +226,17 @@ export class JenkinsService {
   }
 
   /**
+   * 标准化Jenkins URL，确保使用正确的域名
+   */
+  private normalizeJenkinsUrl(url: string): string {
+    if (!url) return url;
+
+    // 替换错误的域名为正确的域名
+    return url.replace(/http:\/\/www\.wiac\.xyz:8080/g, 'http://jenkins.wiac.xyz:8080')
+              .replace(/https:\/\/www\.wiac\.xyz/g, 'https://jenkins.wiac.xyz');
+  }
+
+  /**
    * 获取最新构建信息
    */
   private async getLatestBuildInfo(jobName: string): Promise<{ buildNumber: number; buildUrl: string } | null> {
@@ -241,7 +252,7 @@ export class JenkinsService {
         const data = await response.json() as { number: number; url: string };
         return {
           buildNumber: data.number,
-          buildUrl: data.url,
+          buildUrl: this.normalizeJenkinsUrl(data.url),
         };
       }
     } catch (error) {

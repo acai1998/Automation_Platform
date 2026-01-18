@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { request } from '../api';
 
 export interface ExecuteResult {
@@ -19,6 +19,18 @@ export interface BatchExecution {
   start_time?: string;
   end_time?: string;
   duration_ms?: number;
+}
+
+export interface ManualSyncResult {
+  success: boolean;
+  data?: {
+    updated: boolean;
+    message: string;
+    currentStatus?: string;
+    jenkinsStatus?: string;
+    executionId: number;
+  };
+  message?: string;
 }
 
 
@@ -53,6 +65,30 @@ export function useExecuteBatch() {
 }
 
 /**
+ * 手动同步执行状态
+ */
+export function useManualSync() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (executionId: number) => {
+      const result = await request<ManualSyncResult>(`/executions/${executionId}/sync`, {
+        method: 'POST',
+      });
+      return result.data as ManualSyncResult;
+    },
+    onSuccess: (data, executionId) => {
+      // 如果同步成功，立即刷新批次执行数据
+      if (data.success && data.data?.updated) {
+        queryClient.invalidateQueries({
+          queryKey: ['batch-execution', executionId]
+        });
+      }
+    },
+  });
+}
+
+/**
  * 获取执行批次详情（含智能轮询功能）
  * 优化说明：
  * 1. 集成混合状态同步机制，支持回调+轮询双重保障
@@ -74,6 +110,8 @@ export function useBatchExecution(runId: number | null, options?: {
   } = options || {};
 
   const prevStatusRef = useRef<string | null>(null);
+  const lastSyncAttemptRef = useRef<number>(0);
+  const stuckDetectionRef = useRef<number>(0);
 
   const query = useQuery({
     queryKey: ['batch-execution', runId],
@@ -145,10 +183,37 @@ export function useBatchExecution(runId: number | null, options?: {
     }
     if (data) {
       prevStatusRef.current = data.status;
-    }
-  }, [query.data, onStatusChange]);
 
-  return query;
+      // 检测可能的卡住状态
+      if (['running', 'pending'].includes(data.status) && data.start_time) {
+        const startTime = new Date(data.start_time).getTime();
+        const elapsedTime = Date.now() - startTime;
+
+        // 如果执行时间超过5分钟且状态未变化，标记为可能卡住
+        if (elapsedTime > 5 * 60 * 1000) {
+          const now = Date.now();
+          if (now - stuckDetectionRef.current > 60 * 1000) { // 每分钟最多提醒一次
+            stuckDetectionRef.current = now;
+            onSyncIssue?.(`Execution ${data.id} has been ${data.status} for ${Math.round(elapsedTime / 60000)} minutes. This may indicate a sync issue.`);
+          }
+        }
+      }
+    }
+  }, [query.data, onStatusChange, onSyncIssue]);
+
+  return {
+    ...query,
+    // 添加便捷的状态检查方法
+    isStuck: query.data && query.data.start_time && ['running', 'pending'].includes(query.data.status)
+      ? (Date.now() - new Date(query.data.start_time).getTime()) > 5 * 60 * 1000
+      : false,
+    isPotentiallyStuck: query.data && query.data.start_time && ['running', 'pending'].includes(query.data.status)
+      ? (Date.now() - new Date(query.data.start_time).getTime()) > 2 * 60 * 1000
+      : false,
+    executionDuration: query.data && query.data.start_time
+      ? Date.now() - new Date(query.data.start_time).getTime()
+      : 0
+  };
 }
 
 
@@ -165,9 +230,11 @@ export function useTestExecution(options?: {
   const [runId, setRunId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncIssues, setSyncIssues] = useState<string[]>([]);
+  const [lastManualSync, setLastManualSync] = useState<number | null>(null);
 
   const executeCase = useExecuteCase();
   const executeBatch = useExecuteBatch();
+  const manualSync = useManualSync();
 
   // 批次执行状态（带智能轮询）
   const batchExecution = useBatchExecution(runId, {
@@ -221,10 +288,39 @@ export function useTestExecution(options?: {
     [executeBatch.mutateAsync]
   );
 
+  // 手动同步状态
+  const handleManualSync = useCallback(async () => {
+    if (!runId) return;
+
+    try {
+      setError(null);
+      const result = await manualSync.mutateAsync(runId);
+      setLastManualSync(Date.now());
+
+      if (result.success && result.data) {
+        const message = result.data.updated
+          ? `Status synced successfully: ${result.data.currentStatus} → ${result.data.jenkinsStatus}`
+          : `Status already up to date: ${result.data.currentStatus}`;
+
+        setSyncIssues(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`]);
+      } else {
+        setSyncIssues(prev => [...prev, `${new Date().toLocaleTimeString()}: Sync failed - ${result.message}`]);
+      }
+
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Manual sync failed';
+      setError(message);
+      setSyncIssues(prev => [...prev, `${new Date().toLocaleTimeString()}: Error - ${message}`]);
+      throw err;
+    }
+  }, [runId, manualSync.mutateAsync]);
+
   const reset = useCallback(() => {
     setRunId(null);
     setError(null);
     setSyncIssues([]);
+    setLastManualSync(null);
   }, []);
 
   // 检测长时间运行
@@ -243,14 +339,20 @@ export function useTestExecution(options?: {
     batchInfo: batchExecution.data,
     isFetchingBatch: batchExecution.isFetching,
     batchError: batchExecution.error,
+    isStuck: batchExecution.isStuck,
+    isPotentiallyStuck: batchExecution.isPotentiallyStuck,
+    executionDuration: batchExecution.executionDuration,
 
     // 同步状态
     syncIssues,
     isLongRunning,
+    lastManualSync,
+    isSyncing: manualSync.isPending,
 
     // 执行函数
     executeCase: handleExecuteCase,
     executeBatch: handleExecuteBatch,
+    manualSync: handleManualSync,
     reset,
   };
 }

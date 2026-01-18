@@ -54,34 +54,95 @@ export class JenkinsAuthMiddleware {
     const signatureSecret = process.env.JENKINS_SIGNATURE_SECRET;
     const allowedIPsStr = process.env.JENKINS_ALLOWED_IPS;
 
+    const missingVars: string[] = [];
+    const configGuide = `
+╔════════════════════════════════════════════════════════════════════════╗
+║              Jenkins 认证配置 - 环境变量验证失败                       ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+以下是快速配置步骤：
+
+1️⃣ 创建或编辑 .env 文件，添加以下必需的环境变量：
+`;
+
     // 校验必需的环境变量
     if (!apiKey) {
-      throw new AuthenticationError(
-        AuthErrorType.MISSING_ENV_VARS,
-        'Missing required environment variable: JENKINS_API_KEY',
-        500
-      );
+      missingVars.push('JENKINS_API_KEY');
     }
     if (!jwtSecret) {
-      throw new AuthenticationError(
-        AuthErrorType.MISSING_ENV_VARS,
-        'Missing required environment variable: JENKINS_JWT_SECRET',
-        500
-      );
+      missingVars.push('JENKINS_JWT_SECRET');
     }
     if (!signatureSecret) {
+      missingVars.push('JENKINS_SIGNATURE_SECRET');
+    }
+
+    if (missingVars.length > 0) {
+      let errorMessage = configGuide;
+      
+      errorMessage += `
+# 必需的环境变量（都必须配置）
+${missingVars.includes('JENKINS_API_KEY') ? `JENKINS_API_KEY=your-secret-api-key-here # 用于 API Key 认证` : `# JENKINS_API_KEY 已配置`}
+${missingVars.includes('JENKINS_JWT_SECRET') ? `JENKINS_JWT_SECRET=your-secret-jwt-key-here # 用于 JWT 认证` : `# JENKINS_JWT_SECRET 已配置`}
+${missingVars.includes('JENKINS_SIGNATURE_SECRET') ? `JENKINS_SIGNATURE_SECRET=your-secret-signature-key-here # 用于签名认证` : `# JENKINS_SIGNATURE_SECRET 已配置`}
+
+# 可选的配置
+JENKINS_ALLOWED_IPS=192.168.1.0/24,10.0.0.5,localhost # IP 白名单（留空表示允许所有 IP）
+
+2️⃣ 配置完成后，重启应用：
+npm run start
+
+3️⃣ 验证配置（在另一个终端中运行）：
+curl -X POST http://localhost:3000/api/jenkins/callback/test \\
+  -H "X-Api-Key: your-secret-api-key-here" \\
+  -H "Content-Type: application/json" \\
+  -d '{"testMessage": "hello"}'
+
+4️⃣ 如果收到成功响应，说明认证配置正确！
+
+📚 详细文档：docs/JENKINS_AUTH_QUICK_START.md
+🔍 更多帮助：docs/JENKINS_AUTH_IMPROVEMENTS.md
+
+缺失的环境变量：${missingVars.join(', ')}
+`;
+
+      console.error(errorMessage);
+      
       throw new AuthenticationError(
         AuthErrorType.MISSING_ENV_VARS,
-        'Missing required environment variable: JENKINS_SIGNATURE_SECRET',
+        `Missing required environment variables: ${missingVars.join(', ')}. See console output above for configuration instructions.`,
         500
       );
     }
 
+    // 在这里，apiKey、jwtSecret、signatureSecret 都已确定非 undefined
+    const apiKeyVal = apiKey as string;
+    const jwtSecretVal = jwtSecret as string;
+    const signatureSecretVal = signatureSecret as string;
+
+    // 验证环境变量值的长度和格式
+    if (apiKeyVal.length < 8) {
+      console.warn('⚠️  Warning: JENKINS_API_KEY appears to be too short (< 8 characters). Consider using a longer, more secure key.');
+    }
+    if (jwtSecretVal.length < 8) {
+      console.warn('⚠️  Warning: JENKINS_JWT_SECRET appears to be too short (< 8 characters). Consider using a longer, more secure key.');
+    }
+    if (signatureSecretVal.length < 8) {
+      console.warn('⚠️  Warning: JENKINS_SIGNATURE_SECRET appears to be too short (< 8 characters). Consider using a longer, more secure key.');
+    }
+
+    // 验证 IP 白名单格式
+    const allowedIPs = (allowedIPsStr || '').split(',').filter(ip => ip.trim());
+    if (allowedIPs.length > 0) {
+      console.log(`✅ Jenkins 认证已初始化，IP 白名单已启用 (${allowedIPs.length} 条规则)`);
+    } else {
+      console.warn('⚠️  Warning: Jenkins 认证已初始化，但未配置 IP 白名单。建议添加 JENKINS_ALLOWED_IPS 来限制访问。');
+    }
+
     return {
-      apiKey,
-      jwtSecret,
-      signatureSecret,
-      allowedIPs: (allowedIPsStr || '').split(',').filter(ip => ip.trim()),
+      apiKey: apiKeyVal,
+      jwtSecret: jwtSecretVal,
+      signatureSecret: signatureSecretVal,
+      allowedIPs,
     };
   }
 
@@ -107,10 +168,30 @@ export class JenkinsAuthMiddleware {
       const authResult = await this.tryMultipleAuth(req);
 
       if (!authResult.success) {
+        // Enhanced logging for auth failures with diagnostic information
+        const clientIP = this.getClientIP(req);
+        const diagnostics = this.generateAuthFailureDiagnostics(req, authResult);
+        
+        console.warn(`[AUTH] ❌ Authentication failed for ${clientIP}`, {
+          ip: clientIP,
+          userAgent: req.get('User-Agent'),
+          endpoint: `${req.method} ${req.path}`,
+          attempts: authResult.attempts,
+          timestamp: new Date().toISOString(),
+          diagnostics,
+          headers: {
+            hasAuthHeader: !!req.headers.authorization,
+            hasApiKey: !!req.headers['x-api-key'],
+            hasSignature: !!req.headers['x-jenkins-signature'],
+            hasTimestamp: !!req.headers['x-jenkins-timestamp'],
+          }
+        });
+
         res.status(401).json({
           error: 'Authentication failed',
           message: 'Invalid or missing authentication credentials',
           attempts: authResult.attempts,
+          diagnostics: process.env.NODE_ENV === 'development' ? diagnostics : undefined,
         });
         return;
       }
@@ -175,17 +256,51 @@ export class JenkinsAuthMiddleware {
   /**
    * 获取客户端真实IP
    * 优先从代理头获取，其次从 socket 获取
+   * 支持多层代理和各种代理头格式
    */
   private getClientIP(req: Request): string {
+    // 尝试从各种代理头获取 IP
     const forwarded = req.headers['x-forwarded-for'];
     const xRealIp = req.headers['x-real-ip'];
+    const cfConnectingIp = req.headers['cf-connecting-ip']; // Cloudflare
+    const xClientIp = req.headers['x-client-ip'];
     const socketAddress = req.socket?.remoteAddress;
 
-    const ipStr = Array.isArray(forwarded)
-      ? forwarded[0]
-      : forwarded || (typeof xRealIp === 'string' ? xRealIp : socketAddress) || 'unknown';
+    // 获取原始 IP 字符串
+    let ipStr: string;
+    
+    if (Array.isArray(forwarded)) {
+      ipStr = forwarded[0];
+    } else if (forwarded) {
+      ipStr = forwarded as string;
+    } else if (typeof xRealIp === 'string') {
+      ipStr = xRealIp;
+    } else if (typeof cfConnectingIp === 'string') {
+      ipStr = cfConnectingIp;
+    } else if (typeof xClientIp === 'string') {
+      ipStr = xClientIp;
+    } else {
+      ipStr = socketAddress || 'unknown';
+    }
 
-    return ipStr.split(',')[0].trim().toLowerCase();
+    // 处理多个 IP 地址（取第一个）
+    const clientIP = ipStr.split(',')[0].trim();
+
+    // 调试日志：在开发环境中记录 IP 识别过程
+    if (process.env.NODE_ENV === 'development' && process.env.JENKINS_DEBUG_IP === 'true') {
+      console.debug(`[IP-DETECTION] Client IP resolution:`, {
+        detected: clientIP,
+        sources: {
+          forwarded: Array.isArray(forwarded) ? forwarded[0] : forwarded,
+          xRealIp,
+          cfConnectingIp,
+          xClientIp,
+          socketAddress,
+        }
+      });
+    }
+
+    return clientIP.toLowerCase();
   }
 
   /**
@@ -475,6 +590,31 @@ export class JenkinsAuthMiddleware {
     const signature = this.generateSignature(payload, timestamp);
 
     return { signature, timestamp };
+  }
+
+  /**
+   * 生成认证失败诊断信息
+   */
+  private generateAuthFailureDiagnostics(req: Request, authResult: AuthenticationResult): Record<string, unknown> {
+    const clientIP = this.getClientIP(req);
+    const inAllowedIPs = this.verifyIP(req);
+
+    return {
+      summary: '认证失败诊断',
+      problems: [] as string[],
+      suggestions: [] as string[],
+      details: {
+        clientIP,
+        ipWhitelistEnabled: this.config.allowedIPs.length > 0,
+        ipInWhitelist: inAllowedIPs,
+        configuredIPs: this.config.allowedIPs,
+        attemptedMethods: authResult.attempts,
+        hasAuthorizationHeader: !!req.headers.authorization,
+        hasApiKeyHeader: !!req.headers['x-api-key'],
+        hasSignatureHeader: !!req.headers['x-jenkins-signature'],
+        hasTimestampHeader: !!req.headers['x-jenkins-timestamp'],
+      }
+    };
   }
 
   /**

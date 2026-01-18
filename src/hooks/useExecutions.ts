@@ -38,6 +38,10 @@ export interface Auto_TestRunResults {
   error_stack: string;
   screenshot_path: string;
   log_path: string;
+  // New diagnostic fields for enhanced test result tracking
+  assertions_total: number;
+  assertions_passed: number;
+  response_data: string;
 }
 
 interface TestRunsResponse {

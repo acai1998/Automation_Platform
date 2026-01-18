@@ -33,6 +33,13 @@ export interface Auto_TestRunResultsInput {
   status: 'passed' | 'failed' | 'skipped' | 'error';
   duration: number;
   errorMessage?: string;
+  // New diagnostic fields for enhanced test result tracking
+  stackTrace?: string;          // Error stack trace information
+  screenshotPath?: string;      // Path to failure screenshot
+  logPath?: string;             // Path to execution log file
+  assertionsTotal?: number;     // Total number of assertions in the test
+  assertionsPassed?: number;    // Number of assertions that passed
+  responseData?: string;        // API response data as JSON string
 }
 
 export interface ExecutionCallbackInput {
@@ -306,6 +313,17 @@ export class ExecutionService {
     results?: Auto_TestRunResultsInput[];
   }): Promise<void> {
     const pool = getPool();
+
+    console.log(`[BATCH-EXECUTION] Processing runId: ${runId}, looking for executionId...`);
+
+    // 查询对应的 executionId 用于调试
+    const executionIdResult = await pool.execute(`
+      SELECT id FROM Auto_TestCaseTaskExecutions
+      WHERE run_id = ? AND task_id IS NULL
+    `, [runId]);
+
+    const executionId = (executionIdResult[0] as any[])?.[0]?.id;
+    console.log(`[BATCH-EXECUTION] Found executionId: ${executionId} for runId: ${runId}`);
     
     // 1. 更新 Auto_TestRun
     await pool.execute(`
@@ -328,37 +346,62 @@ export class ExecutionService {
         // 尝试更新
         const [updateResult] = await pool.execute(`
           UPDATE Auto_TestRunResults
-          SET status = ?, duration = ?, error_message = ?,
-              start_time = NOW(), end_time = NOW()
-          WHERE execution_id = ? AND case_id = ?
+          SET status = ?, duration = ?, error_message = ?, error_stack = ?,
+              screenshot_path = ?, log_path = ?, assertions_total = ?, assertions_passed = ?,
+              response_data = ?, start_time = NOW(), end_time = NOW()
+          WHERE execution_id = (
+            SELECT id FROM Auto_TestCaseTaskExecutions
+            WHERE run_id = ? AND task_id IS NULL
+            LIMIT 1
+          ) AND case_id = ?
         `, [
           result.status,
           result.duration,
           result.errorMessage || null,
+          result.stackTrace || null,
+          result.screenshotPath || null,
+          result.logPath || null,
+          result.assertionsTotal || null,
+          result.assertionsPassed || null,
+          result.responseData || null,
           runId,
           result.caseId
         ]);
 
         const affectedRows = (updateResult as any).affectedRows;
+        console.log(`[BATCH-EXECUTION] UPDATE affected ${affectedRows} rows for case ${result.caseId} (runId: ${runId})`);
 
         // 如果没有更新到记录（可能是新用例，或者之前没有插入），则插入
         if (affectedRows === 0) {
           await pool.execute(`
             INSERT INTO Auto_TestRunResults (
-              execution_id, case_id, case_name, status, duration, error_message,
+              execution_id, case_id, case_name, status, duration, error_message, error_stack,
+              screenshot_path, log_path, assertions_total, assertions_passed, response_data,
               start_time, end_time, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
+            ) VALUES (
+              (SELECT id FROM Auto_TestCaseTaskExecutions WHERE run_id = ? AND task_id IS NULL LIMIT 1),
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW()
+            )
           `, [
             runId,
             result.caseId,
             result.caseName,
             result.status,
             result.duration,
-            result.errorMessage || null
+            result.errorMessage || null,
+            result.stackTrace || null,
+            result.screenshotPath || null,
+            result.logPath || null,
+            result.assertionsTotal || null,
+            result.assertionsPassed || null,
+            result.responseData || null
           ]);
+          console.log(`[BATCH-EXECUTION] INSERT new record for case ${result.caseId} (runId: ${runId})`);
         }
       }
     }
+
+    console.log(`[BATCH-EXECUTION] Completed processing ${results.results?.length || 0} results for runId: ${runId}`);
   }
 
   /**
@@ -493,10 +536,17 @@ export class ExecutionService {
         jenkinsBuilding: buildStatus.building,
         jenkinsResult: buildStatus.result,
         jenkinsStatusMapped,
-        buildNumber: buildStatus.number
+        buildNumber: buildStatus.number,
+        buildUrl: buildStatus.url,
+        buildDuration: buildStatus.duration
       });
 
-      // 5. 检查状态是否需要更新
+      // 5. Check for status inconsistencies and log them
+      if (execution.status === 'running' && !buildStatus.building && buildStatus.result) {
+        console.warn(`Status inconsistency detected for runId ${runId}: platform shows 'running' but Jenkins shows completed with result '${buildStatus.result}'`);
+      }
+
+      // 6. 检查状态是否需要更新
       if (execution.status === jenkinsStatusMapped) {
         return {
           success: true,
@@ -546,20 +596,39 @@ export class ExecutionService {
    * 映射Jenkins状态到内部状态
    */
   private mapJenkinsStatusToInternal(result: string | null, building: boolean): string {
+    // Log the status mapping decision for debugging
+    console.log(`Mapping Jenkins status: building=${building}, result=${result}`);
+
     if (building) {
       return 'running';
     }
 
-    switch (result) {
+    // Handle null result (build may still be pending or just finished)
+    if (result === null) {
+      console.warn('Jenkins result is null - build may still be in progress or just finished');
+      return 'pending';
+    }
+
+    const normalizedResult = result.toUpperCase();
+
+    switch (normalizedResult) {
       case 'SUCCESS':
+        console.log('Mapping SUCCESS to success');
         return 'success';
       case 'FAILURE':
       case 'UNSTABLE':
+        console.log(`Mapping ${normalizedResult} to failed`);
         return 'failed';
       case 'ABORTED':
+        console.log('Mapping ABORTED to aborted');
         return 'aborted';
-      default:
+      case 'NOT_BUILT':
+        console.log('Mapping NOT_BUILT to pending');
         return 'pending';
+      default:
+        console.warn(`Unknown Jenkins result status: ${result}, defaulting to failed`);
+        // For unknown statuses, default to failed to ensure stuck executions are resolved
+        return 'failed';
     }
   }
 
@@ -633,13 +702,24 @@ export class ExecutionService {
         // 尝试更新现有记录
         const [updateResult] = await pool.execute(`
           UPDATE Auto_TestRunResults
-          SET status = ?, duration = ?, error_message = ?,
-              start_time = FROM_UNIXTIME(?), end_time = FROM_UNIXTIME(?)
-          WHERE execution_id = ? AND case_id = ?
+          SET status = ?, duration = ?, error_message = ?, error_stack = ?,
+              screenshot_path = ?, log_path = ?, assertions_total = ?, assertions_passed = ?,
+              response_data = ?, start_time = FROM_UNIXTIME(?), end_time = FROM_UNIXTIME(?)
+          WHERE execution_id = (
+            SELECT id FROM Auto_TestCaseTaskExecutions
+            WHERE run_id = ? AND task_id IS NULL
+            LIMIT 1
+          ) AND case_id = ?
         `, [
           result.status,
           result.duration,
           result.errorMessage || null,
+          result.stackTrace || null,
+          result.screenshotPath || null,
+          result.logPath || null,
+          result.assertionsTotal || null,
+          result.assertionsPassed || null,
+          result.responseData || null,
           result.startTime ? Math.floor(result.startTime / 1000) : Math.floor(Date.now() / 1000),
           result.endTime ? Math.floor(result.endTime / 1000) : Math.floor(Date.now() / 1000),
           runId,
@@ -652,9 +732,13 @@ export class ExecutionService {
         if (affectedRows === 0 && result.caseId > 0) {
           await pool.execute(`
             INSERT INTO Auto_TestRunResults (
-              execution_id, case_id, case_name, status, duration, error_message,
+              execution_id, case_id, case_name, status, duration, error_message, error_stack,
+              screenshot_path, log_path, assertions_total, assertions_passed, response_data,
               start_time, end_time, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), NOW())
+            ) VALUES (
+              (SELECT id FROM Auto_TestCaseTaskExecutions WHERE run_id = ? AND task_id IS NULL LIMIT 1),
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), NOW()
+            )
           `, [
             runId,
             result.caseId,
@@ -662,6 +746,12 @@ export class ExecutionService {
             result.status,
             result.duration,
             result.errorMessage || null,
+            result.stackTrace || null,
+            result.screenshotPath || null,
+            result.logPath || null,
+            result.assertionsTotal || null,
+            result.assertionsPassed || null,
+            result.responseData || null,
             result.startTime ? Math.floor(result.startTime / 1000) : Math.floor(Date.now() / 1000),
             result.endTime ? Math.floor(result.endTime / 1000) : Math.floor(Date.now() / 1000)
           ]);

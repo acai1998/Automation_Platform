@@ -40,6 +40,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [loadingCaseIds, setLoadingCaseIds] = useState<Set<number>>(new Set());
 
   const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
@@ -54,7 +55,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   // 执行管理
   const {
     executeCase,
-    isExecuting,
   } = useTestExecution();
 
   // 分页信息
@@ -87,6 +87,9 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     // 如果没有项目ID，使用默认项目ID 1
     const finalProjectId = projectId || 1;
     
+    // 设置该用例为加载状态
+    setLoadingCaseIds(prev => new Set(prev).add(caseId));
+    
     try {
       const result = await executeCase(caseId, finalProjectId);
       
@@ -106,6 +109,13 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       toast.error(message, {
         description: '请检查 Jenkins 连接或稍后重试',
         duration: 4000,
+      });
+    } finally {
+      // 移除该用例的加载状态
+      setLoadingCaseIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(caseId);
+        return newSet;
       });
     }
   };
@@ -127,15 +137,16 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     }
 
     if (column.key === 'actions') {
+      const isLoading = loadingCaseIds.has(record.id);
       return (
         <Button
           size="sm"
           variant="default"
-          disabled={isExecuting}
+          disabled={isLoading}
           onClick={() => handleRunCase(record.id, record.name, record.project_id)}
           className="gap-1.5 h-8 px-3 transition-all duration-200 hover:scale-105 active:scale-95"
         >
-          {isExecuting ? (
+          {isLoading ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <Play className="h-3.5 w-3.5" />
@@ -366,11 +377,15 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                         <Button
                           size="sm"
                           variant="default"
-                          disabled={isExecuting}
+                          disabled={loadingCaseIds.has(record.id)}
                           onClick={() => handleRunCase(record.id, record.name, record.project_id)}
                           className="h-8 px-3"
                         >
-                          <Play className="h-3.5 w-3.5" />
+                          {loadingCaseIds.has(record.id) ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5" />
+                          )}
                         </Button>
                       </td>
                     </tr>
@@ -403,11 +418,11 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                       <Button
                         size="sm"
                         variant="default"
-                        disabled={isExecuting}
+                        disabled={loadingCaseIds.has(record.id)}
                         onClick={() => handleRunCase(record.id, record.name, record.project_id)}
                         className="shrink-0 h-8 w-8 p-0"
                       >
-                        {isExecuting ? (
+                        {loadingCaseIds.has(record.id) ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <Play className="h-4 w-4" />
