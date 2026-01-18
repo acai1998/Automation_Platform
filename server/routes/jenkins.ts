@@ -399,19 +399,40 @@ router.get('/batch/:runId', async (req, res) => {
 
 /**
  * POST /api/jenkins/callback/test
- * 测试回调连接和认证 - 包括详细的诊断信息
+ * 测试回调连接和认证 - 支持传入真实数据进行测试处理
+ * 可选参数: runId, status, passedCases, failedCases, skippedCases, durationMs, results
+ * 如果提供了 runId，则会真实处理回调数据；否则仅测试连接
  */
 router.post('/callback/test', [
   jenkinsAuthMiddleware.verify,
   rateLimitMiddleware.limit
 ], async (req, res) => {
+  const startTime = Date.now();
   try {
     const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
     const timestamp = new Date().toISOString();
     
-    console.log(`[CALLBACK-TEST] ✅ Test callback received from ${clientIP}`, {
+    // 检查是否提供了真实的回调数据
+    const { 
+      testMessage = 'test',
+      runId,
+      status,
+      passedCases,
+      failedCases,
+      skippedCases,
+      durationMs,
+      results
+    } = req.body;
+
+    const isRealDataTest = !!runId && !!status;
+
+    console.log(`[CALLBACK-TEST] Received test callback from ${clientIP}`, {
       authSource: req.jenkinsAuth?.source,
       timestamp,
+      isRealDataTest,
+      runId,
+      status,
+      dataMode: isRealDataTest ? 'REAL_DATA' : 'CONNECTION_TEST',
       headers: {
         contentType: req.headers['content-type'],
         hasAuth: !!req.headers.authorization,
@@ -420,35 +441,133 @@ router.post('/callback/test', [
       }
     });
 
-    const { testMessage = 'test' } = req.body;
+    // 如果提供了真实回调数据，则处理它
+    if (isRealDataTest) {
+      console.log(`[CALLBACK-TEST] Processing real callback data:`, {
+        runId,
+        status,
+        passedCases: passedCases || 0,
+        failedCases: failedCases || 0,
+        skippedCases: skippedCases || 0,
+        durationMs: durationMs || 0,
+        resultsCount: results?.length || 0
+      });
 
-    res.json({
-      success: true,
-      message: 'Callback test successful - 回调连接测试通过',
-      details: {
-        receivedAt: timestamp,
-        authenticationMethod: req.jenkinsAuth?.source || 'unknown',
-        clientIP,
-        testMessage,
-        metadata: req.jenkinsAuth?.metadata,
-      },
-      diagnostics: {
-        platform: process.env.NODE_ENV,
-        jenkinsUrl: process.env.JENKINS_URL,
-        callbackReceived: true,
-        authenticationPassed: true,
-        networkConnectivity: 'OK',
-        timestamp,
-      },
-      recommendations: [
-        '✅ 认证配置正确',
-        '✅ 网络连接正常',
-        '✅ 可以开始集成 Jenkins'
-      ]
-    });
-  } catch (error) {
+      try {
+        // 真实处理回调
+        await executionService.completeBatchExecution(runId, {
+          status: status || 'failed',
+          passedCases: passedCases || 0,
+          failedCases: failedCases || 0,
+          skippedCases: skippedCases || 0,
+          durationMs: durationMs || 0,
+          results: results || [],
+        });
+
+        const processingTime = Date.now() - startTime;
+
+        console.log(`[CALLBACK-TEST] Successfully processed real callback for runId ${runId} in ${processingTime}ms`);
+
+        res.json({
+          success: true,
+          message: 'Test callback processed successfully - 测试回调数据已处理',
+          mode: 'REAL_DATA',
+          details: {
+            receivedAt: timestamp,
+            authenticationMethod: req.jenkinsAuth?.source || 'unknown',
+            clientIP,
+            testMessage,
+            metadata: req.jenkinsAuth?.metadata,
+            processedData: {
+              runId,
+              status,
+              passedCases: passedCases || 0,
+              failedCases: failedCases || 0,
+              skippedCases: skippedCases || 0,
+              durationMs: durationMs || 0,
+              resultsCount: results?.length || 0
+            }
+          },
+          diagnostics: {
+            platform: process.env.NODE_ENV,
+            jenkinsUrl: process.env.JENKINS_URL,
+            callbackReceived: true,
+            authenticationPassed: true,
+            networkConnectivity: 'OK',
+            dataProcessing: 'SUCCESS',
+            timestamp,
+            processingTimeMs: processingTime
+          },
+          recommendations: [
+            '✅ 认证配置正确',
+            '✅ 网络连接正常',
+            '✅ 回调数据已成功处理',
+            '✅ 可以开始集成 Jenkins'
+          ]
+        });
+      } catch (processError) {
+        const errorMessage = processError instanceof Error ? processError.message : 'Unknown error';
+        const processingTime = Date.now() - startTime;
+
+        console.error(`[CALLBACK-TEST] Failed to process real callback for runId ${runId}:`, {
+          error: errorMessage,
+          stack: processError instanceof Error ? processError.stack : undefined,
+          processingTimeMs: processingTime
+        });
+
+        res.status(500).json({
+          success: false,
+          message: `Failed to process callback data: ${errorMessage}`,
+          mode: 'REAL_DATA',
+          details: {
+            error: errorMessage,
+            timestamp: new Date().toISOString(),
+            runId,
+            processingTimeMs: processingTime,
+            suggestions: [
+              '检查 runId 是否存在于数据库',
+              '查看后端日志获取详细错误信息',
+              '确保所有必需字段都已提供'
+            ]
+          }
+        });
+      }
+    } else {
+      // 仅测试连接
+      res.json({
+        success: true,
+        message: 'Callback test successful - 回调连接测试通过',
+        mode: 'CONNECTION_TEST',
+        details: {
+          receivedAt: timestamp,
+          authenticationMethod: req.jenkinsAuth?.source || 'unknown',
+          clientIP,
+          testMessage,
+          metadata: req.jenkinsAuth?.metadata,
+        },
+        diagnostics: {
+          platform: process.env.NODE_ENV,
+          jenkinsUrl: process.env.JENKINS_URL,
+          callbackReceived: true,
+          authenticationPassed: true,
+          networkConnectivity: 'OK',
+          timestamp,
+        },
+        recommendations: [
+          '✅ 认证配置正确',
+          '✅ 网络连接正常',
+          '✅ 可以开始集成 Jenkins',
+          '💡 提示：可以传入 runId、status 等参数来测试真实回调处理'
+        ]
+      });
+    }
+  } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[CALLBACK-TEST] ❌ Test failed:`, message);
+    console.error(`[CALLBACK-TEST] ❌ Test failed:`, {
+      error: message,
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
     res.status(500).json({ 
       success: false, 
       message,
@@ -459,6 +578,158 @@ router.post('/callback/test', [
           '检查请求头中的认证信息',
           '验证 IP 地址是否在白名单中',
           '确保请求格式正确'
+        ]
+      }
+    });
+  }
+});
+
+/**
+ * POST /api/jenkins/callback/manual-sync/:runId
+ * 手动同步执行状态 - 用于修复卡住的执行记录
+ * 从数据库查询当前状态并允许手动更新
+ */
+router.post('/callback/manual-sync/:runId', [
+  jenkinsAuthMiddleware.verify,
+  rateLimitMiddleware.limit
+], async (req, res) => {
+  try {
+    const runId = parseInt(req.params.runId);
+    const { 
+      status, 
+      passedCases, 
+      failedCases, 
+      skippedCases, 
+      durationMs, 
+      results,
+      force = false 
+    } = req.body;
+
+    if (isNaN(runId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid runId - must be a number'
+      });
+    }
+
+    console.log(`[MANUAL-SYNC] Starting manual sync for runId: ${runId}`, {
+      status,
+      passedCases,
+      failedCases,
+      skippedCases,
+      durationMs,
+      resultsCount: results?.length || 0,
+      force,
+      timestamp: new Date().toISOString()
+    });
+
+    // 查询现有执行记录
+    const execution = await executionService.getBatchExecution(runId);
+    
+    if (!execution.execution) {
+      return res.status(404).json({
+        success: false,
+        message: `Execution not found: runId=${runId}`
+      });
+    }
+
+    const executionData = execution.execution as any;
+    const currentStatus = executionData.status;
+
+    // 检查是否允许更新
+    if (!force && ['success', 'failed', 'aborted'].includes(currentStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Execution is already completed with status: ${currentStatus}. Use force=true to override.`,
+        current: {
+          id: runId,
+          status: currentStatus,
+          totalCases: executionData.total_cases,
+          passedCases: executionData.passed_cases,
+          failedCases: executionData.failed_cases,
+          skippedCases: executionData.skipped_cases,
+          updatedAt: executionData.updated_at || executionData.created_at
+        }
+      });
+    }
+
+    // 必须提供新状态
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'status field is required for manual sync'
+      });
+    }
+
+    // 执行更新
+    const startTime = Date.now();
+
+    await executionService.completeBatchExecution(runId, {
+      status: status as 'success' | 'failed' | 'aborted',
+      passedCases: passedCases || 0,
+      failedCases: failedCases || 0,
+      skippedCases: skippedCases || 0,
+      durationMs: durationMs || 0,
+      results: results || [],
+    });
+
+    const processingTime = Date.now() - startTime;
+
+    console.log(`[MANUAL-SYNC] Successfully synced runId ${runId} in ${processingTime}ms`);
+
+    // 查询更新后的数据
+    const updated = await executionService.getBatchExecution(runId);
+
+    const updatedData = updated.execution as any;
+
+    res.json({
+      success: true,
+      message: 'Manual sync completed successfully',
+      previous: {
+        id: runId,
+        status: currentStatus,
+        totalCases: executionData.total_cases,
+        passedCases: executionData.passed_cases,
+        failedCases: executionData.failed_cases,
+        skippedCases: executionData.skipped_cases
+      },
+      updated: {
+        id: runId,
+        status: updatedData.status,
+        totalCases: updatedData.total_cases,
+        passedCases: updatedData.passed_cases,
+        failedCases: updatedData.failed_cases,
+        skippedCases: updatedData.skipped_cases,
+        endTime: updatedData.end_time,
+        durationMs: updatedData.duration_ms
+      },
+      timing: {
+        processingTimeMs: processingTime,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    const errorDetails = error instanceof Error ? error.stack : undefined;
+
+    console.error(`[MANUAL-SYNC] Failed to sync runId:`, {
+      error: message,
+      stack: errorDetails,
+      timestamp: new Date().toISOString()
+    });
+
+    res.status(500).json({
+      success: false,
+      message: `Manual sync failed: ${message}`,
+      details: {
+        error: message,
+        timestamp: new Date().toISOString(),
+        suggestions: [
+          '检查 runId 是否存在于数据库',
+          '确保传入的状态值有效（success、failed、aborted）',
+          '查看后端日志获取详细错误信息',
+          '如果执行已完成，使用 force=true 强制更新'
         ]
       }
     });

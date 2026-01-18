@@ -313,95 +313,191 @@ export class ExecutionService {
     results?: Auto_TestRunResultsInput[];
   }): Promise<void> {
     const pool = getPool();
+    const startTime = Date.now();
 
-    console.log(`[BATCH-EXECUTION] Processing runId: ${runId}, looking for executionId...`);
+    try {
+      console.log(`[BATCH-EXECUTION] ========== Processing runId: ${runId} ==========`, {
+        status: results.status,
+        passedCases: results.passedCases,
+        failedCases: results.failedCases,
+        skippedCases: results.skippedCases,
+        durationMs: results.durationMs,
+        resultsCount: results.results?.length || 0,
+        timestamp: new Date().toISOString()
+      });
 
-    // 查询对应的 executionId 用于调试
-    const executionIdResult = await pool.execute(`
-      SELECT id FROM Auto_TestCaseTaskExecutions
-      WHERE run_id = ? AND task_id IS NULL
-    `, [runId]);
+      // 1. 先检查执行记录是否存在
+      const execution = await queryOne<{ id: number; status: string }>(`
+        SELECT id, status FROM Auto_TestRun WHERE id = ?
+      `, [runId]);
 
-    const executionId = (executionIdResult[0] as any[])?.[0]?.id;
-    console.log(`[BATCH-EXECUTION] Found executionId: ${executionId} for runId: ${runId}`);
-    
-    // 1. 更新 Auto_TestRun
-    await pool.execute(`
-      UPDATE Auto_TestRun
-      SET status = ?, passed_cases = ?, failed_cases = ?, skipped_cases = ?,
-          duration_ms = ?, end_time = NOW()
-      WHERE id = ?
-    `, [
-      results.status,
-      results.passedCases,
-      results.failedCases,
-      results.skippedCases,
-      results.durationMs,
-      runId,
-    ]);
-
-    // 2. 如果有详细结果，更新 Auto_TestRunResults
-    if (results.results && results.results.length > 0) {
-      for (const result of results.results) {
-        // 尝试更新
-        const [updateResult] = await pool.execute(`
-          UPDATE Auto_TestRunResults
-          SET status = ?, duration = ?, error_message = ?, error_stack = ?,
-              screenshot_path = ?, log_path = ?, assertions_total = ?, assertions_passed = ?,
-              response_data = ?, start_time = NOW(), end_time = NOW()
-          WHERE execution_id = (
-            SELECT id FROM Auto_TestCaseTaskExecutions
-            WHERE run_id = ? AND task_id IS NULL
-            LIMIT 1
-          ) AND case_id = ?
-        `, [
-          result.status,
-          result.duration,
-          result.errorMessage || null,
-          result.stackTrace || null,
-          result.screenshotPath || null,
-          result.logPath || null,
-          result.assertionsTotal || null,
-          result.assertionsPassed || null,
-          result.responseData || null,
-          runId,
-          result.caseId
-        ]);
-
-        const affectedRows = (updateResult as any).affectedRows;
-        console.log(`[BATCH-EXECUTION] UPDATE affected ${affectedRows} rows for case ${result.caseId} (runId: ${runId})`);
-
-        // 如果没有更新到记录（可能是新用例，或者之前没有插入），则插入
-        if (affectedRows === 0) {
-          await pool.execute(`
-            INSERT INTO Auto_TestRunResults (
-              execution_id, case_id, case_name, status, duration, error_message, error_stack,
-              screenshot_path, log_path, assertions_total, assertions_passed, response_data,
-              start_time, end_time, created_at
-            ) VALUES (
-              (SELECT id FROM Auto_TestCaseTaskExecutions WHERE run_id = ? AND task_id IS NULL LIMIT 1),
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW()
-            )
-          `, [
-            runId,
-            result.caseId,
-            result.caseName,
-            result.status,
-            result.duration,
-            result.errorMessage || null,
-            result.stackTrace || null,
-            result.screenshotPath || null,
-            result.logPath || null,
-            result.assertionsTotal || null,
-            result.assertionsPassed || null,
-            result.responseData || null
-          ]);
-          console.log(`[BATCH-EXECUTION] INSERT new record for case ${result.caseId} (runId: ${runId})`);
-        }
+      if (!execution) {
+        throw new Error(`Execution not found in Auto_TestRun: runId=${runId}`);
       }
-    }
 
-    console.log(`[BATCH-EXECUTION] Completed processing ${results.results?.length || 0} results for runId: ${runId}`);
+      console.log(`[BATCH-EXECUTION] Found execution record:`, {
+        id: execution.id,
+        currentStatus: execution.status
+      });
+
+      // 2. 查询对应的 executionId 用于调试（用于 Auto_TestRunResults）
+      const executionIdResult = await pool.execute(`
+        SELECT id FROM Auto_TestCaseTaskExecutions
+        WHERE run_id = ? AND task_id IS NULL
+      `, [runId]);
+
+      const executionId = (executionIdResult[0] as any[])?.[0]?.id;
+      console.log(`[BATCH-EXECUTION] Found executionId: ${executionId} for runId: ${runId}`);
+      
+      // 3. 更新 Auto_TestRun
+      const [updateResult] = await pool.execute(`
+        UPDATE Auto_TestRun
+        SET status = ?, passed_cases = ?, failed_cases = ?, skipped_cases = ?,
+            duration_ms = ?, end_time = NOW()
+        WHERE id = ?
+      `, [
+        results.status,
+        results.passedCases,
+        results.failedCases,
+        results.skippedCases,
+        results.durationMs,
+        runId,
+      ]);
+
+      const updateRowsAffected = (updateResult as any).affectedRows;
+      console.log(`[BATCH-EXECUTION] Auto_TestRun UPDATE affected ${updateRowsAffected} rows:`, {
+        runId,
+        newStatus: results.status,
+        statistics: {
+          passed: results.passedCases,
+          failed: results.failedCases,
+          skipped: results.skippedCases,
+          total: results.passedCases + results.failedCases + results.skippedCases
+        }
+      });
+
+      if (updateRowsAffected === 0) {
+        throw new Error(`Failed to update Auto_TestRun: runId=${runId}`);
+      }
+
+      // 4. 如果有详细结果，更新 Auto_TestRunResults
+      let resultsProcessed = 0;
+      let resultsInserted = 0;
+      let resultsUpdated = 0;
+      let resultsFailed = 0;
+
+      if (results.results && results.results.length > 0) {
+        console.log(`[BATCH-EXECUTION] Processing ${results.results.length} detailed results...`);
+
+        for (const result of results.results) {
+          try {
+            // 尝试更新
+            const [updateTestResult] = await pool.execute(`
+              UPDATE Auto_TestRunResults
+              SET status = ?, duration = ?, error_message = ?, error_stack = ?,
+                  screenshot_path = ?, log_path = ?, assertions_total = ?, assertions_passed = ?,
+                  response_data = ?, start_time = NOW(), end_time = NOW()
+              WHERE execution_id = (
+                SELECT id FROM Auto_TestCaseTaskExecutions
+                WHERE run_id = ? AND task_id IS NULL
+                LIMIT 1
+              ) AND case_id = ?
+            `, [
+              result.status,
+              result.duration,
+              result.errorMessage || null,
+              result.stackTrace || null,
+              result.screenshotPath || null,
+              result.logPath || null,
+              result.assertionsTotal || null,
+              result.assertionsPassed || null,
+              result.responseData || null,
+              runId,
+              result.caseId
+            ]);
+
+            const affectedRows = (updateTestResult as any).affectedRows;
+
+            // 如果没有更新到记录（可能是新用例，或者之前没有插入），则插入
+            if (affectedRows === 0) {
+              await pool.execute(`
+                INSERT INTO Auto_TestRunResults (
+                  execution_id, case_id, case_name, status, duration, error_message, error_stack,
+                  screenshot_path, log_path, assertions_total, assertions_passed, response_data,
+                  start_time, end_time, created_at
+                ) VALUES (
+                  (SELECT id FROM Auto_TestCaseTaskExecutions WHERE run_id = ? AND task_id IS NULL LIMIT 1),
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW()
+                )
+              `, [
+                runId,
+                result.caseId,
+                result.caseName,
+                result.status,
+                result.duration,
+                result.errorMessage || null,
+                result.stackTrace || null,
+                result.screenshotPath || null,
+                result.logPath || null,
+                result.assertionsTotal || null,
+                result.assertionsPassed || null,
+                result.responseData || null
+              ]);
+              resultsInserted++;
+              console.log(`[BATCH-EXECUTION] INSERT new result for case ${result.caseId}: status=${result.status}`);
+            } else {
+              resultsUpdated++;
+              console.log(`[BATCH-EXECUTION] UPDATE existing result for case ${result.caseId}: status=${result.status}`);
+            }
+            resultsProcessed++;
+          } catch (resultError) {
+            resultsFailed++;
+            console.error(`[BATCH-EXECUTION] Failed to process result for case ${result.caseId}:`, {
+              error: resultError instanceof Error ? resultError.message : String(resultError),
+              caseId: result.caseId,
+              status: result.status
+            });
+          }
+        }
+
+        console.log(`[BATCH-EXECUTION] Results processing summary:`, {
+          total: results.results.length,
+          processed: resultsProcessed,
+          inserted: resultsInserted,
+          updated: resultsUpdated,
+          failed: resultsFailed
+        });
+      }
+
+      const processingTime = Date.now() - startTime;
+      console.log(`[BATCH-EXECUTION] ========== Completed runId: ${runId} ==========`, {
+        status: results.status,
+        processingTimeMs: processingTime,
+        timestamp: new Date().toISOString(),
+        summary: {
+          executionRecordUpdated: updateRowsAffected > 0,
+          detailedResultsProcessed: resultsProcessed,
+          detailedResultsInserted: resultsInserted,
+          detailedResultsUpdated: resultsUpdated,
+          detailedResultsFailed: resultsFailed
+        }
+      });
+
+    } catch (error: unknown) {
+      const processingTime = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+
+      console.error(`[BATCH-EXECUTION] ========== FAILED: runId=${runId} ==========`, {
+        error: errorMessage,
+        stack: errorStack,
+        processingTimeMs: processingTime,
+        timestamp: new Date().toISOString()
+      });
+
+      // 重新抛出错误，让调用者处理
+      throw error;
+    }
   }
 
   /**
