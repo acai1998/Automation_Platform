@@ -38,10 +38,15 @@ export class JenkinsService {
 
   constructor() {
     // 从环境变量或配置文件加载 Jenkins 配置
+    const token = process.env.JENKINS_TOKEN;
+    if (!token) {
+      throw new Error('JENKINS_TOKEN environment variable is required for Jenkins authentication');
+    }
+
     this.config = {
       baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/',
       username: process.env.JENKINS_USER || 'root',
-      token: process.env.JENKINS_TOKEN || '116fb13c3cc6cd3e33e688bacc26e18b60',
+      token,
       jobs: {
         api: process.env.JENKINS_JOB_API || 'api-automation',
         ui: process.env.JENKINS_JOB_UI || 'ui-automation',

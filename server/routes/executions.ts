@@ -197,7 +197,16 @@ router.get('/stuck', async (req, res) => {
 
     // Query stuck executions
     const { query } = await import('../config/database.js');
-    const stuckExecutions = await query(`
+    const stuckExecutions = await query<Array<{
+      id: number;
+      status: string;
+      jenkins_job?: string;
+      jenkins_build_id?: string;
+      jenkins_url?: string;
+      start_time: Date;
+      duration_minutes: number;
+      trigger_by_name?: string;
+    }>>(`
       SELECT id, status, jenkins_job, jenkins_build_id, jenkins_url,
              start_time, TIMESTAMPDIFF(MINUTE, start_time, NOW()) as duration_minutes,
              trigger_by_name

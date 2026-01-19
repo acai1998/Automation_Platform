@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { executionService } from '../services/ExecutionService.js';
 import { jenkinsService } from '../services/JenkinsService.js';
 import { jenkinsAuthMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware.js';
@@ -13,27 +13,32 @@ const router = Router();
  * 此接口创建执行记录并返回 executionId，供 Jenkins 后续回调使用
  * 实际触发 Jenkins Job 的逻辑需要在此处或由调用方完成
  */
-router.post('/trigger', async (req, res) => {
+router.post('/trigger', async (req: Request, res: Response) => {
   try {
-    const { taskId, triggeredBy = 1, jenkinsJobName } = req.body;
+    const { caseIds, projectId = 1, triggeredBy = 1, jenkinsJobName } = req.body;
 
-    if (!taskId) {
-      return res.status(400).json({ success: false, message: 'taskId is required' });
+    if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'caseIds is required and must be a non-empty array'
+      });
     }
 
     // 创建执行记录
-    const execution = await executionService.createExecution({
-      taskId,
+    const execution = await executionService.triggerTestExecution({
+      caseIds,
+      projectId,
       triggeredBy,
-      triggerType: 'ci_triggered',
+      triggerType: 'jenkins',
+      jenkinsJob: jenkinsJobName,
     });
 
     res.json({
       success: true,
       data: {
-        executionId: execution.executionId,
+        runId: execution.runId,
         totalCases: execution.totalCases,
-        status: execution.status,
+        status: 'pending',
         jenkinsJobName: jenkinsJobName || null,
         message: 'Execution created. Waiting for Jenkins to start.'
       }
@@ -51,7 +56,7 @@ router.post('/trigger', async (req, res) => {
 router.post('/run-case', [
   rateLimitMiddleware.limit,
   requestValidator.validateSingleExecution
-], async (req, res) => {
+], async (req: Request, res: Response) => {
   try {
     const { caseId, projectId, triggeredBy = 1 } = req.body;
     
@@ -135,7 +140,7 @@ router.post('/run-case', [
 router.post('/run-batch', [
   rateLimitMiddleware.limit,
   requestValidator.validateBatchExecution
-], async (req, res) => {
+], async (req: Request, res: Response) => {
   try {
     const { caseIds, projectId, triggeredBy = 1 } = req.body;
     
@@ -219,10 +224,10 @@ router.post('/run-batch', [
  *
  * Jenkins Job 可以调用此接口获取需要执行的用例信息
  */
-router.get('/tasks/:taskId/cases', async (req, res) => {
+router.get('/tasks/:taskId/cases', async (req: Request, res: Response) => {
   try {
     const taskId = parseInt(req.params.taskId);
-    const cases = await executionService.getTaskCases(taskId);
+    const cases = await executionService.getRunCases(taskId);
 
     res.json({
       success: true,
@@ -240,7 +245,7 @@ router.get('/tasks/:taskId/cases', async (req, res) => {
  *
  * 用于查询 Jenkins Job 的执行状态
  */
-router.get('/status/:executionId', async (req, res) => {
+router.get('/status/:executionId', async (req: Request, res: Response) => {
   try {
     const executionId = parseInt(req.params.executionId);
     const detail = await executionService.getExecutionDetail(executionId);
@@ -283,7 +288,7 @@ router.post('/callback', [
   jenkinsAuthMiddleware.verify,
   rateLimitMiddleware.limit,
   requestValidator.validateCallback
-], async (req, res) => {
+], async (req: Request, res: Response) => {
   const startTime = Date.now();
   let callbackStatus = 'unknown';
 
@@ -382,7 +387,7 @@ router.post('/callback', [
  * GET /api/jenkins/batch/:runId
  * 获取执行批次详情
  */
-router.get('/batch/:runId', async (req, res) => {
+router.get('/batch/:runId', async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.params.runId);
     const batch = await executionService.getBatchExecution(runId);
@@ -406,7 +411,7 @@ router.get('/batch/:runId', async (req, res) => {
 router.post('/callback/test', [
   jenkinsAuthMiddleware.verify,
   rateLimitMiddleware.limit
-], async (req, res) => {
+], async (req: Request, res: Response) => {
   const startTime = Date.now();
   try {
     const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
@@ -592,7 +597,7 @@ router.post('/callback/test', [
 router.post('/callback/manual-sync/:runId', [
   jenkinsAuthMiddleware.verify,
   rateLimitMiddleware.limit
-], async (req, res) => {
+], async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.params.runId);
     const { 
@@ -740,7 +745,7 @@ router.post('/callback/manual-sync/:runId', [
  * POST /api/jenkins/callback/diagnose
  * 诊断回调连接问题 - 无需认证，用于排查配置问题
  */
-router.post('/callback/diagnose', async (req, res) => {
+router.post('/callback/diagnose', async (req: Request, res: Response) => {
   try {
     const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
     const timestamp = new Date().toISOString();
@@ -828,7 +833,7 @@ router.post('/callback/diagnose', async (req, res) => {
  * GET /api/jenkins/health
  * Jenkins 连接健康检查 - 包括详细的诊断信息
  */
-router.get('/health', async (req, res) => {
+router.get('/health', async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
@@ -1000,7 +1005,7 @@ router.get('/health', async (req, res) => {
  * GET /api/jenkins/diagnose
  * 诊断执行问题
  */
-router.get('/diagnose', async (req, res) => {
+router.get('/diagnose', async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.query.runId as string);
     
@@ -1015,10 +1020,10 @@ router.get('/diagnose', async (req, res) => {
 
     // 获取执行批次信息
     const batch = await executionService.getBatchExecution(runId);
-    const execution = batch.execution as Record<string, unknown>;
+    const execution = batch.execution;
 
     // 计算执行时长
-    const startTime = execution.start_time ? new Date(execution.start_time as string).getTime() : null;
+    const startTime = execution.start_time ? new Date(execution.start_time).getTime() : null;
     const currentTime = Date.now();
     const executionDuration = startTime ? currentTime - startTime : 0;
 
@@ -1079,7 +1084,7 @@ router.get('/diagnose', async (req, res) => {
           executionAge: executionDuration,
           executionAgeMinutes: Math.round(executionDuration / 60000),
           isOld: executionDuration > 30 * 60 * 1000, // 超过30分钟
-          createdRecently: startTime ? (currentTime - new Date(execution.created_at as string).getTime()) < 60 * 1000 : false
+          createdRecently: startTime && execution.created_at ? (currentTime - new Date(execution.created_at).getTime()) < 60 * 1000 : false
         },
 
         // 建议
@@ -1222,7 +1227,7 @@ router.get('/monitoring/stats', async (_req, res) => {
  * POST /api/jenkins/monitoring/fix-stuck
  * 修复卡住的执行
  */
-router.post('/monitoring/fix-stuck', async (req, res) => {
+router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
   try {
     const { timeoutMinutes = 5, dryRun = false } = req.body;
 

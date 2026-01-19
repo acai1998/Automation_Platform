@@ -414,7 +414,7 @@ export class ExecutionScheduler {
 
       // 查询所有运行中的执行
       const runningExecutions = await executionService.getAllTestRuns(100, 0);
-      const activeExecutions = runningExecutions.data.filter((exec: any) =>
+      const activeExecutions = runningExecutions.data.filter((exec) =>
         ['pending', 'running'].includes(exec.status)
       );
 

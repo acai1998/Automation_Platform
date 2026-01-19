@@ -1,5 +1,14 @@
 import { query, queryOne, getPool } from '../config/database.js';
 import { jenkinsStatusService, TestResults } from './JenkinsStatusService.js';
+import {
+  ExecutionRecord,
+  TestResultRecord,
+  TestRunRecord,
+  MySQLResultMetadata,
+  DatabaseQueryResult,
+  ExecutionError,
+  DbQueryResult
+} from '../../shared/types/database.js';
 
 // 已废弃：由于没有远程 tasks 表，建议使用 CaseExecutionInput
 export interface TaskExecutionInput {
@@ -59,14 +68,6 @@ export interface ExecutionCallbackInput {
  * 注：实际测试执行由 Jenkins 等外部系统完成
  */
 export class ExecutionService {
-  /**
-   * 创建执行记录（直接在 Auto_TestCaseTaskExecutions 表中创建）
-   */
-  async createExecution(input: TaskExecutionInput): Promise<ExecutionProgress> {
-    // 注意：由于没有远程 tasks 表，这个方法需要重新设计
-    // 暂时抛出错误，建议使用 triggerTestExecution 方法
-    throw new Error('createExecution method is deprecated. Please use triggerTestExecution method instead.');
-  }
 
   /**
    * 更新执行状态为运行中（使用远程数据库表）
@@ -222,12 +223,13 @@ export class ExecutionService {
     // 2.5. 创建对应的执行记录到 Auto_TestCaseTaskExecutions 表（为了满足外键约束）
     const [executionResult] = await pool.execute(`
       INSERT INTO Auto_TestCaseTaskExecutions (
-        task_id, status, total_cases, executed_by, start_time, created_at
-      ) VALUES (?, 'pending', ?, ?, NOW(), NOW())
+        task_id, status, total_cases, executed_by, start_time, created_at, run_id
+      ) VALUES (?, 'pending', ?, ?, NOW(), NOW(), ?)
     `, [
       null, // 设置为 NULL 以避免外键约束
       cases.length,
       input.triggeredBy,
+      runId, // 保存关联的 runId
     ]);
 
     const executionInsertResult = executionResult as { insertId: number };
@@ -256,8 +258,8 @@ export class ExecutionService {
   /**
    * 获取批次执行详情
    */
-  async getBatchExecution(runId: number) {
-    const execution = await queryOne(`
+  async getBatchExecution(runId: number): Promise<{ execution: TestRunRecord }> {
+    const execution = await queryOne<TestRunRecord>(`
       SELECT atr.*, u.display_name as trigger_by_name
       FROM Auto_TestRun atr
       LEFT JOIN Auto_Users u ON atr.trigger_by = u.id
@@ -341,12 +343,41 @@ export class ExecutionService {
       });
 
       // 2. 查询对应的 executionId 用于调试（用于 Auto_TestRunResults）
-      const executionIdResult = await pool.execute(`
-        SELECT id FROM Auto_TestCaseTaskExecutions
-        WHERE run_id = ? AND task_id IS NULL
-      `, [runId]);
-
-      const executionId = (executionIdResult[0] as any[])?.[0]?.id;
+      // 注意：尝试从 Auto_TestRunResults 中查找关联的 execution_id
+      // 或直接使用最新创建的 executionId
+      let executionId: number | undefined;
+      
+      try {
+        // 首先尝试通过 run_id 查询（如果列存在）
+        const executionIdResult = await pool.execute(`
+          SELECT id FROM Auto_TestCaseTaskExecutions
+          WHERE run_id = ? AND task_id IS NULL
+          LIMIT 1
+        `, [runId]);
+        
+        const results = executionIdResult[0] as DbQueryResult<ExecutionRecord>;
+        executionId = results?.[0]?.id;
+      } catch (findError) {
+        // 如果 run_id 列不存在，尝试从 Auto_TestRunResults 表查询
+        console.log(`[BATCH-EXECUTION] run_id query failed, trying alternative method:`, findError instanceof Error ? findError.message : findError);
+        
+        try {
+          const resultIdQuery = await pool.execute(`
+            SELECT DISTINCT execution_id FROM Auto_TestRunResults
+            WHERE EXISTS (
+              SELECT 1 FROM Auto_TestRun WHERE id = ? AND status IN ('pending', 'running')
+            )
+            ORDER BY execution_id DESC
+            LIMIT 1
+          `, [runId]);
+          
+          const altResults = resultIdQuery[0] as DbQueryResult<{ execution_id: number }>;
+          executionId = altResults?.[0]?.execution_id;
+        } catch (altError) {
+          console.warn(`[BATCH-EXECUTION] Could not find executionId through alternative method:`, altError instanceof Error ? altError.message : altError);
+        }
+      }
+      
       console.log(`[BATCH-EXECUTION] Found executionId: ${executionId} for runId: ${runId}`);
       
       // 3. 更新 Auto_TestRun
@@ -364,7 +395,7 @@ export class ExecutionService {
         runId,
       ]);
 
-      const updateRowsAffected = (updateResult as any).affectedRows;
+      const updateRowsAffected = (updateResult as MySQLResultMetadata).affectedRows;
       console.log(`[BATCH-EXECUTION] Auto_TestRun UPDATE affected ${updateRowsAffected} rows:`, {
         runId,
         newStatus: results.status,
@@ -391,17 +422,23 @@ export class ExecutionService {
 
         for (const result of results.results) {
           try {
+            // 如果有 executionId，直接使用它；否则尝试查询
+            let targetExecutionId = executionId;
+            
+            if (!targetExecutionId) {
+              // 如果无法确定正确的 execution_id，则跳过此结果以避免数据损坏
+              // 这种情况通常表示数据库结构问题或执行流程异常
+              console.error(`[BATCH-EXECUTION] Cannot determine execution_id for runId: ${runId}, caseId: ${result.caseId}. Skipping result to prevent data corruption.`);
+              continue;
+            }
+            
             // 尝试更新
             const [updateTestResult] = await pool.execute(`
               UPDATE Auto_TestRunResults
               SET status = ?, duration = ?, error_message = ?, error_stack = ?,
                   screenshot_path = ?, log_path = ?, assertions_total = ?, assertions_passed = ?,
                   response_data = ?, start_time = NOW(), end_time = NOW()
-              WHERE execution_id = (
-                SELECT id FROM Auto_TestCaseTaskExecutions
-                WHERE run_id = ? AND task_id IS NULL
-                LIMIT 1
-              ) AND case_id = ?
+              WHERE execution_id = ? AND case_id = ?
             `, [
               result.status,
               result.duration,
@@ -412,11 +449,11 @@ export class ExecutionService {
               result.assertionsTotal || null,
               result.assertionsPassed || null,
               result.responseData || null,
-              runId,
+              targetExecutionId,
               result.caseId
             ]);
 
-            const affectedRows = (updateTestResult as any).affectedRows;
+            const affectedRows = (updateTestResult as MySQLResultMetadata).affectedRows;
 
             // 如果没有更新到记录（可能是新用例，或者之前没有插入），则插入
             if (affectedRows === 0) {
@@ -426,11 +463,10 @@ export class ExecutionService {
                   screenshot_path, log_path, assertions_total, assertions_passed, response_data,
                   start_time, end_time, created_at
                 ) VALUES (
-                  (SELECT id FROM Auto_TestCaseTaskExecutions WHERE run_id = ? AND task_id IS NULL LIMIT 1),
-                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW()
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW()
                 )
               `, [
-                runId,
+                targetExecutionId,
                 result.caseId,
                 result.caseName,
                 result.status,
@@ -520,7 +556,7 @@ export class ExecutionService {
   /**
    * 获取所有测试运行记录（Auto_TestRun 表）
    */
-  async getAllTestRuns(limit = 50, offset = 0) {
+  async getAllTestRuns(limit = 50, offset = 0): Promise<{ data: TestRunRecord[]; total: number }> {
     const sql = `
       SELECT atr.*, u.display_name as trigger_by_name
       FROM Auto_TestRun atr
@@ -528,13 +564,13 @@ export class ExecutionService {
       ORDER BY atr.created_at DESC
       LIMIT ? OFFSET ?
     `;
-    const data = await query(sql, [limit, offset]);
-    
+    const data = await query<TestRunRecord[]>(sql, [limit, offset]);
+
     const countSql = 'SELECT COUNT(*) as total FROM Auto_TestRun';
     const countResult = await queryOne<{ total: number }>(countSql);
-    
+
     return {
-      data,
+      data: data || [],
       total: countResult?.total ?? 0
     };
   }
@@ -793,6 +829,40 @@ export class ExecutionService {
   private async updateTestResultsFromJenkins(runId: number, testResults: TestResults): Promise<void> {
     const pool = getPool();
 
+    // 首先找到关联的 executionId
+    let executionId: number | undefined;
+    
+    try {
+      // 尝试通过 run_id 查询
+      const executionIdResult = await pool.execute(`
+        SELECT id FROM Auto_TestCaseTaskExecutions
+        WHERE run_id = ? AND task_id IS NULL
+        LIMIT 1
+      `, [runId]);
+      
+      const results = executionIdResult[0] as DbQueryResult<ExecutionRecord>;
+      executionId = results?.[0]?.id;
+    } catch (findError) {
+      console.log(`[updateTestResultsFromJenkins] run_id query failed, trying alternative method:`, findError instanceof Error ? findError.message : findError);
+      
+      try {
+        // 如果 run_id 列不存在，尝试从 Auto_TestRunResults 表查询
+        const resultIdQuery = await pool.execute(`
+          SELECT DISTINCT execution_id FROM Auto_TestRunResults
+          LIMIT 1
+        `);
+        
+        const altResults = resultIdQuery[0] as DbQueryResult<{ execution_id: number }>;
+        executionId = altResults?.[0]?.execution_id;
+      } catch (altError) {
+        console.warn(`[updateTestResultsFromJenkins] Could not find executionId:`, altError instanceof Error ? altError.message : altError);
+      }
+    }
+    
+    if (!executionId) {
+      throw new Error(`Could not find executionId for runId ${runId}`);
+    }
+
     for (const result of testResults.results) {
       try {
         // 尝试更新现有记录
@@ -801,11 +871,7 @@ export class ExecutionService {
           SET status = ?, duration = ?, error_message = ?, error_stack = ?,
               screenshot_path = ?, log_path = ?, assertions_total = ?, assertions_passed = ?,
               response_data = ?, start_time = FROM_UNIXTIME(?), end_time = FROM_UNIXTIME(?)
-          WHERE execution_id = (
-            SELECT id FROM Auto_TestCaseTaskExecutions
-            WHERE run_id = ? AND task_id IS NULL
-            LIMIT 1
-          ) AND case_id = ?
+          WHERE execution_id = ? AND case_id = ?
         `, [
           result.status,
           result.duration,
@@ -818,11 +884,11 @@ export class ExecutionService {
           result.responseData || null,
           result.startTime ? Math.floor(result.startTime / 1000) : Math.floor(Date.now() / 1000),
           result.endTime ? Math.floor(result.endTime / 1000) : Math.floor(Date.now() / 1000),
-          runId,
+          executionId,
           result.caseId
         ]);
 
-        const affectedRows = (updateResult as any).affectedRows;
+        const affectedRows = (updateResult as MySQLResultMetadata).affectedRows;
 
         // 如果没有找到记录，插入新记录
         if (affectedRows === 0 && result.caseId > 0) {
@@ -832,11 +898,10 @@ export class ExecutionService {
               screenshot_path, log_path, assertions_total, assertions_passed, response_data,
               start_time, end_time, created_at
             ) VALUES (
-              (SELECT id FROM Auto_TestCaseTaskExecutions WHERE run_id = ? AND task_id IS NULL LIMIT 1),
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), NOW()
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), NOW()
             )
           `, [
-            runId,
+            executionId,
             result.caseId,
             result.caseName,
             result.status,

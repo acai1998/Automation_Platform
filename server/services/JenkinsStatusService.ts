@@ -77,10 +77,15 @@ export class JenkinsStatusService {
   private config: JenkinsConfig;
 
   constructor() {
+    const token = process.env.JENKINS_TOKEN;
+    if (!token) {
+      throw new Error('JENKINS_TOKEN environment variable is required for Jenkins authentication');
+    }
+
     this.config = {
       baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/',
       username: process.env.JENKINS_USER || 'root',
-      token: process.env.JENKINS_TOKEN || '116fb13c3cc6cd3e33e688bacc26e18b60',
+      token,
       jobs: {
         api: process.env.JENKINS_JOB_API || 'api-automation',
         ui: process.env.JENKINS_JOB_UI || 'ui-automation',
@@ -98,6 +103,24 @@ export class JenkinsStatusService {
   }
 
   /**
+   * 创建带超时的 fetch 请求
+   */
+  private async fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = 10000): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      return response;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /**
    * 查询构建状态
    */
   async getBuildStatus(jobName: string, buildId: string, retryCount: number = 3): Promise<BuildStatus | null> {
@@ -109,14 +132,13 @@ export class JenkinsStatusService {
 
         console.log(`Querying build status (attempt ${attempt}/${retryCount}): ${url}`);
 
-        const response = await fetch(url, {
+        const response = await this.fetchWithTimeout(url, {
           method: 'GET',
           headers: {
             'Authorization': this.getAuthHeader(),
             'Accept': 'application/json',
           },
-          timeout: 10000, // 10秒超时
-        });
+        }, 10000);
 
         if (!response.ok) {
           if (response.status === 404) {
@@ -187,14 +209,13 @@ export class JenkinsStatusService {
 
       console.log(`Querying queue status: ${url}`);
 
-      const response = await fetch(url, {
+      const response = await this.fetchWithTimeout(url, {
         method: 'GET',
         headers: {
           'Authorization': this.getAuthHeader(),
           'Accept': 'application/json',
         },
-        timeout: 10000,
-      });
+      }, 10000);
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -234,14 +255,13 @@ export class JenkinsStatusService {
     try {
       const url = `${this.config.baseUrl}/job/${jobName}/lastBuild/api/json`;
 
-      const response = await fetch(url, {
+      const response = await this.fetchWithTimeout(url, {
         method: 'GET',
         headers: {
           'Authorization': this.getAuthHeader(),
           'Accept': 'application/json',
         },
-        timeout: 10000,
-      });
+      }, 10000);
 
       if (!response.ok) {
         return null;
@@ -266,13 +286,12 @@ export class JenkinsStatusService {
     try {
       const url = `${this.config.baseUrl}/job/${jobName}/${buildId}/logText/progressiveText?start=${start}`;
 
-      const response = await fetch(url, {
+      const response = await this.fetchWithTimeout(url, {
         method: 'GET',
         headers: {
           'Authorization': this.getAuthHeader(),
         },
-        timeout: 15000, // 15秒超时（日志可能较大）
-      });
+      }, 15000);
 
       if (!response.ok) {
         return null;
@@ -357,14 +376,13 @@ export class JenkinsStatusService {
     try {
       const url = `${this.config.baseUrl}/job/${jobName}/${buildId}/testReport/api/json`;
 
-      const response = await fetch(url, {
+      const response = await this.fetchWithTimeout(url, {
         method: 'GET',
         headers: {
           'Authorization': this.getAuthHeader(),
           'Accept': 'application/json',
         },
-        timeout: 10000,
-      });
+      }, 10000);
 
       if (!response.ok) {
         return null;
@@ -414,14 +432,13 @@ export class JenkinsStatusService {
       // 获取artifacts列表
       const artifactsUrl = `${this.config.baseUrl}/job/${jobName}/${buildId}/api/json?tree=artifacts[*]`;
 
-      const response = await fetch(artifactsUrl, {
+      const response = await this.fetchWithTimeout(artifactsUrl, {
         method: 'GET',
         headers: {
           'Authorization': this.getAuthHeader(),
           'Accept': 'application/json',
         },
-        timeout: 10000,
-      });
+      }, 10000);
 
       if (!response.ok) {
         return null;
@@ -441,13 +458,12 @@ export class JenkinsStatusService {
 
       // 下载结果文件
       const fileUrl = `${this.config.baseUrl}/job/${jobName}/${buildId}/artifact/${resultFile.relativePath}`;
-      const fileResponse = await fetch(fileUrl, {
+      const fileResponse = await this.fetchWithTimeout(fileUrl, {
         method: 'GET',
         headers: {
           'Authorization': this.getAuthHeader(),
         },
-        timeout: 15000,
-      });
+      }, 15000);
 
       if (!fileResponse.ok) {
         return null;
@@ -614,13 +630,12 @@ export class JenkinsStatusService {
    */
   async checkConnection(): Promise<{ connected: boolean; message: string }> {
     try {
-      const response = await fetch(`${this.config.baseUrl}/api/json`, {
+      const response = await this.fetchWithTimeout(`${this.config.baseUrl}/api/json`, {
         method: 'GET',
         headers: {
           'Authorization': this.getAuthHeader(),
         },
-        timeout: 5000,
-      });
+      }, 5000);
 
       if (response.ok) {
         return { connected: true, message: 'Jenkins connection successful' };
