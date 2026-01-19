@@ -34,6 +34,7 @@ export class JenkinsAuthMiddleware {
   private readonly usedSignatures = new Map<string, SignatureUsageRecord>();
   private readonly signatureCleanupInterval: NodeJS.Timeout;
   private readonly signatureExpiryMs: number = 5 * 60 * 1000; // 5分钟
+  private readonly maxSignatures: number = 10000; // 最大签名记录数，防止内存耗尽
 
   constructor() {
     this.config = this.validateAndLoadConfig();
@@ -504,11 +505,17 @@ curl -X POST http://localhost:3000/api/jenkins/callback/test \\
       return { success: false, error: 'Signature replay detected' };
     }
 
-    // 生成期望的签名
-    const payload = JSON.stringify(req.body) || '';
+    // 生成期望的签名 - 使用确定性JSON序列化
+    const payload = this.deterministicStringify(req.body) || '';
     const expectedSignature = this.generateSignature(payload, timestamp);
 
     if (signature === expectedSignature) {
+      // 检查并强制执行内存限制
+      if (this.usedSignatures.size >= this.maxSignatures) {
+        console.warn(`[SECURITY] Signature tracking approaching memory limit (${this.usedSignatures.size}/${this.maxSignatures}). Forcing cleanup.`);
+        this.forceCleanupOldestSignatures();
+      }
+
       // 记录已使用的签名
       this.usedSignatures.set(signatureKey, {
         timestamp: now,
@@ -525,6 +532,33 @@ curl -X POST http://localhost:3000/api/jenkins/callback/test \\
     }
 
     return { success: false, error: 'Invalid signature' };
+  }
+
+  /**
+   * 确定性JSON序列化 - 确保对象属性顺序一致
+   * 防止由于属性顺序不同导致的签名验证绕过
+   */
+  private deterministicStringify(obj: unknown): string {
+    if (obj === null || obj === undefined) {
+      return '';
+    }
+
+    if (typeof obj !== 'object') {
+      return String(obj);
+    }
+
+    if (Array.isArray(obj)) {
+      return '[' + obj.map(item => this.deterministicStringify(item)).join(',') + ']';
+    }
+
+    // 对对象的键进行排序以确保一致性
+    const sortedKeys = Object.keys(obj as Record<string, unknown>).sort();
+    const pairs = sortedKeys.map(key => {
+      const value = (obj as Record<string, unknown>)[key];
+      return `"${key}":${this.deterministicStringify(value)}`;
+    });
+
+    return '{' + pairs.join(',') + '}';
   }
 
   /**
@@ -558,6 +592,32 @@ curl -X POST http://localhost:3000/api/jenkins/callback/test \\
   }
 
   /**
+   * 强制清理最旧的签名记录（内存保护机制）
+   * 当达到最大签名数量限制时触发
+   */
+  private forceCleanupOldestSignatures(): void {
+    // 首先尝试清理过期的记录
+    this.cleanupExpiredSignatures();
+
+    // 如果仍然超过限制，强制删除最旧的记录
+    if (this.usedSignatures.size >= this.maxSignatures) {
+      const entries = Array.from(this.usedSignatures.entries());
+      // 按时间戳排序，删除最旧的记录
+      entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+      const toDelete = entries.slice(0, Math.floor(this.maxSignatures * 0.1)); // 删除10%最旧的记录
+      let deletedCount = 0;
+
+      for (const [key] of toDelete) {
+        this.usedSignatures.delete(key);
+        deletedCount++;
+      }
+
+      console.warn(`[SECURITY] Force cleaned ${deletedCount} oldest signature records to prevent memory exhaustion. Current size: ${this.usedSignatures.size}/${this.maxSignatures}`);
+    }
+  }
+
+  /**
    * 记录认证成功日志
    */
   private logAuthSuccess(req: Request, authResult: AuthenticationResult): void {
@@ -583,11 +643,17 @@ curl -X POST http://localhost:3000/api/jenkins/callback/test \\
    }
 
   /**
-   * 生成API签名 (用于Jenkins端)
+   * 生成API签名 (用于Jenkins端) - 字符串版本
    */
-  public generateAPISignature(payload: string): { signature: string; timestamp: string } {
+  public generateAPISignature(payload: string): { signature: string; timestamp: string };
+  /**
+   * 生成API签名 (用于Jenkins端) - 对象版本
+   */
+  public generateAPISignature(payload: Record<string, unknown>): { signature: string; timestamp: string };
+  public generateAPISignature(payload: string | Record<string, unknown>): { signature: string; timestamp: string } {
     const timestamp = Date.now().toString();
-    const signature = this.generateSignature(payload, timestamp);
+    const payloadStr = typeof payload === 'string' ? payload : this.deterministicStringify(payload);
+    const signature = this.generateSignature(payloadStr, timestamp);
 
     return { signature, timestamp };
   }

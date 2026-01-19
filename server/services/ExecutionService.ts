@@ -223,13 +223,12 @@ export class ExecutionService {
     // 2.5. 创建对应的执行记录到 Auto_TestCaseTaskExecutions 表（为了满足外键约束）
     const [executionResult] = await pool.execute(`
       INSERT INTO Auto_TestCaseTaskExecutions (
-        task_id, status, total_cases, executed_by, start_time, created_at, run_id
-      ) VALUES (?, 'pending', ?, ?, NOW(), NOW(), ?)
+        task_id, status, total_cases, executed_by, start_time, created_at
+      ) VALUES (?, 'pending', ?, ?, NOW(), NOW())
     `, [
       null, // 设置为 NULL 以避免外键约束
       cases.length,
       input.triggeredBy,
-      runId, // 保存关联的 runId
     ]);
 
     const executionInsertResult = executionResult as { insertId: number };
@@ -342,43 +341,70 @@ export class ExecutionService {
         currentStatus: execution.status
       });
 
-      // 2. 查询对应的 executionId 用于调试（用于 Auto_TestRunResults）
-      // 注意：尝试从 Auto_TestRunResults 中查找关联的 execution_id
-      // 或直接使用最新创建的 executionId
+      // 2. 查询对应的 executionId - 使用更可靠的查找策略
       let executionId: number | undefined;
-      
+
       try {
-        // 首先尝试通过 run_id 查询（如果列存在）
-        const executionIdResult = await pool.execute(`
-          SELECT id FROM Auto_TestCaseTaskExecutions
-          WHERE run_id = ? AND task_id IS NULL
+        // 策略1: 尝试通过 Auto_TestRunResults 表查找（如果已有结果）
+        const resultIdQuery = await pool.execute(`
+          SELECT DISTINCT execution_id FROM Auto_TestRunResults
+          WHERE execution_id IN (
+            SELECT id FROM Auto_TestCaseTaskExecutions
+            WHERE created_at >= (SELECT created_at FROM Auto_TestRun WHERE id = ?)
+          )
+          ORDER BY execution_id DESC
           LIMIT 1
         `, [runId]);
-        
-        const results = executionIdResult[0] as DbQueryResult<ExecutionRecord>;
-        executionId = results?.[0]?.id;
-      } catch (findError) {
-        // 如果 run_id 列不存在，尝试从 Auto_TestRunResults 表查询
-        console.log(`[BATCH-EXECUTION] run_id query failed, trying alternative method:`, findError instanceof Error ? findError.message : findError);
-        
-        try {
-          const resultIdQuery = await pool.execute(`
-            SELECT DISTINCT execution_id FROM Auto_TestRunResults
-            WHERE EXISTS (
-              SELECT 1 FROM Auto_TestRun WHERE id = ? AND status IN ('pending', 'running')
-            )
-            ORDER BY execution_id DESC
+
+        const altResults = resultIdQuery[0] as DbQueryResult<{ execution_id: number }>;
+        executionId = altResults?.[0]?.execution_id;
+
+        // 策略2: 如果通过结果表找不到，尝试通过时间关联查找最近的执行记录
+        if (!executionId) {
+          console.warn(`[BATCH-EXECUTION] No results found for runId ${runId}, trying time-based lookup...`);
+
+          const timeBasedQuery = await pool.execute(`
+            SELECT te.id as execution_id
+            FROM Auto_TestCaseTaskExecutions te
+            INNER JOIN Auto_TestRun tr ON ABS(TIMESTAMPDIFF(SECOND, te.created_at, tr.created_at)) <= 60
+            WHERE tr.id = ? AND te.status IN ('pending', 'running')
+            ORDER BY te.created_at DESC
             LIMIT 1
           `, [runId]);
-          
-          const altResults = resultIdQuery[0] as DbQueryResult<{ execution_id: number }>;
-          executionId = altResults?.[0]?.execution_id;
-        } catch (altError) {
-          console.warn(`[BATCH-EXECUTION] Could not find executionId through alternative method:`, altError instanceof Error ? altError.message : altError);
+
+          const timeResults = timeBasedQuery[0] as DbQueryResult<{ execution_id: number }>;
+          executionId = timeResults?.[0]?.execution_id;
         }
+
+        // 策略3: 如果仍然找不到，创建一个新的执行记录（数据恢复）
+        if (!executionId) {
+          console.error(`[BATCH-EXECUTION] Cannot find executionId for runId ${runId}, creating recovery execution record...`);
+
+          const [recoveryResult] = await pool.execute(`
+            INSERT INTO Auto_TestCaseTaskExecutions (
+              task_id, status, total_cases, executed_by, start_time, created_at,
+              passed_cases, failed_cases, skipped_cases
+            ) VALUES (?, 'running', ?, 1, NOW(), NOW(), ?, ?, ?)
+          `, [
+            null, // task_id
+            results.passedCases + results.failedCases + results.skippedCases, // total_cases
+            results.passedCases,
+            results.failedCases,
+            results.skippedCases
+          ]);
+
+          const recoveryInsertResult = recoveryResult as { insertId: number };
+          executionId = recoveryInsertResult.insertId;
+
+          console.warn(`[BATCH-EXECUTION] Created recovery execution record with ID: ${executionId} for runId: ${runId}`);
+        }
+
+      } catch (findError) {
+        console.error(`[BATCH-EXECUTION] Error finding executionId for runId: ${runId}:`, findError instanceof Error ? findError.message : findError);
+        throw new Error(`Failed to determine executionId for runId ${runId}: ${findError instanceof Error ? findError.message : 'Unknown error'}`);
       }
-      
-      console.log(`[BATCH-EXECUTION] Found executionId: ${executionId} for runId: ${runId}`);
+
+      console.log(`[BATCH-EXECUTION] Using executionId: ${executionId} for runId: ${runId}`);
       
       // 3. 更新 Auto_TestRun
       const [updateResult] = await pool.execute(`
@@ -422,15 +448,8 @@ export class ExecutionService {
 
         for (const result of results.results) {
           try {
-            // 如果有 executionId，直接使用它；否则尝试查询
-            let targetExecutionId = executionId;
-            
-            if (!targetExecutionId) {
-              // 如果无法确定正确的 execution_id，则跳过此结果以避免数据损坏
-              // 这种情况通常表示数据库结构问题或执行流程异常
-              console.error(`[BATCH-EXECUTION] Cannot determine execution_id for runId: ${runId}, caseId: ${result.caseId}. Skipping result to prevent data corruption.`);
-              continue;
-            }
+            // 使用已确定的 executionId（现在总是有值）
+            const targetExecutionId = executionId!; // 使用非空断言，因为上面的逻辑确保了它有值
             
             // 尝试更新
             const [updateTestResult] = await pool.execute(`
@@ -830,33 +849,23 @@ export class ExecutionService {
     const pool = getPool();
 
     // 首先找到关联的 executionId
+    // 从 Auto_TestRunResults 表中查询关联的 execution_id
     let executionId: number | undefined;
     
     try {
-      // 尝试通过 run_id 查询
-      const executionIdResult = await pool.execute(`
-        SELECT id FROM Auto_TestCaseTaskExecutions
-        WHERE run_id = ? AND task_id IS NULL
+      const resultIdQuery = await pool.execute(`
+        SELECT DISTINCT execution_id FROM Auto_TestRunResults
+        WHERE EXISTS (
+          SELECT 1 FROM Auto_TestRun WHERE id = ? AND status IN ('pending', 'running')
+        )
+        ORDER BY execution_id DESC
         LIMIT 1
       `, [runId]);
       
-      const results = executionIdResult[0] as DbQueryResult<ExecutionRecord>;
-      executionId = results?.[0]?.id;
+      const altResults = resultIdQuery[0] as DbQueryResult<{ execution_id: number }>;
+      executionId = altResults?.[0]?.execution_id;
     } catch (findError) {
-      console.log(`[updateTestResultsFromJenkins] run_id query failed, trying alternative method:`, findError instanceof Error ? findError.message : findError);
-      
-      try {
-        // 如果 run_id 列不存在，尝试从 Auto_TestRunResults 表查询
-        const resultIdQuery = await pool.execute(`
-          SELECT DISTINCT execution_id FROM Auto_TestRunResults
-          LIMIT 1
-        `);
-        
-        const altResults = resultIdQuery[0] as DbQueryResult<{ execution_id: number }>;
-        executionId = altResults?.[0]?.execution_id;
-      } catch (altError) {
-        console.warn(`[updateTestResultsFromJenkins] Could not find executionId:`, altError instanceof Error ? altError.message : altError);
-      }
+      console.warn(`[updateTestResultsFromJenkins] Could not find executionId for runId ${runId}:`, findError instanceof Error ? findError.message : findError);
     }
     
     if (!executionId) {

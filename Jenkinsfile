@@ -13,6 +13,7 @@ pipeline {
     environment {
         GIT_CREDENTIALS = credentials('git-credentials')
         PLATFORM_API_URL = 'http://localhost:3000'
+        JENKINS_API_KEY = '3512fc38e1882a9ad2ab88c436277c129517e24a76daad1849ef419f90fd8a4f'
         PYTHON_ENV = "${WORKSPACE}/venv"
     }
     
@@ -177,6 +178,7 @@ pipeline {
                         if [ ! -z "${CALLBACK_URL}" ]; then
                             curl -X POST "${CALLBACK_URL}" \
                                 -H "Content-Type: application/json" \
+                                -H "X-Api-Key: ${JENKINS_API_KEY}" \
                                 -d "{
                                     \"runId\": ${RUN_ID},
                                     \"status\": \"$STATUS\",
@@ -212,6 +214,60 @@ pipeline {
                     } catch (Exception e) {
                         echo "JUnit报告处理失败: ${e.message}"
                     }
+                    
+                    // 最终回调 - 确保状态同步
+                    if (params.RUN_ID) {
+                        echo "========== 最终回调 =========="
+                        def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
+                        def finalStatus = currentBuild.result == 'SUCCESS' ? 'success' : 'failed'
+                        
+                        echo "回调地址: ${callbackUrl}"
+                        echo "运行ID: ${params.RUN_ID}"
+                        echo "最终状态: ${finalStatus}"
+                        
+                        // 尝试使用 httpRequest 插件(如果可用)
+                        try {
+                            def callbackData = [
+                                runId: params.RUN_ID.toInteger(),
+                                status: finalStatus,
+                                passedCases: 0,
+                                failedCases: currentBuild.result == 'SUCCESS' ? 0 : 1,
+                                skippedCases: 0,
+                                durationMs: currentBuild.durationMillis ?: 0
+                            ]
+                            
+                            httpRequest(
+                                url: callbackUrl,
+                                httpMode: 'POST',
+                                contentType: 'APPLICATION_JSON',
+                                customHeaders: [[name: 'X-Api-Key', value: env.JENKINS_API_KEY]],
+                                requestBody: groovy.json.JsonOutput.toJson(callbackData),
+                                validResponseCodes: '200:299',
+                                ignoreSslErrors: true
+                            )
+                            echo "✅ httpRequest 回调成功"
+                        } catch (Exception e) {
+                            echo "⚠️ httpRequest 插件不可用或失败: ${e.message}"
+                            echo "使用 curl 进行回调..."
+                            
+                            // 回退到 curl
+                            sh """
+                                curl -X POST '${callbackUrl}' \
+                                    -H 'Content-Type: application/json' \
+                                    -H 'X-Api-Key: ${env.JENKINS_API_KEY}' \
+                                    -d '{
+                                        "runId": ${params.RUN_ID},
+                                        "status": "${finalStatus}",
+                                        "passedCases": 0,
+                                        "failedCases": ${currentBuild.result == 'SUCCESS' ? 0 : 1},
+                                        "skippedCases": 0,
+                                        "durationMs": ${currentBuild.durationMillis ?: 0}
+                                    }' \
+                                    || echo '❌ curl 回调失败'
+                            """
+                        }
+                        echo "==============================="
+                    }
                 }
             }
         }
@@ -237,6 +293,7 @@ pipeline {
                             echo "正在回调失败状态到平台..."
                             curl -X POST "${CALLBACK_URL}" \
                                 -H "Content-Type: application/json" \
+                                -H "X-Api-Key: ${JENKINS_API_KEY}" \
                                 -d "{
                                     \"runId\": ${RUN_ID},
                                     \"status\": \"failed\",

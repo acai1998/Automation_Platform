@@ -7,6 +7,44 @@ import { requestValidator } from '../middleware/RequestValidator.js';
 const router = Router();
 
 /**
+ * 净化错误消息，移除敏感信息以防止信息泄露
+ * @param error 原始错误对象
+ * @param context 错误上下文，用于日志记录
+ * @returns 净化后的错误消息
+ */
+function sanitizeErrorMessage(error: unknown, context: string): string {
+  const originalMessage = error instanceof Error ? error.message : 'Unknown error';
+
+  // 记录详细错误信息到服务器日志
+  console.error(`[${context}] Detailed error:`, {
+    message: originalMessage,
+    stack: error instanceof Error ? error.stack : undefined,
+    timestamp: new Date().toISOString()
+  });
+
+  // 检查是否包含敏感信息关键词
+  const sensitiveKeywords = [
+    'password', 'token', 'secret', 'key', 'credential',
+    'database', 'connection', 'host', 'port', 'path',
+    'file not found', 'permission denied', 'access denied',
+    'ENOENT', 'EACCES', 'EPERM', 'ETIMEDOUT'
+  ];
+
+  const lowerMessage = originalMessage.toLowerCase();
+  const containsSensitiveInfo = sensitiveKeywords.some(keyword =>
+    lowerMessage.includes(keyword.toLowerCase())
+  );
+
+  if (containsSensitiveInfo || process.env.NODE_ENV === 'production') {
+    // 生产环境或包含敏感信息时返回通用错误消息
+    return 'An internal error occurred. Please contact support if the issue persists.';
+  }
+
+  // 开发环境且不包含敏感信息时返回原始消息
+  return originalMessage;
+}
+
+/**
  * POST /api/jenkins/trigger
  * 触发 Jenkins Job 执行
  *
@@ -44,8 +82,8 @@ router.post('/trigger', async (req: Request, res: Response) => {
       }
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    res.status(500).json({ success: false, message });
+    const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_TRIGGER');
+    res.status(500).json({ success: false, message: sanitizedMessage });
   }
 });
 
@@ -127,9 +165,8 @@ router.post('/run-case', [
       message: triggerResult.message,
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[/api/jenkins/run-case] Error:`, { message, stack: error instanceof Error ? error.stack : 'N/A' });
-    res.status(500).json({ success: false, message });
+    const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_CASE');
+    res.status(500).json({ success: false, message: sanitizedMessage });
   }
 });
 
@@ -212,9 +249,8 @@ router.post('/run-batch', [
       message: triggerResult.message,
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[/api/jenkins/run-batch] Error:`, { message, stack: error instanceof Error ? error.stack : 'N/A' });
-    res.status(500).json({ success: false, message });
+    const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_BATCH');
+    res.status(500).json({ success: false, message: sanitizedMessage });
   }
 });
 
@@ -366,7 +402,7 @@ router.post('/callback', [
             caseName: 'Callback Processing Error',
             status: 'failed',
             duration: 0,
-            errorMessage: `Callback processing failed: ${errorMessage}`
+            errorMessage: `Callback processing failed: ${sanitizeErrorMessage(error, 'CALLBACK_FALLBACK')}`
           }],
         });
         console.log(`[CALLBACK] Successfully marked execution ${req.body.runId} as failed`);
@@ -375,9 +411,10 @@ router.post('/callback', [
       }
     }
 
+    const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_CALLBACK');
     res.status(500).json({
       success: false,
-      message: errorMessage,
+      message: sanitizedMessage,
       processingTimeMs: processingTime
     });
   }
@@ -743,9 +780,12 @@ router.post('/callback/manual-sync/:runId', [
 
 /**
  * POST /api/jenkins/callback/diagnose
- * 诊断回调连接问题 - 无需认证，用于排查配置问题
+ * 诊断回调连接问题 - 需要认证以保护系统信息
  */
-router.post('/callback/diagnose', async (req: Request, res: Response) => {
+router.post('/callback/diagnose',
+  rateLimitMiddleware.limit,
+  jenkinsAuthMiddleware.verify,
+  async (req: Request, res: Response) => {
   try {
     const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
     const timestamp = new Date().toISOString();
@@ -929,7 +969,7 @@ router.get('/health', async (req: Request, res: Response) => {
             statusText: response.statusText,
             details: healthCheckData,
           },
-          message: 'Authentication failed. Check Jenkins credentials.'
+          message: 'Jenkins service authentication failed. Please check configuration.'
         });
       } else {
         healthCheckData.issues.push(`❌ Jenkins 返回错误状态: ${response.status} ${response.statusText}`);
@@ -971,21 +1011,19 @@ router.get('/health', async (req: Request, res: Response) => {
       throw fetchError;
     }
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    const stack = error instanceof Error ? error.stack : '';
-    console.error(`[/api/jenkins/health] Error:`, { message, stack });
-    
+    const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_HEALTH');
+
     res.status(500).json({
       success: false,
       data: {
         connected: false,
-        error: message,
+        error: sanitizedMessage,
         details: {
           timestamp: new Date().toISOString(),
           duration: Date.now() - startTime,
           issues: [
             '❌ 无法连接到 Jenkins',
-            `错误: ${message}`
+            '请检查Jenkins服务状态和网络连接'
           ],
           recommendations: [
             '检查 Jenkins 服务是否运行',
@@ -994,18 +1032,21 @@ router.get('/health', async (req: Request, res: Response) => {
             '查看应用日志获取详细错误信息'
           ]
         },
-        stack: process.env.NODE_ENV === 'development' ? stack : undefined
+        stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : undefined) : undefined
       },
-      message: `Failed to connect to Jenkins: ${message}`
+      message: `Failed to connect to Jenkins: ${sanitizedMessage}`
     });
   }
 });
 
 /**
  * GET /api/jenkins/diagnose
- * 诊断执行问题
+ * 诊断执行问题 - 需要认证以保护系统信息
  */
-router.get('/diagnose', async (req: Request, res: Response) => {
+router.get('/diagnose',
+  rateLimitMiddleware.limit,
+  jenkinsAuthMiddleware.verify,
+  async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.query.runId as string);
     
