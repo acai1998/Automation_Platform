@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { executionService } from '../services/ExecutionService.js';
+import logger from '../utils/logger.js';
+import { LOG_CONTEXTS, createTimer } from '../config/logging.js';
 
 const router = Router();
 
@@ -8,10 +10,36 @@ const router = Router();
  * Jenkins 执行结果回调接口
  */
 router.post('/callback', async (req, res) => {
+  const timer = createTimer();
+  const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+
   try {
     const { executionId, status, results, duration, reportUrl } = req.body;
 
+    logger.info('Jenkins callback received', {
+      executionId,
+      status,
+      resultsCount: Array.isArray(results) ? results.length : 0,
+      duration,
+      reportUrl,
+      clientIP,
+      userAgent: req.headers['user-agent'],
+      contentType: req.headers['content-type'],
+    }, LOG_CONTEXTS.EXECUTION);
+
     if (!executionId || !status || !Array.isArray(results)) {
+      logger.warn('Jenkins callback validation failed', {
+        executionId,
+        status,
+        resultsType: typeof results,
+        clientIP,
+        missingFields: {
+          executionId: !executionId,
+          status: !status,
+          results: !Array.isArray(results),
+        },
+      }, LOG_CONTEXTS.EXECUTION);
+
       return res.status(400).json({
         success: false,
         message: 'executionId, status, and results are required'
@@ -26,8 +54,26 @@ router.post('/callback', async (req, res) => {
       reportUrl
     });
 
+    const processingTime = timer();
+    logger.info('Jenkins callback processed successfully', {
+      executionId,
+      status,
+      resultsCount: results.length,
+      processingTime: `${processingTime}ms`,
+      clientIP,
+    }, LOG_CONTEXTS.EXECUTION);
+
     res.json({ success: true, message: 'Callback processed successfully' });
   } catch (error: unknown) {
+    const processingTime = timer();
+    logger.errorLog(error, 'Jenkins callback processing failed', {
+      executionId: req.body?.executionId,
+      status: req.body?.status,
+      clientIP,
+      processingTime: `${processingTime}ms`,
+      requestBody: req.body,
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -38,11 +84,36 @@ router.post('/callback', async (req, res) => {
  * 标记执行开始运行（Jenkins 开始执行时调用）
  */
 router.post('/:id/start', async (req, res) => {
+  const timer = createTimer();
+  const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+
   try {
     const id = parseInt(req.params.id);
+
+    logger.info('Marking execution as running', {
+      executionId: id,
+      clientIP,
+      userAgent: req.headers['user-agent'],
+    }, LOG_CONTEXTS.EXECUTION);
+
     await executionService.markExecutionRunning(id);
+
+    const processingTime = timer();
+    logger.info('Execution marked as running successfully', {
+      executionId: id,
+      processingTime: `${processingTime}ms`,
+      clientIP,
+    }, LOG_CONTEXTS.EXECUTION);
+
     res.json({ success: true, message: 'Execution marked as running' });
   } catch (error: unknown) {
+    const processingTime = timer();
+    logger.errorLog(error, 'Failed to mark execution as running', {
+      executionId: req.params.id,
+      clientIP,
+      processingTime: `${processingTime}ms`,
+    });
+
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -67,11 +138,14 @@ router.get('/test-runs', async (req, res) => {
 /**
  * GET /api/executions/:id/results
  * 获取执行批次的用例结果列表
+ * 
+ * 改进：现在支持通过 executionId 查询结果
+ * 注意：:id 现在指的是 executionId（来自 Auto_TestCaseTaskExecutions.id）
  */
 router.get('/:id/results', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const results = await executionService.getBatchExecutionResults(id);
+    const executionId = parseInt(req.params.id);
+    const results = await executionService.getBatchExecutionResults(executionId);
     res.json({ success: true, data: results });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

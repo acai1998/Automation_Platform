@@ -2,6 +2,22 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { request } from '../api';
 
+/**
+ * 轮询相关常量配置
+ * 用于统一管理轮询间隔、超时时间等魔法数字
+ */
+const POLLING_CONSTANTS = {
+  FAST_INTERVAL: 3000,           // 3秒 - pending状态快速轮询
+  NORMAL_INTERVAL: 5000,         // 5秒 - 运行初期
+  MEDIUM_INTERVAL: 10000,        // 10秒 - 运行中期
+  SLOW_INTERVAL: 30000,          // 30秒 - 运行后期
+  MAX_EXECUTION_TIME: 10 * 60 * 1000,     // 10分钟 - 最大轮询时长
+  STUCK_DETECTION_TIME: 5 * 60 * 1000,    // 5分钟 - 卡住检测时间
+  PENDING_FAST_POLL_WINDOW: 30 * 1000,    // 30秒 - pending状态快速轮询窗口
+  EARLY_EXECUTION_WINDOW: 2 * 60 * 1000,  // 2分钟 - 执行早期窗口
+  MID_EXECUTION_WINDOW: 5 * 60 * 1000,    // 5分钟 - 执行中期窗口
+} as const;
+
 export interface ExecuteResult {
   runId: number;
   buildUrl: string;
@@ -137,9 +153,8 @@ export function useBatchExecution(runId: number | null, options?: {
         // 检查是否超过最大轮询时长 (基于 start_time)
         if (data.start_time) {
           const startTime = new Date(data.start_time).getTime();
-          const MAX_POLL_DURATION = 10 * 60 * 1000; // 10分钟
           const elapsedTime = Date.now() - startTime;
-          if (elapsedTime > MAX_POLL_DURATION) {
+          if (elapsedTime > POLLING_CONSTANTS.MAX_EXECUTION_TIME) {
             console.log('[Polling] 已达到最大轮询时长（10分钟），停止轮询');
             return false;
           }
@@ -153,15 +168,15 @@ export function useBatchExecution(runId: number | null, options?: {
           }
           
           // pending 状态下快速轮询（等待 Jenkins 接收）
-          if (status === 'pending' && duration < 30 * 1000) {
+          if (status === 'pending' && duration < POLLING_CONSTANTS.PENDING_FAST_POLL_WINDOW) {
             console.log('[Polling] In pending state, fast polling (3 seconds)');
-            return 3000; // 3秒快速轮询
+            return POLLING_CONSTANTS.FAST_INTERVAL;
           }
 
           // 根据执行时长动态调整轮询间隔
-          if (duration < 2 * 60 * 1000) return 5000; // 5秒
-          if (duration < 5 * 60 * 1000) return 10000; // 10秒
-          return 30000; // 30秒
+          if (duration < POLLING_CONSTANTS.EARLY_EXECUTION_WINDOW) return POLLING_CONSTANTS.NORMAL_INTERVAL;
+          if (duration < POLLING_CONSTANTS.MID_EXECUTION_WINDOW) return POLLING_CONSTANTS.MEDIUM_INTERVAL;
+          return POLLING_CONSTANTS.SLOW_INTERVAL;
         }
 
         // 传统轮询逻辑
@@ -190,7 +205,7 @@ export function useBatchExecution(runId: number | null, options?: {
         const elapsedTime = Date.now() - startTime;
 
         // 如果执行时间超过5分钟且状态未变化，标记为可能卡住
-        if (elapsedTime > 5 * 60 * 1000) {
+        if (elapsedTime > POLLING_CONSTANTS.STUCK_DETECTION_TIME) {
           const now = Date.now();
           if (now - stuckDetectionRef.current > 60 * 1000) { // 每分钟最多提醒一次
             stuckDetectionRef.current = now;
@@ -199,16 +214,24 @@ export function useBatchExecution(runId: number | null, options?: {
         }
       }
     }
+
+    // 清理函数：重置检测状态
+    return () => {
+      if (!query.data || ['success', 'failed', 'aborted'].includes(query.data.status)) {
+        stuckDetectionRef.current = 0;
+        lastSyncAttemptRef.current = 0;
+      }
+    };
   }, [query.data, onStatusChange, onSyncIssue]);
 
   return {
     ...query,
     // 添加便捷的状态检查方法
     isStuck: query.data && query.data.start_time && ['running', 'pending'].includes(query.data.status)
-      ? (Date.now() - new Date(query.data.start_time).getTime()) > 5 * 60 * 1000
+      ? (Date.now() - new Date(query.data.start_time).getTime()) > POLLING_CONSTANTS.STUCK_DETECTION_TIME
       : false,
     isPotentiallyStuck: query.data && query.data.start_time && ['running', 'pending'].includes(query.data.status)
-      ? (Date.now() - new Date(query.data.start_time).getTime()) > 2 * 60 * 1000
+      ? (Date.now() - new Date(query.data.start_time).getTime()) > POLLING_CONSTANTS.EARLY_EXECUTION_WINDOW
       : false,
     executionDuration: query.data && query.data.start_time
       ? Date.now() - new Date(query.data.start_time).getTime()
@@ -327,7 +350,7 @@ export function useTestExecution(options?: {
   const isLongRunning = batchExecution.data &&
     batchExecution.data.start_time &&
     ['running', 'pending'].includes(batchExecution.data.status) &&
-    (Date.now() - new Date(batchExecution.data.start_time).getTime()) > 5 * 60 * 1000; // 超过5分钟
+    (Date.now() - new Date(batchExecution.data.start_time).getTime()) > POLLING_CONSTANTS.STUCK_DETECTION_TIME;
 
   return {
     // 执行状态

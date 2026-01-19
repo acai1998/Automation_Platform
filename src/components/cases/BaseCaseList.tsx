@@ -1,4 +1,4 @@
-import { useState, ReactNode } from 'react';
+import { useState, ReactNode, useMemo, useCallback } from 'react';
 import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,6 +6,17 @@ import { useCases, usePagination, type CaseType, type TestCase } from '@/hooks/u
 import { useTestExecution } from '@/hooks/useExecuteCase';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
+
+/**
+ * 分页配置常量
+ * 用于统一管理分页相关的魔法数字
+ */
+const PAGINATION_CONFIG = {
+  PAGE_SIZE_OPTIONS: [10, 20, 50] as const,
+  DEFAULT_PAGE_SIZE: 10,
+  MAX_VISIBLE_PAGES: 5,
+  SEARCH_DEBOUNCE_MS: 300,
+} as const;
 
 /**
  * 列配置
@@ -39,10 +50,11 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState<number>(PAGINATION_CONFIG.DEFAULT_PAGE_SIZE);
   const [loadingCaseIds, setLoadingCaseIds] = useState<Set<number>>(new Set());
+  const [retryCount, setRetryCount] = useState(0);
+  const [isRetrying, setIsRetrying] = useState(false);
 
-  const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
   // 获取用例列表
   const { data, isLoading, error, refetch } = useCases({
@@ -75,6 +87,23 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       setTimeout(() => setIsRefreshing(false), 500);
     }
   };
+
+  // 指数退避重试函数
+  const retryWithBackoff = useCallback(async () => {
+    setIsRetrying(true);
+    try {
+      const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      await refetch();
+      setRetryCount(0); // 重置重试计数
+      toast.success('数据重新加载成功');
+    } catch (error) {
+      setRetryCount(prev => prev + 1);
+      toast.error('重试失败，请稍后再试');
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [refetch, retryCount]);
 
   // 处理搜索
   const handleSearch = () => {
@@ -191,7 +220,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     }
   };
 
-  const theme = getTypeTheme();
+  const theme = useMemo(() => getTypeTheme(), [type]);
 
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -281,9 +310,19 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             <p className="text-red-600 dark:text-red-400 text-sm">
               加载失败: {error instanceof Error ? error.message : '未知错误'}
             </p>
-            <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-2">
-              <RefreshCw className="h-4 w-4" />
-              重试
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={retryWithBackoff}
+              disabled={isRetrying}
+              className="gap-2"
+            >
+              {isRetrying ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {isRetrying ? '重试中...' : '重试'}
             </Button>
           </div>
         ) : data?.data.length === 0 ? (
@@ -468,7 +507,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                       }}
                       className="h-8 w-16 pl-2 pr-6 text-sm text-center rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer appearance-none bg-[length:10px] bg-[right_4px_center] bg-no-repeat bg-[url('data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%2210%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%236b7280%22%20stroke-width%3D%222.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E')]"
                     >
-                      {PAGE_SIZE_OPTIONS.map((size) => (
+                      {PAGINATION_CONFIG.PAGE_SIZE_OPTIONS.map((size) => (
                         <option key={size} value={size}>
                           {size}
                         </option>
@@ -496,14 +535,14 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <div className="flex items-center gap-1 px-2">
-                    {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                    {Array.from({ length: Math.min(PAGINATION_CONFIG.MAX_VISIBLE_PAGES, pagination.totalPages) }, (_, i) => {
                       let pageNum: number;
-                      if (pagination.totalPages <= 5) {
+                      if (pagination.totalPages <= PAGINATION_CONFIG.MAX_VISIBLE_PAGES) {
                         pageNum = i + 1;
                       } else if (page <= 3) {
                         pageNum = i + 1;
                       } else if (page >= pagination.totalPages - 2) {
-                        pageNum = pagination.totalPages - 4 + i;
+                        pageNum = pagination.totalPages - (PAGINATION_CONFIG.MAX_VISIBLE_PAGES - 1) + i;
                       } else {
                         pageNum = page - 2 + i;
                       }

@@ -6,18 +6,7 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import GitHubRepositoryForm from '@/components/GitHubRepositoryForm';
 import GitHubRepositoryTable from '@/components/GitHubRepositoryTable';
-
-interface GitHubRepository {
-  id: string;
-  name: string;
-  description?: string;
-  url: string;
-  language?: string;
-  status: 'active' | 'inactive' | 'archived';
-  stars?: number;
-  lastSync?: string;
-  createdAt: string;
-}
+import { GitHubRepository } from '@/types/repository';
 
 export default function GitHubRepositoryManagement() {
   const [repositories, setRepositories] = useState<GitHubRepository[]>([

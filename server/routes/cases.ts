@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { query, queryOne, getPool } from '../config/database.js';
 import { jenkinsService, CaseType } from '../services/JenkinsService.js';
+import logger from '../utils/logger.js';
+import { LOG_CONTEXTS, createTimer } from '../config/logging.js';
 
 const router = Router();
 
@@ -34,8 +36,15 @@ interface TestCase {
  * 获取用例列表
  */
 router.get('/', async (req, res) => {
+  const timer = createTimer();
+
   try {
     const { projectId, module, enabled, type, search, limit = 50, offset = 0 } = req.query;
+
+    logger.info('Fetching test cases list', {
+      filters: { projectId, module, enabled, type, search },
+      pagination: { limit, offset },
+    }, LOG_CONTEXTS.CASES);
 
     let sql = `
       SELECT tc.*, u.display_name as created_by_name
@@ -104,14 +113,22 @@ router.get('/', async (req, res) => {
     const countResult = await queryOne<{ total: number }>(countSql, countParams);
     const total = countResult?.total ?? 0;
 
+    const duration = timer();
+    logger.info('Test cases list fetched successfully', {
+      resultCount: data.length,
+      total,
+      duration: `${duration}ms`,
+      hasFilters: !!(projectId || module || enabled !== undefined || type || search),
+    }, LOG_CONTEXTS.CASES);
+
     res.json({ success: true, data, total });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
+    const duration = timer();
+    logger.errorLog(error, 'Failed to fetch test cases list', {
       endpoint: req.path,
-      method: req.method
+      method: req.method,
+      duration: `${duration}ms`,
+      query: req.query,
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';

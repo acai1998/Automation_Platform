@@ -1,4 +1,6 @@
 import mysql from 'mysql2/promise';
+import logger from '../utils/logger.js';
+import { LOG_CONTEXTS, createTimer } from './logging.js';
 
 // MariaDB 连接配置
 const DB_NAME = process.env.DB_NAME || 'autotest';
@@ -30,7 +32,12 @@ let dbInitialized = false;
 export function getPool(): mysql.Pool {
   if (!pool) {
     pool = mysql.createPool(dbConfig);
-    console.log('MariaDB connection pool created');
+    logger.info('MariaDB connection pool created', {
+      host: dbConfig.host,
+      port: dbConfig.port,
+      database: dbConfig.database,
+      connectionLimit: dbConfig.connectionLimit,
+    }, LOG_CONTEXTS.DATABASE);
   }
   return pool;
 }
@@ -43,9 +50,34 @@ export async function getConnection(): Promise<mysql.PoolConnection> {
 
 // 执行查询
 export async function query<T>(sql: string, params?: unknown[]): Promise<T> {
+  const timer = createTimer();
   const pool = getPool();
-  const [rows] = await pool.execute(sql, params);
-  return rows as T;
+
+  try {
+    logger.debug('Executing database query', {
+      sql: sql.substring(0, 200) + (sql.length > 200 ? '...' : ''),
+      paramsCount: params?.length || 0,
+    }, LOG_CONTEXTS.DATABASE);
+
+    const [rows] = await pool.execute(sql, params);
+    const duration = timer();
+    const rowCount = Array.isArray(rows) ? rows.length : 1;
+
+    // 使用logger的queryLog方法记录查询日志
+    logger.queryLog(sql, params || [], duration, rowCount);
+
+    return rows as T;
+  } catch (error) {
+    const duration = timer();
+
+    logger.errorLog(error, 'Database query failed', {
+      sql: sql.substring(0, 200) + (sql.length > 200 ? '...' : ''),
+      paramsCount: params?.length || 0,
+      duration: `${duration}ms`,
+    });
+
+    throw error;
+  }
 }
 
 // 执行单条查询并返回第一行
@@ -66,7 +98,11 @@ async function ensureDatabaseExists(): Promise<void> {
     });
     await testPool.execute('SELECT 1');
     await testPool.end();
-    console.log(`✓ Database '${DB_NAME}' exists and is accessible`);
+    logger.info(`Database '${DB_NAME}' exists and is accessible`, {
+      database: DB_NAME,
+      host: dbConfig.host,
+      port: dbConfig.port,
+    }, LOG_CONTEXTS.DATABASE);
     dbInitialized = true;
   } catch (error: unknown) {
     // 如果连接失败,尝试创建数据库（适用于本地开发环境）
@@ -78,7 +114,11 @@ async function ensureDatabaseExists(): Promise<void> {
       });
       try {
         await tempPool.execute(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-        console.log(`✓ Database '${DB_NAME}' created`);
+        logger.info(`Database '${DB_NAME}' created`, {
+          database: DB_NAME,
+          host: dbConfigWithoutDB.host,
+          port: dbConfigWithoutDB.port,
+        }, LOG_CONTEXTS.DATABASE);
         dbInitialized = true;
       } finally {
         await tempPool.end();
@@ -98,17 +138,32 @@ export async function testConnection(retries = 3, delay = 2000): Promise<boolean
 
       const pool = getPool();
       const connection = await pool.getConnection();
-      console.log('MariaDB connection test successful');
+      logger.info('MariaDB connection test successful', {
+        database: DB_NAME,
+        host: dbConfig.host,
+        port: dbConfig.port,
+      }, LOG_CONTEXTS.DATABASE);
       connection.release();
       return true;
     } catch (error: unknown) {
       const err = error as { code?: string };
       if (err.code === 'ER_CON_COUNT_ERROR' && i < retries - 1) {
-        console.log(`Connection failed (Too many connections), retrying in ${delay / 1000}s... (${i + 1}/${retries})`);
+        logger.warn(`Connection failed (Too many connections), retrying in ${delay / 1000}s... (${i + 1}/${retries})`, {
+          attempt: i + 1,
+          maxRetries: retries,
+          delayMs: delay,
+          errorCode: err.code,
+        }, LOG_CONTEXTS.DATABASE);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
-      console.error('MariaDB connection test failed:', error);
+      logger.errorLog(error, 'MariaDB connection test failed', {
+        database: DB_NAME,
+        host: dbConfig.host,
+        port: dbConfig.port,
+        attempt: i + 1,
+        maxRetries: retries,
+      });
       return false;
     }
   }
@@ -120,7 +175,11 @@ export async function closePool(): Promise<void> {
   if (pool) {
     await pool.end();
     pool = null;
-    console.log('MariaDB connection pool closed');
+    logger.info('MariaDB connection pool closed', {
+      database: DB_NAME,
+      host: dbConfig.host,
+      port: dbConfig.port,
+    }, LOG_CONTEXTS.DATABASE);
   }
 }
 

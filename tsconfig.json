@@ -23,6 +23,5 @@
     }
   },
   "include": ["src", "shared"],
-  "exclude": ["node_modules", "dist", "archive", "tmp", ".aiconfig"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "exclude": ["node_modules", "dist", "archive", "tmp", ".aiconfig"]
 }

@@ -2,6 +2,9 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { testConnection } from './config/database.js';
+import { initializeLogging, LOG_CONTEXTS } from './config/logging.js';
+import { requestLoggingMiddleware, errorLoggingMiddleware } from './middleware/RequestLoggingMiddleware.js';
+import logger from './utils/logger.js';
 import dashboardRoutes from './routes/dashboard.js';
 import executionRoutes from './routes/executions.js';
 import casesRoutes from './routes/cases.js';
@@ -15,17 +18,23 @@ const app = express();
 const BASE_PORT = parseInt(process.env.PORT || '3000', 10);
 const MAX_PORT_ATTEMPTS = 10;
 
+// 初始化日志系统
+initializeLogging();
+
 // 中间件
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// 请求日志中间件 (在所有路由之前)
+app.use(requestLoggingMiddleware);
+
 // 初始化 MariaDB
-console.log('Connecting to MariaDB...');
+logger.info('Initializing MariaDB connection...', {}, LOG_CONTEXTS.DATABASE);
 testConnection().then(async (connected) => {
   if (connected) {
-    console.log('MariaDB connected successfully');
+    logger.info('MariaDB connected successfully', {}, LOG_CONTEXTS.DATABASE);
   } else {
-    console.error('MariaDB connection failed!');
+    logger.error('MariaDB connection failed!', {}, LOG_CONTEXTS.DATABASE);
     process.exit(1);
   }
 });
@@ -41,23 +50,29 @@ app.use('/api/repositories', repositoriesRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  const healthStatus = { status: 'ok', timestamp: new Date().toISOString() };
+
+  logger.info('Health check requested', {
+    response: healthStatus,
+    ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress,
+  }, LOG_CONTEXTS.HTTP);
+
+  res.json(healthStatus);
 });
 
-// 错误处理
-app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('Error:', err);
-  res.status(500).json({
-    success: false,
-    message: err.message || 'Internal Server Error',
-  });
-});
+// 错误处理中间件 (在所有路由之后)
+app.use(errorLoggingMiddleware);
 
 // 启动服务器（支持端口重试）
 function startServer(port: number, attempt: number = 1): void {
   const server = app.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
-    console.log(`API available at http://localhost:${port}/api`);
+    logger.info(`Server started successfully`, {
+      port,
+      url: `http://localhost:${port}`,
+      apiUrl: `http://localhost:${port}/api`,
+      environment: process.env.NODE_ENV || 'development',
+      attempt,
+    }, LOG_CONTEXTS.HTTP);
 
     // 启动定时任务调度器
     schedulerService.start();
@@ -67,14 +82,27 @@ function startServer(port: number, attempt: number = 1): void {
     if (err.code === 'EADDRINUSE') {
       if (attempt < MAX_PORT_ATTEMPTS) {
         const nextPort = BASE_PORT + attempt;
-        console.log(`Port ${port} is in use, trying port ${nextPort}...`);
+        logger.warn(`Port ${port} is in use, trying port ${nextPort}...`, {
+          currentPort: port,
+          nextPort,
+          attempt,
+          maxAttempts: MAX_PORT_ATTEMPTS,
+        }, LOG_CONTEXTS.HTTP);
         startServer(nextPort, attempt + 1);
       } else {
-        console.error(`Failed to find available port after ${MAX_PORT_ATTEMPTS} attempts`);
+        logger.error(`Failed to find available port after ${MAX_PORT_ATTEMPTS} attempts`, {
+          basePort: BASE_PORT,
+          maxAttempts: MAX_PORT_ATTEMPTS,
+          lastAttemptPort: port,
+        }, LOG_CONTEXTS.HTTP);
         process.exit(1);
       }
     } else {
-      console.error('Server error:', err);
+      logger.errorLog(err, 'Server startup error', {
+        port,
+        attempt,
+        errorCode: err.code,
+      });
       process.exit(1);
     }
   });
@@ -84,13 +112,19 @@ startServer(BASE_PORT);
 
 // 优雅关闭
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
+  logger.info('SIGTERM received, shutting down gracefully...', {
+    signal: 'SIGTERM',
+    uptime: process.uptime(),
+  }, LOG_CONTEXTS.HTTP);
   schedulerService.stop();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully...');
+  logger.info('SIGINT received, shutting down gracefully...', {
+    signal: 'SIGINT',
+    uptime: process.uptime(),
+  }, LOG_CONTEXTS.HTTP);
   schedulerService.stop();
   process.exit(0);
 });
