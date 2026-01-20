@@ -1,23 +1,30 @@
-import { useEffect, useState, useMemo } from "react";
-import { Loader2, HelpCircle } from "lucide-react";
+import { useEffect, useState, useMemo, useCallback } from "react";
+import { Loader2, HelpCircle, RotateCcw } from "lucide-react";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 import { dashboardApi } from "@/lib/api";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import type { DashboardResponse } from "@/types/dashboard";
-
-interface TodayExecutionData {
-  total: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-}
+import { CustomTooltip } from "@/components/ui/CustomTooltip";
+import type {
+  DashboardResponse,
+  ChartSegmentData,
+  TestStatusFilter
+} from "@/types/dashboard";
 
 interface TodayExecutionProps {
   data?: DashboardResponse;
   onRefresh?: () => Promise<void>;
+  onFilterChange?: (status: TestStatusFilter) => void;
+  selectedFilter?: TestStatusFilter;
 }
 
-export function TodayExecution({ data, onRefresh }: TodayExecutionProps) {
+export function TodayExecution({
+  data,
+  onRefresh,
+  onFilterChange,
+  selectedFilter = 'all'
+}: TodayExecutionProps) {
   const [loading, setLoading] = useState(false);
+  const [animationKey, setAnimationKey] = useState(0);
 
   // 使用批量数据或回退到单独获取
   const todayData = data?.todayExecution;
@@ -45,6 +52,11 @@ export function TodayExecution({ data, onRefresh }: TodayExecutionProps) {
     }
   }, [data?.todayExecution]);
 
+  // Force re-animation when data changes
+  useEffect(() => {
+    setAnimationKey(prev => prev + 1);
+  }, [todayData]);
+
   // 使用 useMemo 缓存计算结果
   const chartData = useMemo(() => {
     const total = Number(todayData?.total) || 0;
@@ -52,27 +64,95 @@ export function TodayExecution({ data, onRefresh }: TodayExecutionProps) {
     const failed = Number(todayData?.failed) || 0;
     const skipped = Number(todayData?.skipped) || 0;
 
-    const passedPercent = total > 0 ? Math.round((passed / total) * 100) : 0;
-    const failedPercent = total > 0 ? Math.round((failed / total) * 100) : 0;
-    const skippedPercent = total > 0 ? Math.round((skipped / total) * 100) : 0;
+    if (total === 0) {
+      return {
+        total: 0,
+        segments: [],
+        isEmpty: true
+      };
+    }
 
-    // Create conic gradient for donut chart
-    const gradient = total > 0
-      ? `conic-gradient(
-          #39E079 0% ${passedPercent}%,
-          #fa5538 ${passedPercent}% ${passedPercent + failedPercent}%,
-          #fbbf24 ${passedPercent + failedPercent}% 100%
-        )`
-      : '#e5e7eb';
+    const segments: ChartSegmentData[] = [
+      {
+        name: '成功',
+        value: passed,
+        color: '#39E079',
+        percentage: Math.round((passed / total) * 100),
+        icon: '✓',
+        status: 'passed' as TestStatusFilter
+      },
+      {
+        name: '失败',
+        value: failed,
+        color: '#fa5538',
+        percentage: Math.round((failed / total) * 100),
+        icon: '✗',
+        status: 'failed' as TestStatusFilter
+      },
+      {
+        name: '跳过',
+        value: skipped,
+        color: '#fbbf24',
+        percentage: Math.round((skipped / total) * 100),
+        icon: '⊘',
+        status: 'skipped' as TestStatusFilter
+      }
+    ].filter(segment => segment.value > 0);
 
     return {
       total,
-      passedPercent,
-      failedPercent,
-      skippedPercent,
-      gradient
+      segments,
+      isEmpty: false
     };
   }, [todayData]);
+
+  // 交互处理函数
+  const handleSegmentClick = useCallback((data: ChartSegmentData) => {
+    if (onFilterChange) {
+      const newStatus = selectedFilter === data.status ? 'all' : data.status;
+      onFilterChange(newStatus);
+    }
+  }, [onFilterChange, selectedFilter]);
+
+  const handleCenterClick = useCallback(() => {
+    if (onFilterChange) {
+      onFilterChange('all');
+    }
+  }, [onFilterChange]);
+
+  // 自定义 Pie Cell 组件，支持交互
+  const renderCustomizedCell = (entry: ChartSegmentData, index: number) => {
+    const isSelected = selectedFilter === entry.status;
+    const isFiltered = selectedFilter !== 'all';
+    const isActive = !isFiltered || isSelected;
+
+    return (
+      <Cell
+        key={`cell-${index}`}
+        fill={entry.color}
+        stroke={isSelected ? entry.color : 'transparent'}
+        strokeWidth={isSelected ? 3 : 0}
+        style={{
+          filter: isActive ? 'none' : 'opacity(0.3)',
+          cursor: 'pointer',
+          transition: 'all 0.3s ease'
+        }}
+        className="hover:brightness-110"
+      />
+    );
+  };
+
+  // Empty state component
+  const EmptyChart = () => (
+    <div className="w-40 h-40 rounded-full border-8 border-slate-200 dark:border-slate-700 flex items-center justify-center">
+      <div className="text-center">
+        <span className="text-2xl font-bold text-slate-400 dark:text-slate-500">0</span>
+        <div className="text-xs text-slate-400 dark:text-slate-500 uppercase tracking-wider font-semibold">
+          测试用例
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="xl:col-span-1 rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark p-6 flex flex-col transition-all duration-200 hover:shadow-lg hover:border-primary/10">
@@ -86,11 +166,36 @@ export function TodayExecution({ data, onRefresh }: TodayExecutionProps) {
               </button>
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs">
-              <div className="text-slate-600 dark:text-gray-400 text-sm">显示今天内执行用例的实时状态分布（成功/失败/跳过），用于快速了解当前执行情况。</div>
+              <div className="text-slate-600 dark:text-gray-400 text-sm">
+                显示今天内执行用例的实时状态分布（成功/失败/跳过）。点击图表段筛选对应状态的测试，点击中心清除筛选。
+              </div>
             </TooltipContent>
           </Tooltip>
+          {selectedFilter !== 'all' && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleCenterClick}
+                  className="p-1 rounded text-primary hover:text-primary/80 transition-colors"
+                  title="清除筛选"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <div className="text-sm">清除筛选</div>
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
-        <p className="text-slate-500 dark:text-gray-400 text-sm">实时状态分布</p>
+        <div className="flex items-center gap-2">
+          <p className="text-slate-500 dark:text-gray-400 text-sm">实时状态分布</p>
+          {selectedFilter !== 'all' && (
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
+              已筛选: {chartData.segments.find(s => s.status === selectedFilter)?.name}
+            </span>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -99,42 +204,96 @@ export function TodayExecution({ data, onRefresh }: TodayExecutionProps) {
         </div>
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center gap-8">
-          {/* Donut Chart */}
-          <div
-            className="donut-chart shadow-xl shadow-black/10 dark:shadow-black/20"
-            style={{ background: chartData.gradient }}
-          >
-            <div className="donut-hole">
-              <span className="text-3xl font-bold text-slate-900 dark:text-white">{chartData.total}</span>
-              <span className="text-xs text-slate-500 dark:text-gray-400 uppercase tracking-wider font-semibold">
-                测试用例
-              </span>
+          {/* Interactive Donut Chart */}
+          <div className="relative">
+            {chartData.isEmpty ? (
+              <EmptyChart />
+            ) : (
+              <ResponsiveContainer width={160} height={160}>
+                <PieChart key={animationKey}>
+                  <Pie
+                    data={chartData.segments as any}
+                    cx={80}
+                    cy={80}
+                    startAngle={-90}
+                    endAngle={270}
+                    innerRadius={55}
+                    outerRadius={80}
+                    paddingAngle={2}
+                    dataKey="value"
+                    animationBegin={200}
+                    animationDuration={1000}
+                    animationEasing="ease-out"
+                    onClick={handleSegmentClick}
+                  >
+                    {chartData.segments.map((entry, index) =>
+                      renderCustomizedCell(entry, index)
+                    )}
+                  </Pie>
+                  <RechartsTooltip
+                    content={<CustomTooltip />}
+                    wrapperStyle={{ outline: 'none' }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+
+            {/* Interactive Center Content */}
+            <div
+              className="absolute inset-0 flex items-center justify-center cursor-pointer transition-all duration-200 hover:scale-105"
+              onClick={handleCenterClick}
+              role="button"
+              tabIndex={0}
+              aria-label={`总计 ${chartData.total} 个测试用例，点击清除筛选`}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleCenterClick();
+                }
+              }}
+            >
+              <div className="text-center pointer-events-none">
+                <div className="text-3xl font-bold text-slate-900 dark:text-white transition-all duration-300">
+                  {chartData.total}
+                </div>
+                <div className="text-xs text-slate-500 dark:text-gray-400 uppercase tracking-wider font-semibold">
+                  {selectedFilter !== 'all' ? '点击清除' : '测试用例'}
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Legend */}
+          {/* Interactive Legend */}
           <div className="flex w-full justify-between gap-2 px-2">
-            <div className="flex flex-col items-center gap-1">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-success"></span>
-                <span className="text-sm font-medium text-slate-600 dark:text-gray-300">成功</span>
-              </div>
-              <span className="text-lg font-bold text-slate-900 dark:text-white">{chartData.passedPercent}%</span>
-            </div>
-            <div className="flex flex-col items-center gap-1">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-danger"></span>
-                <span className="text-sm font-medium text-slate-600 dark:text-gray-300">失败</span>
-              </div>
-              <span className="text-lg font-bold text-slate-900 dark:text-white">{chartData.failedPercent}%</span>
-            </div>
-            <div className="flex flex-col items-center gap-1">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-warning"></span>
-                <span className="text-sm font-medium text-slate-600 dark:text-gray-300">跳过</span>
-              </div>
-              <span className="text-lg font-bold text-slate-900 dark:text-white">{chartData.skippedPercent}%</span>
-            </div>
+            {chartData.segments.map((segment) => {
+              const isSelected = selectedFilter === segment.status;
+              const isFiltered = selectedFilter !== 'all';
+              const isActive = !isFiltered || isSelected;
+
+              return (
+                <button
+                  key={segment.status}
+                  onClick={() => handleSegmentClick(segment)}
+                  className={`flex flex-col items-center gap-1 transition-all duration-200 rounded-lg p-2 hover:bg-slate-50 dark:hover:bg-slate-800 ${
+                    isSelected ? 'bg-slate-100 dark:bg-slate-700 ring-2 ring-primary/20' : ''
+                  } ${!isActive ? 'opacity-50' : ''}`}
+                  aria-label={`${segment.name}: ${segment.value} 个用例 (${segment.percentage}%)，点击筛选`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-3 h-3 rounded-full transition-all duration-200"
+                      style={{ backgroundColor: segment.color }}
+                    />
+                    <span className="text-sm font-medium text-slate-600 dark:text-gray-300">
+                      {segment.name}
+                    </span>
+                  </div>
+                  <span className="text-lg font-bold text-slate-900 dark:text-white">
+                    {segment.percentage}%
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

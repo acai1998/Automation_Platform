@@ -1,4 +1,4 @@
-import { ScriptFileInfo, ParsedTestCase } from './RepositoryService.js';
+import { ScriptFileInfo, ParsedTestCase } from './RepositoryService';
 
 /**
  * 脚本解析服务

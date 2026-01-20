@@ -7,6 +7,7 @@ import { Play, ChevronDown } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState, useEffect } from "react";
 import { dashboardApi } from "@/lib/api";
+import { useDashboardFilter } from "@/hooks/useDashboardFilter";
 import type { DashboardResponse } from "@/types/dashboard";
 
 type TimeRange = '7d' | '30d' | '90d';
@@ -15,6 +16,9 @@ export default function Home() {
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [dashboardData, setDashboardData] = useState<DashboardResponse | null>(null);
   const [, setLoading] = useState(true);
+
+  // Filter state management for chart interactions
+  const { filterState, setFilter } = useDashboardFilter();
 
   const fetchAllData = async () => {
     try {
@@ -112,6 +116,8 @@ export default function Home() {
             <TodayExecution
               data={dashboardData || undefined}
               onRefresh={fetchAllData}
+              onFilterChange={setFilter}
+              selectedFilter={filterState.selectedStatus}
             />
 
             {/* Trend Line Chart */}
@@ -127,6 +133,7 @@ export default function Home() {
             <RecentTests
               data={dashboardData || undefined}
               onRefresh={fetchAllData}
+              statusFilter={filterState.selectedStatus}
             />
           </div>
         </div>

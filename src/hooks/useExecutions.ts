@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { request } from '../api';
 
 export interface TestRunRecord {
   id: number;
@@ -37,6 +38,10 @@ export interface Auto_TestRunResults {
   error_stack: string;
   screenshot_path: string;
   log_path: string;
+  // New diagnostic fields for enhanced test result tracking
+  assertions_total: number;
+  assertions_passed: number;
+  response_data: string;
 }
 
 interface TestRunsResponse {
@@ -50,10 +55,8 @@ export function useTestRuns(page = 1, pageSize = 10) {
     queryKey: ['test-runs', page, pageSize],
     queryFn: async () => {
       const offset = (page - 1) * pageSize;
-      const response = await fetch(`/api/executions/test-runs?limit=${pageSize}&offset=${offset}`);
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || '获取运行记录失败');
-      return result;
+      const result = await request<TestRunRecord[]>(`/executions/test-runs?limit=${pageSize}&offset=${offset}`);
+      return result as unknown as TestRunsResponse;
     },
     keepPreviousData: true,
   });
@@ -63,12 +66,13 @@ export function useTestRunDetail(id: number) {
   return useQuery<{ success: boolean; data: TestRunRecord }>({
     queryKey: ['test-run', id],
     queryFn: async () => {
-      const response = await fetch(`/api/jenkins/batch/${id}`);
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || '获取详情失败');
-      return result;
+      const result = await request<TestRunRecord>(`/jenkins/batch/${id}`);
+      return result as { success: boolean; data: TestRunRecord };
     },
     enabled: !!id,
+    staleTime: 30000, // 30秒缓存，详情页数据不需要频繁刷新
+    refetchOnWindowFocus: false, // 禁用窗口聚焦刷新
+    refetchInterval: false, // 禁用自动轮询（详情页不需要轮询，状态已确定）
   });
 }
 
@@ -76,10 +80,8 @@ export function useTestRunResults(id: number) {
   return useQuery<{ success: boolean; data: Auto_TestRunResults[] }>({
     queryKey: ['test-run-results', id],
     queryFn: async () => {
-      const response = await fetch(`/api/executions/${id}/results`);
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || '获取结果失败');
-      return result;
+      const result = await request<Auto_TestRunResults[]>(`/executions/${id}/results`);
+      return result as { success: boolean; data: Auto_TestRunResults[] };
     },
     enabled: !!id,
   });

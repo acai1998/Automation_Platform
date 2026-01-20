@@ -1,25 +1,44 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Tooltip } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { AlertCircle, Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { GitHubRepository } from '@/types/repository';
 
-interface GitHubRepository {
-  id?: string;
-  name: string;
-  description?: string;
-  url: string;
-  language?: string;
-  status: 'active' | 'inactive' | 'archived';
-  stars?: number;
-  lastSync?: string;
-  createdAt?: string;
+const LANGUAGES = [
+  'Python',
+  'JavaScript',
+  'TypeScript',
+  'Java',
+  'Go',
+  'Rust',
+  'C++',
+  'C#',
+  'PHP',
+  'Ruby',
+  'Swift',
+  'Kotlin',
+];
+
+function FormTooltip({ content, children }: { content: string; children: React.ReactNode }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {children}
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>{content}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 interface GitHubRepositoryFormProps {
   repository?: GitHubRepository;
-  onSubmit: (data: Omit<GitHubRepository, 'id' | 'createdAt'>) => void;
+  onSubmit: (data: Omit<GitHubRepository, 'id' | 'createdAt'>) => Promise<void> | void;
   onCancel: () => void;
 }
 
@@ -89,30 +108,14 @@ export default function GitHubRepositoryForm({
 
     setIsSubmitting(true);
     try {
-      // 模拟 API 调用
-      await new Promise(resolve => setTimeout(resolve, 500));
-      onSubmit(formData);
+      await onSubmit(formData);
     } catch (error) {
+      console.error(error);
       toast.error('提交失败，请重试');
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const languages = [
-    'Python',
-    'JavaScript',
-    'TypeScript',
-    'Java',
-    'Go',
-    'Rust',
-    'C++',
-    'C#',
-    'PHP',
-    'Ruby',
-    'Swift',
-    'Kotlin',
-  ];
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -158,7 +161,7 @@ export default function GitHubRepositoryForm({
             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">选择语言</option>
-            {languages.map(lang => (
+            {LANGUAGES.map(lang => (
               <option key={lang} value={lang}>{lang}</option>
             ))}
             <option value="other">其他</option>
@@ -211,7 +214,7 @@ export default function GitHubRepositoryForm({
           </label>
           <select
             value={formData.status}
-            onChange={e => setFormData({ ...formData, status: e.target.value as any })}
+            onChange={e => setFormData({ ...formData, status: e.target.value as GitHubRepository['status'] })}
             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="active">活跃</option>
@@ -245,7 +248,7 @@ export default function GitHubRepositoryForm({
         >
           取消
         </Button>
-        <Tooltip content={repository ? '更新仓库信息' : '添加新仓库'}>
+        <FormTooltip content={repository ? '更新仓库信息' : '添加新仓库'}>
           <Button
             type="submit"
             disabled={isSubmitting}
@@ -263,7 +266,7 @@ export default function GitHubRepositoryForm({
               </>
             )}
           </Button>
-        </Tooltip>
+        </FormTooltip>
       </div>
     </form>
   );

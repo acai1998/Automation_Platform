@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { authService } from '../services/AuthService.js';
+import { authService } from '../services/AuthService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 // 扩展 Request 类型以包含用户信息
 declare global {
@@ -17,8 +19,16 @@ declare global {
 // 验证 JWT Token 中间件
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
+  const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
 
   if (!authHeader) {
+    logger.warn('Authentication failed: No authorization header', {
+      endpoint: req.path,
+      method: req.method,
+      clientIP,
+      userAgent: req.headers['user-agent'],
+    }, LOG_CONTEXTS.AUTH);
+
     res.status(401).json({ success: false, message: '未提供认证令牌' });
     return;
   }
@@ -27,9 +37,26 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
 
   const decoded = authService.verifyToken(token);
   if (!decoded) {
+    logger.warn('Authentication failed: Invalid or expired token', {
+      endpoint: req.path,
+      method: req.method,
+      clientIP,
+      userAgent: req.headers['user-agent'],
+      tokenLength: token.length,
+    }, LOG_CONTEXTS.AUTH);
+
     res.status(401).json({ success: false, message: '无效或过期的令牌' });
     return;
   }
+
+  logger.debug('Authentication successful', {
+    userId: decoded.id,
+    email: decoded.email,
+    role: decoded.role,
+    endpoint: req.path,
+    method: req.method,
+    clientIP,
+  }, LOG_CONTEXTS.AUTH);
 
   req.user = decoded;
   next();
@@ -53,15 +80,42 @@ export function optionalAuth(req: Request, res: Response, next: NextFunction): v
 // 角色检查中间件
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
+    const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+
     if (!req.user) {
+      logger.warn('Authorization failed: User not authenticated', {
+        endpoint: req.path,
+        method: req.method,
+        requiredRoles: roles,
+        clientIP,
+      }, LOG_CONTEXTS.AUTH);
+
       res.status(401).json({ success: false, message: '未认证' });
       return;
     }
 
     if (!roles.includes(req.user.role)) {
+      logger.warn('Authorization failed: Insufficient role permissions', {
+        userId: req.user.id,
+        userRole: req.user.role,
+        requiredRoles: roles,
+        endpoint: req.path,
+        method: req.method,
+        clientIP,
+      }, LOG_CONTEXTS.AUTH);
+
       res.status(403).json({ success: false, message: '没有权限执行此操作' });
       return;
     }
+
+    logger.debug('Authorization successful', {
+      userId: req.user.id,
+      userRole: req.user.role,
+      requiredRoles: roles,
+      endpoint: req.path,
+      method: req.method,
+      clientIP,
+    }, LOG_CONTEXTS.AUTH);
 
     next();
   };

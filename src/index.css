@@ -164,28 +164,6 @@
  * ============================================ */
 @layer components {
 
-  /* Donut Chart CSS */
-  .donut-chart {
-    width: 160px;
-    height: 160px;
-    border-radius: 50%;
-    position: relative;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-  }
-
-  .donut-hole {
-    width: 110px;
-    height: 110px;
-    border-radius: 50%;
-    @apply bg-white dark:bg-surface-dark;
-    position: absolute;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-  }
 
   /*
    * Recharts 焦点样式修复

@@ -1,34 +1,15 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { query, queryOne } from '../config/database.js';
-import { sendPasswordResetEmail } from './EmailService.js';
+import { UserRepository } from '../repositories/UserRepository';
+import { AppDataSource } from '../config/database';
+import { User } from '../entities/User';
+import { sendPasswordResetEmail } from './EmailService';
 
 // JWT 密钥配置
 const JWT_SECRET = process.env.JWT_SECRET || 'autotest-jwt-secret-key-2025';
 const JWT_EXPIRES_IN = '7d';
 const JWT_REFRESH_EXPIRES_IN = '30d';
-
-// 用户类型定义
-export interface User {
-  id: number;
-  username: string;
-  email: string;
-  password_hash: string;
-  display_name: string | null;
-  avatar: string | null;
-  role: 'admin' | 'tester' | 'developer' | 'viewer';
-  status: 'active' | 'inactive' | 'locked';
-  email_verified: boolean;
-  reset_token: string | null;
-  reset_token_expires: Date | null;
-  remember_token: string | null;
-  login_attempts: number;
-  locked_until: Date | null;
-  last_login_at: Date | null;
-  created_at: Date;
-  updated_at: Date;
-}
 
 // 返回给前端的用户信息（不包含敏感数据）
 export interface UserInfo {
@@ -57,7 +38,13 @@ export interface RegisterResponse {
   user?: UserInfo;
 }
 
-class AuthService {
+export class AuthService {
+  private userRepository: UserRepository;
+
+  constructor() {
+    this.userRepository = new UserRepository(AppDataSource);
+  }
+
   // 密码加密
   private async hashPassword(password: string): Promise<string> {
     const salt = await bcrypt.genSalt(12);
@@ -106,8 +93,8 @@ class AuthService {
     return {
       id: user.id,
       username: user.username,
-      email: user.email,
-      display_name: user.display_name,
+      email: user.email || '',
+      display_name: user.displayName,
       avatar: user.avatar,
       role: user.role,
       status: user.status,
@@ -118,19 +105,13 @@ class AuthService {
   async register(email: string, password: string, username: string): Promise<RegisterResponse> {
     try {
       // 检查邮箱是否已存在
-      const existingEmail = await queryOne<User>(
-        'SELECT id FROM Auto_Users WHERE email = ?',
-        [email]
-      );
+      const existingEmail = await this.userRepository.findByEmail(email);
       if (existingEmail) {
         return { success: false, message: '该邮箱已被注册' };
       }
 
       // 检查用户名是否已存在
-      const existingUsername = await queryOne<User>(
-        'SELECT id FROM Auto_Users WHERE username = ?',
-        [username]
-      );
+      const existingUsername = await this.userRepository.findByUsername(username);
       if (existingUsername) {
         return { success: false, message: '该用户名已被使用' };
       }
@@ -138,21 +119,13 @@ class AuthService {
       // 加密密码
       const passwordHash = await this.hashPassword(password);
 
-      // 插入新用户
-      await query(
-        `INSERT INTO Auto_Users (username, email, password_hash, display_name) VALUES (?, ?, ?, ?)`,
-        [username, email, passwordHash, username]
-      );
-
-      // 获取新创建的用户
-      const user = await queryOne<User>(
-        'SELECT * FROM Auto_Users WHERE email = ?',
-        [email]
-      );
-
-      if (!user) {
-        return { success: false, message: '用户创建失败' };
-      }
+      // 创建新用户
+      const user = await this.userRepository.createUser({
+        username,
+        email,
+        passwordHash,
+        displayName: username,
+      });
 
       return {
         success: true,
@@ -169,10 +142,7 @@ class AuthService {
   async login(email: string, password: string, remember = false): Promise<LoginResponse> {
     try {
       // 查找用户
-      const user = await queryOne<User>(
-        'SELECT * FROM Auto_Users WHERE email = ?',
-        [email]
-      );
+      const user = await this.userRepository.findByEmail(email);
 
       if (!user) {
         return { success: false, message: '用户不存在' };
@@ -180,42 +150,31 @@ class AuthService {
 
       // 检查账户是否被锁定
       if (user.status === 'locked') {
-        if (user.locked_until && new Date(user.locked_until) > new Date()) {
+        if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
           return { success: false, message: '账户已被锁定，请稍后重试' };
         }
         // 锁定时间已过，解锁账户
-        await query(
-          'UPDATE Auto_Users SET status = ?, login_attempts = 0, locked_until = NULL WHERE id = ?',
-          ['active', user.id]
-        );
+        await this.userRepository.unlockUser(user.id);
       }
 
       // 验证密码
-      const isValidPassword = await this.verifyPassword(password, user.password_hash);
+      const isValidPassword = await this.verifyPassword(password, user.passwordHash);
       if (!isValidPassword) {
         // 增加登录失败次数
-        const newAttempts = user.login_attempts + 1;
+        const newAttempts = user.loginAttempts + 1;
         if (newAttempts >= 5) {
           // 锁定账户 15 分钟
           const lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
-          await query(
-            'UPDATE Auto_Users SET login_attempts = ?, status = ?, locked_until = ? WHERE id = ?',
-            [newAttempts, 'locked', lockedUntil, user.id]
-          );
+          await this.userRepository.lockUser(user.id, lockedUntil);
+          await this.userRepository.updateLoginAttempts(user.id, newAttempts);
           return { success: false, message: '登录失败次数过多，账户已被锁定 15 分钟' };
         }
-        await query(
-          'UPDATE Auto_Users SET login_attempts = ? WHERE id = ?',
-          [newAttempts, user.id]
-        );
+        await this.userRepository.updateLoginAttempts(user.id, newAttempts);
         return { success: false, message: '密码错误' };
       }
 
       // 登录成功，重置登录失败次数
-      await query(
-        'UPDATE Auto_Users SET login_attempts = 0, last_login_at = NOW() WHERE id = ?',
-        [user.id]
-      );
+      await this.userRepository.updateLastLogin(user.id);
 
       // 生成 Token
       const token = this.generateToken(user);
@@ -223,10 +182,7 @@ class AuthService {
 
       // 如果选择记住登录，保存 remember_token
       if (remember && refreshToken) {
-        await query(
-          'UPDATE Auto_Users SET remember_token = ? WHERE id = ?',
-          [refreshToken, user.id]
-        );
+        await this.userRepository.setRememberToken(user.id, refreshToken);
       }
 
       return {
@@ -245,10 +201,7 @@ class AuthService {
   // 登出
   async logout(userId: number): Promise<{ success: boolean; message: string }> {
     try {
-      await query(
-        'UPDATE Auto_Users SET remember_token = NULL WHERE id = ?',
-        [userId]
-      );
+      await this.userRepository.setRememberToken(userId, null);
       return { success: true, message: '登出成功' };
     } catch (error) {
       console.error('Logout error:', error);
@@ -259,10 +212,7 @@ class AuthService {
   // 忘记密码 - 发送重置邮件
   async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
     try {
-      const user = await queryOne<User>(
-        'SELECT * FROM Auto_Users WHERE email = ?',
-        [email]
-      );
+      const user = await this.userRepository.findByEmail(email);
 
       if (!user) {
         // 为了安全，不透露用户是否存在
@@ -273,10 +223,7 @@ class AuthService {
       const resetToken = crypto.randomBytes(32).toString('hex');
       const resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 小时后过期
 
-      await query(
-        'UPDATE Auto_Users SET reset_token = ?, reset_token_expires = ? WHERE id = ?',
-        [resetToken, resetTokenExpires, user.id]
-      );
+      await this.userRepository.setResetToken(user.id, resetToken, resetTokenExpires);
 
       // 发送重置邮件
       await sendPasswordResetEmail(email, resetToken, user.username);
@@ -291,10 +238,7 @@ class AuthService {
   // 重置密码
   async resetPassword(token: string, newPassword: string): Promise<{ success: boolean; message: string }> {
     try {
-      const user = await queryOne<User>(
-        'SELECT * FROM Auto_Users WHERE reset_token = ? AND reset_token_expires > NOW()',
-        [token]
-      );
+      const user = await this.userRepository.findByResetToken(token);
 
       if (!user) {
         return { success: false, message: '重置链接无效或已过期' };
@@ -304,10 +248,7 @@ class AuthService {
       const passwordHash = await this.hashPassword(newPassword);
 
       // 更新密码并清除重置 Token
-      await query(
-        'UPDATE Auto_Users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?',
-        [passwordHash, user.id]
-      );
+      await this.userRepository.resetPassword(user.id, passwordHash);
 
       return { success: true, message: '密码重置成功' };
     } catch (error) {
@@ -319,10 +260,7 @@ class AuthService {
   // 获取当前用户信息
   async getCurrentUser(userId: number): Promise<UserInfo | null> {
     try {
-      const user = await queryOne<User>(
-        'SELECT * FROM Auto_Users WHERE id = ?',
-        [userId]
-      );
+      const user = await this.userRepository.findById(userId);
       return user ? this.toUserInfo(user) : null;
     } catch (error) {
       console.error('Get current user error:', error);
@@ -338,10 +276,7 @@ class AuthService {
         return { message: 'Token 无效或已过期' };
       }
 
-      const user = await queryOne<User>(
-        'SELECT * FROM Auto_Users WHERE id = ? AND remember_token = ?',
-        [decoded.id, refreshToken]
-      );
+      const user = await this.userRepository.findByRememberToken(refreshToken);
 
       if (!user) {
         return { message: 'Token 无效' };
