@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { executionService } from '../services/ExecutionService.js';
-import { jenkinsService } from '../services/JenkinsService.js';
-import { jenkinsAuthMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware.js';
-import { requestValidator } from '../middleware/RequestValidator.js';
+import { executionService } from '../services/ExecutionService';
+import { jenkinsService } from '../services/JenkinsService';
+import { jenkinsAuthMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
+import { requestValidator } from '../middleware/RequestValidator';
 
 const router = Router();
 
@@ -1072,7 +1072,7 @@ router.get('/diagnose',
     let jenkinsConnectivity: any = null;
     if (execution.jenkinsJob && execution.jenkinsBuildId) {
       try {
-        const { jenkinsStatusService } = await import('../services/JenkinsStatusService.js');
+        const { jenkinsStatusService } = await import('../services/JenkinsStatusService');
         const buildStatus = await jenkinsStatusService.getBuildStatus(
           execution.jenkinsJob as string,
           execution.jenkinsBuildId as string
@@ -1211,7 +1211,7 @@ router.get('/monitoring/stats', async (_req, res) => {
     console.log(`[MONITORING] Getting monitoring statistics...`);
 
     // 获取混合同步服务的统计信息
-    const { hybridSyncService } = await import('../services/HybridSyncService.js');
+    const { hybridSyncService } = await import('../services/HybridSyncService');
     const syncStats = hybridSyncService.getMonitoringStats();
 
     // 获取最近的执行统计
@@ -1279,7 +1279,7 @@ router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
       const timeoutMs = timeoutMinutes * 60 * 1000;
       const timeoutThreshold = new Date(Date.now() - timeoutMs);
 
-      const { query } = await import('../config/database.js');
+      const { query } = await import('../config/database');
       const stuckExecutions = await query(`
         SELECT id, status, jenkins_job, jenkins_build_id, jenkins_url,
                start_time, TIMESTAMPDIFF(MINUTE, start_time, NOW()) as duration_minutes

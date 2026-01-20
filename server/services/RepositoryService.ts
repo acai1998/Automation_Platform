@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import { glob } from 'glob';
-import { query, queryOne, getPool } from '../config/database.js';
+import { query, queryOne, getPool } from '../config/database';
 
 export interface RepositoryConfig {
   id: number;

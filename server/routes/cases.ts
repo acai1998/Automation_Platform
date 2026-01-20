@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { AppDataSource } from '../config/dataSource.js';
-import { TestCaseRepository } from '../repositories/TestCaseRepository.js';
-import { jenkinsService, CaseType } from '../services/JenkinsService.js';
-import logger from '../utils/logger.js';
-import { LOG_CONTEXTS, createTimer } from '../config/logging.js';
+import { AppDataSource } from '../config/dataSource';
+import { TestCaseRepository } from '../repositories/TestCaseRepository';
+import { jenkinsService, CaseType } from '../services/JenkinsService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS, createTimer } from '../config/logging';
 
 const router = Router();
 const testCaseRepository = new TestCaseRepository(AppDataSource);

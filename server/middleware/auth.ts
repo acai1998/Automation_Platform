@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { authService } from '../services/AuthService.js';
-import logger from '../utils/logger.js';
-import { LOG_CONTEXTS } from '../config/logging.js';
+import { authService } from '../services/AuthService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 // 扩展 Request 类型以包含用户信息
 declare global {

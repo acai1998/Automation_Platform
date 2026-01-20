@@ -1,4 +1,4 @@
-import { JenkinsConfig } from './JenkinsService.js';
+import { JenkinsConfig } from './JenkinsService';
 
 /**
  * Jenkins构建状态

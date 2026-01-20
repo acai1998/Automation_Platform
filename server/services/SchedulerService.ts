@@ -1,6 +1,6 @@
-import { repositoryService } from './RepositoryService.js';
-import { repositorySyncService } from './RepositorySyncService.js';
-import type { RepositoryConfig } from './RepositoryService.js';
+import { repositoryService } from './RepositoryService';
+import { repositorySyncService } from './RepositorySyncService';
+import type { RepositoryConfig } from './RepositoryService';
 
 /**
  * 定时任务调度器服务

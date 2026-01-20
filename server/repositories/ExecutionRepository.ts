@@ -1,7 +1,7 @@
 import { DataSource, QueryRunner, In, Repository } from 'typeorm';
-import { TaskExecution, TestRun, TestRunResult, TestCase } from '../entities/index.js';
-import { BaseRepository } from './BaseRepository.js';
-import { User } from '../entities/User.js';
+import { TaskExecution, TestRun, TestRunResult, TestCase } from '../entities/index';
+import { BaseRepository } from './BaseRepository';
+import { User } from '../entities/User';
 
 export interface ExecutionDetail {
   execution: TaskExecution & { executedByName?: string };

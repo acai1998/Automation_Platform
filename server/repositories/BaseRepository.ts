@@ -1,6 +1,6 @@
 import { DataSource, Repository, QueryRunner, SelectQueryBuilder, ObjectLiteral, EntityTarget } from 'typeorm';
-import logger from '../utils/logger.js';
-import { LOG_CONTEXTS } from '../config/logging.js';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 /**
  * 基础 Repository 类

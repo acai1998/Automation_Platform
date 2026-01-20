@@ -1,10 +1,10 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { UserRepository } from '../repositories/UserRepository.js';
-import { AppDataSource } from '../config/database.js';
-import { User } from '../entities/User.js';
-import { sendPasswordResetEmail } from './EmailService.js';
+import { UserRepository } from '../repositories/UserRepository';
+import { AppDataSource } from '../config/database';
+import { User } from '../entities/User';
+import { sendPasswordResetEmail } from './EmailService';
 
 // JWT 密钥配置
 const JWT_SECRET = process.env.JWT_SECRET || 'autotest-jwt-secret-key-2025';

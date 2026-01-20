@@ -1,4 +1,4 @@
-import logger, { LogLevel } from '../utils/logger.js';
+import logger, { LogLevel } from '../utils/logger';
 
 // 日志配置常量
 export const LOG_CONTEXTS = {

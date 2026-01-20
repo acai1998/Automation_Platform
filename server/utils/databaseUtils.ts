@@ -1,7 +1,7 @@
 import { PoolConnection } from 'mysql2/promise';
-import { MySQLResultMetadata } from '../../shared/types/database.js';
-import logger from './logger.js';
-import { LOG_CONTEXTS, createTimer } from '../config/logging.js';
+import { MySQLResultMetadata } from '../../shared/types/database';
+import logger from './logger';
+import { LOG_CONTEXTS, createTimer } from '../config/logging';
 
 /**
  * 类型守卫：检查对象是否为 MySQL 操作结果元数据

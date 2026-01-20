@@ -12,7 +12,7 @@ import {
   SignatureUsageRecord,
   AuthErrorType,
   AuthenticationError,
-} from '../../shared/types/jenkins-auth.js';
+} from '../../shared/types/jenkins-auth';
 
 /**
  * 扩展 Express Request 类型以包含 Jenkins 认证信息

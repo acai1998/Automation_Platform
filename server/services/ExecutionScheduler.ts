@@ -1,5 +1,5 @@
-import { hybridSyncService, MonitoringConfig } from './HybridSyncService.js';
-import { executionService } from './ExecutionService.js';
+import { hybridSyncService, MonitoringConfig } from './HybridSyncService';
+import { executionService } from './ExecutionService';
 
 /**
  * 执行记录接口

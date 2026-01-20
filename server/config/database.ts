@@ -1,7 +1,7 @@
 import mysql from 'mysql2/promise';
-import logger from '../utils/logger.js';
-import { LOG_CONTEXTS, createTimer } from './logging.js';
-import { AppDataSource, initializeDataSource } from './dataSource.js';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS, createTimer } from './logging';
+import { AppDataSource, initializeDataSource } from './dataSource';
 
 // MariaDB 连接配置
 const DB_NAME = process.env.DB_NAME || 'autotest';

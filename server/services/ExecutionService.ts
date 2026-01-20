@@ -1,5 +1,5 @@
-import { AppDataSource } from '../config/database.js';
-import { jenkinsStatusService, TestResults } from './JenkinsStatusService.js';
+import { AppDataSource } from '../config/database';
+import { jenkinsStatusService, TestResults } from './JenkinsStatusService';
 import {
   ExecutionRecord,
   TestResultRecord,
@@ -8,17 +8,17 @@ import {
   DatabaseQueryResult,
   ExecutionError,
   DbQueryResult
-} from '../../shared/types/database.js';
+} from '../../shared/types/database';
 import {
   batchInsert,
   isMySQLMetadata,
   executeInTransactionNoRelease,
   executeWithSavepoint,
-} from '../utils/databaseUtils.js';
-import { EXECUTION_CONFIG, EXECUTION_STATUS, TEST_RESULT_STATUS } from '../config/constants.js';
-import logger from '../utils/logger.js';
-import { LOG_CONTEXTS, createTimer } from '../config/logging.js';
-import { ExecutionRepository } from '../repositories/ExecutionRepository.js';
+} from '../utils/databaseUtils';
+import { EXECUTION_CONFIG, EXECUTION_STATUS, TEST_RESULT_STATUS } from '../config/constants';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS, createTimer } from '../config/logging';
+import { ExecutionRepository } from '../repositories/ExecutionRepository';
 
 // 已废弃：由于没有远程 tasks 表，建议使用 CaseExecutionInput
 export interface TaskExecutionInput {

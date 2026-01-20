@@ -1,6 +1,6 @@
-import { executionService } from './ExecutionService.js';
-import { jenkinsStatusService } from './JenkinsStatusService.js';
-import { Auto_TestRunResultsInput } from './ExecutionService.js';
+import { executionService } from './ExecutionService';
+import { jenkinsStatusService } from './JenkinsStatusService';
+import { Auto_TestRunResultsInput } from './ExecutionService';
 
 /**
  * 回调数据接口

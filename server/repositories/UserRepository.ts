@@ -1,6 +1,6 @@
 import { DataSource, QueryRunner } from 'typeorm';
-import { User } from '../entities/User.js';
-import { BaseRepository } from './BaseRepository.js';
+import { User } from '../entities/User';
+import { BaseRepository } from './BaseRepository';
 
 /**
  * 用户 Repository

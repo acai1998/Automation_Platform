@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { repositoryService } from '../services/RepositoryService.js';
-import { repositorySyncService } from '../services/RepositorySyncService.js';
-import { schedulerService } from '../services/SchedulerService.js';
+import { repositoryService } from '../services/RepositoryService';
+import { repositorySyncService } from '../services/RepositorySyncService';
+import { schedulerService } from '../services/SchedulerService';
 
 const router = Router();
 

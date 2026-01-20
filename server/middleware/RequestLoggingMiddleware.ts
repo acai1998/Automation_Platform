@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import logger, { Logger } from '../utils/logger.js';
+import logger, { Logger } from '../utils/logger';
 import {
   LOG_CONTEXTS,
   generateRequestId,
@@ -8,7 +8,7 @@ import {
   createTimer,
   sanitizeObject,
   PERFORMANCE_THRESHOLDS,
-} from '../config/logging.js';
+} from '../config/logging';
 
 // 扩展Request接口以包含请求上下文
 declare global {

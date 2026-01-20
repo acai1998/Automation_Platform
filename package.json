@@ -1,13 +1,12 @@
 {
   "name": "automation-platform",
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "server:build": "tsc -p tsconfig.server.json",
-    "server": "npm run server:build && node dist/server/index.js",
+    "server": "ts-node --project tsconfig.server.json server/index.ts",
     "start": "concurrently \"npm run dev\" \"npm run server\""
   },
   "dependencies": {

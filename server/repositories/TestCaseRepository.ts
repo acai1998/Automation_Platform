@@ -1,6 +1,6 @@
 import { DataSource, Repository, DeepPartial, QueryDeepPartialEntity, QueryRunner } from 'typeorm';
-import { TestCase } from '../entities/TestCase.js';
-import { BaseRepository } from './BaseRepository.js';
+import { TestCase } from '../entities/TestCase';
+import { BaseRepository } from './BaseRepository';
 
 /**
  * 测试用例 Repository

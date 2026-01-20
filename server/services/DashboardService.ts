@@ -1,5 +1,5 @@
-import { DashboardRepository } from '../repositories/DashboardRepository.js';
-import { AppDataSource } from '../config/database.js';
+import { DashboardRepository } from '../repositories/DashboardRepository';
+import { AppDataSource } from '../config/database';
 
 export interface DashboardStats {
   totalCases: number;

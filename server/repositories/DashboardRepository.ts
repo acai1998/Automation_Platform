@@ -1,6 +1,6 @@
 import { DataSource } from 'typeorm';
-import { TestCase, TaskExecution, DailySummary, User } from '../entities/index.js';
-import { BaseRepository } from './BaseRepository.js';
+import { TestCase, TaskExecution, DailySummary, User } from '../entities/index';
+import { BaseRepository } from './BaseRepository';
 
 export interface DashboardStats {
   totalCases: number;

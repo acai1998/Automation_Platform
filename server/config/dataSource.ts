@@ -1,7 +1,6 @@
-import 'reflect-metadata';
 import { DataSource, DataSourceOptions } from 'typeorm';
-import logger from '../utils/logger.js';
-import { getTypeOrmConfig, sanitizeConfigForLogging, DB_CONFIG_CONSTANTS } from './dbConfig.js';
+import logger from '../utils/logger';
+import { getTypeOrmConfig, sanitizeConfigForLogging, DB_CONFIG_CONSTANTS } from './dbConfig';
 import * as path from 'path';
 
 /**

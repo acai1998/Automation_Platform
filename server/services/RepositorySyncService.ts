@@ -1,6 +1,6 @@
-import { query, queryOne, getPool } from '../config/database.js';
-import { repositoryService, RepositoryConfig, ScriptFileInfo, ParsedTestCase } from './RepositoryService.js';
-import { scriptParserService } from './ScriptParserService.js';
+import { query, queryOne, getPool } from '../config/database';
+import { repositoryService, RepositoryConfig, ScriptFileInfo, ParsedTestCase } from './RepositoryService';
+import { scriptParserService } from './ScriptParserService';
 
 export interface SyncLog {
   id: number;
