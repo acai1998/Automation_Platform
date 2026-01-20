@@ -164,6 +164,7 @@ export class DashboardRepository extends BaseRepository<any> {
         'execution.passedCases',
         'execution.failedCases',
         'user.displayName',
+        'user.username',
         'user.id',
       ])
       .orderBy('execution.startTime', 'DESC')

@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { User } from './User';
 
 /**
  * TaskExecution Entity - 映射 Auto_TestCaseTaskExecutions 表
@@ -37,6 +38,10 @@ export class TaskExecution {
 
   @Column({ type: 'int', name: 'executed_by' })
   executedBy: number;
+
+  @ManyToOne(() => User, { eager: false })
+  @JoinColumn({ name: 'executed_by' })
+  executedByUser: User;
 
   @Column({ type: 'datetime', name: 'start_time', nullable: true })
   startTime: Date | null;
