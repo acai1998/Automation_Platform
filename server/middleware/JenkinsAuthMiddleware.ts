@@ -173,7 +173,9 @@ curl -X POST http://localhost:3000/api/jenkins/callback/test \\
         const clientIP = this.getClientIP(req);
         const diagnostics = this.generateAuthFailureDiagnostics(req, authResult);
         
-        console.warn(`[AUTH] ❌ Authentication failed for ${clientIP}`, {
+        // NOTE: Keep the first argument as a constant string to avoid
+        // "externally-controlled format string" (CodeQL js/tainted-format-string).
+        console.warn('[AUTH] ❌ Authentication failed', {
           ip: clientIP,
           userAgent: req.get('User-Agent'),
           endpoint: `${req.method} ${req.path}`,
