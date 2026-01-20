@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query, queryOne, getPool } from '../config/database.js';
+import { query, queryOne, getPool } from '../config/database';
 
 const router = Router();
 

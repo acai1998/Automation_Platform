@@ -32,3 +32,26 @@ export interface DashboardResponse {
     executedById: number;
   }>;
 }
+
+// Chart filter types for interactive features
+export type TestStatusFilter = 'all' | 'passed' | 'failed' | 'skipped';
+
+export interface ChartSegmentData {
+  name: string;
+  value: number;
+  color: string;
+  percentage: number;
+  icon: string;
+  status: TestStatusFilter;
+}
+
+export interface ChartFilterState {
+  selectedStatus: TestStatusFilter;
+  isActive: boolean;
+}
+
+export interface ChartInteractionHandlers {
+  onSegmentClick: (status: TestStatusFilter) => void;
+  onCenterClick: () => void;
+  onFilterClear: () => void;
+}

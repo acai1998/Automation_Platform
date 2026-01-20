@@ -7,7 +7,7 @@ interface ApiResponse<T> {
   total?: number;
 }
 
-async function request<T>(
+export async function request<T>(
   endpoint: string,
   options?: RequestInit
 ): Promise<ApiResponse<T>> {

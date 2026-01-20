@@ -15,6 +15,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "strictPropertyInitialization": false,
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
@@ -23,6 +26,6 @@
     }
   },
   "include": ["src", "shared"],
-  "exclude": ["node_modules", "dist", "archive", "tmp", ".aiconfig"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "exclude": ["node_modules", "dist", "archive", "tmp", ".aiconfig"]
 }
+

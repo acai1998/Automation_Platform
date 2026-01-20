@@ -1,8 +1,12 @@
 import { Router } from 'express';
-import { query, queryOne, getPool } from '../config/database.js';
-import { jenkinsService, CaseType } from '../services/JenkinsService.js';
+import { AppDataSource } from '../config/dataSource';
+import { TestCaseRepository } from '../repositories/TestCaseRepository';
+import { jenkinsService, CaseType } from '../services/JenkinsService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS, createTimer } from '../config/logging';
 
 const router = Router();
+const testCaseRepository = new TestCaseRepository(AppDataSource);
 
 interface TestCase {
   id: number;
@@ -34,84 +38,57 @@ interface TestCase {
  * 获取用例列表
  */
 router.get('/', async (req, res) => {
+  const timer = createTimer();
+
   try {
     const { projectId, module, enabled, type, search, limit = 50, offset = 0 } = req.query;
 
-    let sql = `
-      SELECT tc.*, u.display_name as created_by_name
-      FROM Auto_TestCase tc
-      LEFT JOIN Auto_Users u ON tc.created_by = u.id
-      WHERE 1=1
-    `;
-    const params: unknown[] = [];
+    logger.info('Fetching test cases list', {
+      filters: { projectId, module, enabled, type, search },
+      pagination: { limit, offset },
+    }, LOG_CONTEXTS.CASES);
 
-    if (projectId) {
-      sql += ' AND tc.project_id = ?';
-      params.push(projectId);
-    }
-    if (module) {
-      sql += ' AND tc.module = ?';
-      params.push(module);
-    }
-    if (enabled !== undefined) {
-      sql += ' AND tc.enabled = ?';
-      params.push(enabled === 'true' || enabled === '1' ? 1 : 0);
-    }
-    if (type) {
-      sql += ' AND tc.type = ?';
-      params.push(type);
-    }
-    if (search) {
-      sql += ' AND (tc.name LIKE ? OR tc.description LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`);
-    }
+    const options = {
+      projectId: projectId ? Number(projectId) : undefined,
+      module: module as string | undefined,
+      enabled: enabled !== undefined ? (enabled === 'true' || enabled === '1') : undefined,
+      type: type as string | undefined,
+      search: search as string | undefined,
+      limit: Number(limit),
+      offset: Number(offset),
+    };
 
-    sql += ' ORDER BY tc.updated_at DESC LIMIT ? OFFSET ?';
-    params.push(Number(limit), Number(offset));
+    const data = await testCaseRepository.findAllWithUser(options);
 
-    const data = await query<TestCase[]>(sql, params);
-
-    // 如果没有数据，返回空数组和友善提示
+    // 如果没有数据,返回空数组和友善提示
     if (!Array.isArray(data) || data.length === 0) {
       return res.json({
         success: true,
         data: [],
         total: 0,
-        message: '暂无测试用例数据，请检查筛选条件或联系管理员添加用例'
+        message: '暂无测试用例数据,请检查筛选条件或联系管理员添加用例'
       });
     }
 
     // 获取总数
-    let countSql = 'SELECT COUNT(*) as total FROM Auto_TestCase tc WHERE 1=1';
-    const countParams: unknown[] = [];
-    if (projectId) {
-      countSql += ' AND tc.project_id = ?';
-      countParams.push(projectId);
-    }
-    if (enabled !== undefined) {
-      countSql += ' AND tc.enabled = ?';
-      countParams.push(enabled === 'true' || enabled === '1' ? 1 : 0);
-    }
-    if (type) {
-      countSql += ' AND tc.type = ?';
-      countParams.push(type);
-    }
-    if (search) {
-      countSql += ' AND (tc.name LIKE ? OR tc.description LIKE ?)';
-      countParams.push(`%${search}%`, `%${search}%`);
-    }
+    const total = await testCaseRepository.count(options);
 
-    const countResult = await queryOne<{ total: number }>(countSql, countParams);
-    const total = countResult?.total ?? 0;
+    const duration = timer();
+    logger.info('Test cases list fetched successfully', {
+      resultCount: data.length,
+      total,
+      duration: `${duration}ms`,
+      hasFilters: !!(projectId || module || enabled !== undefined || type || search),
+    }, LOG_CONTEXTS.CASES);
 
     res.json({ success: true, data, total });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
+    const duration = timer();
+    logger.errorLog(error, 'Failed to fetch test cases list', {
       endpoint: req.path,
-      method: req.method
+      method: req.method,
+      duration: `${duration}ms`,
+      query: req.query,
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -125,11 +102,9 @@ router.get('/', async (req, res) => {
  */
 router.get('/modules/list', async (_req, res) => {
   try {
-    const data = await query<Array<{ module: string }>>(
-      'SELECT DISTINCT module FROM Auto_TestCase WHERE module IS NOT NULL ORDER BY module'
-    );
+    const data = await testCaseRepository.getDistinctModules();
 
-    res.json({ success: true, data: data.map((d) => d.module) });
+    res.json({ success: true, data });
   } catch (error: unknown) {
     // 增强错误日志记录
     console.error('Database operation failed:', {
@@ -175,12 +150,7 @@ router.get('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
-    const data = await queryOne<TestCase>(`
-      SELECT tc.*, u.display_name as created_by_name
-      FROM Auto_TestCase tc
-      LEFT JOIN Auto_Users u ON tc.created_by = u.id
-      WHERE tc.id = ?
-    `, [id]);
+    const data = await testCaseRepository.findByIdWithUser(id);
 
     if (!data) {
       return res.status(404).json({ success: false, message: 'Case not found' });
@@ -223,29 +193,20 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, message: 'name is required' });
     }
 
-    const pool = getPool();
-    const [result] = await pool.execute(
-      `INSERT INTO Auto_TestCase (name, description, project_id, module, priority, type, tags, config_json, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        name,
-        description || null,
-        projectId || null,
-        module || null,
-        priority,
-        type,
-        tags || null,
-        typeof configJson === 'string' ? configJson : JSON.stringify(configJson || {}),
-        createdBy,
-        createdBy,
-      ]
-    );
-
-    const insertResult = result as { insertId: number };
+    const testCase = await testCaseRepository.createTestCase({
+      name,
+      description,
+      module,
+      priority,
+      type,
+      tags,
+      configJson: typeof configJson === 'string' ? configJson : JSON.stringify(configJson || {}),
+      createdBy,
+    });
 
     res.json({
       success: true,
-      data: { id: insertResult.insertId },
+      data: { id: testCase.id },
       message: 'Case created successfully',
     });
   } catch (error: unknown) {
@@ -283,57 +244,23 @@ router.put('/:id', async (req, res) => {
       updatedBy = 1,
     } = req.body;
 
-    // 构建更新语句
-    const updates: string[] = [];
-    const params: unknown[] = [];
+    const updateData: Record<string, unknown> = {};
 
-    if (name !== undefined) {
-      updates.push('name = ?');
-      params.push(name);
-    }
-    if (description !== undefined) {
-      updates.push('description = ?');
-      params.push(description);
-    }
-    if (projectId !== undefined) {
-      updates.push('project_id = ?');
-      params.push(projectId);
-    }
-    if (module !== undefined) {
-      updates.push('module = ?');
-      params.push(module);
-    }
-    if (priority !== undefined) {
-      updates.push('priority = ?');
-      params.push(priority);
-    }
-    if (type !== undefined) {
-      updates.push('type = ?');
-      params.push(type);
-    }
-    if (enabled !== undefined) {
-      updates.push('enabled = ?');
-      params.push(enabled ? 1 : 0);
-    }
-    if (tags !== undefined) {
-      updates.push('tags = ?');
-      params.push(tags);
-    }
-    if (scriptPath !== undefined) {
-      updates.push('script_path = ?');
-      params.push(scriptPath);
-    }
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (projectId !== undefined) updateData.projectId = projectId;
+    if (module !== undefined) updateData.module = module;
+    if (priority !== undefined) updateData.priority = priority;
+    if (type !== undefined) updateData.type = type;
+    if (enabled !== undefined) updateData.enabled = enabled;
+    if (tags !== undefined) updateData.tags = tags;
+    if (scriptPath !== undefined) updateData.scriptPath = scriptPath;
     if (configJson !== undefined) {
-      updates.push('config_json = ?');
-      params.push(typeof configJson === 'string' ? configJson : JSON.stringify(configJson));
+      updateData.configJson = typeof configJson === 'string' ? configJson : JSON.stringify(configJson);
     }
+    updateData.updatedBy = updatedBy;
 
-    updates.push('updated_by = ?');
-    params.push(updatedBy);
-    params.push(id);
-
-    const pool = getPool();
-    await pool.execute(`UPDATE Auto_TestCase SET ${updates.join(', ')} WHERE id = ?`, params);
+    await testCaseRepository.updateTestCase(id, updateData);
 
     res.json({ success: true, message: 'Case updated successfully' });
   } catch (error: unknown) {
@@ -358,8 +285,7 @@ router.delete('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
-    const pool = getPool();
-    await pool.execute('DELETE FROM Auto_TestCase WHERE id = ?', [id]);
+    await testCaseRepository.deleteTestCase(id);
 
     res.json({ success: true, message: 'Case deleted successfully' });
   } catch (error: unknown) {
@@ -385,17 +311,7 @@ router.post('/:id/run', async (req, res) => {
     const id = parseInt(req.params.id);
 
     // 获取用例信息
-    const testCase = await queryOne<{
-      id: number;
-      name: string;
-      type: string;
-      script_path: string;
-      enabled: boolean;
-    }>(`
-      SELECT id, name, type, script_path, enabled
-      FROM Auto_TestCase
-      WHERE id = ?
-    `, [id]);
+    const testCase = await testCaseRepository.findById(id);
 
     if (!testCase) {
       return res.status(404).json({ success: false, message: 'Case not found' });
@@ -407,7 +323,7 @@ router.post('/:id/run', async (req, res) => {
     }
 
     // 检查是否有脚本路径
-    if (!testCase.script_path) {
+    if (!testCase.scriptPath) {
       return res.status(400).json({ success: false, message: 'Case has no script path configured' });
     }
 
@@ -425,7 +341,7 @@ router.post('/:id/run', async (req, res) => {
     const result = await jenkinsService.triggerJob(
       id,
       caseType,
-      testCase.script_path,
+      testCase.scriptPath,
       callbackUrl
     );
 
@@ -471,7 +387,7 @@ router.post('/:id/callback', async (req, res) => {
     const { status, duration, errorMessage } = req.body;
 
     // 检查用例是否存在
-    const testCase = await queryOne<{ id: number }>('SELECT id FROM Auto_TestCase WHERE id = ?', [id]);
+    const testCase = await testCaseRepository.findById(id);
     if (!testCase) {
       return res.status(404).json({ success: false, message: 'Case not found' });
     }
