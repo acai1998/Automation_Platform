@@ -162,7 +162,7 @@ router.get('/:id', async (req, res) => {
     const id = parseInt(req.params.id);
     const data = await executionService.getExecutionDetail(id);
 
-    if (!data.execution) {
+    if (!data || !data.execution) {
       return res.status(404).json({ success: false, message: 'Execution not found' });
     }
 

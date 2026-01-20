@@ -3,6 +3,14 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Edit, Trash2, Copy, Check, ExternalLink, Star } from 'lucide-react';
 import { GitHubRepository } from '@/types/repository';
 
@@ -72,9 +80,14 @@ export default function GitHubRepositoryTable({
   };
 
   const handleDeleteClick = (id: string) => {
-    if (!confirm('确定要删除这个仓库吗？此操作无法撤销。')) return;
-    onDelete(id);
-    setDeleteConfirmId(null);
+    setDeleteConfirmId(id);
+  };
+
+  const handleConfirmDelete = () => {
+    if (deleteConfirmId) {
+      onDelete(deleteConfirmId);
+      setDeleteConfirmId(null);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -200,6 +213,7 @@ export default function GitHubRepositoryTable({
                           size="sm"
                           onClick={() => onCopyUrl(repo.id, repo.url)}
                           className="hover:bg-blue-100 dark:hover:bg-blue-900"
+                          aria-label="复制 URL"
                         >
                           {copiedId === repo.id ? (
                             <Check className="w-4 h-4 text-green-600" />
@@ -214,6 +228,7 @@ export default function GitHubRepositoryTable({
                           size="sm"
                           onClick={() => window.open(repo.url, '_blank')}
                           className="hover:bg-blue-100 dark:hover:bg-blue-900"
+                          aria-label="打开仓库"
                         >
                           <ExternalLink className="w-4 h-4" />
                         </Button>
@@ -224,6 +239,7 @@ export default function GitHubRepositoryTable({
                           size="sm"
                           onClick={() => onEdit(repo.id)}
                           className="hover:bg-amber-100 dark:hover:bg-amber-900"
+                          aria-label="编辑"
                         >
                           <Edit className="w-4 h-4" />
                         </Button>
@@ -234,6 +250,7 @@ export default function GitHubRepositoryTable({
                           size="sm"
                           onClick={() => handleDeleteClick(repo.id)}
                           className="hover:bg-red-100 dark:hover:bg-red-900"
+                          aria-label="删除"
                         >
                           <Trash2 className="w-4 h-4 text-red-600" />
                         </Button>
@@ -296,6 +313,7 @@ export default function GitHubRepositoryTable({
                 size="sm"
                 onClick={() => onCopyUrl(repo.id, repo.url)}
                 className="flex-1"
+                aria-label="复制 URL"
               >
                 {copiedId === repo.id ? (
                   <><Check className="w-4 h-4 mr-1 text-green-600" /> 已复制</>
@@ -308,6 +326,7 @@ export default function GitHubRepositoryTable({
                 size="sm"
                 onClick={() => window.open(repo.url, '_blank')}
                 className="flex-1"
+                aria-label="打开仓库"
               >
                 <ExternalLink className="w-4 h-4 mr-1" />
                 打开
@@ -317,6 +336,7 @@ export default function GitHubRepositoryTable({
                 size="sm"
                 onClick={() => onEdit(repo.id)}
                 className="flex-1"
+                aria-label="编辑"
               >
                 <Edit className="w-4 h-4 mr-1" />
                 编辑
@@ -326,6 +346,7 @@ export default function GitHubRepositoryTable({
                 size="sm"
                 onClick={() => handleDeleteClick(repo.id)}
                 className="flex-1 text-red-600"
+                aria-label="删除"
               >
                 <Trash2 className="w-4 h-4 mr-1" />
                 删除
@@ -343,6 +364,25 @@ export default function GitHubRepositoryTable({
           </p>
         </div>
       )}
+
+      <Dialog open={!!deleteConfirmId} onOpenChange={(open) => !open && setDeleteConfirmId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>确认删除</DialogTitle>
+            <DialogDescription>
+              确定要删除这个仓库吗？此操作无法撤销。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmDelete}>
+              删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

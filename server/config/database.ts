@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import logger from '../utils/logger.js';
 import { LOG_CONTEXTS, createTimer } from './logging.js';
+import { AppDataSource, initializeDataSource } from './dataSource.js';
 
 // MariaDB 连接配置
 const DB_NAME = process.env.DB_NAME || 'autotest';
@@ -182,6 +183,9 @@ export async function closePool(): Promise<void> {
     }, LOG_CONTEXTS.DATABASE);
   }
 }
+
+// TypeORM 相关导出
+export { AppDataSource, initializeDataSource };
 
 export default {
   getPool,

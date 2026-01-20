@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import GitHubRepositoryTable from '../GitHubRepositoryTable';
 import { GitHubRepository } from '@/types/repository';
@@ -21,6 +21,16 @@ vi.mock('@/components/ui/tooltip', () => ({
   TooltipContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
+// Mock Dialog components
+vi.mock('@/components/ui/dialog', () => ({
+  Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) => open ? <div data-testid="dialog">{children}</div> : null,
+  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 const mockRepositories: GitHubRepository[] = [
@@ -83,5 +93,28 @@ describe('GitHubRepositoryTable', () => {
             expect(defaultProps.onSelectChange).toHaveBeenCalled();
         });
     }
+  });
+
+  it('shows delete confirmation dialog and deletes on confirm', async () => {
+    render(<GitHubRepositoryTable {...defaultProps} />);
+    
+    // Find delete buttons (aria-label="删除")
+    const deleteButtons = screen.getAllByLabelText('删除');
+    expect(deleteButtons.length).toBeGreaterThan(0);
+    
+    // Click the first one (id: 1)
+    fireEvent.click(deleteButtons[0]);
+    
+    // Check if dialog is open
+    const dialog = screen.getByTestId('dialog');
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText('确认删除')).toBeInTheDocument();
+    
+    // Find the confirm button inside dialog
+    const confirmButton = within(dialog).getByText('删除', { selector: 'button' });
+    
+    fireEvent.click(confirmButton);
+    
+    expect(defaultProps.onDelete).toHaveBeenCalledWith('1');
   });
 });

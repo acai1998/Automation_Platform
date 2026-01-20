@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef, useMemo } from "react";
-import { MoreVertical, Loader2 } from "lucide-react";
+import { MoreVertical, Loader2, Filter } from "lucide-react";
 import { useLocation } from "wouter";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { DashboardResponse } from "@/types/dashboard";
+import type { DashboardResponse, TestStatusFilter } from "@/types/dashboard";
 
 interface RecentRun {
   id: number;
@@ -195,9 +195,10 @@ interface RecentTestsProps {
   data?: DashboardResponse;
   initialData?: RecentRun[];
   onRefresh?: () => Promise<void>;
+  statusFilter?: TestStatusFilter;
 }
 
-export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) {
+export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all' }: RecentTestsProps) {
   const [, setLocation] = useLocation();
   const [runs, setRuns] = useState<RecentRun[]>(() => initialData || []);
   const [loading, setLoading] = useState(() => !initialData);
@@ -206,9 +207,26 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
   // 响应式Grid布局
   const { gridTemplate, showTimeColumn } = useResponsiveGrid();
 
+  // 根据状态筛选数据
+  const filteredRuns = useMemo(() => {
+    if (statusFilter === 'all') {
+      return runs;
+    }
+
+    // 映射 chart filter 到 test status
+    const statusMapping: Record<Exclude<TestStatusFilter, 'all'>, TestStatus[]> = {
+      'passed': ['success'],
+      'failed': ['failed'],
+      'skipped': ['cancelled'] // 将 cancelled 映射为 skipped
+    };
+
+    const targetStatuses = statusMapping[statusFilter as Exclude<TestStatusFilter, 'all'>];
+    return runs.filter(run => targetStatuses?.includes(run.status));
+  }, [runs, statusFilter]);
+
   // 使用虚拟滚动优化性能 - PC端专用
   const rowVirtualizer = useVirtualizer({
-    count: runs.length,
+    count: filteredRuns.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 72, // PC端行高估计值
     overscan: 5, // 预渲染额外行数
@@ -235,9 +253,22 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-slate-900 dark:text-white text-xl font-bold tracking-tight">
-          最近测试运行
-        </h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-slate-900 dark:text-white text-xl font-bold tracking-tight">
+            最近测试运行
+          </h2>
+          {statusFilter !== 'all' && (
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-primary" />
+              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
+                {statusFilter === 'passed' && '仅显示成功'}
+                {statusFilter === 'failed' && '仅显示失败'}
+                {statusFilter === 'skipped' && '仅显示跳过'}
+                <span className="ml-1 text-primary/60">({filteredRuns.length})</span>
+              </span>
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           {onRefresh && (
             <button
@@ -268,9 +299,20 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
-        ) : runs.length === 0 ? (
+        ) : filteredRuns.length === 0 ? (
           <div className="text-center py-12 text-slate-500 dark:text-gray-400">
-            暂无测试运行记录
+            {statusFilter !== 'all' ? (
+              <div className="space-y-2">
+                <div>没有找到符合筛选条件的测试记录</div>
+                <div className="text-xs">
+                  当前筛选: {statusFilter === 'passed' && '成功状态'}
+                  {statusFilter === 'failed' && '失败状态'}
+                  {statusFilter === 'skipped' && '跳过状态'}
+                </div>
+              </div>
+            ) : (
+              '暂无测试运行记录'
+            )}
           </div>
         ) : (
           <div className="relative">
@@ -339,7 +381,7 @@ export function RecentTests({ data, initialData, onRefresh }: RecentTestsProps) 
                 }}
               >
                 {rowVirtualizer.getVirtualItems().map((virtualItem) => {
-                  const run = runs[virtualItem.index];
+                  const run = filteredRuns[virtualItem.index];
                   return (
                     <div
                       key={run.id}

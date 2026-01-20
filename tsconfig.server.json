@@ -5,7 +5,10 @@
     "moduleResolution": "bundler",
     "esModuleInterop": true,
     "strict": true,
+    "strictPropertyInitialization": false,
     "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
     "outDir": "./dist/server",
     "baseUrl": ".",
     "paths": {

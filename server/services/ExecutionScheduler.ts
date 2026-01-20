@@ -116,11 +116,11 @@ export class ExecutionScheduler {
         executionDetails = {
           id: runId,
           status: batchExecution.execution.status,
-          triggerType: batchExecution.execution.trigger_type,
-          totalCases: batchExecution.execution.total_cases,
-          startTime: new Date(batchExecution.execution.start_time || Date.now()),
-          jenkinsJob: batchExecution.execution.jenkins_job,
-          jenkinsBuildId: batchExecution.execution.jenkins_build_id
+          triggerType: batchExecution.execution.triggerType,
+          totalCases: batchExecution.execution.totalCases,
+          startTime: new Date(batchExecution.execution.startTime || Date.now()),
+          jenkinsJob: batchExecution.execution.jenkinsJob || undefined,
+          jenkinsBuildId: batchExecution.execution.jenkinsBuildId || undefined
         };
       }
 

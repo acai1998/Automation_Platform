@@ -286,11 +286,11 @@ router.get('/status/:executionId', async (req: Request, res: Response) => {
     const executionId = parseInt(req.params.executionId);
     const detail = await executionService.getExecutionDetail(executionId);
 
-    if (!detail.execution) {
+    if (!detail || !detail.execution) {
       return res.status(404).json({ success: false, message: 'Execution not found' });
     }
 
-    const execution = detail.execution as Record<string, unknown>;
+    const execution = detail.execution as any;
 
     res.json({
       success: true,
@@ -1064,18 +1064,18 @@ router.get('/diagnose',
     const execution = batch.execution;
 
     // 计算执行时长
-    const startTime = execution.start_time ? new Date(execution.start_time).getTime() : null;
+    const startTime = execution.startTime ? new Date(execution.startTime).getTime() : null;
     const currentTime = Date.now();
     const executionDuration = startTime ? currentTime - startTime : 0;
 
     // 检查Jenkins连接状态
     let jenkinsConnectivity: any = null;
-    if (execution.jenkins_job && execution.jenkins_build_id) {
+    if (execution.jenkinsJob && execution.jenkinsBuildId) {
       try {
         const { jenkinsStatusService } = await import('../services/JenkinsStatusService.js');
         const buildStatus = await jenkinsStatusService.getBuildStatus(
-          execution.jenkins_job as string,
-          execution.jenkins_build_id as string
+          execution.jenkinsJob as string,
+          execution.jenkinsBuildId as string
         );
         jenkinsConnectivity = {
           canConnect: !!buildStatus,
@@ -1098,24 +1098,24 @@ router.get('/diagnose',
     const diagnostics = {
       executionId: execution.id,
       status: execution.status,
-      jenkinsJob: execution.jenkins_job,
-      jenkinsBuildId: execution.jenkins_build_id,
-      jenkinsUrl: execution.jenkins_url,
-      startTime: execution.start_time,
-      createdAt: execution.created_at,
-      totalCases: execution.total_cases,
-      passedCases: execution.passed_cases,
-      failedCases: execution.failed_cases,
-      skippedCases: execution.skipped_cases,
+      jenkinsJob: execution.jenkinsJob,
+      jenkinsBuildId: execution.jenkinsBuildId,
+      jenkinsUrl: execution.jenkinsUrl,
+      startTime: execution.startTime,
+      createdAt: execution.createdAt,
+      totalCases: execution.totalCases,
+      passedCases: execution.passedCases,
+      failedCases: execution.failedCases,
+      skippedCases: execution.skippedCases,
       executionDuration,
 
       // 诊断信息
       diagnostics: {
-        jenkinsInfoMissing: !execution.jenkins_job || !execution.jenkins_build_id || !execution.jenkins_url,
-        startTimeMissing: !execution.start_time,
+        jenkinsInfoMissing: !execution.jenkinsJob || !execution.jenkinsBuildId || !execution.jenkinsUrl,
+        startTimeMissing: !execution.startTime,
         stillPending: execution.status === 'pending',
         stillRunning: execution.status === 'running',
-        noTestResults: execution.passed_cases === 0 && execution.failed_cases === 0 && execution.skipped_cases === 0,
+        noTestResults: execution.passedCases === 0 && execution.failedCases === 0 && execution.skippedCases === 0,
         longRunning: executionDuration > 5 * 60 * 1000, // 超过5分钟
         veryLongRunning: executionDuration > 10 * 60 * 1000, // 超过10分钟
         jenkinsConnectivity,
@@ -1125,7 +1125,7 @@ router.get('/diagnose',
           executionAge: executionDuration,
           executionAgeMinutes: Math.round(executionDuration / 60000),
           isOld: executionDuration > 30 * 60 * 1000, // 超过30分钟
-          createdRecently: startTime && execution.created_at ? (currentTime - new Date(execution.created_at).getTime()) < 60 * 1000 : false
+          createdRecently: startTime && execution.createdAt ? (currentTime - new Date(execution.createdAt).getTime()) < 60 * 1000 : false
         },
 
         // 建议
