@@ -1,4 +1,6 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import 'reflect-metadata';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { User } from './User';
 
 /**
  * TestCase Entity - 映射 Auto_TestCase 表
@@ -8,14 +10,29 @@ export class TestCase {
   @PrimaryGeneratedColumn()
   id: number;
 
+  @Column({ type: 'varchar', length: 255, name: 'case_key', nullable: true, unique: true })
+  caseKey: string | null;
+
   @Column({ type: 'varchar', length: 255 })
   name: string;
 
   @Column({ type: 'text', nullable: true })
   description: string | null;
 
+  @Column({ type: 'int', name: 'project_id', nullable: true })
+  projectId: number | null;
+
+  @Column({ type: 'int', name: 'repo_id', nullable: true })
+  repoId: number | null;
+
   @Column({ type: 'varchar', length: 100, nullable: true })
   module: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  owner: string | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  source: string | null;
 
   @Column({ type: 'enum', enum: ['P0', 'P1', 'P2', 'P3'], default: 'P2' })
   priority: 'P0' | 'P1' | 'P2' | 'P3';
@@ -35,8 +52,22 @@ export class TestCase {
   @Column({ type: 'boolean', name: 'enabled', default: true })
   enabled: boolean;
 
+  @Column({
+    type: 'enum',
+    enum: ['active', 'inactive', 'deprecated', 'draft'],
+    default: 'active'
+  })
+  status: 'active' | 'inactive' | 'deprecated' | 'draft';
+
+  @Column({ type: 'varchar', length: 100, name: 'last_sync_commit', nullable: true })
+  lastSyncCommit: string | null;
+
   @Column({ type: 'int', name: 'created_by', nullable: true })
   createdBy: number | null;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'created_by' })
+  creator: User | null;
 
   @Column({ type: 'int', name: 'updated_by', nullable: true })
   updatedBy: number | null;

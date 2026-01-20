@@ -1,7 +1,8 @@
+import 'reflect-metadata';
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { testConnection } from './config/database.js';
+import { testConnection, initializeDataSource } from './config/database.js';
 import { initializeLogging, LOG_CONTEXTS } from './config/logging.js';
 import { requestLoggingMiddleware, errorLoggingMiddleware } from './middleware/RequestLoggingMiddleware.js';
 import logger from './utils/logger.js';
@@ -33,6 +34,12 @@ logger.info('Initializing MariaDB connection...', {}, LOG_CONTEXTS.DATABASE);
 testConnection().then(async (connected) => {
   if (connected) {
     logger.info('MariaDB connected successfully', {}, LOG_CONTEXTS.DATABASE);
+    try {
+      await initializeDataSource();
+    } catch (err) {
+      logger.errorLog(err, LOG_CONTEXTS.DATABASE, { message: 'TypeORM DataSource initialization failed' });
+      process.exit(1);
+    }
   } else {
     logger.error('MariaDB connection failed!', {}, LOG_CONTEXTS.DATABASE);
     process.exit(1);

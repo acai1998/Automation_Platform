@@ -1,5 +1,3 @@
-import { getPool } from '../config/database.js';
-
 /**
  * Jenkins 配置接口
  */
@@ -79,7 +77,6 @@ export class JenkinsService {
     scriptPath: string,
     callbackUrl?: string
   ): Promise<JenkinsTriggerResult> {
-    const pool = getPool();
     const jobName = this.getJobName(type);
     const triggerUrl = `${this.config.baseUrl}/job/${jobName}/buildWithParameters`;
 

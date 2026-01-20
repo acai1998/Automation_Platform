@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { DataSource, DataSourceOptions } from 'typeorm';
 import logger from '../utils/logger.js';
 import { getTypeOrmConfig, sanitizeConfigForLogging, DB_CONFIG_CONSTANTS } from './dbConfig.js';
@@ -8,13 +9,10 @@ import * as path from 'path';
  * 根据环境动态确定实体文件的加载路径
  */
 function getEntityPaths(): string[] {
-  const isProduction = process.env.NODE_ENV === 'production';
-  const baseDir = isProduction ? 'dist' : '.';
-  const extension = isProduction ? 'js' : 'ts';
-
-  // 使用绝对路径避免路径解析问题
-  const entityPath = path.resolve(process.cwd(), baseDir, 'server', 'entities', `*.${extension}`);
-
+  const isJsRuntime = path.extname(__filename) === '.js';
+  const entityPath = isJsRuntime
+    ? path.resolve(process.cwd(), 'dist', 'server', 'server', 'entities', '*.js')
+    : path.resolve(process.cwd(), 'server', 'entities', '*.ts');
   return [entityPath];
 }
 
