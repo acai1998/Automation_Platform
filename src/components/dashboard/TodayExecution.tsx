@@ -147,7 +147,7 @@ export function TodayExecution({
     <div className="w-40 h-40 rounded-full border-8 border-slate-200 dark:border-slate-700 flex items-center justify-center">
       <div className="text-center">
         <span className="text-2xl font-bold text-slate-400 dark:text-slate-500">0</span>
-        <div className="text-xs text-slate-400 dark:text-slate-500 uppercase tracking-wider font-semibold">
+        <div className="text-sm text-slate-500 dark:text-gray-400 tracking-normal font-medium text-crisp">
           测试用例
         </div>
       </div>
@@ -240,7 +240,7 @@ export function TodayExecution({
 
             {/* Interactive Center Content */}
             <div
-              className="absolute inset-0 flex items-center justify-center cursor-pointer transition-all duration-200"
+              className="absolute inset-0 flex items-center justify-center cursor-pointer"
               onClick={handleCenterClick}
               role="button"
               tabIndex={0}
@@ -253,10 +253,10 @@ export function TodayExecution({
               }}
             >
               <div className="text-center pointer-events-none">
-                <div className="text-3xl font-bold text-slate-900 dark:text-white transition-all duration-300">
+                <div className="text-3xl font-bold text-slate-900 dark:text-white">
                   {chartData.total}
                 </div>
-                <div className="text-xs text-slate-500 dark:text-gray-400 uppercase tracking-wider font-semibold">
+                <div className="text-sm text-slate-600 dark:text-gray-300 tracking-normal font-medium text-crisp">
                   {selectedFilter !== 'all' ? '点击清除' : '测试用例'}
                 </div>
               </div>

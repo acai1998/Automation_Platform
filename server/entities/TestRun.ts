@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { User } from './User';
 
 /**
  * TestRun Entity - 映射 Auto_TestRun 表
@@ -11,14 +12,18 @@ export class TestRun {
   @Column({ type: 'int', name: 'project_id', nullable: true })
   projectId: number | null;
 
-  @Column({ type: 'enum', enum: ['manual', 'jenkins', 'schedule'], default: 'manual' })
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  @Column({ type: 'enum', enum: ['pending', 'running', 'success', 'failed', 'aborted'], default: 'pending' })
+  status: 'pending' | 'running' | 'success' | 'failed' | 'aborted';
 
   @Column({ type: 'enum', enum: ['manual', 'jenkins', 'schedule'], default: 'manual', name: 'trigger_type' })
   triggerType: 'manual' | 'jenkins' | 'schedule';
 
   @Column({ type: 'int', name: 'trigger_by' })
   triggerBy: number;
+
+  @ManyToOne(() => User, { eager: false })
+  @JoinColumn({ name: 'trigger_by' })
+  triggerByUser: User;
 
   @Column({ type: 'varchar', length: 255, name: 'jenkins_job', nullable: true })
   jenkinsJob: string | null;
@@ -55,7 +60,4 @@ export class TestRun {
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
-
-  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
-  updatedAt: Date;
 }

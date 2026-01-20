@@ -185,7 +185,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     await this.repository.update(
       { id: executionId, status: In(['pending', 'running']) },
       {
-        status: 'cancelled',
+        status: 'aborted',
         endTime: new Date(),
       }
     );
@@ -197,7 +197,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async updateExecutionResults(
     executionId: number,
     results: {
-      status: 'success' | 'failed' | 'cancelled';
+      status: 'success' | 'failed' | 'aborted';
       passedCases: number;
       failedCases: number;
       skippedCases: number;
@@ -216,7 +216,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async updateTestRunResults(
     runId: number,
     results: {
-      status: 'completed' | 'failed' | 'cancelled';
+      status: 'success' | 'failed' | 'aborted';
       passedCases: number;
       failedCases: number;
       skippedCases: number;
@@ -281,51 +281,77 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
   /**
    * 获取执行结果列表
+   * 修复：使用原生SQL确保字段名正确映射
    */
   async getExecutionResults(executionId: number): Promise<any[]> {
-    return this.testRunResultRepository.createQueryBuilder('result')
-      .leftJoinAndSelect('result.testCase', 'testCase')
-      .where('result.executionId = :executionId', { executionId })
-      .orderBy('result.id', 'ASC')
-      .getRawMany();
+    return this.testRunResultRepository.query(`
+      SELECT 
+        r.id,
+        r.execution_id,
+        r.case_id,
+        r.case_name,
+        COALESCE(tc.module, '-') as module,
+        COALESCE(tc.priority, 'P2') as priority,
+        COALESCE(tc.type, 'api') as type,
+        r.status,
+        r.start_time,
+        r.end_time,
+        r.duration,
+        r.error_message,
+        r.error_stack,
+        r.screenshot_path,
+        r.log_path,
+        r.assertions_total,
+        r.assertions_passed,
+        r.response_data,
+        r.created_at
+      FROM Auto_TestRunResults r
+      LEFT JOIN Auto_TestCase tc ON r.case_id = tc.id
+      WHERE r.execution_id = ?
+      ORDER BY r.id ASC
+    `, [executionId]);
   }
 
   /**
    * 获取所有测试运行记录（分页）
+   * 修复：使用原生SQL确保字段名正确映射，解决前端无法读取数据的问题
    */
   async getAllTestRuns(limit: number = 50, offset: number = 0): Promise<{ data: any[]; total: number }> {
-    const [data, total] = await Promise.all([
-      this.testRunRepository.createQueryBuilder('testRun')
-        .leftJoin('testRun.triggerByUser', 'user')
-        .select([
-          'testRun.id',
-          'testRun.projectId',
-          'testRun.taskName',
-          'testRun.status',
-          'testRun.triggerType',
-          'testRun.triggerBy',
-          'testRun.jenkinsJob',
-          'testRun.jenkinsBuildId',
-          'testRun.jenkinsUrl',
-          'testRun.totalCases',
-          'testRun.passedCases',
-          'testRun.failedCases',
-          'testRun.skippedCases',
-          'testRun.durationMs',
-          'testRun.runConfig',
-          'testRun.startTime',
-          'testRun.endTime',
-          'testRun.createdAt',
-          'testRun.updatedAt',
-          'user.displayName',
-          'user.username',
-        ])
-        .orderBy('testRun.createdAt', 'DESC')
-        .limit(limit)
-        .offset(offset)
-        .getRawMany(),
-      this.testRunRepository.count()
-    ]);
+    // 使用原生SQL查询，确保字段名与前端期望一致
+    const data = await this.testRunRepository.query(`
+      SELECT 
+        tr.id,
+        tr.project_id,
+        CASE 
+          WHEN tr.project_id IS NOT NULL THEN CONCAT('项目 #', tr.project_id)
+          ELSE '未分类'
+        END as project_name,
+        tr.status,
+        tr.trigger_type,
+        tr.trigger_by,
+        COALESCE(u.display_name, u.username, '系统') as trigger_by_name,
+        tr.jenkins_job,
+        tr.jenkins_build_id,
+        tr.jenkins_url,
+        tr.total_cases,
+        tr.passed_cases,
+        tr.failed_cases,
+        tr.skipped_cases,
+        tr.duration_ms,
+        tr.start_time,
+        tr.end_time,
+        tr.created_at
+      FROM Auto_TestRun tr
+      LEFT JOIN Auto_Users u ON tr.trigger_by = u.id
+      ORDER BY tr.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [limit, offset]);
+
+    // 获取总数
+    const countResult = await this.testRunRepository.query(`
+      SELECT COUNT(*) as total FROM Auto_TestRun
+    `);
+    const total = countResult[0]?.total || 0;
 
     return { data, total };
   }

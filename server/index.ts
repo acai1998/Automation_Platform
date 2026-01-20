@@ -14,6 +14,7 @@ import jenkinsRoutes from './routes/jenkins';
 import authRoutes from './routes/auth';
 import repositoriesRoutes from './routes/repositories';
 import { schedulerService } from './services/SchedulerService';
+import { dailySummaryScheduler } from './services/DailySummaryScheduler';
 
 const app = express();
 const BASE_PORT = parseInt(process.env.PORT || '3000', 10);
@@ -36,6 +37,10 @@ testConnection().then(async (connected) => {
     logger.info('MariaDB connected successfully', {}, LOG_CONTEXTS.DATABASE);
     try {
       await initializeDataSource();
+
+      // 初始化每日汇总数据（历史数据回填）
+      await initializeDailySummaryData();
+
     } catch (err) {
       logger.errorLog(err, LOG_CONTEXTS.DATABASE, { message: 'TypeORM DataSource initialization failed' });
       process.exit(1);
@@ -45,6 +50,56 @@ testConnection().then(async (connected) => {
     process.exit(1);
   }
 });
+
+/**
+ * 初始化每日汇总数据
+ * 检查并回填过去90天的汇总数据
+ */
+async function initializeDailySummaryData(): Promise<void> {
+  try {
+    logger.info('Initializing daily summary data...', {}, LOG_CONTEXTS.DATABASE);
+
+    // 启动每日汇总调度器
+    dailySummaryScheduler.start();
+
+    // 检查是否需要历史数据回填
+    const shouldBackfill = process.env.ENABLE_DAILY_SUMMARY_BACKFILL !== 'false';
+
+    if (shouldBackfill) {
+      logger.info('Starting historical daily summary backfill (90 days)...', {}, LOG_CONTEXTS.DATABASE);
+
+      // 异步执行历史数据回填，不阻塞服务器启动
+      setImmediate(async () => {
+        try {
+          const result = await dailySummaryScheduler.backfillHistoricalSummaries(90);
+
+          logger.info('Historical daily summary backfill completed', {
+            totalDays: result.totalDays,
+            successCount: result.successCount,
+            failedCount: result.failedCount,
+            errorCount: result.errors.length,
+          }, LOG_CONTEXTS.DATABASE);
+
+          if (result.errors.length > 0) {
+            logger.warn('Some historical summaries failed to generate', {
+              failedDates: result.errors.map(e => e.date),
+              sampleErrors: result.errors.slice(0, 3).map(e => ({ date: e.date, error: e.error })),
+            }, LOG_CONTEXTS.DATABASE);
+          }
+
+        } catch (error) {
+          logger.errorLog(error, 'Historical daily summary backfill failed', {});
+        }
+      });
+    } else {
+      logger.info('Daily summary backfill disabled by configuration', {}, LOG_CONTEXTS.DATABASE);
+    }
+
+  } catch (error) {
+    logger.errorLog(error, 'Failed to initialize daily summary data', {});
+    // 不中断服务器启动，但记录错误
+  }
+}
 
 // API 路由
 app.use('/api/auth', authRoutes);
@@ -124,6 +179,7 @@ process.on('SIGTERM', () => {
     uptime: process.uptime(),
   }, LOG_CONTEXTS.HTTP);
   schedulerService.stop();
+  dailySummaryScheduler.stop();
   process.exit(0);
 });
 
@@ -133,6 +189,7 @@ process.on('SIGINT', () => {
     uptime: process.uptime(),
   }, LOG_CONTEXTS.HTTP);
   schedulerService.stop();
+  dailySummaryScheduler.stop();
   process.exit(0);
 });
 

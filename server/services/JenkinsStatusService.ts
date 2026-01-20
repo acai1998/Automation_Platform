@@ -77,9 +77,9 @@ export class JenkinsStatusService {
   private config: JenkinsConfig;
 
   constructor() {
-    const token = process.env.JENKINS_TOKEN;
+    const token = process.env.JENKINS_TOKEN || '';
     if (!token) {
-      throw new Error('JENKINS_TOKEN environment variable is required for Jenkins authentication');
+      console.warn('JENKINS_TOKEN environment variable is required for Jenkins authentication. Jenkins integration may not work.');
     }
 
     this.config = {

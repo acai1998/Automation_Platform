@@ -266,6 +266,10 @@
   .text-balance {
     text-wrap: balance;
   }
+  .text-crisp {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
 /* ============================================
