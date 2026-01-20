@@ -165,7 +165,7 @@ export function TodayExecution({
                 <HelpCircle className="h-4 w-4" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="top" className="max-w-xs">
+            <TooltipContent side="top" sideOffset={12} className="max-w-xs">
               <div className="text-slate-600 dark:text-gray-400 text-sm">
                 显示今天内执行用例的实时状态分布（成功/失败/跳过）。点击图表段筛选对应状态的测试，点击中心清除筛选。
               </div>
@@ -182,7 +182,7 @@ export function TodayExecution({
                   <RotateCcw className="h-4 w-4" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top">
+              <TooltipContent side="top" sideOffset={12}>
                 <div className="text-sm">清除筛选</div>
               </TooltipContent>
             </Tooltip>
@@ -240,7 +240,7 @@ export function TodayExecution({
 
             {/* Interactive Center Content */}
             <div
-              className="absolute inset-0 flex items-center justify-center cursor-pointer transition-all duration-200 hover:scale-105"
+              className="absolute inset-0 flex items-center justify-center cursor-pointer transition-all duration-200"
               onClick={handleCenterClick}
               role="button"
               tabIndex={0}

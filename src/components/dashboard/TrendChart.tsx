@@ -185,7 +185,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
                 <HelpCircle className="h-4 w-4" />
               </button>
             </UiTooltipTrigger>
-            <UiTooltipContent side="top" className="max-w-xs">
+            <UiTooltipContent side="top" sideOffset={12} className="max-w-xs">
               <div className="text-slate-600 dark:text-gray-400 text-sm">
                 展示过去 {timeRange === '7d' ? '7 天' : timeRange === '30d' ? '30 天' : '90 天'} 的成功率趋势，用于评估稳定性变化。
               </div>

@@ -77,10 +77,10 @@ export class DashboardRepository extends BaseRepository<any> {
       : null;
 
     return {
-      totalCases: stats.totalCases || 0,
-      todayRuns: stats.todayRuns || 0,
+      totalCases: parseInt(stats.totalCases) || 0,
+      todayRuns: parseInt(stats.todayRuns) || 0,
       todaySuccessRate,
-      runningTasks: stats.runningTasks || 0,
+      runningTasks: parseInt(stats.runningTasks) || 0,
     };
   }
 
@@ -152,8 +152,11 @@ export class DashboardRepository extends BaseRepository<any> {
    * 获取最近测试运行
    */
   async getRecentRuns(limit: number = 10): Promise<RecentRun[]> {
+    // 这里显式通过外键字段执行 LEFT JOIN，而不是依赖 relation 名称解析，
+    // 可以避免在某些实体元数据未正确加载时出现
+    // \"Relation with property path executedByUser in entity was not found\" 错误。
     return this.taskExecutionRepository.createQueryBuilder('execution')
-      .leftJoin('execution.executedByUser', 'user')
+      .leftJoin(User, 'user', 'user.id = execution.executedBy')
       .select([
         'execution.id',
         'execution.taskName',
@@ -302,10 +305,10 @@ export class DashboardRepository extends BaseRepository<any> {
 
     const stats = result[0];
     return {
-      total: stats.total || 0,
-      passed: stats.passed || 0,
-      failed: stats.failed || 0,
-      skipped: stats.skipped || 0,
+      total: parseInt(stats.total) || 0,
+      passed: parseInt(stats.passed) || 0,
+      failed: parseInt(stats.failed) || 0,
+      skipped: parseInt(stats.skipped) || 0,
     };
   }
 
