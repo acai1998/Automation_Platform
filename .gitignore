@@ -9,6 +9,7 @@ __pycache__/
 *.so
 
 # Project specific
+.trae/
 .claude/
 .venv/
 .venv/
