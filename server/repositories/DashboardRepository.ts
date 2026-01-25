@@ -142,7 +142,7 @@ export class DashboardRepository extends BaseRepository<any> {
     // 优先从汇总表获取数据
     const summaries = await this.dailySummaryRepository.createQueryBuilder('summary')
       .select([
-        'summary.summaryDate as date',
+        'DATE_FORMAT(summary.summaryDate, "%Y-%m-%d") as date',
         'summary.totalExecutions',
         'summary.passedCases',
         'summary.failedCases',
@@ -155,14 +155,18 @@ export class DashboardRepository extends BaseRepository<any> {
       .getRawMany();
 
     if (summaries.length > 0) {
+      // 确保返回的数据量不超过请求的天数
+      const result = summaries.length > days ? summaries.slice(-days) : summaries;
+      
       const duration = Date.now() - startTime;
       logger.info('Trend data retrieved from daily summary table', {
         dataSource: 'summary_table',
         days,
-        recordCount: summaries.length,
+        recordCount: result.length,
+        originalCount: summaries.length,
         durationMs: duration,
       }, LOG_CONTEXTS.DASHBOARD);
-      return summaries;
+      return result;
     }
 
     // 如果没有汇总数据，从执行记录实时计算
@@ -173,7 +177,7 @@ export class DashboardRepository extends BaseRepository<any> {
 
     const trendData = await this.taskExecutionRepository.query(`
       SELECT
-        DATE(start_time) as date,
+        DATE_FORMAT(DATE(start_time), '%Y-%m-%d') as date,
         COUNT(*) as totalExecutions,
         COALESCE(SUM(passed_cases), 0) as passedCases,
         COALESCE(SUM(failed_cases), 0) as failedCases,
@@ -186,15 +190,19 @@ export class DashboardRepository extends BaseRepository<any> {
       ORDER BY date ASC
     `, [days]);
 
+    // 确保返回的数据量不超过请求的天数
+    const finalResult = trendData.length > days ? trendData.slice(-days) : trendData;
+
     const duration = Date.now() - startTime;
     logger.info('Trend data calculated from execution records', {
       dataSource: 'fallback_calculation',
       days,
-      recordCount: Array.isArray(trendData) ? trendData.length : 0,
+      recordCount: finalResult.length,
+      originalCount: trendData.length,
       durationMs: duration,
     }, LOG_CONTEXTS.DASHBOARD);
 
-    return trendData;
+    return finalResult;
   }
 
   /**

@@ -84,9 +84,8 @@ router.get('/trend', async (req, res) => {
       });
     }
 
-    // T-1 数据口径调整：用户请求 N 天，实际查询 N+1 天，排除今天后返回 N 天数据
-    const queryDays = days + 1;
-    const data = await dashboardService.getTrendData(queryDays);
+    // T-1 数据口径：查询用户请求的天数，SQL 中的 < CURDATE() 会自动排除今天
+    const data = await dashboardService.getTrendData(days);
 
     // ✅ Validate response data before sending
     if (!Array.isArray(data)) {
@@ -134,7 +133,6 @@ router.get('/trend', async (req, res) => {
 
     logger.debug('Trend data validated', {
       requestedDays: days,
-      queryDays: queryDays,
       originalCount: data.length,
       validatedCount: validatedData.length,
       endpoint: '/trend',
@@ -239,6 +237,9 @@ router.get('/all', async (req, res) => {
         message: 'timeRange parameter must be between 1 and 365 days'
       });
     }
+
+    // T-1 数据口径：查询用户请求的天数，SQL 中的 < CURDATE() 会自动排除今天
+    // 例如：今天是 2026-01-25，用户选择"近7天"，返回 2026-01-18 到 2026-01-24 共7条记录
 
     // 并行获取所有数据（移除 recentRuns 以减少性能压力）
     const [stats, todayExecution, trendData] = await Promise.all([
