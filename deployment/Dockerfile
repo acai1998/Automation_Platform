@@ -25,6 +25,9 @@ COPY configs/ ./configs/
 COPY src/ ./src/
 COPY shared/ ./shared/
 
+# 确保关键目录被正确复制
+RUN ls -la ./src/lib/ || echo "lib directory not found"
+
 # 构建前端
 RUN npm run build
 
