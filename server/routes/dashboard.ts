@@ -84,7 +84,9 @@ router.get('/trend', async (req, res) => {
       });
     }
 
-    const data = await dashboardService.getTrendData(days);
+    // T-1 数据口径调整：用户请求 N 天，实际查询 N+1 天，排除今天后返回 N 天数据
+    const queryDays = days + 1;
+    const data = await dashboardService.getTrendData(queryDays);
 
     // ✅ Validate response data before sending
     if (!Array.isArray(data)) {
@@ -132,6 +134,7 @@ router.get('/trend', async (req, res) => {
 
     logger.debug('Trend data validated', {
       requestedDays: days,
+      queryDays: queryDays,
       originalCount: data.length,
       validatedCount: validatedData.length,
       endpoint: '/trend',
@@ -181,6 +184,45 @@ router.get('/recent-runs', async (req, res) => {
   }
 });
 
+// 辅助验证函数
+const validateStats = (stats: any) => {
+  if (stats && typeof stats === 'object') {
+    return {
+      totalCases: Number.isInteger(stats.totalCases) ? stats.totalCases : 0,
+      todayRuns: Number.isInteger(stats.todayRuns) ? stats.todayRuns : 0,
+      todaySuccessRate: typeof stats.todaySuccessRate === 'number' ? stats.todaySuccessRate : null,
+      runningTasks: Number.isInteger(stats.runningTasks) ? stats.runningTasks : 0,
+    };
+  }
+  return { totalCases: 0, todayRuns: 0, todaySuccessRate: null, runningTasks: 0 };
+};
+
+const validateTodayExecution = (data: any) => {
+  if (data && typeof data === 'object') {
+    return {
+      total: Number.isInteger(data.total) ? data.total : 0,
+      passed: Number.isInteger(data.passed) ? data.passed : 0,
+      failed: Number.isInteger(data.failed) ? data.failed : 0,
+      skipped: Number.isInteger(data.skipped) ? data.skipped : 0,
+    };
+  }
+  return { total: 0, passed: 0, failed: 0, skipped: 0 };
+};
+
+const validateTrendData = (data: any[]) => {
+  if (Array.isArray(data)) {
+    return data.map(item => ({
+      date: item?.date || '',
+      totalExecutions: Number.isInteger(item?.totalExecutions) ? item.totalExecutions : 0,
+      passedCases: Number.isInteger(item?.passedCases) ? item.passedCases : 0,
+      failedCases: Number.isInteger(item?.failedCases) ? item.failedCases : 0,
+      skippedCases: Number.isInteger(item?.skippedCases) ? item.skippedCases : 0,
+      successRate: typeof item?.successRate === 'number' ? item.successRate : 0,
+    }));
+  }
+  return [];
+};
+
 /**
  * GET /api/dashboard/all?timeRange=30d
  * 批量获取仪表盘所有数据
@@ -198,56 +240,23 @@ router.get('/all', async (req, res) => {
       });
     }
 
-    // 并行获取所有数据
-    const [stats, todayExecution, trendData, recentRuns] = await Promise.all([
+    // 并行获取所有数据（移除 recentRuns 以减少性能压力）
+    const [stats, todayExecution, trendData] = await Promise.all([
       dashboardService.getStats(),
       dashboardService.getTodayExecution(),
-      dashboardService.getTrendData(days),
-      dashboardService.getRecentRuns(10)
+      dashboardService.getTrendData(days)
     ]);
 
     // ✅ Validate each data component before sending
-    const validatedStats = stats && typeof stats === 'object' ? {
-      totalCases: Number.isInteger(stats.totalCases) ? stats.totalCases : 0,
-      todayRuns: Number.isInteger(stats.todayRuns) ? stats.todayRuns : 0,
-      todaySuccessRate: typeof stats.todaySuccessRate === 'number' ? stats.todaySuccessRate : null,
-      runningTasks: Number.isInteger(stats.runningTasks) ? stats.runningTasks : 0,
-    } : {
-      totalCases: 0,
-      todayRuns: 0,
-      todaySuccessRate: null,
-      runningTasks: 0,
-    };
-
-    const validatedTodayExecution = todayExecution && typeof todayExecution === 'object' ? {
-      total: Number.isInteger(todayExecution.total) ? todayExecution.total : 0,
-      passed: Number.isInteger(todayExecution.passed) ? todayExecution.passed : 0,
-      failed: Number.isInteger(todayExecution.failed) ? todayExecution.failed : 0,
-      skipped: Number.isInteger(todayExecution.skipped) ? todayExecution.skipped : 0,
-    } : {
-      total: 0,
-      passed: 0,
-      failed: 0,
-      skipped: 0,
-    };
-
-    const validatedTrendData = Array.isArray(trendData) ? trendData.map(item => ({
-      date: item?.date || '',
-      totalExecutions: Number.isInteger(item?.totalExecutions) ? item.totalExecutions : 0,
-      passedCases: Number.isInteger(item?.passedCases) ? item.passedCases : 0,
-      failedCases: Number.isInteger(item?.failedCases) ? item.failedCases : 0,
-      skippedCases: Number.isInteger(item?.skippedCases) ? item.skippedCases : 0,
-      successRate: typeof item?.successRate === 'number' ? item.successRate : 0,
-    })) : [];
-
-    const validatedRecentRuns = Array.isArray(recentRuns) ? recentRuns : [];
+    const validatedStats = validateStats(stats);
+    const validatedTodayExecution = validateTodayExecution(todayExecution);
+    const validatedTrendData = validateTrendData(trendData);
 
     logger.debug('Dashboard all data validated', {
       requestedDays: days,
       statsValid: !!stats,
       todayExecutionValid: !!todayExecution,
       trendDataCount: validatedTrendData.length,
-      recentRunsCount: validatedRecentRuns.length,
       endpoint: '/all',
     }, LOG_CONTEXTS.DASHBOARD);
 
@@ -256,8 +265,7 @@ router.get('/all', async (req, res) => {
       data: {
         stats: validatedStats,
         todayExecution: validatedTodayExecution,
-        trendData: validatedTrendData,
-        recentRuns: validatedRecentRuns
+        trendData: validatedTrendData
       }
     });
   } catch (error: unknown) {
