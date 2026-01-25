@@ -1,0 +1,154 @@
+version: '3.8'
+
+# 开发环境 Docker Compose 配置
+# 用途: 在开发环境中部署自动化测试平台
+# 特点: 快速部署、调试友好、资源节约
+
+services:
+  # 主应用服务
+  app:
+    image: ${DOCKER_REGISTRY}/${APP_NAME}:${BUILD_VERSION}
+    container_name: ${COMPOSE_PROJECT_NAME}-app
+    restart: unless-stopped
+
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - DEBUG=automation-platform:*
+
+    env_file:
+      - .env
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      # 数据持久化
+      - app-data:/app/data
+      - app-logs:/app/logs
+
+      # 开发环境代码热重载（如果需要）
+      # - ./src:/app/src:ro
+      # - ./server:/app/server:ro
+
+      # 时区同步
+      - /etc/localtime:/etc/localtime:ro
+
+    networks:
+      - automation-network
+
+    # 健康检查（较宽松的配置）
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+
+    # 资源限制（开发环境较宽松）
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # Redis 缓存服务（简化配置）
+  redis:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME}-redis
+    restart: unless-stopped
+
+    command: redis-server --appendonly yes
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis-data:/data
+
+    networks:
+      - automation-network
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "2"
+
+  # 开发工具服务
+  adminer:
+    image: adminer:latest
+    container_name: ${COMPOSE_PROJECT_NAME}-adminer
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080"
+
+    environment:
+      - ADMINER_DEFAULT_SERVER=db
+      - ADMINER_DESIGN=pepa-linha
+
+    networks:
+      - automation-network
+
+    # 仅在开发环境运行
+    profiles:
+      - development
+
+  # 邮件测试服务
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: ${COMPOSE_PROJECT_NAME}-mailhog
+    restart: unless-stopped
+
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+
+    networks:
+      - automation-network
+
+    # 仅在开发环境运行
+    profiles:
+      - development
+
+# 网络配置
+networks:
+  automation-network:
+    driver: bridge
+
+# 数据卷配置（开发环境使用 Docker 管理的卷）
+volumes:
+  app-data:
+    driver: local
+  app-logs:
+    driver: local
+  redis-data:
+    driver: local
