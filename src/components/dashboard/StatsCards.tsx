@@ -33,7 +33,7 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
   return (
     <div
       onClick={onClick}
-      className={`flex flex-col gap-4 rounded-xl p-6 border border-slate-200 dark:border-border-dark bg-gradient-to-br from-white to-slate-50/50 dark:from-surface-dark dark:to-surface-dark/80 shadow-sm transition-all duration-200 ${onClick ? 'cursor-pointer hover:shadow-lg hover:scale-[1.02] hover:border-primary/20 hover:from-primary/5 hover:to-primary/10' : ''}`}
+      className={`flex flex-col gap-4 rounded-xl p-6 border border-slate-200 dark:border-border-dark bg-gradient-to-br from-white to-slate-50/50 dark:from-surface-dark dark:to-surface-dark/80 shadow-sm transition-all duration-200 overflow-visible hover:shadow-lg hover:scale-[1.02] ${onClick ? 'cursor-pointer hover:border-primary/20 hover:from-primary/5 hover:to-primary/10' : ''}`}
     >
       <div className="flex justify-between items-start">
         <div className={`p-3 ${iconBg} rounded-xl shadow-sm ${iconColor} transition-transform duration-200 hover:scale-110`}>
@@ -52,7 +52,7 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
                   <HelpCircle className="h-4 w-4" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs">
+              <TooltipContent side="top" sideOffset={12} className="max-w-xs">
                 <div className="text-slate-600 dark:text-gray-400 text-sm">
                   {description}
                 </div>
@@ -187,9 +187,9 @@ export function StatsCards({ data, onRefresh }: StatsCardsProps) {
 
   return (
     <TooltipProvider>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 overflow-visible">
         {cardsConfig.map((config, index) => (
-          <div key={index} className="animate-fade-in-up" style={{ animationDelay: `${index * 100}ms` }}>
+          <div key={index} className="animate-fade-in-up overflow-visible" style={{ animationDelay: `${index * 100}ms` }}>
             <StatCard
               {...config}
               loading={loading}

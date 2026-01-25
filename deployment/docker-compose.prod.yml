@@ -1,0 +1,360 @@
+version: '3.8'
+
+# 生产环境 Docker Compose 配置
+# 用途: 在生产环境中部署自动化测试平台
+# 特点: 高可用、安全、性能优化
+
+services:
+  # 主应用服务
+  app:
+    image: ${DOCKER_REGISTRY}/${APP_NAME}:${BUILD_VERSION}
+    container_name: ${COMPOSE_PROJECT_NAME}-app
+    restart: unless-stopped
+
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+
+    env_file:
+      - .env
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      # 数据持久化
+      - app-data:/app/data
+      - app-logs:/app/logs
+
+      # 配置文件挂载
+      - ./configs/app.conf:/app/config/app.conf:ro
+
+      # 时区同步
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
+    networks:
+      - automation-network
+
+    depends_on:
+      - redis
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+    # 安全配置
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp
+
+  # Redis 缓存服务
+  redis:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME}-redis
+    restart: unless-stopped
+
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis-data:/data
+      - ./configs/redis.conf:/usr/local/etc/redis/redis.conf:ro
+
+    networks:
+      - automation-network
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # Nginx 反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: ${COMPOSE_PROJECT_NAME}-nginx
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      # Nginx 配置
+      - ./configs/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./configs/nginx-sites:/etc/nginx/conf.d:ro
+
+      # SSL 证书
+      - ./certs:/etc/nginx/certs:ro
+
+      # 日志
+      - nginx-logs:/var/log/nginx
+
+      # 静态文件（如果需要）
+      - ./static:/usr/share/nginx/html/static:ro
+
+    networks:
+      - automation-network
+
+    depends_on:
+      - app
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # 日志收集服务 (可选)
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: ${COMPOSE_PROJECT_NAME}-filebeat
+    restart: unless-stopped
+
+    user: root
+
+    environment:
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-elasticsearch:9200}
+
+    volumes:
+      # Filebeat 配置
+      - ./configs/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+
+      # 日志文件
+      - app-logs:/var/log/app:ro
+      - nginx-logs:/var/log/nginx:ro
+
+      # Docker socket (用于容器日志收集)
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    networks:
+      - automation-network
+
+    depends_on:
+      - app
+      - nginx
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+
+    # 仅在启用日志收集时运行
+    profiles:
+      - logging
+
+  # 监控服务 (可选)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ${COMPOSE_PROJECT_NAME}-prometheus
+    restart: unless-stopped
+
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+
+    ports:
+      - "9090:9090"
+
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+    networks:
+      - automation-network
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+
+    # 仅在启用监控时运行
+    profiles:
+      - monitoring
+
+  # Grafana 仪表盘 (可选)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ${COMPOSE_PROJECT_NAME}-grafana
+    restart: unless-stopped
+
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+
+    ports:
+      - "3001:3000"
+
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./configs/grafana:/etc/grafana/provisioning:ro
+
+    networks:
+      - automation-network
+
+    depends_on:
+      - prometheus
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+    # 仅在启用监控时运行
+    profiles:
+      - monitoring
+
+# 网络配置
+networks:
+  automation-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# 数据卷配置
+volumes:
+  # 应用数据
+  app-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/${APP_NAME}/data
+
+  # 应用日志
+  app-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/${APP_NAME}/logs
+
+  # Redis 数据
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/${APP_NAME}/redis-data
+
+  # Nginx 日志
+  nginx-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/${APP_NAME}/nginx-logs
+
+  # Prometheus 数据
+  prometheus-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/${APP_NAME}/prometheus-data
+
+  # Grafana 数据
+  grafana-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/${APP_NAME}/grafana-data
+
+# 扩展配置
+x-common-variables: &common-variables
+  TZ: Asia/Shanghai
+  LANG: zh_CN.UTF-8
+
+x-logging: &default-logging
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "100m"
+      max-file: "5"
+
+x-restart-policy: &restart-policy
+  restart: unless-stopped

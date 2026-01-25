@@ -76,10 +76,18 @@ export class DashboardService {
   }
 
   /**
-   * 刷新每日汇总数据
+   * 刷新每日汇总数据（单日）
    */
   async refreshDailySummary(date?: string) {
     return this.dashboardRepository.refreshDailySummary(date);
+  }
+
+  /**
+   * 批量刷新每日汇总数据（多日）
+   * 使用批量查询优化，减少数据库请求次数
+   */
+  async batchRefreshDailySummaries(days: number) {
+    return this.dashboardRepository.batchRefreshDailySummaries(days);
   }
 }
 

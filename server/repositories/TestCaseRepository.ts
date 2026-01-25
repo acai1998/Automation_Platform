@@ -41,7 +41,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
   async findAll(options?: {
     type?: string;
     priority?: string;
-    status?: string;
     limit?: number;
     offset?: number;
   }): Promise<TestCase[]> {
@@ -53,10 +52,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
 
     if (options?.priority) {
       queryBuilder.andWhere('testCase.priority = :priority', { priority: options.priority });
-    }
-
-    if (options?.status) {
-      queryBuilder.andWhere('testCase.status = :status', { status: options.status });
     }
 
     queryBuilder.orderBy('testCase.createdAt', 'DESC');
@@ -153,7 +148,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
     if (data.module !== undefined) updateData.module = data.module || null;
     if (data.priority !== undefined) updateData.priority = data.priority;
     if (data.type !== undefined) updateData.type = data.type;
-    if (data.status !== undefined) updateData.status = data.status;
     if (data.scriptPath !== undefined) updateData.scriptPath = data.scriptPath || null;
     if (data.enabled !== undefined) updateData.enabled = data.enabled;
     if (data.updatedBy !== undefined) updateData.updatedBy = data.updatedBy;
@@ -200,7 +194,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
   async count(options?: {
     type?: string;
     priority?: string;
-    status?: string;
     projectId?: number;
     module?: string;
     enabled?: boolean;
@@ -214,10 +207,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
 
     if (options?.priority) {
       queryBuilder.andWhere('testCase.priority = :priority', { priority: options.priority });
-    }
-
-    if (options?.status) {
-      queryBuilder.andWhere('testCase.status = :status', { status: options.status });
     }
 
     if (options?.projectId) {
@@ -439,7 +428,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
         if (data.module !== undefined) updateData.module = data.module || null;
         if (data.priority !== undefined) updateData.priority = data.priority;
         if (data.type !== undefined) updateData.type = data.type;
-        if (data.status !== undefined) updateData.status = data.status;
         if (data.scriptPath !== undefined) updateData.scriptPath = data.scriptPath || null;
         if (data.enabled !== undefined) updateData.enabled = data.enabled;
         if (data.updatedBy !== undefined) updateData.updatedBy = data.updatedBy;

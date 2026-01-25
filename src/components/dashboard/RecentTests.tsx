@@ -2,18 +2,12 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { MoreVertical, Loader2, Filter } from "lucide-react";
 import { useLocation } from "wouter";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { DashboardResponse, TestStatusFilter } from "@/types/dashboard";
+import type { DashboardResponse, TestStatusFilter, RecentRun, TestStatus } from "@/types/dashboard";
 
-interface RecentRun {
-  id: number;
-  suiteName: string;
-  status: TestStatus;
-  duration: number | null;
-  startTime: string;
-  executedBy: string | null;
+// 扩展 DashboardResponse 以支持 recentRuns（用于组件内部）
+interface DashboardDataWithRuns extends DashboardResponse {
+  recentRuns?: RecentRun[];
 }
-
-type TestStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 
 // Grid 布局配置常量
 const GRID_CONFIG = {
@@ -192,7 +186,7 @@ function useResponsiveGrid() {
 }
 
 interface RecentTestsProps {
-  data?: DashboardResponse;
+  data?: DashboardDataWithRuns;
   initialData?: RecentRun[];
   onRefresh?: () => Promise<void>;
   statusFilter?: TestStatusFilter;

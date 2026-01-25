@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, OneToMany } from 'typeorm';
+import { TaskExecution } from './TaskExecution';
 
 /**
  * User Entity - 映射 Auto_Users 表
@@ -46,6 +47,9 @@ export class User {
 
   @Column({ type: 'varchar', length: 255, name: 'remember_token', nullable: true })
   rememberToken: string | null;
+
+  @OneToMany(() => TaskExecution, (execution) => execution.executedByUser)
+  taskExecutions: TaskExecution[];
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;

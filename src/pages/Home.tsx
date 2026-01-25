@@ -8,13 +8,18 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState, useEffect } from "react";
 import { dashboardApi } from "@/lib/api";
 import { useDashboardFilter } from "@/hooks/useDashboardFilter";
-import type { DashboardResponse } from "@/types/dashboard";
+import type { DashboardResponse, RecentRun } from "@/types/dashboard";
 
 type TimeRange = '7d' | '30d' | '90d';
 
+// 扩展 DashboardResponse 以包含 recentRuns（用于内部状态管理）
+interface DashboardDataWithRuns extends DashboardResponse {
+  recentRuns?: RecentRun[];
+}
+
 export default function Home() {
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
-  const [dashboardData, setDashboardData] = useState<DashboardResponse | null>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardDataWithRuns | null>(null);
   const [, setLoading] = useState(true);
 
   // Filter state management for chart interactions
@@ -23,9 +28,19 @@ export default function Home() {
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      const response = await dashboardApi.getAll(timeRange);
-      if (response.success && response.data) {
-        setDashboardData(response.data);
+      // 并行获取仪表盘数据和最近运行记录（仅首次加载）
+      const shouldFetchRecentRuns = !dashboardData?.recentRuns;
+      
+      const [dashboardResponse, recentRunsResponse] = await Promise.all([
+        dashboardApi.getAll(timeRange),
+        shouldFetchRecentRuns ? dashboardApi.getRecentRuns(10) : Promise.resolve({ success: true, data: dashboardData?.recentRuns || [] })
+      ]);
+
+      if (dashboardResponse.success && dashboardResponse.data) {
+        setDashboardData({
+          ...dashboardResponse.data,
+          recentRuns: recentRunsResponse.success ? recentRunsResponse.data : dashboardData?.recentRuns || []
+        });
       }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);
