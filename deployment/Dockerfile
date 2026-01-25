@@ -9,11 +9,10 @@ WORKDIR /app
 # 复制 package 文件
 COPY package*.json ./
 
-# 安装依赖
-RUN npm ci --only=production && \
-    npm ci --only=development
+# 安装所有依赖（包括开发依赖，构建需要）
+RUN npm ci
 
-# 复制源代码
+# 复制源代码和配置文件
 COPY . .
 
 # 构建前端
@@ -36,6 +35,9 @@ COPY package*.json ./
 
 # 仅安装生产依赖
 RUN npm ci --only=production
+
+# 安装 tsx 用于运行 TypeScript
+RUN npm install -g tsx
 
 # 从构建阶段复制前端文件
 COPY --from=frontend-builder /app/dist ./dist
