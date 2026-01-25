@@ -1,0 +1,55 @@
+# Docker ignore file for Automation Platform
+
+# Node modules (will be installed in container)
+node_modules
+npm-debug.log*
+
+# Build outputs (will be built in container)
+dist
+
+# Development files
+.git
+.gitignore
+.github
+README.md
+docs/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+
+# Test files
+coverage/
+.nyc_output
+.coverage
+*.cover
+.pytest_cache/
+
+# Temporary files
+tmp/
+archive/
+*.log
+*.db
+
+# Vercel
+.vercel/
+
+# Custom
+deepseek_*
+test_crypto.py
+.mcp.json

@@ -9,11 +9,21 @@ WORKDIR /app
 # 复制 package 文件
 COPY package*.json ./
 
-# 安装所有依赖（包括开发依赖，构建需要）
-RUN npm ci
+# 清理 npm 缓存并安装依赖
+RUN npm cache clean --force && \
+    npm install
 
-# 复制源代码和配置文件
-COPY . .
+# 复制前端相关的配置文件
+COPY vite.config.ts ./
+COPY tsconfig.json ./
+COPY index.html ./
+
+# 复制配置目录
+COPY configs/ ./configs/
+
+# 复制源代码
+COPY src/ ./src/
+COPY shared/ ./shared/
 
 # 构建前端
 RUN npm run build
@@ -43,8 +53,8 @@ RUN npm install -g tsx
 COPY --from=frontend-builder /app/dist ./dist
 
 # 复制后端代码
-COPY server ./server
-COPY shared ./shared
+COPY server/ ./server/
+COPY shared/ ./shared/
 COPY tsconfig.server.json ./
 
 # 创建数据库目录
