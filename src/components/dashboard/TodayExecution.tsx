@@ -147,7 +147,7 @@ export function TodayExecution({
     <div className="w-40 h-40 rounded-full border-8 border-slate-200 dark:border-slate-700 flex items-center justify-center">
       <div className="text-center">
         <span className="text-2xl font-bold text-slate-400 dark:text-slate-500">0</span>
-        <div className="text-xs text-slate-400 dark:text-slate-500 uppercase tracking-wider font-semibold">
+        <div className="text-sm text-slate-500 dark:text-gray-400 tracking-normal font-medium text-crisp">
           测试用例
         </div>
       </div>
@@ -165,7 +165,7 @@ export function TodayExecution({
                 <HelpCircle className="h-4 w-4" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="top" className="max-w-xs">
+            <TooltipContent side="top" sideOffset={12} className="max-w-xs">
               <div className="text-slate-600 dark:text-gray-400 text-sm">
                 显示今天内执行用例的实时状态分布（成功/失败/跳过）。点击图表段筛选对应状态的测试，点击中心清除筛选。
               </div>
@@ -182,7 +182,7 @@ export function TodayExecution({
                   <RotateCcw className="h-4 w-4" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top">
+              <TooltipContent side="top" sideOffset={12}>
                 <div className="text-sm">清除筛选</div>
               </TooltipContent>
             </Tooltip>
@@ -240,7 +240,7 @@ export function TodayExecution({
 
             {/* Interactive Center Content */}
             <div
-              className="absolute inset-0 flex items-center justify-center cursor-pointer transition-all duration-200 hover:scale-105"
+              className="absolute inset-0 flex items-center justify-center cursor-pointer"
               onClick={handleCenterClick}
               role="button"
               tabIndex={0}
@@ -253,10 +253,10 @@ export function TodayExecution({
               }}
             >
               <div className="text-center pointer-events-none">
-                <div className="text-3xl font-bold text-slate-900 dark:text-white transition-all duration-300">
+                <div className="text-3xl font-bold text-slate-900 dark:text-white">
                   {chartData.total}
                 </div>
-                <div className="text-xs text-slate-500 dark:text-gray-400 uppercase tracking-wider font-semibold">
+                <div className="text-sm text-slate-600 dark:text-gray-300 tracking-normal font-medium text-crisp">
                   {selectedFilter !== 'all' ? '点击清除' : '测试用例'}
                 </div>
               </div>

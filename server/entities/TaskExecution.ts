@@ -18,8 +18,8 @@ export class TaskExecution {
   @Column({ type: 'varchar', length: 100, name: 'task_name', nullable: true })
   taskName: string | null;
 
-  @Column({ type: 'enum', enum: ['pending', 'running', 'success', 'failed', 'cancelled'], default: 'pending' })
-  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+  @Column({ type: 'enum', enum: ['pending', 'running', 'success', 'failed', 'aborted'], default: 'pending' })
+  status: 'pending' | 'running' | 'success' | 'failed' | 'aborted';
 
   @Column({ type: 'int', name: 'total_cases', default: 0 })
   totalCases: number;

@@ -19,19 +19,23 @@ export interface DashboardResponse {
     skippedCases: number;
     successRate: number;
   }>;
-  recentRuns: Array<{
-    id: number;
-    suiteName: string;
-    status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
-    duration: number | null;
-    startTime: string;
-    totalCases: number;
-    passedCases: number;
-    failedCases: number;
-    executedBy: string;
-    executedById: number;
-  }>;
 }
+
+// RecentRun 类型定义（用于单独的 /api/dashboard/recent-runs 接口）
+export interface RecentRun {
+  id: number;
+  suiteName: string;
+  status: TestStatus;
+  duration: number | null;
+  startTime: string;
+  totalCases: number;
+  passedCases: number;
+  failedCases: number;
+  executedBy: string | null;
+  executedById: number;
+}
+
+export type TestStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 
 // Chart filter types for interactive features
 export type TestStatusFilter = 'all' | 'passed' | 'failed' | 'skipped';

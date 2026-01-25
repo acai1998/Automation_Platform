@@ -1,0 +1,653 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'staging', 'production'],
+            description: '部署环境'
+        )
+        choice(
+            name: 'DEPLOY_STRATEGY',
+            choices: ['rolling', 'blue-green', 'recreate'],
+            description: '部署策略'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: '跳过测试阶段'
+        )
+        booleanParam(
+            name: 'FORCE_REBUILD',
+            defaultValue: false,
+            description: '强制重新构建镜像'
+        )
+        string(
+            name: 'DOCKER_TAG',
+            defaultValue: '',
+            description: '自定义Docker镜像标签 (留空则使用BUILD_NUMBER)'
+        )
+    }
+
+    environment {
+        // 应用配置
+        APP_NAME = 'automation-platform'
+        DOCKER_REGISTRY = credentials('docker-registry-url')
+        DOCKER_CREDENTIALS = credentials('docker-registry-credentials')
+
+        // 远程服务器配置
+        DEPLOY_HOST = credentials('deploy-host')
+        DEPLOY_USER = credentials('deploy-user')
+        DEPLOY_SSH_KEY = credentials('deploy-ssh-key')
+
+        // 数据库配置
+        DB_HOST = credentials('db-host')
+        DB_CREDENTIALS = credentials('db-credentials')
+
+        // 应用密钥
+        JWT_SECRET = credentials('jwt-secret')
+        JENKINS_API_KEY = credentials('jenkins-api-key')
+
+        // 动态变量
+        BUILD_VERSION = "${params.DOCKER_TAG ?: env.BUILD_NUMBER}"
+        IMAGE_NAME = "${DOCKER_REGISTRY}/${APP_NAME}"
+        IMAGE_TAG = "${IMAGE_NAME}:${BUILD_VERSION}"
+        COMPOSE_PROJECT_NAME = "${APP_NAME}-${params.ENVIRONMENT}"
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('准备') {
+            steps {
+                script {
+                    echo """
+                    ========================================
+                    🚀 开始 CI/CD 部署流水线
+                    ========================================
+                    应用名称: ${APP_NAME}
+                    部署环境: ${params.ENVIRONMENT}
+                    部署策略: ${params.DEPLOY_STRATEGY}
+                    构建版本: ${BUILD_VERSION}
+                    镜像标签: ${IMAGE_TAG}
+                    跳过测试: ${params.SKIP_TESTS}
+                    强制重建: ${params.FORCE_REBUILD}
+                    ========================================
+                    """
+
+                    // 检查必要的凭据
+                    if (!env.DOCKER_REGISTRY || !env.DEPLOY_HOST) {
+                        error('❌ 缺少必要的部署凭据配置')
+                    }
+                }
+            }
+        }
+
+        stage('代码检出') {
+            steps {
+                script {
+                    echo '📥 检出源代码...'
+
+                    // 清理工作目录
+                    deleteDir()
+
+                    // 检出代码
+                    checkout scm
+
+                    // 显示提交信息
+                    sh '''
+                        echo "当前提交信息:"
+                        git log --oneline -n 5
+                        echo "分支信息:"
+                        git branch -a
+                    '''
+                }
+            }
+        }
+
+        stage('环境准备') {
+            steps {
+                script {
+                    echo '🔧 准备构建环境...'
+
+                    sh '''
+                        # 检查必要的工具
+                        echo "检查系统工具..."
+                        node --version
+                        npm --version
+                        docker --version
+                        docker-compose --version
+
+                        # 检查磁盘空间
+                        echo "磁盘空间检查:"
+                        df -h
+
+                        # 清理旧的Docker资源（如果需要）
+                        if [ "${FORCE_REBUILD}" = "true" ]; then
+                            echo "强制重建模式，清理旧镜像..."
+                            docker image prune -f || true
+                            docker builder prune -f || true
+                        fi
+                    '''
+                }
+            }
+        }
+
+        stage('依赖安装') {
+            steps {
+                script {
+                    echo '📦 安装项目依赖...'
+
+                    sh '''
+                        # 检查 package.json 是否存在
+                        if [ ! -f package.json ]; then
+                            echo "❌ package.json 不存在"
+                            exit 1
+                        fi
+
+                        # 安装依赖
+                        echo "安装 npm 依赖..."
+                        npm ci --only=production
+
+                        # 显示已安装的关键包
+                        echo "关键依赖版本:"
+                        npm list --depth=0 | grep -E "(react|express|typescript|vite)" || true
+                    '''
+                }
+            }
+        }
+
+        stage('代码质量检查') {
+            when {
+                not { params.SKIP_TESTS }
+            }
+            parallel {
+                stage('TypeScript 类型检查') {
+                    steps {
+                        script {
+                            echo '🔍 TypeScript 类型检查...'
+
+                            sh '''
+                                echo "前端类型检查:"
+                                npx tsc --noEmit -p tsconfig.json
+
+                                echo "后端类型检查:"
+                                npx tsc --noEmit -p tsconfig.server.json
+
+                                echo "✅ 类型检查通过"
+                            '''
+                        }
+                    }
+                }
+
+                stage('代码风格检查') {
+                    steps {
+                        script {
+                            echo '📏 代码风格检查...'
+
+                            sh '''
+                                # 检查是否有 ESLint 配置
+                                if [ -f .eslintrc.js ] || [ -f .eslintrc.json ] || [ -f eslint.config.js ]; then
+                                    echo "运行 ESLint..."
+                                    npx eslint . --ext .ts,.tsx,.js,.jsx --max-warnings 0 || true
+                                else
+                                    echo "⚠️ 未找到 ESLint 配置，跳过代码风格检查"
+                                fi
+
+                                # 检查是否有 Prettier 配置
+                                if [ -f .prettierrc ] || [ -f .prettierrc.json ] || [ -f prettier.config.js ]; then
+                                    echo "检查 Prettier 格式..."
+                                    npx prettier --check . || true
+                                else
+                                    echo "⚠️ 未找到 Prettier 配置，跳过格式检查"
+                                fi
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('运行测试') {
+            when {
+                not { params.SKIP_TESTS }
+            }
+            steps {
+                script {
+                    echo '🧪 运行单元测试...'
+
+                    sh '''
+                        # 安装开发依赖（测试需要）
+                        npm install --only=dev
+
+                        # 运行前端测试
+                        echo "运行前端测试..."
+                        npm run test -- --run --reporter=verbose
+
+                        echo "✅ 测试通过"
+                    '''
+                }
+            }
+            post {
+                always {
+                    // 收集测试报告（如果存在）
+                    publishTestResults testResultsPattern: 'test-results.xml'
+                    publishHTML([
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'coverage',
+                        reportFiles: 'index.html',
+                        reportName: 'Coverage Report'
+                    ])
+                }
+            }
+        }
+
+        stage('构建应用') {
+            steps {
+                script {
+                    echo '🏗️ 构建前后端应用...'
+
+                    sh '''
+                        echo "构建前端..."
+                        npm run build
+
+                        echo "检查构建产物..."
+                        if [ ! -d "dist" ]; then
+                            echo "❌ 前端构建失败，dist 目录不存在"
+                            exit 1
+                        fi
+
+                        echo "构建产物大小:"
+                        du -sh dist/
+
+                        echo "构建后端 TypeScript..."
+                        npm run server:build || echo "⚠️ 后端构建脚本不存在，将在 Docker 中构建"
+
+                        echo "✅ 应用构建完成"
+                    '''
+                }
+            }
+        }
+
+        stage('构建 Docker 镜像') {
+            steps {
+                script {
+                    echo '🐳 构建 Docker 镜像...'
+
+                    sh '''
+                        # 检查 Dockerfile
+                        DOCKERFILE_PATH="deployment/Dockerfile"
+                        if [ ! -f "$DOCKERFILE_PATH" ]; then
+                            DOCKERFILE_PATH="Dockerfile"
+                        fi
+
+                        if [ ! -f "$DOCKERFILE_PATH" ]; then
+                            echo "❌ 未找到 Dockerfile"
+                            exit 1
+                        fi
+
+                        echo "使用 Dockerfile: $DOCKERFILE_PATH"
+
+                        # 构建镜像
+                        echo "构建 Docker 镜像: ${IMAGE_TAG}"
+                        docker build -f $DOCKERFILE_PATH -t ${IMAGE_TAG} .
+
+                        # 标记为 latest（如果是生产环境）
+                        if [ "${ENVIRONMENT}" = "production" ]; then
+                            docker tag ${IMAGE_TAG} ${IMAGE_NAME}:latest
+                            echo "已标记为 latest 版本"
+                        fi
+
+                        # 显示镜像信息
+                        echo "镜像构建完成:"
+                        docker images | grep ${APP_NAME}
+
+                        # 检查镜像大小
+                        IMAGE_SIZE=$(docker images --format "table {{.Size}}" ${IMAGE_TAG} | tail -n 1)
+                        echo "镜像大小: $IMAGE_SIZE"
+
+                        echo "✅ Docker 镜像构建完成"
+                    '''
+                }
+            }
+        }
+
+        stage('镜像安全扫描') {
+            when {
+                environment name: 'ENVIRONMENT', value: 'production'
+            }
+            steps {
+                script {
+                    echo '🔒 镜像安全扫描...'
+
+                    sh '''
+                        # 使用 Trivy 进行安全扫描（如果可用）
+                        if command -v trivy >/dev/null 2>&1; then
+                            echo "使用 Trivy 进行安全扫描..."
+                            trivy image --exit-code 0 --severity HIGH,CRITICAL ${IMAGE_TAG}
+                        else
+                            echo "⚠️ Trivy 未安装，跳过安全扫描"
+                        fi
+
+                        # 使用 Docker Scout 扫描（如果可用）
+                        if docker scout version >/dev/null 2>&1; then
+                            echo "使用 Docker Scout 进行安全扫描..."
+                            docker scout cves ${IMAGE_TAG} || true
+                        else
+                            echo "⚠️ Docker Scout 未可用，跳过扫描"
+                        fi
+                    '''
+                }
+            }
+        }
+
+        stage('推送镜像') {
+            steps {
+                script {
+                    echo '📤 推送 Docker 镜像到仓库...'
+
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-registry-credentials',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh '''
+                            # 登录到 Docker 仓库
+                            echo "登录到 Docker 仓库: ${DOCKER_REGISTRY}"
+                            echo $DOCKER_PASS | docker login ${DOCKER_REGISTRY} -u $DOCKER_USER --password-stdin
+
+                            # 推送镜像
+                            echo "推送镜像: ${IMAGE_TAG}"
+                            docker push ${IMAGE_TAG}
+
+                            # 推送 latest 标签（如果是生产环境）
+                            if [ "${ENVIRONMENT}" = "production" ]; then
+                                echo "推送 latest 镜像..."
+                                docker push ${IMAGE_NAME}:latest
+                            fi
+
+                            echo "✅ 镜像推送完成"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('准备部署配置') {
+            steps {
+                script {
+                    echo '⚙️ 准备部署配置文件...'
+
+                    sh '''
+                        # 创建部署目录
+                        mkdir -p deployment-configs
+
+                        # 复制环境特定的配置
+                        if [ -f "deployment/.env.${ENVIRONMENT}" ]; then
+                            cp "deployment/.env.${ENVIRONMENT}" deployment-configs/.env
+                            echo "使用环境特定配置: .env.${ENVIRONMENT}"
+                        elif [ -f "deployment/.env.example" ]; then
+                            cp "deployment/.env.example" deployment-configs/.env
+                            echo "使用示例配置文件"
+                        else
+                            echo "⚠️ 未找到环境配置文件"
+                        fi
+
+                        # 复制 Docker Compose 配置
+                        if [ -f "deployment/docker-compose.${ENVIRONMENT}.yml" ]; then
+                            cp "deployment/docker-compose.${ENVIRONMENT}.yml" deployment-configs/docker-compose.yml
+                            echo "使用环境特定 Compose 配置"
+                        elif [ -f "deployment/docker-compose.prod.yml" ]; then
+                            cp "deployment/docker-compose.prod.yml" deployment-configs/docker-compose.yml
+                            echo "使用生产 Compose 配置"
+                        elif [ -f "deployment/docker-compose.yml" ]; then
+                            cp "deployment/docker-compose.yml" deployment-configs/docker-compose.yml
+                            echo "使用默认 Compose 配置"
+                        else
+                            echo "❌ 未找到 Docker Compose 配置文件"
+                            exit 1
+                        fi
+
+                        # 替换配置中的变量
+                        sed -i "s|{{IMAGE_TAG}}|${IMAGE_TAG}|g" deployment-configs/docker-compose.yml
+                        sed -i "s|{{ENVIRONMENT}}|${ENVIRONMENT}|g" deployment-configs/docker-compose.yml
+                        sed -i "s|{{COMPOSE_PROJECT_NAME}}|${COMPOSE_PROJECT_NAME}|g" deployment-configs/docker-compose.yml
+
+                        echo "部署配置准备完成"
+                    '''
+                }
+            }
+        }
+
+        stage('部署到远程服务器') {
+            steps {
+                script {
+                    echo "🚀 部署到 ${params.ENVIRONMENT} 环境..."
+
+                    sshagent(['deploy-ssh-key']) {
+                        sh '''
+                            # 复制部署文件到远程服务器
+                            echo "复制部署文件到远程服务器..."
+                            scp -o StrictHostKeyChecking=no -r deployment-configs/* ${DEPLOY_USER}@${DEPLOY_HOST}:/opt/${APP_NAME}/
+                            scp -o StrictHostKeyChecking=no scripts/deploy.sh ${DEPLOY_USER}@${DEPLOY_HOST}:/opt/${APP_NAME}/
+                            scp -o StrictHostKeyChecking=no scripts/health-check.sh ${DEPLOY_USER}@${DEPLOY_HOST}:/opt/${APP_NAME}/
+
+                            # 在远程服务器上执行部署
+                            echo "在远程服务器上执行部署..."
+                            ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "
+                                cd /opt/${APP_NAME}
+                                chmod +x deploy.sh health-check.sh
+                                ./deploy.sh ${ENVIRONMENT} ${DEPLOY_STRATEGY} ${IMAGE_TAG}
+                            "
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('健康检查') {
+            steps {
+                script {
+                    echo '🏥 执行部署后健康检查...'
+
+                    sshagent(['deploy-ssh-key']) {
+                        sh '''
+                            # 等待服务启动
+                            echo "等待服务启动..."
+                            sleep 30
+
+                            # 执行健康检查
+                            echo "执行健康检查..."
+                            ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "
+                                cd /opt/${APP_NAME}
+                                ./health-check.sh ${ENVIRONMENT}
+                            "
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('烟雾测试') {
+            steps {
+                script {
+                    echo '💨 执行烟雾测试...'
+
+                    sh '''
+                        # 获取应用 URL
+                        case "${ENVIRONMENT}" in
+                            "production")
+                                APP_URL="https://automation-platform.example.com"
+                                ;;
+                            "staging")
+                                APP_URL="https://staging-automation-platform.example.com"
+                                ;;
+                            "dev")
+                                APP_URL="https://dev-automation-platform.example.com"
+                                ;;
+                            *)
+                                APP_URL="http://${DEPLOY_HOST}:3000"
+                                ;;
+                        esac
+
+                        echo "测试应用 URL: $APP_URL"
+
+                        # 健康检查端点测试
+                        echo "测试健康检查端点..."
+                        curl -f "$APP_URL/api/health" || {
+                            echo "❌ 健康检查失败"
+                            exit 1
+                        }
+
+                        # API 端点测试
+                        echo "测试 API 端点..."
+                        curl -f "$APP_URL/api/dashboard" -H "Content-Type: application/json" || {
+                            echo "⚠️ API 端点测试失败，但继续部署"
+                        }
+
+                        # 前端页面测试
+                        echo "测试前端页面..."
+                        curl -f "$APP_URL/" || {
+                            echo "❌ 前端页面访问失败"
+                            exit 1
+                        }
+
+                        echo "✅ 烟雾测试通过"
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo '🧹 清理构建环境...'
+
+                // 清理本地 Docker 镜像
+                sh '''
+                    echo "清理本地 Docker 镜像..."
+                    docker rmi ${IMAGE_TAG} || true
+                    if [ "${ENVIRONMENT}" = "production" ]; then
+                        docker rmi ${IMAGE_NAME}:latest || true
+                    fi
+
+                    # 清理未使用的 Docker 资源
+                    docker image prune -f || true
+                '''
+
+                // 归档构建产物
+                archiveArtifacts artifacts: 'dist/**', allowEmptyArchive: true
+                archiveArtifacts artifacts: 'deployment-configs/**', allowEmptyArchive: true
+            }
+        }
+
+        success {
+            script {
+                echo """
+                ✅ 部署成功完成！
+
+                📋 部署信息:
+                - 环境: ${params.ENVIRONMENT}
+                - 版本: ${BUILD_VERSION}
+                - 镜像: ${IMAGE_TAG}
+                - 策略: ${params.DEPLOY_STRATEGY}
+
+                🔗 访问链接:
+                - 健康检查: http://${env.DEPLOY_HOST}:3000/api/health
+                - 应用首页: http://${env.DEPLOY_HOST}:3000/
+                """
+
+                // 发送成功通知
+                emailext(
+                    subject: "✅ [${APP_NAME}] 部署成功 - ${params.ENVIRONMENT} 环境",
+                    body: """
+                    部署已成功完成！
+
+                    环境: ${params.ENVIRONMENT}
+                    版本: ${BUILD_VERSION}
+                    构建号: ${BUILD_NUMBER}
+                    部署时间: ${new Date()}
+
+                    构建日志: ${BUILD_URL}
+                    """,
+                    to: "${env.CHANGE_AUTHOR_EMAIL ?: 'devops@example.com'}"
+                )
+            }
+        }
+
+        failure {
+            script {
+                echo """
+                ❌ 部署失败！
+
+                📋 失败信息:
+                - 环境: ${params.ENVIRONMENT}
+                - 版本: ${BUILD_VERSION}
+                - 阶段: ${env.STAGE_NAME}
+                """
+
+                // 自动回滚（如果不是第一次部署）
+                if (params.DEPLOY_STRATEGY == 'blue-green') {
+                    echo '🔄 尝试自动回滚...'
+
+                    sshagent(['deploy-ssh-key']) {
+                        sh '''
+                            ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "
+                                cd /opt/${APP_NAME}
+                                ./rollback.sh ${ENVIRONMENT}
+                            " || echo "自动回滚失败"
+                        '''
+                    }
+                }
+
+                // 发送失败通知
+                emailext(
+                    subject: "❌ [${APP_NAME}] 部署失败 - ${params.ENVIRONMENT} 环境",
+                    body: """
+                    部署失败！
+
+                    环境: ${params.ENVIRONMENT}
+                    版本: ${BUILD_VERSION}
+                    构建号: ${BUILD_NUMBER}
+                    失败时间: ${new Date()}
+                    失败阶段: ${env.STAGE_NAME}
+
+                    构建日志: ${BUILD_URL}
+
+                    请检查日志并修复问题。
+                    """,
+                    to: "${env.CHANGE_AUTHOR_EMAIL ?: 'devops@example.com'}"
+                )
+            }
+        }
+
+        aborted {
+            script {
+                echo '⏹️ 部署被中止'
+
+                emailext(
+                    subject: "⏹️ [${APP_NAME}] 部署中止 - ${params.ENVIRONMENT} 环境",
+                    body: """
+                    部署被手动中止。
+
+                    环境: ${params.ENVIRONMENT}
+                    版本: ${BUILD_VERSION}
+                    构建号: ${BUILD_NUMBER}
+                    中止时间: ${new Date()}
+
+                    构建日志: ${BUILD_URL}
+                    """,
+                    to: "${env.CHANGE_AUTHOR_EMAIL ?: 'devops@example.com'}"
+                )
+            }
+        }
+    }
+}

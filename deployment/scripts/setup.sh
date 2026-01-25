@@ -44,6 +44,86 @@ get_os() {
     esac
 }
 
+# 环境变量配置向导
+setup_environment() {
+    log_info "配置环境变量..."
+    echo ""
+    
+    # 检查 .env 文件是否存在
+    if [ -f ".env" ]; then
+        log_success ".env 文件已存在，跳过环境配置"
+        echo ""
+        return 0
+    fi
+    
+    # 检查 .env.example 是否存在
+    if [ ! -f ".env.example" ]; then
+        log_error ".env.example 模板文件不存在"
+        echo "请确保项目完整，或手动创建 .env 文件"
+        exit 1
+    fi
+    
+    log_info "检测到这是首次配置，需要设置数据库连接信息"
+    echo ""
+    echo "请输入数据库连接信息（按 Enter 使用默认值）："
+    echo "════════════════════════════════════════"
+    
+    # 询问数据库主机
+    read -p "数据库主机地址 [localhost]: " DB_HOST
+    DB_HOST=${DB_HOST:-localhost}
+    
+    # 询问数据库端口
+    read -p "数据库端口 [3306]: " DB_PORT
+    DB_PORT=${DB_PORT:-3306}
+    
+    # 询问数据库用户名
+    read -p "数据库用户名 [root]: " DB_USER
+    DB_USER=${DB_USER:-root}
+    
+    # 询问数据库密码（隐藏输入）
+    read -s -p "数据库密码: " DB_PASSWORD
+    echo ""
+    
+    # 询问数据库名称
+    read -p "数据库名称 [autotest]: " DB_NAME
+    DB_NAME=${DB_NAME:-autotest}
+    
+    echo ""
+    echo "════════════════════════════════════════"
+    
+    # 生成 .env 文件
+    log_info "生成 .env 文件..."
+    
+    cp .env.example .env
+    
+    # 更新数据库配置
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        sed -i '' "s|DB_HOST=.*|DB_HOST=$DB_HOST|" .env
+        sed -i '' "s|DB_PORT=.*|DB_PORT=$DB_PORT|" .env
+        sed -i '' "s|DB_USER=.*|DB_USER=$DB_USER|" .env
+        sed -i '' "s|DB_PASSWORD=.*|DB_PASSWORD=$DB_PASSWORD|" .env
+        sed -i '' "s|DB_NAME=.*|DB_NAME=$DB_NAME|" .env
+    else
+        # Linux
+        sed -i "s|DB_HOST=.*|DB_HOST=$DB_HOST|" .env
+        sed -i "s|DB_PORT=.*|DB_PORT=$DB_PORT|" .env
+        sed -i "s|DB_USER=.*|DB_USER=$DB_USER|" .env
+        sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=$DB_PASSWORD|" .env
+        sed -i "s|DB_NAME=.*|DB_NAME=$DB_NAME|" .env
+    fi
+    
+    log_success ".env 文件创建成功"
+    echo ""
+    log_info "配置摘要："
+    echo "  数据库主机: $DB_HOST"
+    echo "  数据库端口: $DB_PORT"
+    echo "  数据库名称: $DB_NAME"
+    echo "  数据库用户: $DB_USER"
+    echo "  数据库密码: ********"
+    echo ""
+}
+
 # 欢迎信息
 echo ""
 echo "╔════════════════════════════════════════════════════════════╗"
@@ -93,6 +173,11 @@ fi
 
 log_success "检测到项目文件"
 
+echo ""
+
+# 配置环境变量
+setup_environment
+
 # 清理旧依赖（可选）
 if [ -d "node_modules" ]; then
     read -p "检测到已存在的 node_modules，是否删除并重新安装? (y/n) " -n 1 -r
@@ -124,18 +209,6 @@ fi
 
 echo ""
 
-# 初始化数据库
-log_info "初始化数据库..."
-
-if npm run db:init; then
-    log_success "数据库初始化完成"
-else
-    log_error "数据库初始化失败"
-    exit 1
-fi
-
-echo ""
-
 # 验证安装
 log_info "验证安装..."
 
@@ -146,7 +219,7 @@ files_to_check=(
     "src"
     "server"
     "node_modules"
-    "server/db/autotest.db"
+    ".env"
 )
 
 all_ok=true
@@ -187,8 +260,8 @@ echo "║                                                            ║"
 echo "║  构建生产版本：                                            ║"
 echo "║    npm run build                                           ║"
 echo "║                                                            ║"
-echo "║  重置数据库：                                              ║"
-echo "║    npm run db:reset                                        ║"
+echo "║  修改数据库配置：                                          ║"
+echo "║    编辑 .env 文件并重启服务                                ║"
 echo "║                                                            ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo ""

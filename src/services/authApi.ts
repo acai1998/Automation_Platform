@@ -98,7 +98,30 @@ export async function login(
       body: JSON.stringify({ email, password, remember }),
     });
 
-    const data: AuthResponse = await response.json();
+    // 检查响应是否有内容
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      console.error('Login error: Non-JSON response', {
+        status: response.status,
+        statusText: response.statusText,
+        contentType
+      });
+      return { 
+        success: false, 
+        message: `服务器返回异常响应 (${response.status}): ${response.statusText}` 
+      };
+    }
+
+    const text = await response.text();
+    if (!text || text.trim() === '') {
+      console.error('Login error: Empty response body');
+      return { 
+        success: false, 
+        message: '服务器返回空响应，请检查后端服务是否正常运行' 
+      };
+    }
+
+    const data: AuthResponse = JSON.parse(text);
 
     if (data.success && data.token) {
       setToken(data.token, remember);
@@ -110,6 +133,9 @@ export async function login(
     return data;
   } catch (error) {
     console.error('Login error:', error);
+    if (error instanceof SyntaxError) {
+      return { success: false, message: 'JSON 解析失败，请检查后端服务' };
+    }
     return { success: false, message: '网络错误，请稍后重试' };
   }
 }

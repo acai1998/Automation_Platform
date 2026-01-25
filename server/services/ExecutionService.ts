@@ -19,6 +19,7 @@ import { EXECUTION_CONFIG, EXECUTION_STATUS, TEST_RESULT_STATUS } from '../confi
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
 import { ExecutionRepository } from '../repositories/ExecutionRepository';
+import { dashboardService } from './DashboardService';
 
 // 已废弃：由于没有远程 tasks 表，建议使用 CaseExecutionInput
 export interface TaskExecutionInput {
@@ -43,7 +44,7 @@ export interface ExecutionProgress {
   passedCases: number;
   failedCases: number;
   skippedCases: number;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'aborted';
 }
 
 export interface Auto_TestRunResultsInput {
@@ -63,7 +64,7 @@ export interface Auto_TestRunResultsInput {
 
 export interface ExecutionCallbackInput {
   executionId: number;
-  status: 'success' | 'failed' | 'cancelled';
+  status: 'success' | 'failed' | 'aborted';
   results: Auto_TestRunResultsInput[];
   duration: number;
   reportUrl?: string;
@@ -90,6 +91,10 @@ export interface ExecutionTriggerResult {
  */
 export class ExecutionService {
   private executionRepository: ExecutionRepository;
+
+  constructor() {
+    this.executionRepository = new ExecutionRepository(AppDataSource);
+  }
 
   /**
    * 更新执行状态为运行中（使用远程数据库表）
@@ -380,6 +385,22 @@ export class ExecutionService {
 
       // 2. 使用 ExecutionRepository 完成批次执行
       await this.executionRepository.completeBatch(runId, results);
+
+      // 3. 触发每日汇总数据刷新（异步，不影响主流程）
+      try {
+        const executionDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式
+        await dashboardService.refreshDailySummary(executionDate);
+        logger.debug('Daily summary refreshed after execution completion', {
+          runId,
+          executionDate,
+        }, LOG_CONTEXTS.EXECUTION);
+      } catch (summaryError) {
+        // 记录错误但不影响主流程
+        logger.warn('Failed to refresh daily summary after execution completion', {
+          runId,
+          error: summaryError instanceof Error ? summaryError.message : String(summaryError),
+        }, LOG_CONTEXTS.EXECUTION);
+      }
 
       const duration = timer();
       logger.info('Batch execution completed successfully', {
