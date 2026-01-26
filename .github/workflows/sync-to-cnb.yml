@@ -1,4 +1,4 @@
-name: Sync to CNB
+name: Sync to GitHub and CNB
 
 on:
   push:
@@ -29,6 +29,17 @@ jobs:
         CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
       run: |
         echo "Syncing to CNB..."
-        # 使用 token 认证推送
         git push https://x-access-token:${CNB_TOKEN}@cnb.cool/ImAcaiy/Automation_Platform.git HEAD:master
-        echo "Sync completed!"
+        echo "CNB sync completed!"
+
+    - name: Add GitHub remote
+      run: |
+        git remote add github https://github.com/acai1998/Automation_Platform.git || git remote set-url github https://github.com/acai1998/Automation_Platform.git
+
+    - name: Sync to GitHub
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "Syncing to GitHub..."
+        git push https://x-access-token:${GITHUB_TOKEN}@github.com/acai1998/Automation_Platform.git HEAD:master
+        echo "GitHub sync completed!"
