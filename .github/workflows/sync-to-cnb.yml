@@ -1,0 +1,34 @@
+name: Sync to CNB
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+
+    - name: Add CNB remote
+      run: |
+        git remote add cnb https://cnb.cool/ImAcaiy/Automation_Platform.git || git remote set-url cnb https://cnb.cool/ImAcaiy/Automation_Platform.git
+
+    - name: Sync to CNB
+      env:
+        CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+      run: |
+        echo "Syncing to CNB..."
+        # 使用 token 认证推送
+        git push https://x-access-token:${CNB_TOKEN}@cnb.cool/ImAcaiy/Automation_Platform.git HEAD:master
+        echo "Sync completed!"
