@@ -10,6 +10,7 @@
 </p>
 
 一个现代化的全栈自动化测试管理平台，用于管理测试用例、调度 Jenkins 执行任务、监控执行结果。平台专注于测试管理和调度，实际测试执行由 Jenkins 等外部系统完成。
+<img width="1672" height="1001" alt="image" src="https://github.com/user-attachments/assets/1353f77c-297e-44ba-a790-ac3a68b85254" />
 
 ## ✨ 功能特性
 
