@@ -31,7 +31,7 @@ jobs:
         echo "Syncing to CNB..."
         git fetch https://x-access-token:${CNB_TOKEN}@cnb.cool/ImAcaiy/Automation_Platform.git master
         git rebase origin/master HEAD
-        git push https://x-access-token:${CNB_TOKEN}@cnb.cool/ImAcaiy/Automation_Platform.git HEAD:master --force-with-lease
+        git push https://x-access-token:${CNB_TOKEN}@cnb.cool/ImAcaiy/Automation_Platform.git HEAD:master --force
         echo "CNB sync completed!"
 
     - name: Add GitHub remote
