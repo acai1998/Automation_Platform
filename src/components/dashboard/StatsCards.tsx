@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { CheckCircle, Terminal, AlertCircle, Timer, TrendingUp, TrendingDown, Loader2, HelpCircle } from "lucide-react";
 import { useLocation } from "wouter";
-import { dashboardApi } from "@/lib/api";
+import { dashboardApi } from "@/api";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { StatCardSkeleton } from "@/components/ui/StatCardSkeleton";
 import type { DashboardResponse } from "@/types/dashboard";

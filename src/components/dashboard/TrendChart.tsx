@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { Loader2, TrendingUp, BarChart3, HelpCircle, RefreshCw } from "lucide-react";
-import { dashboardApi } from "@/lib/api";
+import { dashboardApi } from "@/api";
 import {
   LineChart,
   Line,

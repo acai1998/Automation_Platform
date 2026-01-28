@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { Loader2, HelpCircle, RotateCcw } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
-import { dashboardApi } from "@/lib/api";
+import { dashboardApi } from "@/api";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { CustomTooltip } from "@/components/ui/CustomTooltip";
 import type {

@@ -1,5 +1,5 @@
-# 多阶段构建 - 自动化测试平台
-# Multi-stage build - Automation Platform
+# 多阶段构建 - 自动化测试平台（调试版本）
+# Multi-stage build - Automation Platform (Debug Version)
 
 # 阶段 1：构建前端
 FROM node:20-alpine AS frontend-builder
@@ -8,22 +8,14 @@ WORKDIR /app
 
 # 注意：不要在这里设置 NODE_ENV=production，否则 npm ci 不会安装 devDependencies
 # Vite 在 devDependencies 中，构建时需要它
-# 只设置 VITE_NODE_ENV，让 Vite 知道这是生产构建
 ENV VITE_NODE_ENV=production
 
 # 复制 package 文件
 COPY package*.json ./
 
 # 清理 npm 缓存并安装所有依赖（包括 devDependencies）
-# 先正常安装，然后强制替换为 vite 5.0.12 以确保兼容性
 RUN npm cache clean --force && \
     npm ci && \
-    echo "原始 vite 版本:" && \
-    npm list vite && \
-    echo "强制替换为 vite 5.0.12..." && \
-    npm uninstall vite && \
-    npm install vite@5.0.12 && \
-    echo "最终 vite 版本:" && \
     npm list vite
 
 # 复制前端相关的配置文件
@@ -34,28 +26,28 @@ COPY index.html ./
 # 复制配置目录
 COPY configs/ ./configs/
 
-# 复制源代码
+# 复制源代码（使用明确的路径）
 COPY src/ ./src/
 COPY shared/ ./shared/
 
-# 确保关键目录被正确复制并修复文件权限
-RUN echo "=== Checking source files ===" && \
-    ls -la ./src/ && \
-    ls -la ./src/lib/ && \
-    echo "=== Checking utils.ts file ===" && \
-    ls -la ./src/lib/utils.ts && \
+# 确保关键文件存在并可访问
+RUN echo "=== 验证关键文件 ===" && \
+    ls -lah ./src/lib/utils.ts && \
+    file ./src/lib/utils.ts && \
     cat ./src/lib/utils.ts && \
-    chmod -R 755 ./src && \
-    echo "=== File check complete ==="
+    echo "=== 文件验证通过 ==="
 
-# 验证关键依赖是否安装
-RUN echo "=== Checking installed dependencies ===" && \
-    npm list vite && \
-    ls -lh ./node_modules/.bin/vite && \
-    echo "=== Dependencies check complete ==="
-
-# 构建前端（使用本地安装的 vite）
-RUN ./node_modules/.bin/vite build
+# 尝试构建
+RUN npm run build || {
+    echo "=== 构建失败，显示调试信息 ===";
+    echo "当前目录：";
+    pwd;
+    echo "src/lib 目录内容：";
+    ls -la ./src/lib/;
+    echo "尝试直接查看文件：";
+    cat ./src/lib/utils.ts || echo "文件不存在";
+    exit 1;
+}
 
 # 阶段 2：运行时环境
 FROM node:20-alpine
@@ -73,7 +65,7 @@ RUN apk add --no-cache \
 COPY package*.json ./
 
 # 仅安装生产依赖
-RUN npm ci --only=production
+RUN npm ci --only=production --no-cache
 
 # 安装 tsx 用于运行 TypeScript
 RUN npm install -g tsx

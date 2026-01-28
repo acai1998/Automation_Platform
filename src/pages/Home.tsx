@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Play, ChevronDown } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState, useEffect } from "react";
-import { dashboardApi } from "@/lib/api";
+import { dashboardApi } from "@/api";
 import { useDashboardFilter } from "@/hooks/useDashboardFilter";
 import type { DashboardResponse, RecentRun } from "@/types/dashboard";
 
