@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 测试 Docker 构建
+# 测试 Docker 构建 demo
 echo "=== 开始测试 Docker 构建 ==="
 
 # 清理旧镜像
