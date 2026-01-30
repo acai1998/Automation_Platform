@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build and Push Docker Image to Aliyun
 
 on:
   push:
@@ -24,18 +24,18 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Log in to GitHub Container Registry
+    - name: Log in to Aliyun Container Registry
       uses: docker/login-action@v3
       with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+        registry: crpi-dytkl1o45qyeksph.cn-hangzhou.personal.cr.aliyuncs.com
+        username: ${{ secrets.ALIYUN_DOCKER_USERNAME }}
+        password: ${{ secrets.ALIYUN_DOCKER_PASSWORD }}
 
     - name: Extract metadata
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ghcr.io/${{ github.repository }}/automation-platform
+        images: crpi-dytkl1o45qyeksph.cn-hangzhou.personal.cr.aliyuncs.com/caijinwei/auto_test
         tags: |
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
