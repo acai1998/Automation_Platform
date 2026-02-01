@@ -1,13 +1,14 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { getSecretOrEnv } from '../utils/secrets';
 import { UserRepository } from '../repositories/UserRepository';
 import { AppDataSource } from '../config/database';
 import { User } from '../entities/User';
 import { sendPasswordResetEmail } from './EmailService';
 
-// JWT 密钥配置
-const JWT_SECRET = process.env.JWT_SECRET || 'autotest-jwt-secret-key-2025';
+// JWT 密钥配置 - 从 Docker Secrets 或环境变量读取
+const JWT_SECRET = getSecretOrEnv('JWT_SECRET', 'autotest-jwt-secret-key-2025');
 const JWT_EXPIRES_IN = '7d';
 const JWT_REFRESH_EXPIRES_IN = '30d';
 

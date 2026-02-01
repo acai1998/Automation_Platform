@@ -35,10 +35,12 @@ export class JenkinsService {
   private config: JenkinsConfig;
 
   constructor() {
-    // 从环境变量或配置文件加载 Jenkins 配置
-    const token = process.env.JENKINS_TOKEN;
+    // 从 Docker Secrets 或环境变量加载 Jenkins 配置
+    const { getSecretOrEnv } = require('../utils/secrets');
+
+    const token = getSecretOrEnv('JENKINS_TOKEN');
     if (!token) {
-      throw new Error('JENKINS_TOKEN environment variable is required for Jenkins authentication');
+      throw new Error('JENKINS_TOKEN environment variable or secret is required for Jenkins authentication');
     }
 
     this.config = {

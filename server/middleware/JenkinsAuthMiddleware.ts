@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import crypto from 'crypto';
+import { getSecretOrEnv } from '../utils/secrets';
 import {
   JenkinsAuthConfig,
   JenkinsAuthInfo,
@@ -50,9 +51,9 @@ export class JenkinsAuthMiddleware {
    * 启动时检查必需的环境变量
    */
   private validateAndLoadConfig(): JenkinsAuthConfig {
-    const apiKey = process.env.JENKINS_API_KEY;
-    const jwtSecret = process.env.JENKINS_JWT_SECRET;
-    const signatureSecret = process.env.JENKINS_SIGNATURE_SECRET;
+    const apiKey = getSecretOrEnv('JENKINS_API_KEY');
+    const jwtSecret = getSecretOrEnv('JENKINS_JWT_SECRET');
+    const signatureSecret = getSecretOrEnv('JENKINS_SIGNATURE_SECRET');
     const allowedIPsStr = process.env.JENKINS_ALLOWED_IPS;
 
     const missingVars: string[] = [];

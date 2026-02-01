@@ -1,0 +1,81 @@
+# ========================================
+# 多阶段构建 - 生产环境 Dockerfile
+# ========================================
+
+# 阶段 1: 构建阶段
+FROM node:18-alpine AS builder
+
+# 设置工作目录
+WORKDIR /app
+
+# 安装构建依赖
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    git
+
+# 复制 package 文件
+COPY package*.json ./
+COPY server/package*.json ./server/
+
+# 安装依赖
+RUN npm ci --only=production && \
+    cd server && npm ci --only=production
+
+# 复制源代码
+COPY . .
+
+# 构建前端
+RUN npm run build
+
+# ========================================
+# 阶段 2: 运行时阶段
+FROM node:18-alpine AS runtime
+
+# 安装运行时依赖
+RUN apk add --no-cache \
+    curl \
+    dumb-init \
+    && rm -rf /var/cache/apk/*
+
+# 创建非 root 用户
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S automation -u 1001 -G nodejs
+
+# 设置工作目录
+WORKDIR /app
+
+# 从构建阶段复制文件
+COPY --from=builder --chown=automation:nodejs /app/dist ./dist
+COPY --from=builder --chown=automation:nodejs /app/server ./server
+COPY --from=builder --chown=automation:nodejs /app/shared ./shared
+COPY --from=builder --chown=automation:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=automation:nodejs /app/server/node_modules ./server/node_modules
+
+# 复制启动脚本
+COPY --chown=automation:nodejs deployment/scripts/docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# 创建必要目录并设置权限
+RUN mkdir -p /app/logs /app/temp && \
+    chown -R automation:nodejs /app/logs /app/temp
+
+# 设置环境变量
+ENV NODE_ENV=production \
+    PORT=3000 \
+    USER=automation
+
+# 切换到非 root 用户
+USER automation
+
+# 暴露端口
+EXPOSE 3000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:3000/api/health || exit 1
+
+# 使用 dumb-init 作为 PID 1，启动应用
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["docker-entrypoint.sh"]

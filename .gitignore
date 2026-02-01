@@ -171,3 +171,11 @@ server/db/autotest.db
 
 # MCP config (contains credentials)
 .mcp.json
+
+# Docker Secrets (contains sensitive information)
+deployment/secrets/
+*.secret
+*.key
+*_password.txt
+*_token.txt
+*_secret.txt

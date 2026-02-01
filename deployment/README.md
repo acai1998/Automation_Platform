@@ -28,7 +28,10 @@ cp ../.env.example ../.env
 # 2. 编辑配置文件，填写你的数据库信息
 vim ../.env
 
-# 3. 运行部署脚本（基础模式）
+# 3. 【可选】设置 Docker Secrets（生产环境推荐）
+./scripts/setup-secrets.sh
+
+# 4. 运行部署脚本（基础模式）
 ./deploy.sh -m simple -b
 
 # 或者生产模式（包含 Redis + Nginx + 监控）
@@ -191,17 +194,40 @@ docker inspect --format='{{.State.Health.Status}}' automation-platform-app
 
 ## 🔐 安全建议
 
+### 使用 Docker Secrets（生产环境推荐）
+
+```bash
+# 1. 设置 Secrets
+./scripts/setup-secrets.sh
+
+# 2. 验证 Secrets
+./scripts/verify-secrets.sh
+
+# 3. 查看完整指南
+cat Docker-Secrets使用指南.md
+```
+
+### 基本安全措施
+
 1. **不要在代码中硬编码密码**
-   - 使用环境变量或 Docker Secrets
+   - 开发环境: 使用 `.env` 文件
+   - 生产环境: 使用 Docker Secrets
 
 2. **保护配置文件**
    ```bash
-   chmod 600 .env.production
+   chmod 600 ../.env
+   chmod 700 deployment/secrets/
+   chmod 600 deployment/secrets/*.txt
    ```
 
-3. **不要提交配置文件到 Git**
+3. **不要提交敏感信息到 Git**
    ```bash
-   echo ".env.production" >> ../.gitignore
+   # 已在 .gitignore 配置:
+   # .env
+   # deployment/secrets/
+   # *_password.txt
+   # *_token.txt
+   # *_secret.txt
    ```
 
 4. **使用强密码**
@@ -212,6 +238,18 @@ docker inspect --format='{{.State.Health.Status}}' automation-platform-app
 5. **限制数据库访问**
    - 只允许应用 IP 访问数据库
    - 使用防火墙规则限制端口
+
+6. **定期轮换密钥**
+   ```bash
+   # 更新 .env 中的密码
+   vim ../.env
+   
+   # 重新生成 Secrets
+   ./scripts/setup-secrets.sh
+   
+   # 重启服务
+   docker-compose restart app
+   ```
 
 ## 📊 监控和维护
 

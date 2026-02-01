@@ -4,23 +4,65 @@ services:
   # 自动化测试平台应用
   app:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: deployment/Dockerfile
     container_name: automation-platform
     ports:
       - "3000:3000"
+    
+    # 方式1: 直接从宿主机 .env 文件读取所有环境变量（开发环境）
+    env_file:
+      - ../.env
+    
+    # 方式2: 环境变量配置（非敏感信息）
     environment:
-      NODE_ENV: production
-      PORT: 3000
-      DB_PATH: /app/server/db/autotest.db
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=${PORT:-3000}
+      # 数据库配置（非敏感）
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_NAME=${DB_NAME}
+      # Jenkins 配置（非敏感）
+      - JENKINS_URL=${JENKINS_URL}
+      - JENKINS_USER=${JENKINS_USER}
+      - JENKINS_JOB_NAME=${JENKINS_JOB_NAME}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
+      
+      # 使用 Docker Secrets（如果启用）
+      # 应用会优先读取 _FILE 变量指向的文件内容
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PASSWORD_FILE=/run/secrets/db_password
+      - JENKINS_TOKEN=${JENKINS_TOKEN}
+      - JENKINS_TOKEN_FILE=/run/secrets/jenkins_token
+      - JENKINS_API_KEY=${JENKINS_API_KEY}
+      - JENKINS_API_KEY_FILE=/run/secrets/jenkins_api_key
+      - JENKINS_JWT_SECRET=${JENKINS_JWT_SECRET}
+      - JENKINS_JWT_SECRET_FILE=/run/secrets/jenkins_jwt_secret
+      - JENKINS_SIGNATURE_SECRET=${JENKINS_SIGNATURE_SECRET}
+      - JENKINS_SIGNATURE_SECRET_FILE=/run/secrets/jenkins_signature_secret
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+    
+    # Docker Secrets 挂载（生产环境推荐）
+    secrets:
+      - db_password
+      - jenkins_token
+      - jenkins_api_key
+      - jenkins_jwt_secret
+      - jenkins_signature_secret
+      - jwt_secret
+    
     volumes:
-      # 持久化数据库
-      - db-volume:/app/server/db
       # 持久化日志
       - logs-volume:/app/logs
+      # 时区同步
+      - /etc/localtime:/etc/localtime:ro
+    
     restart: unless-stopped
     networks:
       - automation-network
+    
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
@@ -45,11 +87,25 @@ services:
       - automation-network
 
 volumes:
-  db-volume:
-    driver: local
   logs-volume:
     driver: local
 
 networks:
   automation-network:
     driver: bridge
+
+# Docker Secrets 定义
+# 使用方式: docker secret create <secret_name> <file_path>
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  jenkins_token:
+    file: ./secrets/jenkins_token.txt
+  jenkins_api_key:
+    file: ./secrets/jenkins_api_key.txt
+  jenkins_jwt_secret:
+    file: ./secrets/jenkins_jwt_secret.txt
+  jenkins_signature_secret:
+    file: ./secrets/jenkins_signature_secret.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
