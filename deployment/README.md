@@ -1,174 +1,304 @@
-# 📦 部署文件夹
+# Docker 部署指南
 
-> 自动化测试平台的完整部署解决方案
+本目录包含自动化测试平台的 Docker 部署配置文件。
 
-## 📂 文件结构
+## 📁 文件说明
 
 ```
 deployment/
-├── README.md                   # 本文件
-├── QUICK_START.md              # 快速开始指南（推荐首先阅读）
-├── INSTALLATION.md             # 完整安装指南
-├── DEPLOYMENT.md               # 生产部署指南
-├── DEPLOYMENT_SUMMARY.md       # 部署文件总结
-├── DEPLOYMENT_CHECKLIST.md     # 部署检查清单
-├── Dockerfile                  # Docker 镜像定义
-├── docker-compose.yml          # Docker Compose 配置
-├── nginx.conf                  # Nginx 反向代理配置
-├── .env.example                # 环境变量示例
-└── scripts/
-    ├── setup.sh                # macOS/Linux 自动部署脚本
-    ├── setup.bat               # Windows 自动部署脚本
-    └── check-env.sh            # 环境检查脚本
+├── Dockerfile                        # 应用镜像构建文件
+├── docker-compose.yml                # 基础部署配置
+├── docker-compose.prod.yml           # 生产环境部署（包含 Redis + Nginx + 监控）
+├── deploy.sh                         # 一键部署脚本 ⭐
+├── nginx.conf                        # Nginx 配置文件
+├── scripts/                          # 部署相关脚本
+└── README.md                         # 本文件
 ```
 
 ## 🚀 快速开始
 
-### 方式 1：自动部署（推荐）⭐⭐⭐
+### 方式 1: 使用一键部署脚本（推荐）
 
 ```bash
-# macOS / Linux
-bash scripts/setup.sh
+cd deployment
 
-# Windows
-scripts\setup.bat
+# 1. 复制配置文件模板（从根目录）
+cp ../.env.example ../.env
 
-# 启动应用
-npm run start
+# 2. 编辑配置文件，填写你的数据库信息
+vim ../.env
+
+# 3. 运行部署脚本（基础模式）
+./deploy.sh -m simple -b
+
+# 或者生产模式（包含 Redis + Nginx + 监控）
+./deploy.sh -m prod -b
 ```
 
-**所需时间**: 5-15 分钟
-
-### 方式 2：Docker 部署
+### 方式 2: 手动使用 Docker Compose
 
 ```bash
-docker-compose up -d
+cd deployment
+
+# 1. 准备配置文件
+cp ../.env.example ../.env
+vim ../.env  # 填写数据库信息
+
+# 2. 构建镜像
+cd ..
+docker build -t automation-platform:latest -f deployment/Dockerfile .
+
+# 3. 启动服务
+cd deployment
+docker-compose -f docker-compose.yml up -d
 ```
 
-### 方式 3：手动部署
+## 🔧 配置说明
+
+### 连接外部数据库（推荐用于生产环境）
+
+编辑 `.env` 文件（在项目根目录）：
 
 ```bash
-npm install
-npm run db:init
-npm run start
+# Jenkins 配置（必需）
+JENKINS_URL=http://jenkins.wiac.xyz:8080/
+JENKINS_USER=root
+JENKINS_TOKEN=your_jenkins_token
+JENKINS_API_KEY=your-secret-api-key-here
+JENKINS_JWT_SECRET=your-secret-jwt-key-here
+JENKINS_SIGNATURE_SECRET=your-secret-signature-key-here
+
+# 其他配置项请参考 .env.example
 ```
 
----
+### 环境变量说明
 
-## 📚 文档导航
+项目根目录的 `.env.example` 文件包含了完整的配置说明，包括 Jenkins 集成、认证配置等。
 
-| 文档 | 用途 | 阅读时间 |
-|------|------|--------|
-| **QUICK_START.md** | 快速开始指南 | 3 分钟 |
-| **INSTALLATION.md** | 详细安装步骤 | 15 分钟 |
-| **DEPLOYMENT.md** | 生产环境部署 | 30 分钟 |
-| **DEPLOYMENT_CHECKLIST.md** | 检查清单和快速参考 | 5 分钟 |
-| **DEPLOYMENT_SUMMARY.md** | 文件总结和导航 | 10 分钟 |
+## 📋 部署模式对比
 
----
+| 模式 | 配置文件 | 包含服务 | 适用场景 |
+|------|---------|---------|---------|
+| **basic** | `docker-compose.yml` | 仅应用 + Nginx | 基础部署 |
+| **prod** | `docker-compose.prod.yml` | 应用 + Redis + Nginx + 监控 | 生产环境（外部数据库） |
 
-## 🎯 按场景选择
+## 🛠️ 常用命令
 
-### 场景 1：我想快速部署
-
-1. 运行 `bash scripts/setup.sh` 或 `scripts\setup.bat`
-2. 等待脚本完成
-3. 运行 `npm run start`
-4. 打开 http://localhost:5173
-
-**查看**: [QUICK_START.md](./QUICK_START.md)
-
-### 场景 2：我需要详细的安装步骤
-
-**查看**: [INSTALLATION.md](./INSTALLATION.md)
-
-### 场景 3：我要部署到生产环境
-
-**查看**: [DEPLOYMENT.md](./DEPLOYMENT.md)
-
-### 场景 4：我遇到了问题
-
-**查看**: [DEPLOYMENT.md](./DEPLOYMENT.md) 的故障排除部分
-
-### 场景 5：我想使用 Docker
+### 使用部署脚本
 
 ```bash
-docker-compose up -d
+# 查看帮助
+./deploy.sh --help
+
+# 构建并启动（基础模式）
+./deploy.sh -m basic -b
+
+# 构建并启动（生产模式）
+./deploy.sh -m prod -b
+
+# 查看日志
+./deploy.sh -l
+
+# 检查状态
+./deploy.sh --check
+
+# 停止服务
+./deploy.sh -d
+
+# 备份数据（如果需要）
+./deploy.sh --backup
 ```
 
-**查看**: [DEPLOYMENT.md](./DEPLOYMENT.md) 的 Docker 部分
-
----
-
-## ✅ 系统要求
-
-| 组件 | 最低版本 | 推荐版本 |
-|------|---------|---------|
-| Node.js | 18.0.0 | 20.x LTS |
-| npm | 9.0.0 | 10.x+ |
-| 磁盘空间 | 2GB | 5GB+ |
-| 内存 | 4GB | 8GB+ |
-
----
-
-## 🔧 常用命令
+### 使用 Docker Compose
 
 ```bash
-# 启动应用
-npm run start
+# 启动服务
+docker-compose -f docker-compose.yml up -d
 
-# 仅启动前端
-npm run dev
+# 查看日志
+docker-compose -f docker-compose.yml logs -f
 
-# 仅启动后端
-npm run server
+# 停止服务
+docker-compose -f docker-compose.yml down
 
-# 构建生产版本
-npm run build
+# 重启服务
+docker-compose -f docker-compose.yml restart
 
-# 初始化数据库
-npm run db:init
-
-# 重置数据库
-npm run db:reset
-
-# 环境检查
-bash scripts/check-env.sh
+# 查看服务状态
+docker-compose -f docker-compose.yml ps
 ```
 
----
-
-## 🌐 部署完成后
-
-- 前端应用: http://localhost:5173
-- 后端 API: http://localhost:3000
-- 健康检查: http://localhost:3000/api/health
-
----
-
-## 📋 部署前检查
+### 使用 Docker 命令
 
 ```bash
-# 运行环境检查脚本
-bash scripts/check-env.sh
+# 查看容器状态
+docker ps -a | grep automation
+
+# 查看应用日志
+docker logs -f automation-platform-app
+
+# 进入容器
+docker exec -it automation-platform-app sh
+
+# 重启容器
+docker restart automation-platform-app
+
+# 停止并删除容器
+docker stop automation-platform-app
+docker rm automation-platform-app
 ```
 
----
+## 🔍 故障排查
 
-## 🆘 需要帮助？
+### 1. 容器无法启动
 
-1. **快速问题** → 查看 [DEPLOYMENT_CHECKLIST.md](./DEPLOYMENT_CHECKLIST.md)
-2. **详细问题** → 查看 [DEPLOYMENT.md](./DEPLOYMENT.md) 的故障排除部分
-3. **环境问题** → 运行 `bash scripts/check-env.sh`
+```bash
+# 查看详细日志
+docker logs automation-platform-app
 
----
+# 检查配置文件
+cat .env.production
 
-## 📖 返回主项目
+# 验证镜像是否存在
+docker images | grep automation-platform
+```
 
-返回项目根目录查看 [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md) 或 [README.md](../README.md)
+### 2. 无法连接数据库
 
----
+```bash
+# 进入容器测试连接
+docker exec -it automation-platform-app sh
 
-**祝您部署顺利！** 🎉
+# 安装 mysql 客户端
+apk add --no-cache mysql-client
 
-最后更新：2025-12-28
+# 测试数据库连接
+mysql -h your-database-host.com -u automation_user -p
+
+# 测试网络连通性
+ping your-database-host.com
+```
+
+### 3. 检查健康状态
+
+```bash
+# 健康检查
+curl http://localhost:3000/api/health
+
+# 查看容器健康状态
+docker inspect --format='{{.State.Health.Status}}' automation-platform-app
+```
+
+## 🔐 安全建议
+
+1. **不要在代码中硬编码密码**
+   - 使用环境变量或 Docker Secrets
+
+2. **保护配置文件**
+   ```bash
+   chmod 600 .env.production
+   ```
+
+3. **不要提交配置文件到 Git**
+   ```bash
+   echo ".env.production" >> ../.gitignore
+   ```
+
+4. **使用强密码**
+   - 数据库密码至少 16 位
+   - JWT Secret 至少 32 位
+   - 包含大小写字母、数字和特殊字符
+
+5. **限制数据库访问**
+   - 只允许应用 IP 访问数据库
+   - 使用防火墙规则限制端口
+
+## 📊 监控和维护
+
+### 查看资源使用情况
+
+```bash
+# 查看容器资源使用
+docker stats automation-platform-app
+
+# 查看容器详细信息
+docker inspect automation-platform-app
+```
+
+### 日志管理
+
+```bash
+# 查看日志文件位置
+docker inspect -f '{{.LogPath}}' automation-platform-app
+
+# 清理日志（谨慎操作）
+truncate -s 0 $(docker inspect -f '{{.LogPath}}' automation-platform-app)
+```
+
+### 备份数据
+
+```bash
+# 备份数据（如果需要）
+./deploy.sh --backup
+
+# 手动备份应用数据
+docker exec automation-platform tar czf - /app/data > backup_$(date +%Y%m%d_%H%M%S).tar.gz
+```
+
+## 🌐 访问地址
+
+服务启动后，可以通过以下地址访问：
+
+- **应用主页**: http://localhost:3000
+- **健康检查**: http://localhost:3000/api/health
+- **Redis** (生产模式): localhost:6379
+
+## 📚 更多文档
+
+详细的部署指南请参考：
+
+- [Docker部署-外部数据库连接指南.md](../docs/Docker部署-外部数据库连接指南.md)
+- [项目主 README](../README.md)
+
+## ❓ 常见问题
+
+**Q: 如何更新应用？**
+
+```bash
+# 1. 拉取最新代码
+git pull
+
+# 2. 重新构建镜像
+./deploy.sh -m basic -b
+
+# 3. 重启服务
+docker-compose -f docker-compose.yml restart
+```
+
+**Q: 如何切换数据库？**
+
+编辑 `.env.production` 文件，修改 `DB_HOST`、`DB_NAME` 等配置，然后重启服务。
+
+**Q: 如何扩展服务？**
+
+```bash
+# 使用 Docker Compose 扩展
+docker-compose -f docker-compose.yml up -d --scale app=3
+```
+
+**Q: 如何查看数据库中的数据？**
+
+```bash
+# 查看应用内部数据（如果有）
+docker exec -it automation-platform-app ls -la /app/data
+
+# 如果使用外部数据库，请直接连接到您的 MariaDB 服务器
+```
+
+## 📞 获取帮助
+
+如果遇到问题，请：
+
+1. 查看日志: `./deploy.sh -l`
+2. 检查状态: `./deploy.sh --check`
+3. 参考详细文档: [Docker部署指南](../docs/Docker部署-外部数据库连接指南.md)
