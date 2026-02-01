@@ -22,6 +22,7 @@ export const LOG_CONTEXTS = {
   PERFORMANCE: 'PERFORMANCE',
   AUDIT: 'AUDIT',
   ERROR: 'ERROR',
+  SECURITY: 'SECURITY',
 } as const;
 
 // 敏感字段列表 (用于数据脱敏)

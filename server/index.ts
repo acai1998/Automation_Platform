@@ -3,6 +3,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import rateLimit from 'express-rate-limit';
 import { testConnection, initializeDataSource } from './config/database';
 import { initializeLogging, LOG_CONTEXTS } from './config/logging';
 import { requestLoggingMiddleware, errorLoggingMiddleware } from './middleware/RequestLoggingMiddleware';
@@ -128,13 +129,45 @@ const distPath = path.join(__dirname, '../');
 logger.info('Setting up static file serving', { distPath }, LOG_CONTEXTS.HTTP);
 app.use(express.static(distPath));
 
-// SPA fallback - 所有非 API 路由都返回 index.html
-app.get('*', (req, res) => {
+// 静态文件访问速率限制 - 防止 DoS 攻击
+const staticFileRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15分钟窗口
+  max: 1000, // 每个IP每15分钟最多1000次请求
+  message: {
+    error: 'Too many requests for static files, please try again later.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true, // 返回速率限制信息在 `RateLimit-*` 头中
+  legacyHeaders: false, // 禁用 `X-RateLimit-*` 头
+  // 移除自定义 keyGenerator，使用默认的 IP 处理（支持 IPv6）
+  skip: (req: express.Request) => {
+    // 跳过 API 路由的速率限制（API 路由有自己的限制）
+    return req.path.startsWith('/api/');
+  },
+  handler: (req: express.Request, res: express.Response) => {
+    const clientIP = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip;
+    logger.warn('Static file rate limit exceeded', {
+      ip: clientIP,
+      path: req.path,
+      userAgent: req.headers['user-agent'],
+      windowMs: 15 * 60 * 1000,
+      max: 1000
+    }, LOG_CONTEXTS.SECURITY);
+
+    res.status(429).json({
+      error: 'Too many requests for static files, please try again later.',
+      retryAfter: '15 minutes'
+    });
+  }
+});
+
+// SPA fallback - 所有非 API 路由都返回 index.html（带速率限制）
+app.get('*', staticFileRateLimit, (req, res) => {
   // 跳过 API 路由
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'API endpoint not found' });
   }
-  
+
   const indexPath = path.join(distPath, 'index.html');
   logger.debug('Serving SPA index.html', { path: req.path, indexPath }, LOG_CONTEXTS.HTTP);
   res.sendFile(indexPath);
