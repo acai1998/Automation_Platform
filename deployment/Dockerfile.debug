@@ -1,0 +1,56 @@
+# 调试版 Dockerfile - 用于检查编译输出
+
+# 阶段 1：构建前端
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app
+ENV VITE_NODE_ENV=production
+
+COPY package*.json ./
+RUN npm cache clean --force && npm ci
+RUN npm uninstall vite && npm install vite@5.0.12
+
+COPY vite.config.ts tsconfig.json index.html ./
+COPY configs/ ./configs/
+COPY src/ ./src/
+COPY shared/ ./shared/
+
+RUN ./node_modules/.bin/vite build
+
+# 阶段 2：运行时环境（调试模式）
+FROM node:20-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache python3 make g++ sqlite
+
+COPY package*.json ./
+RUN npm ci
+
+COPY --from=frontend-builder /app/dist ./dist
+
+COPY server/ ./server/
+COPY shared/ ./shared/
+COPY tsconfig.server.json ./
+
+# 编译后端 TypeScript
+RUN npm run server:build
+
+# 不清理 devDependencies，便于调试
+# RUN npm prune --production
+
+RUN mkdir -p server/db
+
+# 显示文件结构用于调试
+RUN echo "=== /app 目录结构 ===" && \
+    find /app -type f -name "*.js" | head -20 && \
+    echo "" && \
+    echo "=== dist/server/ 目录 ===" && \
+    ls -la /app/dist/server/ && \
+    echo "" && \
+    echo "=== 检查 index.js ===" && \
+    test -f /app/dist/server/index.js && echo "✅ 找到 index.js" || echo "❌ 未找到 index.js"
+
+EXPOSE 3000
+
+CMD ["sh"]

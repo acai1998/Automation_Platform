@@ -34,11 +34,15 @@ export type CaseType = 'api' | 'ui' | 'performance';
 export class JenkinsService {
   private config: JenkinsConfig;
 
+  private enabled: boolean = true;
+
   constructor() {
     // 从环境变量或配置文件加载 Jenkins 配置
     const token = process.env.JENKINS_TOKEN;
     if (!token) {
-      throw new Error('JENKINS_TOKEN environment variable is required for Jenkins authentication');
+      console.warn('[JenkinsService] JENKINS_TOKEN not set, Jenkins integration disabled');
+      this.enabled = false;
+      return;
     }
 
     this.config = {
@@ -77,6 +81,13 @@ export class JenkinsService {
     scriptPath: string,
     callbackUrl?: string
   ): Promise<JenkinsTriggerResult> {
+    if (!this.enabled) {
+      return {
+        success: false,
+        message: 'Jenkins integration is not configured',
+      };
+    }
+
     const jobName = this.getJobName(type);
     const triggerUrl = `${this.config.baseUrl}/job/${jobName}/buildWithParameters`;
 
@@ -136,6 +147,13 @@ export class JenkinsService {
     scriptPaths: string[],
     callbackUrl?: string
   ): Promise<JenkinsTriggerResult> {
+    if (!this.enabled) {
+      return {
+        success: false,
+        message: 'Jenkins integration is not configured',
+      };
+    }
+
     const jobName = this.config.jobs.api; // 使用默认API Job
     const triggerUrl = `${this.config.baseUrl}/job/${jobName}/buildWithParameters`;
 
@@ -242,6 +260,10 @@ export class JenkinsService {
    * 获取最新构建信息
    */
   private async getLatestBuildInfo(jobName: string): Promise<{ buildNumber: number; buildUrl: string } | null> {
+    if (!this.enabled) {
+      return null;
+    }
+
     try {
       const response = await fetch(`${this.config.baseUrl}/job/${jobName}/lastBuild/api/json`, {
         method: 'GET',
@@ -266,7 +288,10 @@ export class JenkinsService {
   /**
    * 获取 Jenkins 配置信息（不包含敏感信息）
    */
-  getConfigInfo(): { baseUrl: string; jobs: JenkinsConfig['jobs'] } {
+  getConfigInfo(): { baseUrl: string; jobs: JenkinsConfig['jobs'] } | null {
+    if (!this.enabled) {
+      return null;
+    }
     return {
       baseUrl: this.config.baseUrl,
       jobs: this.config.jobs,
@@ -277,6 +302,10 @@ export class JenkinsService {
    * 测试 Jenkins 连接
    */
   async testConnection(): Promise<{ connected: boolean; message: string }> {
+    if (!this.enabled) {
+      return { connected: false, message: 'Jenkins integration is not configured' };
+    }
+
     try {
       const response = await fetch(`${this.config.baseUrl}/api/json`, {
         method: 'GET',
