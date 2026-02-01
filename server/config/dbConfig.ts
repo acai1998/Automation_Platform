@@ -3,6 +3,8 @@
  * 解决 dataSource.ts 和 database.ts 中重复配置的问题
  */
 
+import { getSecretOrEnv } from '../utils/secrets';
+
 // 配置常量
 export const DB_CONFIG_CONSTANTS = {
   // 连接配置
@@ -82,7 +84,7 @@ export function getDbConfig(): DbEnvironmentConfig {
     host: process.env.DB_HOST || DB_CONFIG_CONSTANTS.DEFAULT_HOST,
     port: parsePort(process.env.DB_PORT, DB_CONFIG_CONSTANTS.DEFAULT_PORT),
     username: process.env.DB_USER || DB_CONFIG_CONSTANTS.DEFAULT_USER,
-    password: process.env.DB_PASSWORD || '',
+    password: getSecretOrEnv('DB_PASSWORD', ''),  // 支持从 Docker Secrets 读取
     database: process.env.DB_NAME || DB_CONFIG_CONSTANTS.DEFAULT_DATABASE,
   };
 

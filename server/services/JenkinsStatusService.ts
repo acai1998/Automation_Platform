@@ -77,7 +77,10 @@ export class JenkinsStatusService {
   private config: JenkinsConfig;
 
   constructor() {
-    const token = process.env.JENKINS_TOKEN || '';
+    // 从 Docker Secrets 或环境变量加载 Jenkins 配置
+    const { getSecretOrEnv } = require('../utils/secrets');
+
+    const token = getSecretOrEnv('JENKINS_TOKEN');
     if (!token) {
       console.warn('JENKINS_TOKEN environment variable is required for Jenkins authentication. Jenkins integration may not work.');
     }
