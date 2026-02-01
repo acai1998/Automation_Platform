@@ -54,9 +54,6 @@
 # 自动部署脚本（macOS/Linux）
 bash deployment/scripts/setup.sh
 
-# 或 Windows
-deployment\scripts\setup.bat
-
 # 启动应用
 npm run start
 ```

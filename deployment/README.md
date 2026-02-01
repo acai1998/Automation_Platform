@@ -7,53 +7,45 @@
 ```
 deployment/
 ├── Dockerfile                        # 应用镜像构建文件
-├── docker-compose.yml                # 基础部署配置
-├── docker-compose.prod.yml           # 生产环境部署（包含 Redis + Nginx + 监控）
-├── deploy.sh                         # 一键部署脚本 ⭐
+├── deploy.sh                         # 高级 Docker 部署脚本
 ├── nginx.conf                        # Nginx 配置文件
-├── scripts/                          # 部署相关脚本
+├── scripts/
+│   ├── setup.sh                      # 快速部署脚本 ⭐ (推荐)
+│   ├── check-env.sh                  # 环境检查脚本
+│   └── ...                           # 其他部署工具
 └── README.md                         # 本文件
 ```
 
 ## 🚀 快速开始
 
-### 方式 1: 使用一键部署脚本（推荐）
+### 方式 1: 使用快速部署脚本（推荐）
 
 ```bash
-cd deployment
+# 运行自动部署脚本（推荐）
+bash deployment/scripts/setup.sh
 
-# 1. 复制配置文件模板（从根目录）
-cp ../.env.example ../.env
-
-# 2. 编辑配置文件，填写你的数据库信息
-vim ../.env
-
-# 3. 【可选】设置 Docker Secrets（生产环境推荐）
-./scripts/setup-secrets.sh
-
-# 4. 运行部署脚本（基础模式）
-./deploy.sh -m simple -b
-
-# 或者生产模式（包含 Redis + Nginx + 监控）
-./deploy.sh -m prod -b
+# 脚本会自动完成：
+# - 环境检查和依赖安装
+# - 配置文件设置
+# - 数据库连接测试
+# - 应用启动
 ```
 
-### 方式 2: 手动使用 Docker Compose
+### 方式 2: 高级 Docker 部署
+
+如果您需要自定义 Docker 配置或生产环境部署：
 
 ```bash
-cd deployment
-
 # 1. 准备配置文件
-cp ../.env.example ../.env
-vim ../.env  # 填写数据库信息
+cp .env.example .env
+vim .env  # 填写数据库信息
 
-# 2. 构建镜像
-cd ..
-docker build -t automation-platform:latest -f deployment/Dockerfile .
+# 2. 创建 docker-compose.yml 文件（根据需要）
+# 参考 Docker Swarm 部署指南
 
-# 3. 启动服务
+# 3. 使用高级部署脚本
 cd deployment
-docker-compose -f docker-compose.yml up -d
+./deploy.sh <environment> <strategy> <image_tag>
 ```
 
 ## 🔧 配置说明

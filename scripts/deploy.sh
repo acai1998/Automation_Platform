@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # 自动化平台部署脚本
-# 用途: 在远程服务器上部署应用
+# 用途: 在远程服务器上部署应用 (需要 docker-compose.yml)
+# 注意: 对于快速部署，推荐使用 deployment/scripts/setup.sh
 # 使用: ./deploy.sh <environment> <strategy> <image_tag>
 
 set -euo pipefail
@@ -134,10 +135,12 @@ backup_current_version() {
         log "已备份环境配置"
     fi
 
-    # 备份 docker-compose.yml
+    # 备份 docker-compose.yml (如果存在)
     if [[ -f "/opt/$APP_NAME/docker-compose.yml" ]]; then
         cp "/opt/$APP_NAME/docker-compose.yml" "$backup_dir/"
         log "已备份 Docker Compose 配置"
+    else
+        log "跳过 Docker Compose 配置备份 (文件不存在)"
     fi
 
     # 备份数据库（如果是本地数据库）
@@ -187,7 +190,7 @@ update_configs() {
         sed -i.bak "s|image:.*$APP_NAME:.*|image: $IMAGE_TAG|g" docker-compose.yml
         log "已更新 Docker Compose 镜像标签"
     else
-        error_exit "docker-compose.yml 文件不存在"
+        error_exit "docker-compose.yml 文件不存在。请使用 deployment/scripts/setup.sh 进行快速部署，或创建 docker-compose.yml 文件。"
     fi
 
     # 验证配置文件

@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # 自动化平台回滚脚本
-# 用途: 回滚应用到之前的版本
+# 用途: 回滚应用到之前的版本 (需要 docker-compose.yml)
+# 注意: 对于快速部署，推荐使用 deployment/scripts/setup.sh
 # 使用: ./rollback.sh <environment> [version]
 
 set -euo pipefail
@@ -436,7 +437,7 @@ start_rollback_services() {
 
     # 验证配置文件
     if [[ ! -f "docker-compose.yml" ]]; then
-        error_exit "docker-compose.yml 文件不存在"
+        error_exit "docker-compose.yml 文件不存在。请使用 deployment/scripts/setup.sh 进行快速部署，或创建 docker-compose.yml 文件。"
     fi
 
     # 验证配置
