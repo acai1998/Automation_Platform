@@ -1,0 +1,157 @@
+version: '3.8'
+
+# 阿里云镜像部署配置
+# 使用 GitHub Actions 推送到阿里云容器镜像服务的镜像
+
+services:
+  # 主应用服务 - 使用阿里云镜像
+  app:
+    image: crpi-dytkl1o45qyeksph.cn-hangzhou.personal.cr.aliyuncs.com/caijinwei/auto_test:${IMAGE_TAG:-latest}
+    container_name: auto-test-app
+    restart: unless-stopped
+
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=3000
+
+    env_file:
+      - .env
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      # 数据持久化
+      - app-data:/app/server/db
+      - app-logs:/app/logs
+
+      # 时区同步
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
+    networks:
+      - automation-network
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # Redis 缓存服务
+  redis:
+    image: redis:7-alpine
+    container_name: auto-test-redis
+    restart: unless-stopped
+
+    command: redis-server --appendonly yes
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis-data:/data
+
+    networks:
+      - automation-network
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Nginx 反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: auto-test-nginx
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      # Nginx 配置
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+      # 日志
+      - nginx-logs:/var/log/nginx
+
+    networks:
+      - automation-network
+
+    depends_on:
+      - app
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+# 网络配置
+networks:
+  automation-network:
+    driver: bridge
+
+# 数据卷配置
+volumes:
+  # 应用数据
+  app-data:
+    driver: local
+
+  # 应用日志
+  app-logs:
+    driver: local
+
+  # Redis 数据
+  redis-data:
+    driver: local
+
+  # Nginx 日志
+  nginx-logs:
+    driver: local

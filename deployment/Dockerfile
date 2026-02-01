@@ -72,19 +72,28 @@ RUN apk add --no-cache \
 # 复制 package 文件
 COPY package*.json ./
 
-# 仅安装生产依赖
-RUN npm ci --only=production
-
-# 安装 tsx 用于运行 TypeScript
-RUN npm install -g tsx
+# 安装所有依赖（包括 devDependencies，用于编译）
+RUN npm ci
 
 # 从构建阶段复制前端文件
 COPY --from=frontend-builder /app/dist ./dist
 
-# 复制后端代码
+# 复制后端代码和配置
 COPY server/ ./server/
 COPY shared/ ./shared/
 COPY tsconfig.server.json ./
+
+# 编译后端 TypeScript
+RUN npm run server:build && \
+    echo "=== 编译成功，检查输出 ===" && \
+    ls -la dist/ && \
+    echo "=== dist/server/ 目录内容 ===" && \
+    ls -la dist/server/ && \
+    echo "=== 验证关键文件 ===" && \
+    test -f dist/server/index.js && echo "✅ index.js 存在" || echo "❌ index.js 不存在"
+
+# 清理 devDependencies 减小镜像大小
+RUN npm prune --production
 
 # 创建数据库目录
 RUN mkdir -p server/db
@@ -96,5 +105,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
-# 启动命令
-CMD ["node", "--loader", "tsx", "server/index.ts"]
+# 启动命令 - 运行编译后的 JavaScript
+CMD ["node", "dist/server/server/index.js"]
