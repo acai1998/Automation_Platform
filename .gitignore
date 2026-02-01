@@ -179,3 +179,7 @@ deployment/secrets/
 *_password.txt
 *_token.txt
 *_secret.txt
+secrets/
+db_password.txt
+*_secret.txt
+*.pem
