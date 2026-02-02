@@ -184,7 +184,7 @@ check_docker_containers() {
     }
 
     if [[ ! -f "docker-compose.yml" ]]; then
-        log_warning "docker-compose.yml 不存在，跳过容器检查"
+        log_warning "docker-compose.yml 不存在，跳过容器检查 (使用 deployment/scripts/setup.sh 部署时正常)"
         return 0
     fi
 

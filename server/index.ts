@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
 import { testConnection, initializeDataSource } from './config/database';
 import { initializeLogging, LOG_CONTEXTS } from './config/logging';
 import { requestLoggingMiddleware, errorLoggingMiddleware } from './middleware/RequestLoggingMiddleware';
@@ -120,6 +121,23 @@ app.get('/api/health', (req, res) => {
   }, LOG_CONTEXTS.HTTP);
 
   res.json(healthStatus);
+});
+
+// 静态文件服务 - 提供前端构建文件
+const distPath = path.join(__dirname, '../');
+logger.info('Setting up static file serving', { distPath }, LOG_CONTEXTS.HTTP);
+app.use(express.static(distPath));
+
+// SPA fallback - 所有非 API 路由都返回 index.html
+app.get('*', (req, res) => {
+  // 跳过 API 路由
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  
+  const indexPath = path.join(distPath, 'index.html');
+  logger.debug('Serving SPA index.html', { path: req.path, indexPath }, LOG_CONTEXTS.HTTP);
+  res.sendFile(indexPath);
 });
 
 // 错误处理中间件 (在所有路由之后)
