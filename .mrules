@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-本文件为 Claude Code（claude.ai/code）在处理本代码仓库中的代码时提供指导。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 开发命令
 
@@ -17,6 +17,22 @@ npm run server
 # 构建生产环境的前端代码
 npm run build
 
+```
+
+## 测试
+
+```bash
+# 运行前端测试（Vitest + React Testing Library）
+npx vitest
+
+# 运行测试并监听文件变化
+npx vitest --watch
+
+# 运行单次测试
+npx vitest run
+
+# 运行特定测试文件
+npx vitest src/components/__tests__/GitHubRepositoryTable.test.tsx
 ```
 
 ## 类型检查
@@ -98,14 +114,43 @@ npx tsc --noEmit -p tsconfig.server.json
 └── tmp/           # 临时文件（已忽略）
 ```
 
+## 测试规范
+
+### 前端测试
+- **框架**：Vitest + React Testing Library + jsdom
+- **配置**：测试配置在 `vite.config.ts`，设置文件在 `src/test/setup.ts`
+- **位置**：测试文件放在 `src/components/__tests__/` 目录
+- **命名**：测试文件以 `.test.tsx` 结尾
+- **模式**：使用 `describe()` 和 `it()` 组织测试用例
+- **模拟**：UI 组件使用 `vi.mock()` 进行模拟
+
+### 测试文件示例
+```typescript
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { Component } from '@/components/Component';
+
+vi.mock('@/components/ui/button', () => ({
+  Button: ({ children }: { children: React.ReactNode }) => <button>{children}</button>,
+}));
+
+describe('Component', () => {
+  it('should render correctly', () => {
+    render(<Component />);
+    expect(screen.getByText('Expected Text')).toBeInTheDocument();
+  });
+});
+```
+
 ## **请严格遵守以下规则，当生成代码时：**
 
 - **尽可能减少自行实现的底层与通用逻辑，优先、直接、完整地复用既有成熟仓库与库代码，仅在必要时编写最小业务层与调度代码**
 - **必须用 TypeScript**，禁止 `any` 类型（用 `unknown` 或具体类型替代）
-- **路径别名必须使用**：  
-  `@/*` → `src/*`（前端）  
+- **路径别名必须使用**：
+  `@/*` → `src/*`（前端）
   `@shared/*` → `shared/*`（共享类型）
 -  **React 组件**：必须用函数组件 + hooks，文件名与组件名一致（如 `Button.tsx`）
+- **测试文件**：新组件必须包含对应的测试文件，放在 `src/components/__tests__/` 目录
 - **所有说明文件**必须放在对应目录,如 `docs/`文件下
 - **不要生成过多的说明文件，会显得文件结构太杂乱**
 
@@ -314,6 +359,21 @@ curl -X POST http://localhost:3000/api/executions/callback \
 # 手动修复卡住的执行记录
 curl -X POST http://localhost:3000/api/jenkins/callback/manual-sync/:runId \
   -H "X-Api-Key: <api_key>"
+```
+
+### 测试命令
+```bash
+# 运行前端测试
+npx vitest
+
+# 运行测试并监听变化
+npx vitest --watch
+
+# 运行单次测试
+npx vitest run
+
+# 测试覆盖率
+npx vitest --coverage
 ```
 
 ### 类型检查
