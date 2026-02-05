@@ -158,37 +158,59 @@ export class DailySummaryScheduler {
   /**
    * 批量生成历史汇总数据
    * @param days 要生成的天数，默认90天
+   * @param onlyMissingDates 是否仅回填缺失日期（增量模式）
    */
-  async backfillHistoricalSummaries(days: number = 90): Promise<{
+  async backfillHistoricalSummaries(
+    days: number = 90,
+    onlyMissingDates: boolean = true
+  ): Promise<{
     totalDays: number;
     successCount: number;
     failedCount: number;
     errors: Array<{ date: string; error: string }>;
+    skippedCount?: number;
+    mode: 'incremental' | 'full';
   }> {
     logger.info('Starting historical daily summaries backfill (batch mode)', {
       days,
       startTime: new Date().toISOString(),
-      mode: 'batch_query_optimized',
+      mode: onlyMissingDates ? 'incremental' : 'full',
+      backfillMode: 'batch_query_optimized',
     }, LOG_CONTEXTS.SCHEDULER);
 
-    const result = {
+    const result: {
+      totalDays: number;
+      successCount: number;
+      failedCount: number;
+      errors: Array<{ date: string; error: string }>;
+      skippedCount?: number;
+      mode: 'incremental' | 'full';
+    } = {
       totalDays: days,
       successCount: 0,
       failedCount: 0,
       errors: [] as Array<{ date: string; error: string }>,
+      mode: onlyMissingDates ? 'incremental' as const : 'full' as const,
     };
 
     try {
       // 使用批量查询优化方法，大幅减少数据库请求次数
-      const batchResult = await dashboardService.batchRefreshDailySummaries(days);
+      const batchResult = await dashboardService.batchRefreshDailySummaries(days, onlyMissingDates);
       
       result.successCount = batchResult.successCount;
+      const skippedCount = batchResult.skippedDates?.length ?? 0;
+      if (skippedCount > 0) {
+        result.skippedCount = skippedCount;
+      }
       
       logger.info('Historical daily summaries backfill completed (batch mode)', {
         ...result,
         completedAt: new Date().toISOString(),
         processedDates: batchResult.processedDates.length,
-        optimization: 'Reduced from ~270 queries to ~4 queries',
+        skippedDates: skippedCount,
+        optimization: onlyMissingDates 
+          ? `Incremental backfill: processed ${batchResult.processedDates.length} missing dates, skipped ${skippedCount} existing`
+          : 'Full backfill: Reduced from ~270 queries to ~4 queries',
       }, LOG_CONTEXTS.SCHEDULER);
 
     } catch (error) {

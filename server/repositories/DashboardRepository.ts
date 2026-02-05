@@ -453,16 +453,88 @@ export class DashboardRepository extends BaseRepository<any> {
   }
 
   /**
+   * 检查缺失的日期汇总数据
+   * 返回过去 N 天中没有汇总数据的日期列表
+   * @param days 检查的天数
+   * @returns 缺失日期列表
+   */
+  async getMissingDailySummaryDates(days: number): Promise<string[]> {
+    // 1. 生成预期的日期列表（T-1 逻辑，不包含今天）
+    const expectedDates: string[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let i = 1; i <= days; i++) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      expectedDates.push(date.toISOString().split('T')[0]);
+    }
+
+    if (expectedDates.length === 0) {
+      return [];
+    }
+
+    // 2. 查询已存在的汇总数据日期
+    const existingSummaries = await this.dailySummaryRepository.query(`
+      SELECT DATE_FORMAT(summary_date, "%Y-%m-%d") as date
+      FROM Auto_TestCaseDailySummaries
+      WHERE DATE(summary_date) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND DATE(summary_date) < CURDATE()
+      ORDER BY summary_date DESC
+    `, [days]);
+
+    const existingDates = new Set(
+      existingSummaries.map((s: any) => s.date)
+    );
+
+    // 3. 找出缺失的日期
+    const missingDates = expectedDates.filter(date => !existingDates.has(date));
+
+    logger.debug('Daily summary completeness check', {
+      expectedCount: expectedDates.length,
+      existingCount: existingDates.size,
+      missingCount: missingDates.length,
+      missingDates: missingDates.slice(0, 5), // 只显示前5个缺失日期
+      days,
+    }, LOG_CONTEXTS.DASHBOARD);
+
+    return missingDates;
+  }
+
+  /**
    * 批量刷新每日汇总数据（多日）
    * 使用批量查询优化，减少数据库请求次数
+   * 支持增量回填：仅处理指定的日期列表（如果为空，则处理全部）
    * @param days 要刷新的天数
+   * @param onlyMissingDates 是否仅回填缺失日期（默认 false）
    * @returns 刷新成功的天数
    */
-  async batchRefreshDailySummaries(days: number): Promise<{
+  async batchRefreshDailySummaries(
+    days: number,
+    onlyMissingDates: boolean = false
+  ): Promise<{
     successCount: number;
     processedDates: string[];
+    skippedDates?: string[];
   }> {
     const startTime = Date.now();
+
+    // 0. 如果启用增量回填，先检查缺失日期
+    let datesToProcess: string[] | null = null;
+    if (onlyMissingDates) {
+      datesToProcess = await this.getMissingDailySummaryDates(days);
+      if (datesToProcess.length === 0) {
+        logger.info('No missing daily summaries, skipping backfill', {
+          days,
+          durationMs: Date.now() - startTime,
+        }, LOG_CONTEXTS.DASHBOARD);
+        return {
+          successCount: 0,
+          processedDates: [],
+          skippedDates: [],
+        };
+      }
+    }
 
     // 1. 批量查询所有天的执行统计（按日期分组）
     const dailyStats = await this.taskExecutionRepository.query(`
@@ -570,17 +642,22 @@ export class DashboardRepository extends BaseRepository<any> {
     }
 
     const duration = Date.now() - startTime;
+    const skippedCount = datesToProcess ? allDates.length - datesToProcess.length : 0;
+    
     logger.info('Batch daily summaries refresh completed', {
       days,
       successCount,
       durationMs: duration,
       datesProcessed: processedDates.length,
-      queriesExecuted: Math.ceil(summariesData.length / batchSize) + 2, // 分批插入次数 + 2次查询
+      skippedCount: skippedCount > 0 ? skippedCount : undefined,
+      queriesExecuted: datesToProcess ? 3 : Math.ceil(summariesData.length / batchSize) + 2, // 检查 + 两次查询 + 分批插入，或仅分批插入
+      incrementalBackfill: onlyMissingDates,
     }, LOG_CONTEXTS.DASHBOARD);
 
     return {
       successCount,
       processedDates,
+      skippedDates: datesToProcess && skippedCount > 0 ? allDates.filter(d => !datesToProcess!.includes(d)) : undefined,
     };
   }
 }

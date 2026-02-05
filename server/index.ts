@@ -55,7 +55,7 @@ testConnection().then(async (connected) => {
 
 /**
  * 初始化每日汇总数据
- * 检查并回填过去90天的汇总数据
+ * 检查并回填过去N天的汇总数据（增量模式：仅回填缺失日期）
  */
 async function initializeDailySummaryData(): Promise<void> {
   try {
@@ -66,20 +66,33 @@ async function initializeDailySummaryData(): Promise<void> {
 
     // 检查是否需要历史数据回填
     const shouldBackfill = process.env.ENABLE_DAILY_SUMMARY_BACKFILL !== 'false';
+    const backfillDays = parseInt(process.env.DAILY_SUMMARY_BACKFILL_DAYS || '90', 10);
 
     if (shouldBackfill) {
-      logger.info('Starting historical daily summary backfill (90 days)...', {}, LOG_CONTEXTS.DATABASE);
+      logger.info('Starting historical daily summary backfill (incremental mode)', {
+        days: backfillDays,
+        mode: 'incremental',
+      }, LOG_CONTEXTS.DATABASE);
 
       // 异步执行历史数据回填，不阻塞服务器启动
       setImmediate(async () => {
+        const startTime = Date.now();
         try {
-          const result = await dailySummaryScheduler.backfillHistoricalSummaries(90);
+          // 使用增量回填模式（仅处理缺失日期），避免不必要的数据库写入
+          const result = await dailySummaryScheduler.backfillHistoricalSummaries(
+            backfillDays,
+            true // onlyMissingDates = true
+          );
 
+          const duration = Date.now() - startTime;
           logger.info('Historical daily summary backfill completed', {
             totalDays: result.totalDays,
-            successCount: result.successCount,
-            failedCount: result.failedCount,
+            processedDays: result.successCount,
+            skippedDays: result.skippedCount || 0,
+            failedDays: result.failedCount,
             errorCount: result.errors.length,
+            mode: result.mode,
+            durationMs: duration,
           }, LOG_CONTEXTS.DATABASE);
 
           if (result.errors.length > 0) {
@@ -90,11 +103,15 @@ async function initializeDailySummaryData(): Promise<void> {
           }
 
         } catch (error) {
-          logger.errorLog(error, 'Historical daily summary backfill failed', {});
+          logger.errorLog(error, 'Historical daily summary backfill failed', {
+            backfillDays,
+          });
         }
       });
     } else {
-      logger.info('Daily summary backfill disabled by configuration', {}, LOG_CONTEXTS.DATABASE);
+      logger.info('Daily summary backfill disabled by configuration', {
+        enableFlag: 'ENABLE_DAILY_SUMMARY_BACKFILL',
+      }, LOG_CONTEXTS.DATABASE);
     }
 
   } catch (error) {
