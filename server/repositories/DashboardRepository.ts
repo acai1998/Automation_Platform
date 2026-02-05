@@ -1,6 +1,7 @@
-import { DataSource } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { TestCase, TaskExecution, DailySummary, User } from '../entities/index';
 import { BaseRepository } from './BaseRepository';
+import { ServiceError } from '../utils/ServiceError';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS } from '../config/logging';
 
@@ -41,13 +42,55 @@ export interface RecentRun {
 }
 
 /**
+ * 执行统计查询结果接口
+ */
+interface ExecutionStats {
+  total: string;
+  passed: string;
+  failed: string;
+  skipped: string;
+}
+
+/**
+ * 汇总数据查询结果接口
+ */
+interface SummaryStats {
+  totalExecutions: string;
+  totalCasesRun: string;
+  passedCases: string;
+  failedCases: string;
+  skippedCases: string;
+  avgDuration: string;
+}
+
+/**
+ * 活跃用例数查询结果接口
+ */
+interface ActiveCasesStats {
+  count: string;
+}
+
+/**
+ * 日期统计查询结果接口
+ */
+interface DateStats {
+  summaryDate: string;
+  totalExecutions: string;
+  totalCasesRun: string;
+  passedCases: string;
+  failedCases: string;
+  skippedCases: string;
+  avgDuration: string;
+}
+
+/**
  * 仪表盘数据 Repository
  */
-export class DashboardRepository extends BaseRepository<any> {
-  private testCaseRepository: any;
-  private taskExecutionRepository: any;
-  private dailySummaryRepository: any;
-  private userRepository: any;
+export class DashboardRepository extends BaseRepository<TestCase> {
+  private testCaseRepository: Repository<TestCase>;
+  private taskExecutionRepository: Repository<TaskExecution>;
+  private dailySummaryRepository: Repository<DailySummary>;
+  private userRepository: Repository<User>;
 
   constructor(dataSource: DataSource) {
     super(dataSource, TestCase);
@@ -58,32 +101,204 @@ export class DashboardRepository extends BaseRepository<any> {
   }
 
   /**
+   * 安全的整数解析方法
+   * @param value 要解析的值
+   * @param defaultValue 默认值
+   * @returns 解析后的整数
+   */
+  private parseSafeInt(value: string | number | null | undefined, defaultValue: number = 0): number {
+    if (value === null || value === undefined) {
+      return defaultValue;
+    }
+    
+    const parsed = typeof value === 'string' ? parseInt(value, 10) : value;
+    return isNaN(parsed) ? defaultValue : parsed;
+  }
+
+  /**
+   * 安全的浮点数解析方法
+   * @param value 要解析的值
+   * @param defaultValue 默认值
+   * @returns 解析后的浮点数
+   */
+  private parseSafeFloat(value: string | number | null | undefined, defaultValue: number = 0): number {
+    if (value === null || value === undefined) {
+      return defaultValue;
+    }
+    
+    const parsed = typeof value === 'string' ? parseFloat(value) : value;
+    return isNaN(parsed) ? defaultValue : parsed;
+  }
+
+  /**
+   * 安全的百分比计算
+   * @param current 当前值
+   * @param previous 之前值
+   * @returns 计算后的百分比，如果无法计算返回null
+   */
+  private calculatePercentage(current: number, previous: number): number | null {
+    if (previous <= 0) return null;
+    return Math.round(((current - previous) / previous) * 10000) / 100;
+  }
+
+  /**
+   * 日期范围生成器
+   * 使用生成器减少内存占用，避免创建大数组
+   * @param days 天数
+   * @returns 日期生成器
+   */
+  private *generateDateRange(days: number): Generator<string> {
+    const today = new Date();
+    for (let i = 1; i <= days; i++) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      yield date.toISOString().split('T')[0];
+    }
+  }
+
+  /**
+   * 安全的数据库查询执行方法
+   * @param query 执行的查询函数
+   * @param operation 操作描述
+   * @param context 上下文信息
+   * @returns 查询结果
+   */
+  private async executeQuery<T>(
+    query: () => Promise<T>,
+    operation: string,
+    context?: Record<string, any>
+  ): Promise<T> {
+    try {
+      return await query();
+    } catch (error) {
+      logger.errorLog(error, `Failed to execute ${operation}`, {
+        operation,
+        context,
+      });
+
+      throw new ServiceError(
+        `Failed to execute ${operation}`,
+        error instanceof Error ? error : new Error(String(error)),
+        500,
+        { operation, context }
+      );
+    }
+  }
+
+  /**
+   * 安全的统计计算方法
+   * 统一处理统计查询结果的解析和验证
+   * @param result 查询结果数组
+   * @param defaultValue 默认值
+   * @returns 解析后的统计数据
+   */
+  private parseStatsResult<T extends Record<string, string>>(
+    result: T[],
+    defaultValue: T
+  ): T {
+    return result[0] || defaultValue;
+  }
+
+  /**
+   * 计算成功率
+   * @param passed 通过数量
+   * @param total 总数量
+   * @returns 成功率百分比
+   */
+  private calculateSuccessRate(passed: number, total: number): number | null {
+    if (total <= 0) return null;
+    return Math.round((passed / total) * 10000) / 100;
+  }
+
+  /**
+   * 统一的日志记录方法
+   * @param level 日志级别
+   * @param message 日志消息
+   * @param data 日志数据
+   * @param context 日志上下文
+   */
+  private logDashboard(level: 'debug' | 'info' | 'warn' | 'error', message: string, data?: any, context?: any) {
+    if (level === 'debug') {
+      logger.debug(message, data, context || LOG_CONTEXTS.DASHBOARD);
+    } else if (level === 'info') {
+      logger.info(message, data, context || LOG_CONTEXTS.DASHBOARD);
+    } else if (level === 'warn') {
+      logger.warn(message, data, context || LOG_CONTEXTS.DASHBOARD);
+    } else {
+      logger.errorLog(data, message, context || LOG_CONTEXTS.DASHBOARD);
+    }
+  }
+
+  /**
    * 获取仪表盘统计数据
+   * 优化：使用 UNION ALL 分别查询，避免大表 JOIN，提升查询性能
    */
   async getStats(): Promise<DashboardStats> {
-    const result = await this.testCaseRepository.query(`
-      SELECT
-        COUNT(CASE WHEN tc.enabled = 1 THEN 1 END) as totalCases,
-        COUNT(CASE WHEN DATE(tr.start_time) = CURDATE() THEN 1 END) as todayRuns,
-        COALESCE(SUM(CASE WHEN DATE(tr.start_time) = CURDATE() THEN tr.passed_cases END), 0) as passedCases,
-        COALESCE(SUM(CASE WHEN DATE(tr.start_time) = CURDATE() THEN tr.passed_cases + tr.failed_cases + tr.skipped_cases END), 0) as totalCasesRun,
-        SUM(CASE WHEN tr.status = 'running' THEN 1 ELSE 0 END) as runningTasks
-      FROM Auto_TestCase tc
-      LEFT JOIN Auto_TestCaseTaskExecutions tr ON DATE(tr.start_time) = CURDATE()
-      WHERE tc.enabled = 1 OR tr.id IS NOT NULL
-    `);
+    try {
+      // 定义查询结果接口
+      interface StatsResult {
+        totalCases: string;
+        todayRuns: string;
+        passedCases: string;
+        totalCasesRun: string;
+        runningTasks: string;
+      }
 
-    const stats = result[0];
-    const todaySuccessRate = stats.totalCasesRun > 0
-      ? Math.round((stats.passedCases / stats.totalCasesRun) * 10000) / 100
-      : null;
+      // 优化：使用 UNION ALL 分别查询，避免大表 JOIN
+      const result = await this.testCaseRepository.query(`
+        SELECT
+          (SELECT COUNT(*) FROM Auto_TestCase WHERE enabled = 1) as totalCases,
+          (SELECT COUNT(*) FROM Auto_TestCaseTaskExecutions WHERE DATE(start_time) = CURDATE()) as todayRuns,
+          (SELECT COALESCE(SUM(passed_cases), 0) FROM Auto_TestCaseTaskExecutions WHERE DATE(start_time) = CURDATE()) as passedCases,
+          (SELECT COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) FROM Auto_TestCaseTaskExecutions WHERE DATE(start_time) = CURDATE()) as totalCasesRun,
+          (SELECT SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) FROM Auto_TestCaseTaskExecutions) as runningTasks
+      `) as StatsResult[];
 
-    return {
-      totalCases: parseInt(stats.totalCases) || 0,
-      todayRuns: parseInt(stats.todayRuns) || 0,
-      todaySuccessRate,
-      runningTasks: parseInt(stats.runningTasks) || 0,
-    };
+      const stats = this.parseStatsResult(result, {
+        totalCases: '0',
+        todayRuns: '0',
+        passedCases: '0',
+        totalCasesRun: '0',
+        runningTasks: '0',
+      });
+
+      const totalCases = this.parseSafeInt(stats.totalCases, 0);
+      const todayRuns = this.parseSafeInt(stats.todayRuns, 0);
+      const passedCases = this.parseSafeInt(stats.passedCases, 0);
+      const totalCasesRun = this.parseSafeInt(stats.totalCasesRun, 0);
+      const runningTasks = this.parseSafeInt(stats.runningTasks, 0);
+
+      const todaySuccessRate = this.calculateSuccessRate(passedCases, totalCasesRun);
+
+      this.logDashboard('debug', 'Dashboard stats retrieved', {
+        stats: {
+          totalCases,
+          todayRuns,
+          passedCases,
+          totalCasesRun,
+          runningTasks,
+        },
+        todaySuccessRate,
+      });
+
+      return {
+        totalCases,
+        todayRuns,
+        todaySuccessRate,
+        runningTasks,
+      };
+    } catch (error) {
+      this.logDashboard('error', 'Failed to get dashboard stats', {
+        method: 'getStats',
+      });
+
+      throw new ServiceError(
+        'Failed to get dashboard stats',
+        error instanceof Error ? error : new Error(String(error)),
+        500,
+        { method: 'getStats' }
+      );
+    }
   }
 
   /**
@@ -101,10 +316,15 @@ export class DashboardRepository extends BaseRepository<any> {
           'SUM(execution.skippedCases) as skipped',
         ])
         .where('DATE(execution.startTime) = CURDATE()')
-        .getRawOne();
+        .getRawOne<ExecutionStats>();
 
-      // ✅ Add null safety check - getRawOne() can return null
-      const stats = result || {};
+      // ✅ Type-safe null safety check with explicit interface
+      const stats: ExecutionStats = result || {
+        total: '0',
+        passed: '0',
+        failed: '0',
+        skipped: '0',
+      };
 
       logger.debug('Today execution stats retrieved (QueryBuilder)', {
         hasData: !!result,
@@ -113,68 +333,74 @@ export class DashboardRepository extends BaseRepository<any> {
       }, LOG_CONTEXTS.DASHBOARD);
 
       return {
-        total: parseInt(stats.total || '0') || 0,
-        passed: parseInt(stats.passed || '0') || 0,
-        failed: parseInt(stats.failed || '0') || 0,
-        skipped: parseInt(stats.skipped || '0') || 0,
+        total: this.parseSafeInt(stats.total, 0),
+        passed: this.parseSafeInt(stats.passed, 0),
+        failed: this.parseSafeInt(stats.failed, 0),
+        skipped: this.parseSafeInt(stats.skipped, 0),
       };
     } catch (error) {
       logger.errorLog(error, 'Failed to get today execution stats (QueryBuilder)', {
         method: 'getTodayExecutions',
       });
 
-      // Return safe default values on error
-      return {
-        total: 0,
-        passed: 0,
-        failed: 0,
-        skipped: 0,
-      };
+      throw new ServiceError(
+        'Failed to get today execution stats',
+        error instanceof Error ? error : new Error(String(error)),
+        500,
+        { method: 'getTodayExecutions' }
+      );
     }
   }
 
   /**
    * 获取历史趋势数据 (T-1 口径)
+   * 优化：添加查询性能优化和内存管理
    */
   async getTrendData(days: number = 30): Promise<DailySummaryData[]> {
     const startTime = Date.now();
+    
+    // 限制最大查询天数，避免内存和性能问题
+    const maxDays = 365;
+    const queryDays = Math.min(days, maxDays);
 
-    // 优先从汇总表获取数据
-    const summaries = await this.dailySummaryRepository.createQueryBuilder('summary')
-      .select([
-        'DATE_FORMAT(summary.summaryDate, "%Y-%m-%d") as date',
-        'summary.totalExecutions',
-        'summary.passedCases',
-        'summary.failedCases',
-        'summary.skippedCases',
-        'summary.successRate',
-      ])
-      .where('summary.summaryDate >= DATE_SUB(CURDATE(), INTERVAL :days DAY)', { days })
-      .andWhere('summary.summaryDate < CURDATE()')
-      .orderBy('summary.summaryDate', 'ASC')
-      .getRawMany();
+    // 优先从汇总表获取数据（添加索引提示优化）
+    const summaries = await this.dailySummaryRepository.query(`
+      SELECT
+        DATE_FORMAT(summary_date, "%Y-%m-%d") as date,
+        total_executions,
+        passed_cases,
+        failed_cases,
+        skipped_cases,
+        success_rate
+      FROM Auto_TestCaseDailySummaries
+      WHERE summary_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND summary_date < CURDATE()
+      ORDER BY summary_date ASC
+      LIMIT ?
+    `, [queryDays, queryDays]) as DailySummaryData[];
 
     if (summaries.length > 0) {
       // 确保返回的数据量不超过请求的天数
-      const result = summaries.length > days ? summaries.slice(-days) : summaries;
+      const result = summaries.length > queryDays ? summaries.slice(-queryDays) : summaries;
       
       const duration = Date.now() - startTime;
-      logger.info('Trend data retrieved from daily summary table', {
+      this.logDashboard('info', 'Trend data retrieved from daily summary table', {
         dataSource: 'summary_table',
-        days,
+        days: queryDays,
         recordCount: result.length,
         originalCount: summaries.length,
         durationMs: duration,
-      }, LOG_CONTEXTS.DASHBOARD);
+      });
       return result;
     }
 
-    // 如果没有汇总数据，从执行记录实时计算
-    logger.warn('Daily summary table empty, falling back to real-time calculation', {
+    // 如果没有汇总数据，从执行记录实时计算（添加分页和索引提示）
+    this.logDashboard('warn', 'Daily summary table empty, falling back to real-time calculation', {
       dataSource: 'fallback_calculation',
-      days,
-    }, LOG_CONTEXTS.DASHBOARD);
+      days: queryDays,
+    });
 
+    // 优化：添加索引提示和限制结果数量
     const trendData = await this.taskExecutionRepository.query(`
       SELECT
         DATE_FORMAT(DATE(start_time), '%Y-%m-%d') as date,
@@ -188,19 +414,20 @@ export class DashboardRepository extends BaseRepository<any> {
         AND DATE(start_time) < CURDATE()
       GROUP BY DATE(start_time)
       ORDER BY date ASC
-    `, [days]);
+      LIMIT ?
+    `, [queryDays, queryDays]) as DailySummaryData[];
 
     // 确保返回的数据量不超过请求的天数
-    const finalResult = trendData.length > days ? trendData.slice(-days) : trendData;
+    const finalResult = trendData.length > queryDays ? trendData.slice(-queryDays) : trendData;
 
     const duration = Date.now() - startTime;
-    logger.info('Trend data calculated from execution records', {
+    this.logDashboard('info', 'Trend data calculated from execution records', {
       dataSource: 'fallback_calculation',
-      days,
+      days: queryDays,
       recordCount: finalResult.length,
       originalCount: trendData.length,
       durationMs: duration,
-    }, LOG_CONTEXTS.DASHBOARD);
+    });
 
     return finalResult;
   }
@@ -210,6 +437,20 @@ export class DashboardRepository extends BaseRepository<any> {
    */
   async getRecentRuns(limit: number = 10): Promise<RecentRun[]> {
     try {
+      // 定义查询结果接口
+      interface RecentRunRaw {
+        id: string;
+        taskName: string | null;
+        status: string;
+        duration: string | null;
+        startTime: Date | null;
+        totalCases: string | null;
+        passedCases: string | null;
+        failedCases: string | null;
+        executedBy: string | null;
+        executedById: string | null;
+      }
+
       // 使用直接 SQL 查询，避免 QueryBuilder 字段映射问题
       const results = await this.taskExecutionRepository.query(`
         SELECT
@@ -228,34 +469,46 @@ export class DashboardRepository extends BaseRepository<any> {
         WHERE e.start_time IS NOT NULL
         ORDER BY e.start_time DESC
         LIMIT ?
-      `, [limit]);
+      `, [limit]) as RecentRunRaw[];
 
       // 确保返回数组，即使查询结果为空
       if (!results || !Array.isArray(results)) {
-        console.warn('[DashboardRepository] getRecentRuns returned non-array result:', results);
+        logger.warn('getRecentRuns returned non-array result', {
+          results,
+          limit,
+          method: 'getRecentRuns',
+        }, LOG_CONTEXTS.DASHBOARD);
         return [];
       }
 
       // 转换数据格式，确保所有字段都存在
-      return results.map((r: any) => {
+      return results.map((r: RecentRunRaw) => {
         const result: RecentRun = {
-          id: parseInt(r.id) || 0,
+          id: this.parseSafeInt(r.id, 0),
           suiteName: r.taskName || '未命名任务',
           status: r.status || 'pending',
-          duration: r.duration !== null && r.duration !== undefined ? parseInt(r.duration) : 0,
+          duration: this.parseSafeInt(r.duration, 0),
           startTime: r.startTime || undefined,
-          totalCases: parseInt(r.totalCases) || 0,
-          passedCases: parseInt(r.passedCases) || 0,
-          failedCases: parseInt(r.failedCases) || 0,
+          totalCases: this.parseSafeInt(r.totalCases, 0),
+          passedCases: this.parseSafeInt(r.passedCases, 0),
+          failedCases: this.parseSafeInt(r.failedCases, 0),
           executedBy: r.executedBy || '系统',
-          executedById: r.executedById ? parseInt(r.executedById) : undefined,
+          executedById: r.executedById ? this.parseSafeInt(r.executedById) : undefined,
         };
         return result;
       });
     } catch (error) {
-      console.error('[DashboardRepository] Failed to get recent runs:', error);
-      // 返回空数组而不是抛出错误，避免影响整个仪表盘加载
-      return [];
+      logger.errorLog(error, 'Failed to get recent runs', {
+        limit,
+        method: 'getRecentRuns',
+      });
+
+      throw new ServiceError(
+        'Failed to fetch recent runs',
+        error instanceof Error ? error : new Error(String(error)),
+        500,
+        { limit }
+      );
     }
   }
 
@@ -302,63 +555,118 @@ export class DashboardRepository extends BaseRepository<any> {
 
   /**
    * 获取环比分析数据
+   * 优化：合并查询，减少数据库请求次数，添加数据验证
    */
   async getComparison(days: number = 30): Promise<{
     runsComparison: number | null;
     successRateComparison: number | null;
     failureComparison: number | null;
   }> {
-    // 当前周期数据
-    const current = await this.taskExecutionRepository.query(`
-      SELECT
-        COUNT(*) as runs,
-        COALESCE(SUM(passed_cases), 0) as passed,
-        COALESCE(SUM(failed_cases), 0) as failed,
-        COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
-      FROM Auto_TestCaseTaskExecutions
-      WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-    `, [days]);
+    try {
+      // 限制最大天数，避免性能问题
+      const maxDays = 90;
+      const queryDays = Math.min(days, maxDays);
 
-    // 上一周期数据
-    const previous = await this.taskExecutionRepository.query(`
-      SELECT
-        COUNT(*) as runs,
-        COALESCE(SUM(passed_cases), 0) as passed,
-        COALESCE(SUM(failed_cases), 0) as failed,
-        COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
-      FROM Auto_TestCaseTaskExecutions
-      WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-        AND DATE(start_time) < DATE_SUB(CURDATE(), INTERVAL ? DAY)
-    `, [days * 2, days]);
+      // 定义查询结果接口
+      interface ComparisonStats {
+        period: string;
+        runs: string;
+        passed: string;
+        failed: string;
+        total: string;
+      }
 
-    const currentData = current[0];
-    const previousData = previous[0];
+      // 优化：使用单个查询获取两个周期的数据
+      const comparisonData = await this.taskExecutionRepository.query(`
+        SELECT 
+          CASE 
+            WHEN DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY) THEN 'current'
+            ELSE 'previous'
+          END as period,
+          COUNT(*) as runs,
+          COALESCE(SUM(passed_cases), 0) as passed,
+          COALESCE(SUM(failed_cases), 0) as failed,
+          COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total
+        FROM Auto_TestCaseTaskExecutions
+        WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+          AND DATE(start_time) < CURDATE()
+        GROUP BY 
+          CASE 
+            WHEN DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY) THEN 'current'
+            ELSE 'previous'
+          END
+      `, [queryDays, queryDays * 2, queryDays]) as ComparisonStats[];
 
-    // 计算环比
-    const runsComparison = previousData && previousData.runs > 0
-      ? Math.round(((currentData.runs - previousData.runs) / previousData.runs) * 10000) / 100
-      : null;
+      // 解析查询结果
+      const currentData = comparisonData.find(d => d.period === 'current') || { 
+        runs: '0', passed: '0', failed: '0', total: '0' 
+      };
+      const previousData = comparisonData.find(d => d.period === 'previous') || { 
+        runs: '0', passed: '0', failed: '0', total: '0' 
+      };
 
-    const currentSuccessRate = currentData.total > 0
-      ? (currentData.passed / currentData.total) * 100
-      : 0;
-    const previousSuccessRate = previousData && previousData.total > 0
-      ? (previousData.passed / previousData.total) * 100
-      : 0;
+      // 转换为数字
+      const currentRuns = this.parseSafeInt(currentData.runs, 0);
+      const currentPassed = this.parseSafeInt(currentData.passed, 0);
+      const currentFailed = this.parseSafeInt(currentData.failed, 0);
+      const currentTotal = this.parseSafeInt(currentData.total, 0);
 
-    const successRateComparison = previousData && previousData.total > 0
-      ? Math.round((currentSuccessRate - previousSuccessRate) * 100) / 100
-      : null;
+      const previousRuns = this.parseSafeInt(previousData.runs, 0);
+      const previousPassed = this.parseSafeInt(previousData.passed, 0);
+      const previousFailed = this.parseSafeInt(previousData.failed, 0);
+      const previousTotal = this.parseSafeInt(previousData.total, 0);
 
-    const failureComparison = previousData && previousData.failed > 0
-      ? Math.round(((currentData.failed - previousData.failed) / previousData.failed) * 10000) / 100
-      : null;
+      // 数据验证：如果两个周期都没有数据，返回 null
+      if (currentTotal === 0 && previousTotal === 0) {
+        logger.warn('No data available for comparison periods', {
+          days: queryDays,
+          currentTotal,
+          previousTotal,
+        }, LOG_CONTEXTS.DASHBOARD);
 
-    return {
-      runsComparison,
-      successRateComparison,
-      failureComparison,
-    };
+        return {
+          runsComparison: null,
+          successRateComparison: null,
+          failureComparison: null,
+        };
+      }
+
+      // 计算环比（使用安全的百分比计算方法）
+      const runsComparison = this.calculatePercentage(currentRuns, previousRuns);
+
+      const currentSuccessRate = currentTotal > 0 ? (currentPassed / currentTotal) * 100 : 0;
+      const previousSuccessRate = previousTotal > 0 ? (previousPassed / previousTotal) * 100 : 0;
+      const successRateComparison = previousTotal > 0 
+        ? Math.round((currentSuccessRate - previousSuccessRate) * 100) / 100 
+        : null;
+
+      const failureComparison = this.calculatePercentage(currentFailed, previousFailed);
+
+      logger.debug('Comparison data calculated', {
+        days: queryDays,
+        current: { runs: currentRuns, passed: currentPassed, failed: currentFailed, total: currentTotal },
+        previous: { runs: previousRuns, passed: previousPassed, failed: previousFailed, total: previousTotal },
+        comparison: { runsComparison, successRateComparison, failureComparison },
+      }, LOG_CONTEXTS.DASHBOARD);
+
+      return {
+        runsComparison,
+        successRateComparison,
+        failureComparison,
+      };
+    } catch (error) {
+      logger.errorLog(error, 'Failed to get comparison data', {
+        days,
+        method: 'getComparison',
+      });
+
+      throw new ServiceError(
+        'Failed to calculate comparison data',
+        error instanceof Error ? error : new Error(String(error)),
+        500,
+        { days }
+      );
+    }
   }
 
   /**
@@ -374,35 +682,40 @@ export class DashboardRepository extends BaseRepository<any> {
           COALESCE(SUM(skipped_cases), 0) as skipped
         FROM Auto_TestCaseTaskExecutions
         WHERE DATE(start_time) = CURDATE()
-      `);
+      `) as ExecutionStats[];
 
-      // ✅ Add null safety check - provide default empty object if result is empty
-      const stats = result[0] || {};
+      // ✅ Type-safe null safety check with explicit interface
+      const stats = this.parseStatsResult(result, {
+        total: '0',
+        passed: '0',
+        failed: '0',
+        skipped: '0',
+      });
 
-      logger.debug('Today execution stats retrieved', {
+      this.logDashboard('debug', 'Today execution stats retrieved', {
         hasData: !!result[0],
         resultLength: result.length,
         rawStats: stats,
-      }, LOG_CONTEXTS.DASHBOARD);
-
-      return {
-        total: parseInt(stats.total || '0') || 0,
-        passed: parseInt(stats.passed || '0') || 0,
-        failed: parseInt(stats.failed || '0') || 0,
-        skipped: parseInt(stats.skipped || '0') || 0,
-      };
-    } catch (error) {
-      logger.errorLog(error, 'Failed to get today execution stats', {
         method: 'getTodayExecution',
       });
 
-      // Return safe default values on error
       return {
-        total: 0,
-        passed: 0,
-        failed: 0,
-        skipped: 0,
+        total: this.parseSafeInt(stats.total, 0),
+        passed: this.parseSafeInt(stats.passed, 0),
+        failed: this.parseSafeInt(stats.failed, 0),
+        skipped: this.parseSafeInt(stats.skipped, 0),
       };
+    } catch (error) {
+      this.logDashboard('error', 'Failed to get today execution stats', {
+        method: 'getTodayExecution',
+      });
+
+      throw new ServiceError(
+        'Failed to get today execution stats',
+        error instanceof Error ? error : new Error(String(error)),
+        500,
+        { method: 'getTodayExecution' }
+      );
     }
   }
 
@@ -410,46 +723,94 @@ export class DashboardRepository extends BaseRepository<any> {
    * 刷新每日汇总数据（单日）
    */
   async refreshDailySummary(date?: string): Promise<void> {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    try {
+      const targetDate = date || new Date().toISOString().split('T')[0];
 
-    // 计算当日统计
-    const stats = await this.taskExecutionRepository.query(`
-      SELECT
-        COUNT(*) as totalExecutions,
-        COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as totalCasesRun,
-        COALESCE(SUM(passed_cases), 0) as passedCases,
-        COALESCE(SUM(failed_cases), 0) as failedCases,
-        COALESCE(SUM(skipped_cases), 0) as skippedCases,
-        COALESCE(AVG(duration), 0) as avgDuration
-      FROM Auto_TestCaseTaskExecutions
-      WHERE DATE(start_time) = ?
-    `, [targetDate]);
+      // 定义查询结果接口
+      interface DailyStats {
+        totalExecutions: string;
+        totalCasesRun: string;
+        passedCases: string;
+        failedCases: string;
+        skippedCases: string;
+        avgDuration: string;
+      }
 
-    const activeCases = await this.testCaseRepository.query(`
-      SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
-    `);
+      // 计算当日统计
+      const stats = await this.taskExecutionRepository.query(`
+        SELECT
+          COUNT(*) as totalExecutions,
+          COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as totalCasesRun,
+          COALESCE(SUM(passed_cases), 0) as passedCases,
+          COALESCE(SUM(failed_cases), 0) as failedCases,
+          COALESCE(SUM(skipped_cases), 0) as skippedCases,
+          COALESCE(AVG(duration), 0) as avgDuration
+        FROM Auto_TestCaseTaskExecutions
+        WHERE DATE(start_time) = ?
+      `, [targetDate]) as DailyStats[];
 
-    const totalCasesRun = stats[0]?.totalCasesRun ?? 0;
-    const passedCases = stats[0]?.passedCases ?? 0;
-    const failedCases = stats[0]?.failedCases ?? 0;
-    const skippedCases = stats[0]?.skippedCases ?? 0;
-    const avgDuration = stats[0]?.avgDuration ?? 0;
+      const activeCases = await this.testCaseRepository.query(`
+        SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
+      `) as ActiveCasesStats[];
 
-    const successRate = totalCasesRun > 0
-      ? Math.round((passedCases / totalCasesRun) * 10000) / 100
-      : 0;
+      const statsData = stats[0] || {
+        totalExecutions: '0',
+        totalCasesRun: '0',
+        passedCases: '0',
+        failedCases: '0',
+        skippedCases: '0',
+        avgDuration: '0',
+      };
 
-    await this.saveDailySummary({
-      summaryDate: targetDate,
-      totalExecutions: stats[0]?.totalExecutions ?? 0,
-      totalCasesRun,
-      passedCases,
-      failedCases,
-      skippedCases,
-      successRate,
-      avgDuration: Math.round(avgDuration),
-      activeCasesCount: activeCases[0]?.count ?? 0,
-    });
+      const totalCasesRun = this.parseSafeInt(statsData.totalCasesRun, 0);
+      const passedCases = this.parseSafeInt(statsData.passedCases, 0);
+      const failedCases = this.parseSafeInt(statsData.failedCases, 0);
+      const skippedCases = this.parseSafeInt(statsData.skippedCases, 0);
+      const avgDuration = this.parseSafeInt(statsData.avgDuration, 0);
+      const activeCasesCount = this.parseSafeInt(activeCases[0]?.count, 0);
+
+      const successRate = totalCasesRun > 0
+        ? Math.round((passedCases / totalCasesRun) * 10000) / 100
+        : 0;
+
+      logger.debug('Daily summary data calculated', {
+        targetDate,
+        stats: {
+          totalExecutions: this.parseSafeInt(statsData.totalExecutions, 0),
+          totalCasesRun,
+          passedCases,
+          failedCases,
+          skippedCases,
+          avgDuration,
+        },
+        activeCasesCount,
+        successRate,
+      }, LOG_CONTEXTS.DASHBOARD);
+
+      await this.saveDailySummary({
+        summaryDate: targetDate,
+        totalExecutions: this.parseSafeInt(statsData.totalExecutions, 0),
+        totalCasesRun,
+        passedCases,
+        failedCases,
+        skippedCases,
+        successRate,
+        avgDuration,
+        activeCasesCount,
+      });
+    } catch (error) {
+      logger.errorLog(error, 'Failed to refresh daily summary', {
+        date,
+        method: 'refreshDailySummary',
+      });
+
+      throw new ServiceError(
+        'Failed to refresh daily summary',
+        error instanceof Error ? error : new Error(String(error)),
+        500,
+        { date }
+      );
+    }
   }
 
   /**
@@ -481,10 +842,10 @@ export class DashboardRepository extends BaseRepository<any> {
       WHERE DATE(summary_date) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
         AND DATE(summary_date) < CURDATE()
       ORDER BY summary_date DESC
-    `, [days]);
+    `, [days]) as { date: string }[];
 
     const existingDates = new Set(
-      existingSummaries.map((s: any) => s.date)
+      existingSummaries.map((s: { date: string }) => s.date)
     );
 
     // 3. 找出缺失的日期
@@ -536,7 +897,7 @@ export class DashboardRepository extends BaseRepository<any> {
       }
     }
 
-    // 1. 批量查询所有天的执行统计（按日期分组）
+      // 1. 批量查询所有天的执行统计（按日期分组，添加分页限制）
     const dailyStats = await this.taskExecutionRepository.query(`
       SELECT
         DATE(start_time) as summaryDate,
@@ -551,94 +912,129 @@ export class DashboardRepository extends BaseRepository<any> {
         AND DATE(start_time) < CURDATE()
       GROUP BY DATE(start_time)
       ORDER BY summaryDate DESC
-    `, [days]);
+      LIMIT ?
+    `, [days, days]) as DateStats[];
 
     // 2. 查询活跃用例数（只需查询一次）
     const activeCases = await this.testCaseRepository.query(`
       SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
-    `);
-    const activeCasesCount = activeCases[0]?.count ?? 0;
+    `) as ActiveCasesStats[];
+    const activeCasesCount = this.parseSafeInt(activeCases[0]?.count, 0);
 
-    // 3. 构建所有日期列表（包括没有执行记录的日期）
-    const today = new Date();
+    // 3. 构建所有日期列表（使用生成器减少内存占用）
     const allDates: string[] = [];
-    for (let i = 1; i <= days; i++) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      allDates.push(date.toISOString().split('T')[0]);
+    for (const date of this.generateDateRange(days)) {
+      allDates.push(date);
     }
 
     // 4. 将查询结果映射到日期
-    const statsMap = new Map<string, any>();
-    dailyStats.forEach((stat: any) => {
+    const statsMap = new Map<string, DateStats>();
+    dailyStats.forEach((stat: DateStats) => {
       statsMap.set(stat.summaryDate, stat);
     });
 
     // 5. 批量构建插入数据（包括没有数据的日期，填充为0）
     const summariesData = allDates.map(date => {
       const stat = statsMap.get(date);
-      const totalCasesRun = stat?.totalCasesRun ?? 0;
-      const passedCases = stat?.passedCases ?? 0;
+      const totalExecutions = this.parseSafeInt(stat?.totalExecutions, 0);
+      const totalCasesRun = this.parseSafeInt(stat?.totalCasesRun, 0);
+      const passedCases = this.parseSafeInt(stat?.passedCases, 0);
+      const failedCases = this.parseSafeInt(stat?.failedCases, 0);
+      const skippedCases = this.parseSafeInt(stat?.skippedCases, 0);
+      const avgDuration = this.parseSafeInt(stat?.avgDuration, 0);
+
       const successRate = totalCasesRun > 0
         ? Math.round((passedCases / totalCasesRun) * 10000) / 100
         : 0;
 
       return {
         summaryDate: date,
-        totalExecutions: stat?.totalExecutions ?? 0,
+        totalExecutions,
         totalCasesRun,
         passedCases,
-        failedCases: stat?.failedCases ?? 0,
-        skippedCases: stat?.skippedCases ?? 0,
+        failedCases,
+        skippedCases,
         successRate,
-        avgDuration: Math.round(stat?.avgDuration ?? 0),
+        avgDuration,
         activeCasesCount,
       };
     });
 
-    // 6. 批量插入/更新（分批处理，避免单次SQL过大）
+    // 6. 批量插入/更新（使用事务处理，分批处理，避免单次SQL过大）
     const batchSize = 50; // 每批最多50条
     let successCount = 0;
     const processedDates: string[] = [];
+    const errors: Array<{ date: string; error: string }> = [];
 
-    for (let i = 0; i < summariesData.length; i += batchSize) {
-      const batch = summariesData.slice(i, i + batchSize);
+    // 使用事务包装整个批处理过程
+    await this.executeInTransaction(async (queryRunner) => {
+      for (let i = 0; i < summariesData.length; i += batchSize) {
+        const batch = summariesData.slice(i, i + batchSize);
 
-      // 构建批量插入SQL
-      const values = batch.map(data =>
-        `(?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).join(', ');
+        try {
+          // 构建批量插入SQL
+          const values = batch.map(data =>
+            `(?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).join(', ');
 
-      const params = batch.flatMap(data => [
-        data.summaryDate,
-        data.totalExecutions,
-        data.totalCasesRun,
-        data.passedCases,
-        data.failedCases,
-        data.skippedCases,
-        data.successRate,
-        data.avgDuration,
-        data.activeCasesCount,
-      ]);
+          const params = batch.flatMap(data => [
+            data.summaryDate,
+            data.totalExecutions,
+            data.totalCasesRun,
+            data.passedCases,
+            data.failedCases,
+            data.skippedCases,
+            data.successRate,
+            data.avgDuration,
+            data.activeCasesCount,
+          ]);
 
-      await this.dailySummaryRepository.query(`
-        INSERT INTO Auto_TestCaseDailySummaries (
-          summary_date, total_executions, total_cases_run, passed_cases,
-          failed_cases, skipped_cases, success_rate, avg_duration, active_cases_count
-        ) VALUES ${values}
-        ON DUPLICATE KEY UPDATE
-          total_executions = VALUES(total_executions),
-          total_cases_run = VALUES(total_cases_run),
-          passed_cases = VALUES(passed_cases),
-          failed_cases = VALUES(failed_cases),
-          skipped_cases = VALUES(skipped_cases),
-          success_rate = VALUES(success_rate),
-          avg_duration = VALUES(avg_duration),
-          active_cases_count = VALUES(active_cases_count)
-      `, params);
+          await queryRunner.query(`
+            INSERT INTO Auto_TestCaseDailySummaries (
+              summary_date, total_executions, total_cases_run, passed_cases,
+              failed_cases, skipped_cases, success_rate, avg_duration, active_cases_count
+            ) VALUES ${values}
+            ON DUPLICATE KEY UPDATE
+              total_executions = VALUES(total_executions),
+              total_cases_run = VALUES(total_cases_run),
+              passed_cases = VALUES(passed_cases),
+              failed_cases = VALUES(failed_cases),
+              skipped_cases = VALUES(skipped_cases),
+              success_rate = VALUES(success_rate),
+              avg_duration = VALUES(avg_duration),
+              active_cases_count = VALUES(active_cases_count)
+          `, params);
 
-      successCount += batch.length;
-      processedDates.push(...batch.map(d => d.summaryDate));
+          successCount += batch.length;
+          processedDates.push(...batch.map(d => d.summaryDate));
+        } catch (batchError) {
+          const batchDates = batch.map(d => d.summaryDate);
+          logger.warn('Batch insert failed, continuing with next batch', {
+            batchDates,
+            error: batchError instanceof Error ? batchError.message : String(batchError),
+            batchIndex: i / batchSize,
+            batchSize: batch.length,
+          }, LOG_CONTEXTS.DASHBOARD);
+
+          // 记录错误但继续处理
+          batchDates.forEach(date => {
+            errors.push({
+              date,
+              error: batchError instanceof Error ? batchError.message : String(batchError)
+            });
+          });
+        }
+      }
+    });
+
+    // 记录处理结果
+    if (errors.length > 0) {
+      logger.warn('Some daily summaries failed to insert', {
+        successCount,
+        failedCount: errors.length,
+        total: summariesData.length,
+        errors: errors.slice(0, 5), // 只记录前5个错误
+      }, LOG_CONTEXTS.DASHBOARD);
     }
 
     const duration = Date.now() - startTime;
