@@ -13,7 +13,6 @@ pipeline {
     environment {
         GIT_CREDENTIALS = credentials('git-credentials')
         PLATFORM_API_URL = 'http://localhost:3000'
-        JENKINS_API_KEY = '3512fc38e1882a9ad2ab88c436277c129517e24a76daad1849ef419f90fd8a4f'
         PYTHON_ENV = "${WORKSPACE}/venv"
     }
     
@@ -178,7 +177,6 @@ pipeline {
                         if [ ! -z "${CALLBACK_URL}" ]; then
                             curl -X POST "${CALLBACK_URL}" \
                                 -H "Content-Type: application/json" \
-                                -H "X-Api-Key: ${JENKINS_API_KEY}" \
                                 -d "{
                                     \"runId\": ${RUN_ID},
                                     \"status\": \"$STATUS\",
@@ -240,7 +238,6 @@ pipeline {
                                 url: callbackUrl,
                                 httpMode: 'POST',
                                 contentType: 'APPLICATION_JSON',
-                                customHeaders: [[name: 'X-Api-Key', value: env.JENKINS_API_KEY]],
                                 requestBody: groovy.json.JsonOutput.toJson(callbackData),
                                 validResponseCodes: '200:299',
                                 ignoreSslErrors: true
@@ -254,7 +251,6 @@ pipeline {
                             sh """
                                 curl -X POST '${callbackUrl}' \
                                     -H 'Content-Type: application/json' \
-                                    -H 'X-Api-Key: ${env.JENKINS_API_KEY}' \
                                     -d '{
                                         "runId": ${params.RUN_ID},
                                         "status": "${finalStatus}",
@@ -293,7 +289,6 @@ pipeline {
                             echo "正在回调失败状态到平台..."
                             curl -X POST "${CALLBACK_URL}" \
                                 -H "Content-Type: application/json" \
-                                -H "X-Api-Key: ${JENKINS_API_KEY}" \
                                 -d "{
                                     \"runId\": ${RUN_ID},
                                     \"status\": \"failed\",

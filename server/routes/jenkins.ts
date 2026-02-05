@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { executionService } from '../services/ExecutionService';
 import { jenkinsService } from '../services/JenkinsService';
-import { jenkinsAuthMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
+import { ipWhitelistMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
 import { requestValidator } from '../middleware/RequestValidator';
 
 const router = Router();
@@ -319,9 +319,10 @@ router.get('/status/:executionId', async (req: Request, res: Response) => {
 /**
  * POST /api/jenkins/callback
  * Jenkins 执行结果回调接口
+ * 通过 IP 白名单验证，无需额外认证
  */
 router.post('/callback', [
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit,
   requestValidator.validateCallback
 ], async (req: Request, res: Response) => {
@@ -341,7 +342,6 @@ router.post('/callback', [
       durationMs,
       resultsCount: results.length,
       timestamp: new Date().toISOString(),
-      authSource: req.jenkinsAuth?.source,
       userAgent: req.get('User-Agent'),
       remoteIP: req.ip
     });
@@ -441,12 +441,13 @@ router.get('/batch/:runId', async (req: Request, res: Response) => {
 
 /**
  * POST /api/jenkins/callback/test
- * 测试回调连接和认证 - 支持传入真实数据进行测试处理
+ * 测试回调连接 - 支持传入真实数据进行测试处理
  * 可选参数: runId, status, passedCases, failedCases, skippedCases, durationMs, results
  * 如果提供了 runId，则会真实处理回调数据；否则仅测试连接
+ * 通过 IP 白名单验证
  */
 router.post('/callback/test', [
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit
 ], async (req: Request, res: Response) => {
   const startTime = Date.now();
@@ -469,7 +470,6 @@ router.post('/callback/test', [
     const isRealDataTest = !!runId && !!status;
 
     console.log(`[CALLBACK-TEST] Received test callback from ${clientIP}`, {
-      authSource: req.jenkinsAuth?.source,
       timestamp,
       isRealDataTest,
       runId,
@@ -477,9 +477,6 @@ router.post('/callback/test', [
       dataMode: isRealDataTest ? 'REAL_DATA' : 'CONNECTION_TEST',
       headers: {
         contentType: req.headers['content-type'],
-        hasAuth: !!req.headers.authorization,
-        hasApiKey: !!req.headers['x-api-key'],
-        hasSignature: !!req.headers['x-jenkins-signature'],
       }
     });
 
@@ -516,10 +513,8 @@ router.post('/callback/test', [
           mode: 'REAL_DATA',
           details: {
             receivedAt: timestamp,
-            authenticationMethod: req.jenkinsAuth?.source || 'unknown',
             clientIP,
             testMessage,
-            metadata: req.jenkinsAuth?.metadata,
             processedData: {
               runId,
               status,
@@ -534,14 +529,12 @@ router.post('/callback/test', [
             platform: process.env.NODE_ENV,
             jenkinsUrl: process.env.JENKINS_URL,
             callbackReceived: true,
-            authenticationPassed: true,
             networkConnectivity: 'OK',
             dataProcessing: 'SUCCESS',
             timestamp,
             processingTimeMs: processingTime
           },
           recommendations: [
-            '✅ 认证配置正确',
             '✅ 网络连接正常',
             '✅ 回调数据已成功处理',
             '✅ 可以开始集成 Jenkins'
@@ -582,21 +575,17 @@ router.post('/callback/test', [
         mode: 'CONNECTION_TEST',
         details: {
           receivedAt: timestamp,
-          authenticationMethod: req.jenkinsAuth?.source || 'unknown',
           clientIP,
           testMessage,
-          metadata: req.jenkinsAuth?.metadata,
         },
         diagnostics: {
           platform: process.env.NODE_ENV,
           jenkinsUrl: process.env.JENKINS_URL,
           callbackReceived: true,
-          authenticationPassed: true,
           networkConnectivity: 'OK',
           timestamp,
         },
         recommendations: [
-          '✅ 认证配置正确',
           '✅ 网络连接正常',
           '✅ 可以开始集成 Jenkins',
           '💡 提示：可以传入 runId、status 等参数来测试真实回调处理'
@@ -630,9 +619,10 @@ router.post('/callback/test', [
  * POST /api/jenkins/callback/manual-sync/:runId
  * 手动同步执行状态 - 用于修复卡住的执行记录
  * 从数据库查询当前状态并允许手动更新
+ * 通过 IP 白名单验证
  */
 router.post('/callback/manual-sync/:runId', [
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit
 ], async (req: Request, res: Response) => {
   try {
@@ -780,11 +770,11 @@ router.post('/callback/manual-sync/:runId', [
 
 /**
  * POST /api/jenkins/callback/diagnose
- * 诊断回调连接问题 - 需要认证以保护系统信息
+ * 诊断回调连接问题 - 通过 IP 白名单验证以保护系统信息
  */
 router.post('/callback/diagnose',
   rateLimitMiddleware.limit,
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   async (req: Request, res: Response) => {
   try {
     const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
@@ -795,7 +785,7 @@ router.post('/callback/diagnose',
       headers: Object.keys(req.headers).filter(k => k.toLowerCase().includes('auth') || k.toLowerCase().includes('jenkins'))
     });
 
-    // 分析请求中的认证信息
+    // 分析回调配置
     const diagnostics: any = {
       timestamp,
       clientIP,
@@ -803,54 +793,37 @@ router.post('/callback/diagnose',
         jenkins_url: !!process.env.JENKINS_URL,
         jenkins_user: !!process.env.JENKINS_USER,
         jenkins_token: !!process.env.JENKINS_TOKEN,
-        jenkins_api_key: !!process.env.JENKINS_API_KEY,
-        jenkins_jwt_secret: !!process.env.JENKINS_JWT_SECRET,
-        jenkins_signature_secret: !!process.env.JENKINS_SIGNATURE_SECRET,
         jenkins_allowed_ips: !!process.env.JENKINS_ALLOWED_IPS,
       },
       requestHeaders: {
-        hasAuthorization: !!req.headers.authorization,
-        hasApiKey: !!req.headers['x-api-key'],
-        hasSignature: !!req.headers['x-jenkins-signature'],
-        hasTimestamp: !!req.headers['x-jenkins-timestamp'],
         hasContentType: !!req.headers['content-type'],
       },
       suggestions: [] as string[],
     };
 
     // 分析问题并给出建议
-    if (!diagnostics.environmentVariablesConfigured.jenkins_api_key) {
-      diagnostics.suggestions.push('❌ 未配置 JENKINS_API_KEY');
+    if (!diagnostics.environmentVariablesConfigured.jenkins_token) {
+      diagnostics.suggestions.push('⚠️  未配置 JENKINS_TOKEN，Jenkins API 集成可能无法正常工作');
     }
-    if (!diagnostics.environmentVariablesConfigured.jenkins_jwt_secret) {
-      diagnostics.suggestions.push('❌ 未配置 JENKINS_JWT_SECRET');
-    }
-    if (!diagnostics.environmentVariablesConfigured.jenkins_signature_secret) {
-      diagnostics.suggestions.push('❌ 未配置 JENKINS_SIGNATURE_SECRET');
-    }
-
-    if (!diagnostics.requestHeaders.hasApiKey && 
-        !diagnostics.requestHeaders.hasAuthorization && 
-        !diagnostics.requestHeaders.hasSignature) {
-      diagnostics.suggestions.push('⚠️  请求中没有任何认证信息（API Key、JWT 或签名）');
+    if (!diagnostics.environmentVariablesConfigured.jenkins_allowed_ips) {
+      diagnostics.suggestions.push('⚠️  未配置 JENKINS_ALLOWED_IPS，将允许所有 IP 访问回调接口');
     }
 
     if (diagnostics.suggestions.length === 0) {
       diagnostics.suggestions.push('✅ 所有必需的环境变量已配置');
-      diagnostics.suggestions.push('✅ 请求包含认证信息');
+      diagnostics.suggestions.push('✅ 回调接口已就绪');
     }
 
     // 提供配置步骤
     diagnostics.nextSteps = [
-      '1️⃣ 确保 .env 文件中配置了所有必需的环境变量',
-      '2️⃣ 选择认证方式：API Key（最简单）、JWT 或签名',
+      '1️⃣ 配置 JENKINS_ALLOWED_IPS 以限制回调源 IP（推荐）',
+      '2️⃣ 配置 JENKINS_URL、JENKINS_USER、JENKINS_TOKEN 用于 API 集成',
       '3️⃣ 使用 curl 测试回调：',
       '   curl -X POST http://localhost:3000/api/jenkins/callback/test \\',
-      '     -H "X-Api-Key: your-api-key" \\',
       '     -H "Content-Type: application/json" \\',
       '     -d \'{"testMessage": "hello"}\'',
       '4️⃣ 如果收到成功响应，可以开始集成 Jenkins',
-      '📚 详细文档：docs/JENKINS_AUTH_QUICK_START.md'
+      '📚 详细文档：docs/JENKINS_CONFIG_GUIDE.md'
     ];
 
     res.json({
@@ -1041,11 +1014,11 @@ router.get('/health', async (req: Request, res: Response) => {
 
 /**
  * GET /api/jenkins/diagnose
- * 诊断执行问题 - 需要认证以保护系统信息
+ * 诊断执行问题 - 通过 IP 白名单验证以保护系统信息
  */
 router.get('/diagnose',
   rateLimitMiddleware.limit,
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.query.runId as string);
