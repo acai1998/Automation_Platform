@@ -10,7 +10,7 @@ import * as path from 'path';
 function getEntityPaths(): string[] {
   const isJsRuntime = path.extname(__filename) === '.js';
   const entityPath = isJsRuntime
-    ? path.resolve(process.cwd(), 'dist', 'server', 'server', 'entities', '*.js')
+    ? path.resolve(process.cwd(), 'dist', 'server', 'entities', '*.js')
     : path.resolve(process.cwd(), 'server', 'entities', '*.ts');
   return [entityPath];
 }
