@@ -820,46 +820,48 @@ export class DashboardRepository extends BaseRepository<TestCase> {
    * @returns 缺失日期列表
    */
   async getMissingDailySummaryDates(days: number): Promise<string[]> {
-    // 1. 生成预期的日期列表（T-1 逻辑，不包含今天）
-    const expectedDates: string[] = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // 优化：使用纯SQL查询缺失日期，避免在内存中生成90个日期
+    const missingDates = await this.dailySummaryRepository.query(`
+      SELECT DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL n DAY), '%Y-%m-%d') as missing_date
+      FROM (
+        SELECT 1 as n UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5
+        UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9 UNION SELECT 10
+        UNION SELECT 11 UNION SELECT 12 UNION SELECT 13 UNION SELECT 14 UNION SELECT 15
+        UNION SELECT 16 UNION SELECT 17 UNION SELECT 18 UNION SELECT 19 UNION SELECT 20
+        UNION SELECT 21 UNION SELECT 22 UNION SELECT 23 UNION SELECT 24 UNION SELECT 25
+        UNION SELECT 26 UNION SELECT 27 UNION SELECT 28 UNION SELECT 29 UNION SELECT 30
+        UNION SELECT 31 UNION SELECT 32 UNION SELECT 33 UNION SELECT 34 UNION SELECT 35
+        UNION SELECT 36 UNION SELECT 37 UNION SELECT 38 UNION SELECT 39 UNION SELECT 40
+        UNION SELECT 41 UNION SELECT 42 UNION SELECT 43 UNION SELECT 44 UNION SELECT 45
+        UNION SELECT 46 UNION SELECT 47 UNION SELECT 48 UNION SELECT 49 UNION SELECT 50
+        UNION SELECT 51 UNION SELECT 52 UNION SELECT 53 UNION SELECT 54 UNION SELECT 55
+        UNION SELECT 56 UNION SELECT 57 UNION SELECT 58 UNION SELECT 59 UNION SELECT 60
+        UNION SELECT 61 UNION SELECT 62 UNION SELECT 63 UNION SELECT 64 UNION SELECT 65
+        UNION SELECT 66 UNION SELECT 67 UNION SELECT 68 UNION SELECT 69 UNION SELECT 70
+        UNION SELECT 71 UNION SELECT 72 UNION SELECT 73 UNION SELECT 74 UNION SELECT 75
+        UNION SELECT 76 UNION SELECT 77 UNION SELECT 78 UNION SELECT 79 UNION SELECT 80
+        UNION SELECT 81 UNION SELECT 82 UNION SELECT 83 UNION SELECT 84 UNION SELECT 85
+        UNION SELECT 86 UNION SELECT 87 UNION SELECT 88 UNION SELECT 89 UNION SELECT 90
+      ) as numbers
+      WHERE n <= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM Auto_TestCaseDailySummaries
+          WHERE summary_date = DATE_SUB(CURDATE(), INTERVAL n DAY)
+        )
+      ORDER BY missing_date ASC
+    `, [days]) as { missing_date: string }[];
 
-    for (let i = 1; i <= days; i++) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      expectedDates.push(date.toISOString().split('T')[0]);
-    }
-
-    if (expectedDates.length === 0) {
-      return [];
-    }
-
-    // 2. 查询已存在的汇总数据日期
-    const existingSummaries = await this.dailySummaryRepository.query(`
-      SELECT DATE_FORMAT(summary_date, "%Y-%m-%d") as date
-      FROM Auto_TestCaseDailySummaries
-      WHERE DATE(summary_date) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-        AND DATE(summary_date) < CURDATE()
-      ORDER BY summary_date DESC
-    `, [days]) as { date: string }[];
-
-    const existingDates = new Set(
-      existingSummaries.map((s: { date: string }) => s.date)
-    );
-
-    // 3. 找出缺失的日期
-    const missingDates = expectedDates.filter(date => !existingDates.has(date));
+    const result = missingDates.map(d => d.missing_date);
 
     logger.debug('Daily summary completeness check', {
-      expectedCount: expectedDates.length,
-      existingCount: existingDates.size,
-      missingCount: missingDates.length,
-      missingDates: missingDates.slice(0, 5), // 只显示前5个缺失日期
+      expectedCount: days,
+      existingCount: days - result.length,
+      missingCount: result.length,
+      missingDates: result.slice(0, 5),
       days,
     }, LOG_CONTEXTS.DASHBOARD);
 
-    return missingDates;
+    return result;
   }
 
   /**
@@ -885,14 +887,21 @@ export class DashboardRepository extends BaseRepository<TestCase> {
     if (onlyMissingDates) {
       datesToProcess = await this.getMissingDailySummaryDates(days);
       if (datesToProcess.length === 0) {
-        logger.info('No missing daily summaries, skipping backfill', {
+        // 生成所有日期列表作为跳过的日期
+        const allDates: string[] = [];
+        for (const date of this.generateDateRange(days)) {
+          allDates.push(date);
+        }
+
+        logger.info('All daily summaries already exist, skipping backfill', {
           days,
+          skippedCount: allDates.length,
           durationMs: Date.now() - startTime,
         }, LOG_CONTEXTS.DASHBOARD);
         return {
           successCount: 0,
           processedDates: [],
-          skippedDates: [],
+          skippedDates: allDates, // 返回所有日期作为跳过的日期
         };
       }
     }

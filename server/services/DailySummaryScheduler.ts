@@ -208,8 +208,10 @@ export class DailySummaryScheduler {
         completedAt: new Date().toISOString(),
         processedDates: batchResult.processedDates.length,
         skippedDates: skippedCount,
-        optimization: onlyMissingDates 
-          ? `Incremental backfill: processed ${batchResult.processedDates.length} missing dates, skipped ${skippedCount} existing`
+        optimization: onlyMissingDates
+          ? (skippedCount === days
+            ? `Incremental backfill: all ${skippedCount} days already exist, no queries executed`
+            : `Incremental backfill: processed ${batchResult.processedDates.length} missing dates, skipped ${skippedCount} existing`)
           : 'Full backfill: Reduced from ~270 queries to ~4 queries',
       }, LOG_CONTEXTS.SCHEDULER);
 
