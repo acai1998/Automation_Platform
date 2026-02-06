@@ -2,8 +2,7 @@ import { StatsCards } from "@/components/dashboard/StatsCards";
 import { TodayExecution } from "@/components/dashboard/TodayExecution";
 import { TrendChart } from "@/components/dashboard/TrendChart";
 import { RecentTests } from "@/components/dashboard/RecentTests";
-import { Button } from "@/components/ui/button";
-import { Play, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState, useEffect } from "react";
 import { dashboardApi } from "@/api";
@@ -106,12 +105,6 @@ export default function Home() {
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
               </div>
-
-              {/* Run Test Button */}
-              <Button className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20">
-                <Play className="h-4 w-4" />
-                <span>执行测试</span>
-              </Button>
             </div>
           </div>
 

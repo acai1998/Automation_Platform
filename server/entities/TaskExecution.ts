@@ -9,9 +9,6 @@ export class TaskExecution {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ type: 'int', name: 'run_id', nullable: true })
-  runId: number | null;
-
   @Column({ type: 'int', name: 'task_id', nullable: true })
   taskId: number | null;
 

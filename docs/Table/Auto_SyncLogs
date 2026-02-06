@@ -1,0 +1,26 @@
+-- autotest.Auto_SyncLogs definition
+
+CREATE TABLE `Auto_SyncLogs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '主键ID，自增',
+  `repo_config_id` int(11) NOT NULL COMMENT '关联的仓库配置ID',
+  `sync_type` enum('manual','scheduled','webhook') DEFAULT 'manual' COMMENT '同步类型：manual-手动，scheduled-定时，webhook-钩子触发',
+  `status` enum('pending','running','success','failed') DEFAULT 'pending' COMMENT '同步状态：pending-待处理，running-运行中，success-成功，failed-失败',
+  `total_files` int(11) DEFAULT 0 COMMENT '总文件数量',
+  `added_files` int(11) DEFAULT 0 COMMENT '新增文件数量',
+  `modified_files` int(11) DEFAULT 0 COMMENT '修改文件数量',
+  `deleted_files` int(11) DEFAULT 0 COMMENT '删除文件数量',
+  `created_cases` int(11) DEFAULT 0 COMMENT '创建的测试用例数量',
+  `updated_cases` int(11) DEFAULT 0 COMMENT '更新的测试用例数量',
+  `conflicts_detected` int(11) DEFAULT 0 COMMENT '检测到的冲突数量',
+  `error_message` text DEFAULT NULL COMMENT '错误信息描述',
+  `start_time` datetime DEFAULT NULL COMMENT '同步开始时间',
+  `end_time` datetime DEFAULT NULL COMMENT '同步结束时间',
+  `duration` int(11) DEFAULT NULL COMMENT '同步耗时（秒）',
+  `triggered_by` int(11) DEFAULT NULL COMMENT '触发者用户ID',
+  `created_at` datetime DEFAULT current_timestamp() COMMENT '记录创建时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_repo_config_id` (`repo_config_id`) COMMENT '仓库配置ID索引',
+  KEY `idx_status` (`status`) COMMENT '状态索引',
+  KEY `idx_created_at` (`created_at`) COMMENT '创建时间索引',
+  CONSTRAINT `fk_auto_sync_logs_repo_config` FOREIGN KEY (`repo_config_id`) REFERENCES `Auto_RepositoryConfigs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='仓库同步日志表';

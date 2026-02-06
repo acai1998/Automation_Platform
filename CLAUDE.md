@@ -82,13 +82,19 @@ npx tsc --noEmit -p tsconfig.server.json
 ## 数据库结构
 远程 MariaDB 数据库中的关键表：
 - `Auto_Users` — 用户表（远程表）
-- `Auto_TestCase` — 测试用例资产表（远程表）
-- `Auto_TestRun` — 测试执行批次表（远程表）
-- `Auto_TestRunResults` — 测试用例执行结果表（远程表）
-- `Auto_TestCaseTaskExecutions` — 测试任务执行记录表（远程表）
-- `Auto_TestCaseDailySummaries` — 测试用例每日统计汇总表（远程表）
+- `Auto_TestCaseProjects` — 测试用例项目表
+- `Auto_TestCase` — 测试用例资产表
+- `Auto_TestRun` — 测试执行批次表
+- `Auto_TestRunResults` — 测试用例执行结果表
+- `Auto_TestCaseTaskExecutions` — 测试任务执行记录表
+- `Auto_TestCaseTasks` — 测试任务表
+- `Auto_TestCaseDailySummaries` — 测试用例每日统计汇总表
+- `Auto_TestEnvironments` — 测试环境配置表
+- `Auto_RepositoryConfigs` — 自动化测试仓库配置表
+- `Auto_RepositoryScriptMappings` — 仓库脚本与测试用例映射表
+- `Auto_SyncLogs` — 仓库同步日志表
 
-**注意**：数据库表结构由 DBA 统一管理，本地不进行表结构初始化。
+**注意**：数据库表结构由 DBA 统一管理，本地不进行表结构初始化。详见 `docs/Table/` 目录。
 
 ## 路径别名配置
 
@@ -263,20 +269,34 @@ Jenkins 回调支持三种认证方式（任选其一）：
 ### 核心业务表
 | 表名 | 说明 | 用途 |
 |-----|------|------|
-| `Auto_TestCase` | 测试用例资产表 | 存储用例定义和脚本路径 |
-| `Auto_TestRun` | 测试执行批次表 | 记录执行批次的整体信息和统计 |
-| `Auto_TestRunResults` | 测试用例执行结果表 | 存储单个用例的执行结果 |
-| `Auto_TestCaseTaskExecutions` | 测试任务执行记录表 | 记录任务维度的执行历史 |
-| `Auto_TestCaseDailySummaries` | 每日统计汇总表 | 统计类数据聚合 |
 | `Auto_Users` | 用户表 | 存储用户信息和权限 |
+| `Auto_TestCaseProjects` | 测试用例项目表 | 组织和分类测试用例项目 |
+| `Auto_TestCase` | 测试用例资产表 | 存储用例定义、脚本路径和元数据 |
+| `Auto_TestCaseTasks` | 测试任务表 | 定义和管理测试任务及其调度规则 |
+| `Auto_TestEnvironments` | 测试环境配置表 | 管理测试执行环境配置 |
+| `Auto_TestRun` | 测试执行批次表 | 记录执行批次的整体信息和统计 |
+| `Auto_TestCaseTaskExecutions` | 测试任务执行记录表 | 记录任务维度的执行历史 |
+| `Auto_TestRunResults` | 测试用例执行结果表 | 存储单个用例的执行结果详情 |
+| `Auto_TestCaseDailySummaries` | 每日统计汇总表 | 统计类数据聚合及趋势分析 |
+| `Auto_RepositoryConfigs` | 仓库配置表 | Git 仓库连接配置及认证管理 |
+| `Auto_RepositoryScriptMappings` | 仓库脚本映射表 | 脚本文件与测试用例的映射关系 |
+| `Auto_SyncLogs` | 仓库同步日志表 | 记录 Git 仓库同步的历史和状态 |
 
 ### 禁止硬编码 SQL
 **所有数据库操作必须通过 `server/config/database.ts` 中的连接池进行，禁止在代码中硬编码 SQL**
 
 ### 表关联关系
+- `Auto_Users` ← 多个表的 `trigger_by/created_by/updated_by/owner_id/executed_by` 字段（外键）
+- `Auto_TestCaseProjects` ← `Auto_TestCase.project_id`（一对多）
+- `Auto_TestCaseProjects` ← `Auto_TestCaseTasks.project_id`（一对多）
 - `Auto_TestCase` ← `Auto_TestRunResults.case_id`（一对多）
-- `Auto_TestRun` ← `Auto_TestRunResults.run_id`（一对多）
-- `Auto_Users` ← 多个表的 `trigger_by/created_by/updated_by` 字段（外键）
+- `Auto_TestCase` ← `Auto_RepositoryScriptMappings.case_id`（一对多）
+- `Auto_TestRun` ← `Auto_TestRunResults.execution_id`（一对多）
+- `Auto_TestCaseTasks` ← `Auto_TestCaseTaskExecutions.task_id`（一对多）
+- `Auto_TestEnvironments` ← `Auto_TestCaseTasks.environment_id`（一对多）
+- `Auto_TestEnvironments` ← `Auto_TestCaseTaskExecutions.environment_id`（一对多）
+- `Auto_RepositoryConfigs` ← `Auto_RepositoryScriptMappings.repo_config_id`（一对多）
+- `Auto_RepositoryConfigs` ← `Auto_SyncLogs.repo_config_id`（一对多）
 
 ### T-1 数据口径规则
 对于**统计类数据**（如趋势图）：

@@ -10,7 +10,6 @@ export interface ExecutionDetail {
 
 export interface RecentExecution {
   id: number;
-  runId?: number;
   taskId?: number;
   taskName?: string;
   status: string;
@@ -66,7 +65,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
    * 创建任务执行记录
    */
   async createTaskExecution(executionData: {
-    runId?: number;
     taskId?: number;
     taskName?: string;
     totalCases: number;
@@ -156,7 +154,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       .leftJoin('execution.executedByUser', 'user')
       .select([
         'execution.id',
-        'execution.runId',
         'execution.taskId',
         'execution.taskName',
         'execution.status',
@@ -536,7 +533,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
       // 3. 创建任务执行记录
       const taskExecution = await this.createTaskExecution({
-        runId: testRun.id,
         taskId: undefined,
         taskName: undefined,
         totalCases: cases.length,
