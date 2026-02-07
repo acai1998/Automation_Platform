@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { User } from './User';
 
 /**
@@ -15,8 +15,11 @@ export class TaskExecution {
   @Column({ type: 'varchar', length: 100, name: 'task_name', nullable: true })
   taskName: string | null;
 
-  @Column({ type: 'enum', enum: ['pending', 'running', 'success', 'failed', 'aborted'], default: 'pending' })
-  status: 'pending' | 'running' | 'success' | 'failed' | 'aborted';
+  @Column({ type: 'enum', enum: ['pending', 'running', 'success', 'failed', 'cancelled'], default: 'pending' })
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+
+  @Column({ type: 'enum', enum: ['manual', 'scheduled', 'ci_triggered'], nullable: true, name: 'trigger_type' })
+  triggerType: 'manual' | 'scheduled' | 'ci_triggered' | null;
 
   @Column({ type: 'int', name: 'total_cases', default: 0 })
   totalCases: number;
@@ -48,7 +51,4 @@ export class TaskExecution {
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
-
-  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
-  updatedAt: Date;
 }

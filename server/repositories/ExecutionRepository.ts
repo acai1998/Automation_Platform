@@ -182,7 +182,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     await this.repository.update(
       { id: executionId, status: In(['pending', 'running']) },
       {
-        status: 'aborted',
+        status: 'cancelled',
         endTime: new Date(),
       }
     );
@@ -194,7 +194,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async updateExecutionResults(
     executionId: number,
     results: {
-      status: 'success' | 'failed' | 'aborted';
+      status: 'success' | 'failed' | 'cancelled';
       passedCases: number;
       failedCases: number;
       skippedCases: number;
@@ -213,7 +213,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async updateTestRunResults(
     runId: number,
     results: {
-      status: 'success' | 'failed' | 'aborted';
+      status: 'success' | 'failed' | 'cancelled';
       passedCases: number;
       failedCases: number;
       skippedCases: number;
@@ -221,7 +221,11 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     }
   ): Promise<void> {
     await this.testRunRepository.update(runId, {
-      ...results,
+      status: results.status === 'cancelled' ? 'aborted' : results.status,
+      passedCases: results.passedCases,
+      failedCases: results.failedCases,
+      skippedCases: results.skippedCases,
+      durationMs: results.durationMs,
       endTime: new Date(),
     });
   }
@@ -447,7 +451,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
    */
   async markExecutionAsTimedOut(runId: number): Promise<void> {
     await this.testRunRepository.update(runId, {
-      status: 'aborted' as any,
+      status: 'cancelled' as any,
       endTime: new Date(),
     });
   }
@@ -564,7 +568,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async completeBatch(
     runId: number,
     results: {
-      status: 'success' | 'failed' | 'aborted';
+      status: 'success' | 'failed' | 'cancelled';
       passedCases: number;
       failedCases: number;
       skippedCases: number;

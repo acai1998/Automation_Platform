@@ -353,7 +353,7 @@ router.post('/callback', [
     }
 
     // Validate status value
-    const validStatuses = ['success', 'failed', 'aborted'];
+    const validStatuses = ['success', 'failed', 'cancelled'];
     if (!validStatuses.includes(status)) {
       console.warn(`[CALLBACK] Invalid status '${status}' for runId ${runId}, treating as 'failed'`);
     }
@@ -669,7 +669,7 @@ router.post('/callback/manual-sync/:runId', [
     const currentStatus = executionData.status;
 
     // 检查是否允许更新
-    if (!force && ['success', 'failed', 'aborted'].includes(currentStatus)) {
+    if (!force && ['success', 'failed', 'cancelled'].includes(currentStatus)) {
       return res.status(400).json({
         success: false,
         message: `Execution is already completed with status: ${currentStatus}. Use force=true to override.`,
@@ -697,7 +697,7 @@ router.post('/callback/manual-sync/:runId', [
     const startTime = Date.now();
 
     await executionService.completeBatchExecution(runId, {
-      status: status as 'success' | 'failed' | 'aborted',
+      status: status as 'success' | 'failed' | 'cancelled',
       passedCases: passedCases || 0,
       failedCases: failedCases || 0,
       skippedCases: skippedCases || 0,

@@ -44,7 +44,7 @@ export interface ExecutionProgress {
   passedCases: number;
   failedCases: number;
   skippedCases: number;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'aborted';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 }
 
 export interface Auto_TestRunResultsInput {
@@ -64,7 +64,7 @@ export interface Auto_TestRunResultsInput {
 
 export interface ExecutionCallbackInput {
   executionId: number;
-  status: 'success' | 'failed' | 'aborted';
+  status: 'success' | 'failed' | 'cancelled';
   results: Auto_TestRunResultsInput[];
   duration: number;
   reportUrl?: string;
@@ -351,7 +351,7 @@ export class ExecutionService {
    * @throws Error 如果找不到执行记录或数据库操作失败
    */
   async completeBatchExecution(runId: number, results: {
-    status: 'success' | 'failed' | 'aborted';
+    status: 'success' | 'failed' | 'cancelled';
     passedCases: number;
     failedCases: number;
     skippedCases: number;
@@ -594,7 +594,7 @@ export class ExecutionService {
         return 'failed';
       case 'ABORTED':
         console.log('Mapping ABORTED to aborted');
-        return 'aborted';
+        return 'cancelled';
       case 'NOT_BUILT':
         console.log('Mapping NOT_BUILT to pending');
         return 'pending';
