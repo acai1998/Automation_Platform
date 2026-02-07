@@ -18,11 +18,12 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
   const originalMessage = error instanceof Error ? error.message : 'Unknown error';
 
   // 记录详细错误信息到服务器日志
-  console.error(`[${context}] Detailed error:`, {
+  logger.error(`${context} - Detailed error info`, {
     message: originalMessage,
     stack: error instanceof Error ? error.stack : undefined,
-    timestamp: new Date().toISOString()
-  });
+    timestamp: new Date().toISOString(),
+    context,
+  }, LOG_CONTEXTS.JENKINS);
 
   // 检查是否包含敏感信息关键词
   const sensitiveKeywords = [
@@ -544,7 +545,7 @@ router.post('/callback/test', [
 
     const isRealDataTest = !!runId && !!status;
 
-    console.log(`[CALLBACK-TEST] Received test callback from ${clientIP}`, {
+    logger.debug(`Received test callback from ${clientIP}`, {
       timestamp,
       isRealDataTest,
       runId,
@@ -552,12 +553,13 @@ router.post('/callback/test', [
       dataMode: isRealDataTest ? 'REAL_DATA' : 'CONNECTION_TEST',
       headers: {
         contentType: req.headers['content-type'],
-      }
-    });
+      },
+      clientIP,
+    }, LOG_CONTEXTS.JENKINS);
 
     // 如果提供了真实回调数据，则处理它
     if (isRealDataTest) {
-      console.log(`[CALLBACK-TEST] Processing real callback data:`, {
+      logger.info(`Processing real callback test data`, {
         runId,
         status,
         passedCases: passedCases || 0,
@@ -565,7 +567,7 @@ router.post('/callback/test', [
         skippedCases: skippedCases || 0,
         durationMs: durationMs || 0,
         resultsCount: results?.length || 0
-      });
+      }, LOG_CONTEXTS.JENKINS);
 
       try {
         // 真实处理回调
@@ -580,7 +582,11 @@ router.post('/callback/test', [
 
         const processingTime = Date.now() - startTime;
 
-        console.log(`[CALLBACK-TEST] Successfully processed real callback for runId ${runId} in ${processingTime}ms`);
+        logger.info(`Successfully processed real callback test data for runId ${runId}`, {
+          runId,
+          processingTimeMs: processingTime,
+          dataMode: 'REAL_DATA',
+        }, LOG_CONTEXTS.JENKINS);
 
         res.json({
           success: true,
@@ -619,11 +625,12 @@ router.post('/callback/test', [
         const errorMessage = processError instanceof Error ? processError.message : 'Unknown error';
         const processingTime = Date.now() - startTime;
 
-        console.error(`[CALLBACK-TEST] Failed to process real callback for runId ${runId}:`, {
+        logger.error(`Failed to process real callback test data for runId ${runId}`, {
+          runId,
           error: errorMessage,
           stack: processError instanceof Error ? processError.stack : undefined,
           processingTimeMs: processingTime
-        });
+        }, LOG_CONTEXTS.JENKINS);
 
         res.status(500).json({
           success: false,
@@ -669,11 +676,11 @@ router.post('/callback/test', [
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[CALLBACK-TEST] ❌ Test failed:`, {
+    logger.error(`Test callback failed`, {
       error: message,
       stack: error instanceof Error ? error.stack : undefined,
       timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({ 
       success: false, 
       message,
@@ -719,7 +726,8 @@ router.post('/callback/manual-sync/:runId', [
       });
     }
 
-    console.log(`[MANUAL-SYNC] Starting manual sync for runId: ${runId}`, {
+    logger.info(`Starting manual sync for execution`, {
+      runId,
       status,
       passedCases,
       failedCases,
@@ -728,7 +736,7 @@ router.post('/callback/manual-sync/:runId', [
       resultsCount: results?.length || 0,
       force,
       timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
     // 查询现有执行记录
     const execution = await executionService.getBatchExecution(runId);
@@ -782,7 +790,11 @@ router.post('/callback/manual-sync/:runId', [
 
     const processingTime = Date.now() - startTime;
 
-    console.log(`[MANUAL-SYNC] Successfully synced runId ${runId} in ${processingTime}ms`);
+    logger.info(`Successfully completed manual sync for execution`, {
+      runId,
+      processingTimeMs: processingTime,
+      timestamp: new Date().toISOString(),
+    }, LOG_CONTEXTS.JENKINS);
 
     // 查询更新后的数据
     const updated = await executionService.getBatchExecution(runId);
@@ -820,11 +832,12 @@ router.post('/callback/manual-sync/:runId', [
     const message = error instanceof Error ? error.message : 'Unknown error';
     const errorDetails = error instanceof Error ? error.stack : undefined;
 
-    console.error(`[MANUAL-SYNC] Failed to sync runId:`, {
+    logger.error(`Failed to complete manual sync for execution`, {
+      runId: req.params.runId,
       error: message,
       stack: errorDetails,
       timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
     res.status(500).json({
       success: false,
@@ -855,10 +868,11 @@ router.post('/callback/diagnose',
     const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
     const timestamp = new Date().toISOString();
 
-    console.log(`[CALLBACK-DIAGNOSE] Diagnostic request from ${clientIP}`, {
+    logger.debug(`Received callback diagnostic request`, {
+      clientIP,
       timestamp,
       headers: Object.keys(req.headers).filter(k => k.toLowerCase().includes('auth') || k.toLowerCase().includes('jenkins'))
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
     // 分析回调配置
     const diagnostics: any = {
@@ -909,7 +923,9 @@ router.post('/callback/diagnose',
 
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[CALLBACK-DIAGNOSE] Error:`, message);
+    logger.error(`Callback diagnostic failed`, {
+      error: message,
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
       success: false,
       message: `Diagnostic failed: ${message}`
@@ -925,7 +941,7 @@ router.get('/health', async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
-    console.log(`[/api/jenkins/health] Starting Jenkins health check...`);
+    logger.info(`Starting Jenkins health check...`, {}, LOG_CONTEXTS.JENKINS);
 
     // 测试 Jenkins 连接
     const jenkinsUrl = process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/';
@@ -953,7 +969,9 @@ router.get('/health', async (req: Request, res: Response) => {
     };
 
     // 1. 测试基础连接
-    console.log(`[/api/jenkins/health] Testing connection to:`, jenkinsUrl);
+    logger.debug(`Testing connection to Jenkins`, {
+      jenkinsUrl,
+    }, LOG_CONTEXTS.JENKINS);
     const connStartTime = Date.now();
     
     // 构建 API URL（处理 URL 尾部斜杠）
@@ -963,7 +981,9 @@ router.get('/health', async (req: Request, res: Response) => {
     }
     apiUrl += 'api/json';
     
-    console.log(`[/api/jenkins/health] Final API URL:`, apiUrl);
+    logger.debug(`Final API URL for health check`, {
+      apiUrl,
+    }, LOG_CONTEXTS.JENKINS);
     
     const credentials = Buffer.from(`${jenkinsUser}:${jenkinsToken}`).toString('base64');
     
@@ -987,7 +1007,11 @@ router.get('/health', async (req: Request, res: Response) => {
       healthCheckData.diagnostics.connectionStatus = response.status;
       healthCheckData.diagnostics.statusText = response.statusText;
 
-      console.log(`[/api/jenkins/health] Response status:`, response.status);
+      logger.debug(`Jenkins health check response received`, {
+        status: response.status,
+        statusText: response.statusText,
+        duration: healthCheckData.checks.connectionTest.duration,
+      }, LOG_CONTEXTS.JENKINS);
 
       if (response.ok) {
         const data = await response.json() as any;
@@ -1105,7 +1129,9 @@ router.get('/diagnose',
       });
     }
 
-    console.log(`[/api/jenkins/diagnose] Diagnosing execution ${runId}...`);
+    logger.info(`Starting execution diagnosis`, {
+      runId,
+    }, LOG_CONTEXTS.JENKINS);
 
     // 获取执行批次信息
     const batch = await executionService.getBatchExecution(runId);
@@ -1242,7 +1268,9 @@ router.get('/diagnose',
 
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[/api/jenkins/diagnose] Error:`, message);
+    logger.error(`Execution diagnosis failed`, {
+      error: message,
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
       success: false,
       message: `Diagnosis failed: ${message}`
@@ -1256,7 +1284,7 @@ router.get('/diagnose',
  */
 router.get('/monitoring/stats', async (_req, res) => {
   try {
-    console.log(`[MONITORING] Getting monitoring statistics...`);
+    logger.info(`Getting monitoring statistics...`, {}, LOG_CONTEXTS.JENKINS);
 
     // 获取混合同步服务的统计信息
     const { hybridSyncService } = await import('../services/HybridSyncService');
@@ -1304,7 +1332,9 @@ router.get('/monitoring/stats', async (_req, res) => {
 
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[MONITORING] Failed to get stats:`, message);
+    logger.error(`Failed to get monitoring statistics`, {
+      error: message,
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
       success: false,
       message: `Failed to get monitoring stats: ${message}`
@@ -1320,7 +1350,10 @@ router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
   try {
     const { timeoutMinutes = 5, dryRun = false } = req.body;
 
-    console.log(`[MONITORING] ${dryRun ? 'Simulating' : 'Starting'} fix for stuck executions (timeout: ${timeoutMinutes}min)`);
+    logger.info(`${dryRun ? 'Simulating' : 'Starting'} fix for stuck executions`, {
+      timeoutMinutes,
+      dryRun,
+    }, LOG_CONTEXTS.JENKINS);
 
     if (dryRun) {
       // 只查询，不修复
@@ -1365,7 +1398,9 @@ router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
 
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[MONITORING] Failed to fix stuck executions:`, message);
+    logger.error(`Failed to fix stuck executions`, {
+      error: message,
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
       success: false,
       message: `Failed to fix stuck executions: ${message}`
