@@ -3,6 +3,8 @@ import { executionService } from '../services/ExecutionService';
 import { jenkinsService } from '../services/JenkinsService';
 import { ipWhitelistMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
 import { requestValidator } from '../middleware/RequestValidator';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS, createTimer } from '../config/logging';
 
 const router = Router();
 
@@ -95,15 +97,15 @@ router.post('/run-case', [
   rateLimitMiddleware.limit,
   requestValidator.validateSingleExecution
 ], async (req: Request, res: Response) => {
+  const timer = createTimer();
   try {
     const { caseId, projectId, triggeredBy = 1 } = req.body;
     
-    console.log(`[/api/jenkins/run-case] Starting single case execution:`, {
+    logger.info('Starting single case execution', {
       caseId,
       projectId,
       triggeredBy,
-      timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
     // 创建执行批次记录
     const execution = await executionService.triggerTestExecution({
@@ -113,26 +115,34 @@ router.post('/run-case', [
       triggerType: 'manual',
     });
     
-    console.log(`[/api/jenkins/run-case] Execution record created:`, {
+    logger.info('Execution record created', {
       runId: execution.runId,
-      totalCases: execution.totalCases
-    });
+      executionId: execution.executionId,
+      totalCases: execution.totalCases,
+      caseIds: execution.caseIds,
+    }, LOG_CONTEXTS.JENKINS);
 
     // 触发Jenkins Job
-    console.log(`[/api/jenkins/run-case] Triggering Jenkins job...`);
+    const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/executions/callback`;
+    logger.debug('Triggering Jenkins job', {
+      runId: execution.runId,
+      caseId,
+      callbackUrl,
+    }, LOG_CONTEXTS.JENKINS);
+
     const triggerResult = await jenkinsService.triggerBatchJob(
       execution.runId,
       [caseId],
       [],
-      `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`
+      callbackUrl
     );
     
-    console.log(`[/api/jenkins/run-case] Jenkins trigger result:`, {
+    logger.info('Jenkins trigger result', {
       success: triggerResult.success,
       message: triggerResult.message,
       buildUrl: triggerResult.buildUrl,
-      queueId: triggerResult.queueId
-    });
+      queueId: triggerResult.queueId,
+    }, LOG_CONTEXTS.JENKINS);
 
     if (triggerResult.success) {
       // 更新Jenkins构建信息
@@ -141,21 +151,30 @@ router.post('/run-case', [
         const buildIdMatch = triggerResult.buildUrl.match(/\/(\d+)\/$/);
         const buildId = buildIdMatch ? buildIdMatch[1] : 'unknown';
         
-        console.log(`[/api/jenkins/run-case] Updating Jenkins info:`, {
+        logger.debug('Updating Jenkins info', {
           runId: execution.runId,
           buildId,
           buildUrl: triggerResult.buildUrl
-        });
+        }, LOG_CONTEXTS.JENKINS);
         
         await executionService.updateBatchJenkinsInfo(execution.runId, {
           buildId,
           buildUrl: triggerResult.buildUrl,
         });
+
+        logger.info('Jenkins info updated successfully', {
+          runId: execution.runId,
+          buildId,
+        }, LOG_CONTEXTS.JENKINS);
       }
     } else {
-      console.error(`[/api/jenkins/run-case] Jenkins trigger failed:`, triggerResult.message);
+      logger.warn('Jenkins trigger failed', {
+        runId: execution.runId,
+        message: triggerResult.message,
+      }, LOG_CONTEXTS.JENKINS);
     }
 
+    const duration = timer();
     res.json({
       success: triggerResult.success,
       data: {
@@ -165,6 +184,12 @@ router.post('/run-case', [
       message: triggerResult.message,
     });
   } catch (error: unknown) {
+    const duration = timer();
+    logger.errorLog(error, 'Single case execution failed', {
+      caseId: req.body?.caseId,
+      projectId: req.body?.projectId,
+      durationMs: duration,
+    });
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_CASE');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
@@ -178,16 +203,16 @@ router.post('/run-batch', [
   rateLimitMiddleware.limit,
   requestValidator.validateBatchExecution
 ], async (req: Request, res: Response) => {
+  const timer = createTimer();
   try {
     const { caseIds, projectId, triggeredBy = 1 } = req.body;
     
-    console.log(`[/api/jenkins/run-batch] Starting batch case execution:`, {
+    logger.info('Starting batch case execution', {
       caseCount: caseIds.length,
       caseIds,
       projectId,
       triggeredBy,
-      timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
     // 创建执行批次记录
     const execution = await executionService.triggerTestExecution({
@@ -197,26 +222,34 @@ router.post('/run-batch', [
       triggerType: 'manual',
     });
     
-    console.log(`[/api/jenkins/run-batch] Execution record created:`, {
+    logger.info('Batch execution record created', {
       runId: execution.runId,
-      totalCases: execution.totalCases
-    });
+      executionId: execution.executionId,
+      totalCases: execution.totalCases,
+      caseIds: execution.caseIds,
+    }, LOG_CONTEXTS.JENKINS);
 
     // 触发Jenkins Job
-    console.log(`[/api/jenkins/run-batch] Triggering Jenkins job...`);
+    const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/executions/callback`;
+    logger.debug('Triggering Jenkins job for batch', {
+      runId: execution.runId,
+      caseCount: caseIds.length,
+      callbackUrl,
+    }, LOG_CONTEXTS.JENKINS);
+
     const triggerResult = await jenkinsService.triggerBatchJob(
       execution.runId,
       caseIds,
       [],
-      `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`
+      callbackUrl
     );
     
-    console.log(`[/api/jenkins/run-batch] Jenkins trigger result:`, {
+    logger.info('Jenkins trigger result', {
       success: triggerResult.success,
       message: triggerResult.message,
       buildUrl: triggerResult.buildUrl,
-      queueId: triggerResult.queueId
-    });
+      queueId: triggerResult.queueId,
+    }, LOG_CONTEXTS.JENKINS);
 
     if (triggerResult.success) {
       // 更新Jenkins构建信息
@@ -224,21 +257,30 @@ router.post('/run-batch', [
         const buildIdMatch = triggerResult.buildUrl.match(/\/(\d+)\/$/);
         const buildId = buildIdMatch ? buildIdMatch[1] : 'unknown';
         
-        console.log(`[/api/jenkins/run-batch] Updating Jenkins info:`, {
+        logger.debug('Updating batch Jenkins info', {
           runId: execution.runId,
           buildId,
           buildUrl: triggerResult.buildUrl
-        });
+        }, LOG_CONTEXTS.JENKINS);
         
         await executionService.updateBatchJenkinsInfo(execution.runId, {
           buildId,
           buildUrl: triggerResult.buildUrl,
         });
+
+        logger.info('Batch Jenkins info updated successfully', {
+          runId: execution.runId,
+          buildId,
+        }, LOG_CONTEXTS.JENKINS);
       }
     } else {
-      console.error(`[/api/jenkins/run-batch] Jenkins trigger failed:`, triggerResult.message);
+      logger.warn('Batch Jenkins trigger failed', {
+        runId: execution.runId,
+        message: triggerResult.message,
+      }, LOG_CONTEXTS.JENKINS);
     }
 
+    const duration = timer();
     res.json({
       success: triggerResult.success,
       data: {
@@ -249,6 +291,12 @@ router.post('/run-batch', [
       message: triggerResult.message,
     });
   } catch (error: unknown) {
+    const duration = timer();
+    logger.errorLog(error, 'Batch case execution failed', {
+      caseIds: req.body?.caseIds,
+      projectId: req.body?.projectId,
+      durationMs: duration,
+    });
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_BATCH');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
@@ -326,37 +374,53 @@ router.post('/callback', [
   rateLimitMiddleware.limit,
   requestValidator.validateCallback
 ], async (req: Request, res: Response) => {
-  const startTime = Date.now();
+  const timer = createTimer();
   let callbackStatus = 'unknown';
+  const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
 
   try {
     const { runId, status, passedCases = 0, failedCases = 0, skippedCases = 0, durationMs = 0, results = [] } = req.body;
     callbackStatus = status;
 
     // Enhanced logging with more context
-    console.log(`[CALLBACK] Jenkins callback received for runId: ${runId}`, {
+    logger.info('Jenkins callback received', {
+      runId,
       status,
       passedCases,
       failedCases,
       skippedCases,
       durationMs,
       resultsCount: results.length,
-      timestamp: new Date().toISOString(),
+      clientIP,
       userAgent: req.get('User-Agent'),
-      remoteIP: req.ip
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
     // Validate data consistency
     const totalReportedCases = passedCases + failedCases + skippedCases;
     if (results.length > 0 && totalReportedCases !== results.length) {
-      console.warn(`[CALLBACK] Data inconsistency for runId ${runId}: reported total=${totalReportedCases}, actual results=${results.length}`);
+      logger.warn('Data inconsistency detected', {
+        runId,
+        reportedTotal: totalReportedCases,
+        actualResults: results.length,
+      }, LOG_CONTEXTS.JENKINS);
     }
 
     // Validate status value
     const validStatuses = ['success', 'failed', 'cancelled'];
     if (!validStatuses.includes(status)) {
-      console.warn(`[CALLBACK] Invalid status '${status}' for runId ${runId}, treating as 'failed'`);
+      logger.warn('Invalid status received', {
+        runId,
+        providedStatus: status,
+        validStatuses,
+        treatAs: 'failed',
+      }, LOG_CONTEXTS.JENKINS);
     }
+
+    logger.debug('Processing batch execution completion', {
+      runId,
+      status: validStatuses.includes(status) ? status : 'failed',
+      resultsCount: results.length,
+    }, LOG_CONTEXTS.JENKINS);
 
     // 完成执行批次
     await executionService.completeBatchExecution(runId, {
@@ -368,8 +432,12 @@ router.post('/callback', [
       results,
     });
 
-    const processingTime = Date.now() - startTime;
-    console.log(`[CALLBACK] Successfully processed callback for runId ${runId} in ${processingTime}ms`);
+    const processingTime = timer();
+    logger.info('Callback processed successfully', {
+      runId,
+      status: callbackStatus,
+      processingTimeMs: processingTime,
+    }, LOG_CONTEXTS.JENKINS);
 
     res.json({
       success: true,
@@ -377,20 +445,22 @@ router.post('/callback', [
       processingTimeMs: processingTime
     });
   } catch (error: unknown) {
-    const processingTime = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const processingTime = timer();
 
-    console.error(`[CALLBACK] Failed to process callback for runId ${req.body?.runId || 'unknown'}:`, {
-      error: errorMessage,
+    logger.errorLog(error, 'Failed to process Jenkins callback', {
+      runId: req.body?.runId,
       status: callbackStatus,
       processingTimeMs: processingTime,
-      stack: error instanceof Error ? error.stack : undefined
+      clientIP,
     });
 
     // Try to update execution status to failed if we have a runId
     if (req.body?.runId) {
       try {
-        console.log(`[CALLBACK] Attempting to mark execution ${req.body.runId} as failed due to callback processing error`);
+        logger.warn('Attempting fallback: marking execution as failed', {
+          runId: req.body.runId,
+        }, LOG_CONTEXTS.JENKINS);
+
         await executionService.completeBatchExecution(req.body.runId, {
           status: 'failed',
           passedCases: 0,
@@ -405,9 +475,14 @@ router.post('/callback', [
             errorMessage: `Callback processing failed: ${sanitizeErrorMessage(error, 'CALLBACK_FALLBACK')}`
           }],
         });
-        console.log(`[CALLBACK] Successfully marked execution ${req.body.runId} as failed`);
+
+        logger.info('Fallback: Successfully marked execution as failed', {
+          runId: req.body.runId,
+        }, LOG_CONTEXTS.JENKINS);
       } catch (fallbackError) {
-        console.error(`[CALLBACK] Failed to mark execution as failed:`, fallbackError);
+        logger.errorLog(fallbackError, 'Fallback failed: Unable to mark execution as failed', {
+          runId: req.body.runId,
+        });
       }
     }
 
