@@ -1408,4 +1408,50 @@ router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/jenkins/monitor/status
+ * Get execution monitor service status and statistics
+ */
+router.get('/monitor/status', async (_req: Request, res: Response) => {
+  try {
+    const { executionMonitorService } = await import('../services/ExecutionMonitorService');
+
+    const status = executionMonitorService.getStatus();
+    const stats = executionMonitorService.getStats();
+
+    logger.debug('Monitor status requested', {
+      isRunning: status.isRunning,
+      cyclesRun: stats.cyclesRun,
+    }, LOG_CONTEXTS.MONITOR);
+
+    res.json({
+      success: true,
+      data: {
+        status: status.isRunning ? 'running' : 'stopped',
+        isRunning: status.isRunning,
+        config: status.config,
+        stats: {
+          cyclesRun: stats.cyclesRun,
+          totalExecutionsChecked: stats.totalExecutionsChecked,
+          totalExecutionsUpdated: stats.totalExecutionsUpdated,
+          totalCompilationFailures: stats.totalCompilationFailures,
+          totalErrors: stats.totalErrors,
+          lastCycleTime: stats.lastCycleTime,
+          lastCycleDuration: stats.lastCycleDuration,
+          isProcessing: stats.isProcessing,
+        },
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to get monitor status', {
+      error: message,
+    }, LOG_CONTEXTS.MONITOR);
+    res.status(500).json({
+      success: false,
+      message: `Failed to get monitor status: ${message}`,
+    });
+  }
+});
+
 export default router;

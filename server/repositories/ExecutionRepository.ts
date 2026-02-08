@@ -544,6 +544,28 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   }
 
   /**
+   * 获取可能卡住的执行记录（用于 ExecutionMonitorService）
+   * 查询状态为 pending/running 且超过指定时间阈值的执行记录
+   */
+  async getPotentiallyStuckExecutions(thresholdSeconds: number, limit: number = 20): Promise<any[]> {
+    return this.testRunRepository.createQueryBuilder('testRun')
+      .select([
+        'testRun.id as id',
+        'testRun.status as status',
+        'testRun.jenkinsJob as jenkinsJob',
+        'testRun.jenkinsBuildId as jenkinsBuildId',
+        'testRun.startTime as startTime',
+        'TIMESTAMPDIFF(SECOND, testRun.startTime, NOW()) as durationSeconds',
+      ])
+      .where('testRun.status IN (:...statuses)', { statuses: ['pending', 'running'] })
+      .andWhere('testRun.startTime IS NOT NULL')
+      .andWhere('TIMESTAMPDIFF(SECOND, testRun.startTime, NOW()) > :thresholdSeconds', { thresholdSeconds })
+      .orderBy('testRun.startTime', 'ASC')
+      .limit(limit)
+      .getRawMany();
+  }
+
+  /**
    * 获取测试运行的基本信息
    */
   async getTestRunBasicInfo(runId: number): Promise<any> {

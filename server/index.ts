@@ -17,6 +17,7 @@ import authRoutes from './routes/auth';
 import repositoriesRoutes from './routes/repositories';
 import { schedulerService } from './services/SchedulerService';
 import { dailySummaryScheduler } from './services/DailySummaryScheduler';
+import { executionMonitorService } from './services/ExecutionMonitorService';
 
 const app = express();
 const BASE_PORT = parseInt(process.env.PORT || '3000', 10);
@@ -206,6 +207,9 @@ function startServer(port: number, attempt: number = 1): void {
 
     // 启动定时任务调度器
     schedulerService.start();
+
+    // 启动执行监控服务
+    executionMonitorService.start();
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {
@@ -248,6 +252,7 @@ process.on('SIGTERM', () => {
   }, LOG_CONTEXTS.HTTP);
   schedulerService.stop();
   dailySummaryScheduler.stop();
+  executionMonitorService.stop();
   process.exit(0);
 });
 
@@ -258,6 +263,7 @@ process.on('SIGINT', () => {
   }, LOG_CONTEXTS.HTTP);
   schedulerService.stop();
   dailySummaryScheduler.stop();
+  executionMonitorService.stop();
   process.exit(0);
 });
 
