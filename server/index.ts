@@ -3,6 +3,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import rateLimit from 'express-rate-limit';
 import { testConnection, initializeDataSource } from './config/database';
 import { initializeLogging, LOG_CONTEXTS } from './config/logging';
 import { requestLoggingMiddleware, errorLoggingMiddleware } from './middleware/RequestLoggingMiddleware';
@@ -16,6 +17,7 @@ import authRoutes from './routes/auth';
 import repositoriesRoutes from './routes/repositories';
 import { schedulerService } from './services/SchedulerService';
 import { dailySummaryScheduler } from './services/DailySummaryScheduler';
+import { executionMonitorService } from './services/ExecutionMonitorService';
 
 const app = express();
 const BASE_PORT = parseInt(process.env.PORT || '3000', 10);
@@ -54,7 +56,7 @@ testConnection().then(async (connected) => {
 
 /**
  * 初始化每日汇总数据
- * 检查并回填过去90天的汇总数据
+ * 检查并回填过去N天的汇总数据（增量模式：仅回填缺失日期）
  */
 async function initializeDailySummaryData(): Promise<void> {
   try {
@@ -65,20 +67,33 @@ async function initializeDailySummaryData(): Promise<void> {
 
     // 检查是否需要历史数据回填
     const shouldBackfill = process.env.ENABLE_DAILY_SUMMARY_BACKFILL !== 'false';
+    const backfillDays = parseInt(process.env.DAILY_SUMMARY_BACKFILL_DAYS || '90', 10);
 
     if (shouldBackfill) {
-      logger.info('Starting historical daily summary backfill (90 days)...', {}, LOG_CONTEXTS.DATABASE);
+      logger.info('Starting historical daily summary backfill (incremental mode)', {
+        days: backfillDays,
+        mode: 'incremental',
+      }, LOG_CONTEXTS.DATABASE);
 
       // 异步执行历史数据回填，不阻塞服务器启动
       setImmediate(async () => {
+        const startTime = Date.now();
         try {
-          const result = await dailySummaryScheduler.backfillHistoricalSummaries(90);
+          // 使用增量回填模式（仅处理缺失日期），避免不必要的数据库写入
+          const result = await dailySummaryScheduler.backfillHistoricalSummaries(
+            backfillDays,
+            true // onlyMissingDates = true
+          );
 
+          const duration = Date.now() - startTime;
           logger.info('Historical daily summary backfill completed', {
             totalDays: result.totalDays,
-            successCount: result.successCount,
-            failedCount: result.failedCount,
+            processedDays: result.successCount,
+            skippedDays: result.skippedCount || 0,
+            failedDays: result.failedCount,
             errorCount: result.errors.length,
+            mode: result.mode,
+            durationMs: duration,
           }, LOG_CONTEXTS.DATABASE);
 
           if (result.errors.length > 0) {
@@ -89,11 +104,15 @@ async function initializeDailySummaryData(): Promise<void> {
           }
 
         } catch (error) {
-          logger.errorLog(error, 'Historical daily summary backfill failed', {});
+          logger.errorLog(error, 'Historical daily summary backfill failed', {
+            backfillDays,
+          });
         }
       });
     } else {
-      logger.info('Daily summary backfill disabled by configuration', {}, LOG_CONTEXTS.DATABASE);
+      logger.info('Daily summary backfill disabled by configuration', {
+        enableFlag: 'ENABLE_DAILY_SUMMARY_BACKFILL',
+      }, LOG_CONTEXTS.DATABASE);
     }
 
   } catch (error) {
@@ -128,13 +147,45 @@ const distPath = path.join(__dirname, '../');
 logger.info('Setting up static file serving', { distPath }, LOG_CONTEXTS.HTTP);
 app.use(express.static(distPath));
 
-// SPA fallback - 所有非 API 路由都返回 index.html
-app.get('*', (req, res) => {
+// 静态文件访问速率限制 - 防止 DoS 攻击
+const staticFileRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15分钟窗口
+  max: 1000, // 每个IP每15分钟最多1000次请求
+  message: {
+    error: 'Too many requests for static files, please try again later.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true, // 返回速率限制信息在 `RateLimit-*` 头中
+  legacyHeaders: false, // 禁用 `X-RateLimit-*` 头
+  // 移除自定义 keyGenerator，使用默认的 IP 处理（支持 IPv6）
+  skip: (req: express.Request) => {
+    // 跳过 API 路由的速率限制（API 路由有自己的限制）
+    return req.path.startsWith('/api/');
+  },
+  handler: (req: express.Request, res: express.Response) => {
+    const clientIP = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip;
+    logger.warn('Static file rate limit exceeded', {
+      ip: clientIP,
+      path: req.path,
+      userAgent: req.headers['user-agent'],
+      windowMs: 15 * 60 * 1000,
+      max: 1000
+    }, LOG_CONTEXTS.SECURITY);
+
+    res.status(429).json({
+      error: 'Too many requests for static files, please try again later.',
+      retryAfter: '15 minutes'
+    });
+  }
+});
+
+// SPA fallback - 所有非 API 路由都返回 index.html（带速率限制）
+app.get('*', staticFileRateLimit, (req, res) => {
   // 跳过 API 路由
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'API endpoint not found' });
   }
-  
+
   const indexPath = path.join(distPath, 'index.html');
   logger.debug('Serving SPA index.html', { path: req.path, indexPath }, LOG_CONTEXTS.HTTP);
   res.sendFile(indexPath);
@@ -156,6 +207,9 @@ function startServer(port: number, attempt: number = 1): void {
 
     // 启动定时任务调度器
     schedulerService.start();
+
+    // 启动执行监控服务
+    executionMonitorService.start();
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {
@@ -198,6 +252,7 @@ process.on('SIGTERM', () => {
   }, LOG_CONTEXTS.HTTP);
   schedulerService.stop();
   dailySummaryScheduler.stop();
+  executionMonitorService.stop();
   process.exit(0);
 });
 
@@ -208,6 +263,7 @@ process.on('SIGINT', () => {
   }, LOG_CONTEXTS.HTTP);
   schedulerService.stop();
   dailySummaryScheduler.stop();
+  executionMonitorService.stop();
   process.exit(0);
 });
 

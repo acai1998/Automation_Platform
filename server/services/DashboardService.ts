@@ -85,9 +85,11 @@ export class DashboardService {
   /**
    * 批量刷新每日汇总数据（多日）
    * 使用批量查询优化，减少数据库请求次数
+   * @param days 要刷新的天数
+   * @param onlyMissingDates 是否仅回填缺失日期（增量模式）
    */
-  async batchRefreshDailySummaries(days: number) {
-    return this.dashboardRepository.batchRefreshDailySummaries(days);
+  async batchRefreshDailySummaries(days: number, onlyMissingDates: boolean = false) {
+    return this.dashboardRepository.batchRefreshDailySummaries(days, onlyMissingDates);
   }
 }
 

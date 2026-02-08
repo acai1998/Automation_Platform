@@ -1,0 +1,31 @@
+-- autotest.Auto_TestCaseTaskExecutions definition
+
+CREATE TABLE `Auto_TestCaseTaskExecutions` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '执行记录唯一标识',
+  `task_id` int(11) DEFAULT NULL COMMENT '关联的任务ID',
+  `task_name` varchar(200) DEFAULT NULL COMMENT '任务名称快照',
+  `trigger_type` enum('manual','scheduled','ci_triggered') DEFAULT NULL COMMENT '本次执行的触发方式',
+  `status` enum('pending','running','success','failed','cancelled') DEFAULT 'pending' COMMENT '执行状态',
+  `total_cases` int(11) DEFAULT 0 COMMENT '本次执行的用例总数',
+  `passed_cases` int(11) DEFAULT 0 COMMENT '通过的用例数',
+  `failed_cases` int(11) DEFAULT 0 COMMENT '失败的用例数',
+  `skipped_cases` int(11) DEFAULT 0 COMMENT '跳过的用例数',
+  `start_time` datetime DEFAULT NULL COMMENT '执行开始时间',
+  `end_time` datetime DEFAULT NULL COMMENT '执行结束时间',
+  `duration` int(11) DEFAULT NULL COMMENT '执行耗时（秒）',
+  `executed_by` int(11) DEFAULT NULL COMMENT '执行人ID',
+  `environment_id` int(11) DEFAULT NULL COMMENT '执行环境ID',
+  `error_message` text DEFAULT NULL COMMENT '错误信息',
+  `jenkins_build_id` varchar(100) DEFAULT NULL COMMENT 'Jenkins构建ID',
+  `jenkins_build_url` varchar(500) DEFAULT NULL COMMENT 'Jenkins构建URL',
+  `created_at` datetime DEFAULT current_timestamp() COMMENT '记录创建时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_exec_task` (`task_id`),
+  KEY `idx_exec_status` (`status`),
+  KEY `idx_exec_start_time` (`start_time`),
+  KEY `executed_by` (`executed_by`),
+  KEY `environment_id` (`environment_id`),
+  CONSTRAINT `Auto_TestCaseTaskExecutions_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `Auto_TestCaseTasks` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `Auto_TestCaseTaskExecutions_ibfk_2` FOREIGN KEY (`executed_by`) REFERENCES `Auto_Users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `Auto_TestCaseTaskExecutions_ibfk_3` FOREIGN KEY (`environment_id`) REFERENCES `Auto_TestEnvironments` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB AUTO_INCREMENT=60 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试任务执行记录表';

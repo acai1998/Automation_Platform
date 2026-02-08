@@ -1,0 +1,18 @@
+-- autotest.Auto_RepositoryScriptMappings definition
+
+CREATE TABLE `Auto_RepositoryScriptMappings` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '主键ID，自增',
+  `repo_config_id` int(11) NOT NULL COMMENT '关联的仓库配置ID',
+  `case_id` int(11) DEFAULT NULL COMMENT '关联的测试用例ID（来自Auto_TestCase表）',
+  `script_file_path` varchar(500) NOT NULL COMMENT '脚本文件相对路径',
+  `script_hash` varchar(64) DEFAULT NULL COMMENT '脚本文件内容哈希值，用于检测变更',
+  `status` enum('synced','modified','deleted','conflict') DEFAULT 'synced' COMMENT '脚本状态：synced-已同步，modified-已修改，deleted-已删除，conflict-冲突',
+  `created_at` datetime DEFAULT current_timestamp() COMMENT '记录创建时间',
+  `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp() COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_repo_config_id` (`repo_config_id`) COMMENT '仓库配置ID索引',
+  KEY `idx_case_id` (`case_id`) COMMENT '测试用例ID索引',
+  KEY `idx_script_path` (`script_file_path`(255)) COMMENT '脚本路径索引（前255字符）',
+  KEY `idx_script_hash` (`script_hash`) COMMENT '脚本哈希索引',
+  CONSTRAINT `fk_auto_repository_script_mappings_repo_config` FOREIGN KEY (`repo_config_id`) REFERENCES `Auto_RepositoryConfigs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='仓库脚本与测试用例映射';

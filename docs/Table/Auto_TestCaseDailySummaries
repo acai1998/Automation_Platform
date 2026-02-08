@@ -1,0 +1,19 @@
+-- autotest.Auto_TestCaseDailySummaries definition
+
+CREATE TABLE `Auto_TestCaseDailySummaries` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '记录唯一标识',
+  `summary_date` date NOT NULL COMMENT '统计日期',
+  `total_executions` int(11) DEFAULT 0 COMMENT '当日执行总次数',
+  `total_cases_run` int(11) DEFAULT 0 COMMENT '当日执行的用例总数',
+  `passed_cases` int(11) DEFAULT 0 COMMENT '通过的用例数',
+  `failed_cases` int(11) DEFAULT 0 COMMENT '失败的用例数',
+  `skipped_cases` int(11) DEFAULT 0 COMMENT '跳过的用例数',
+  `success_rate` decimal(5,2) DEFAULT NULL COMMENT '成功率百分比',
+  `avg_duration` int(11) DEFAULT NULL COMMENT '平均执行时长（秒）',
+  `active_cases_count` int(11) DEFAULT 0 COMMENT '当日活跃用例总数',
+  `created_at` datetime DEFAULT current_timestamp() COMMENT '记录创建时间',
+  `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp() COMMENT '最后更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `summary_date` (`summary_date`),
+  KEY `idx_summary_date` (`summary_date`)
+) ENGINE=InnoDB AUTO_INCREMENT=3263 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例每日统计汇总表';

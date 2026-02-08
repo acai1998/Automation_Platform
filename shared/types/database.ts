@@ -15,7 +15,6 @@ export type DbQueryResult<T> = T[];
  */
 export interface ExecutionRecord {
   id: number;
-  run_id?: number;
   task_id?: number;
   status: string;
   created_at?: Date;

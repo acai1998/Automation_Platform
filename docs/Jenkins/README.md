@@ -3,13 +3,12 @@
 ## 📚 文档目录
 
 ### 快速参考
-- **[快速修复指南](./QUICK_FIX_GUIDE.md)** - 5分钟内解决执行卡住问题
+- **[快速配置指南](./JENKINS_QUICK_SETUP.md)** - 5分钟内完成 Jenkins 集成
 - **[故障排查指南](./JENKINS_CALLBACK_TROUBLESHOOTING.md)** - 完整的诊断和配置指南
 
-### 历史记录
-- [回调修复报告](./JENKINS_CALLBACK_FIX_REPORT.md)
-- [回调修复总结](./JENKINS_CALLBACK_SUMMARY.md)
-- [回调修复向导](./JENKINS_CALLBACK_FIX_GUIDE.md)
+### 配置与集成
+- [完整 API 文档](../API_DOCUMENTATION.md)
+- [部署指南](../QUICK_START.md)
 
 ---
 
@@ -20,12 +19,8 @@
 #### 立即修复
 
 ```bash
-# 方法1:使用测试脚本(推荐)
-./scripts/test_jenkins_callback.sh --run-id <你的runId>
-
-# 方法2:手动命令
+# 测试回调接口
 curl -X POST http://localhost:3000/api/jenkins/callback/test \
-  -H "X-Api-Key: $(grep JENKINS_API_KEY .env | cut -d'=' -f2)" \
   -H "Content-Type: application/json" \
   -d '{
     "runId": <runId>,
@@ -52,31 +47,24 @@ curl -X POST http://localhost:3000/api/executions/sync-stuck \
 
 ## 🔧 配置检查
 
-### 1. 测试回调接口
-
-```bash
-# 运行测试脚本
-./scripts/test_jenkins_callback.sh --test-only
-```
-
-### 2. 检查 .env 配置
+### 1. 检查 .env 配置
 
 ```bash
 # 查看 Jenkins 相关配置
-grep -E "JENKINS_URL|JENKINS_API_KEY|API_CALLBACK_URL" .env
+grep -E "JENKINS_URL|JENKINS_ALLOWED_IPS|JENKINS_TOKEN" .env
 
 # 应该包含:
-# JENKINS_URL=http://jenkins.wiac.xyz:8080
-# JENKINS_API_KEY=<64位密钥>
-# API_CALLBACK_URL=http://your-platform-host:3000
+# JENKINS_URL=http://jenkins.example.com:8080
+# JENKINS_USER=your-jenkins-user
+# JENKINS_TOKEN=your-jenkins-api-token
+# JENKINS_ALLOWED_IPS=192.168.1.0/24,jenkins.example.com
 ```
 
-### 3. 验证认证
+### 2. 测试回调接口
 
 ```bash
-# 测试认证是否正确
+# 测试回调连接
 curl -X POST http://localhost:3000/api/jenkins/callback/test \
-  -H "X-Api-Key: $(grep JENKINS_API_KEY .env | cut -d'=' -f2)" \
   -H "Content-Type: application/json" \
   -d '{"testMessage": "test"}'
 

@@ -85,15 +85,9 @@ check_env_var() {
   fi
 }
 
-# 检查关键变量
-check_env_var "JENKINS_API_KEY" "API Key" 8
-API_KEY_CHECK=$?
-
-check_env_var "JENKINS_JWT_SECRET" "JWT Secret" 8
-JWT_CHECK=$?
-
-check_env_var "JENKINS_SIGNATURE_SECRET" "Signature Secret" 8
-SIG_CHECK=$?
+# 检查必需的 Jenkins 认证令牌
+check_env_var "JENKINS_TOKEN" "Jenkins API Token" 8
+TOKEN_CHECK=$?
 
 # 检查可选的 Jenkins 配置
 print_header "3. 检查可选的 Jenkins 配置"
@@ -184,25 +178,23 @@ if [ $FAILED -gt 0 ]; then
   echo "快速修复步骤："
   echo "  1. 编辑 .env 文件"
   echo "  2. 确保以下变量已配置："
-  echo "     - JENKINS_API_KEY"
-  echo "     - JENKINS_JWT_SECRET"
-  echo "     - JENKINS_SIGNATURE_SECRET"
+  echo "     - JENKINS_TOKEN（Jenkins API 令牌，用于服务器间通信）"
   echo "  3. 检查值的长度（建议至少 8 字符）"
   echo "  4. 保存文件后重新运行此脚本"
   echo ""
-  echo "详细文档：docs/JENKINS_AUTH_QUICK_START.md"
+  echo "详细文档：docs/Jenkins/JENKINS_QUICK_SETUP.md"
   exit 1
 elif [ $WARNINGS -gt 0 ]; then
   echo ""
   echo -e "${YELLOW}⚠️  配置检查完成，但有警告${NC}"
   echo ""
   echo "建议："
-  if [ $API_KEY_CHECK -eq 2 ] || [ $JWT_CHECK -eq 2 ] || [ $SIG_CHECK -eq 2 ]; then
-    echo "  - 使用更强的密钥（至少 32 字符）"
-    echo "    生成方法：node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+  if [ $TOKEN_CHECK -eq 2 ]; then
+    echo "  - 使用更强的 Jenkins Token（至少 32 字符）"
   fi
+  echo "  - 配置 JENKINS_ALLOWED_IPS 以限制回调源 IP"
   echo ""
-  echo "应用仍然可以启动，但可能存在安全风险。"
+  echo "应用仍然可以启动。"
   exit 0
 else
   echo ""
@@ -212,7 +204,6 @@ else
   echo "  1. 启动应用：npm run start"
   echo "  2. 测试回调连接："
   echo "     curl -X POST http://localhost:3000/api/jenkins/callback/test \\"
-  echo "       -H \"X-Api-Key: \$(grep JENKINS_API_KEY .env | cut -d= -f2)\" \\"
   echo "       -H \"Content-Type: application/json\" \\"
   echo "       -d '{\"testMessage\": \"hello\"}'"
   echo ""
