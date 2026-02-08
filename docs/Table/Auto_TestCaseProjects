@@ -1,0 +1,15 @@
+-- autotest.Auto_TestCaseProjects definition
+
+CREATE TABLE `Auto_TestCaseProjects` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '项目唯一标识',
+  `name` varchar(100) NOT NULL COMMENT '项目名称',
+  `description` text DEFAULT NULL COMMENT '项目描述',
+  `status` enum('active','archived') DEFAULT 'active' COMMENT '项目状态',
+  `owner_id` int(11) DEFAULT NULL COMMENT '项目负责人ID',
+  `created_at` datetime DEFAULT current_timestamp() COMMENT '创建时间',
+  `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp() COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_projects_status` (`status`),
+  KEY `idx_projects_owner` (`owner_id`),
+  CONSTRAINT `Auto_TestCaseProjects_ibfk_1` FOREIGN KEY (`owner_id`) REFERENCES `Auto_Users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例项目表';

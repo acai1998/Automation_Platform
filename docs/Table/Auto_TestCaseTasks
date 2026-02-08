@@ -1,0 +1,25 @@
+-- autotest.Auto_TestCaseTasks definition
+
+CREATE TABLE `Auto_TestCaseTasks` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '任务唯一标识',
+  `name` varchar(200) NOT NULL COMMENT '任务名称',
+  `description` text DEFAULT NULL COMMENT '任务描述',
+  `project_id` int(11) DEFAULT NULL COMMENT '所属项目ID',
+  `case_ids` text DEFAULT NULL COMMENT '关联的用例ID列表JSON',
+  `trigger_type` enum('manual','scheduled','ci_triggered') DEFAULT 'manual' COMMENT '触发方式',
+  `cron_expression` varchar(50) DEFAULT NULL COMMENT 'Cron表达式',
+  `environment_id` int(11) DEFAULT NULL COMMENT '执行环境ID',
+  `status` enum('active','paused','archived') DEFAULT 'active' COMMENT '任务状态',
+  `created_by` int(11) DEFAULT NULL COMMENT '创建人ID',
+  `created_at` datetime DEFAULT current_timestamp() COMMENT '创建时间',
+  `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp() COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_tasks_project` (`project_id`),
+  KEY `idx_tasks_status` (`status`),
+  KEY `idx_tasks_trigger` (`trigger_type`),
+  KEY `environment_id` (`environment_id`),
+  KEY `created_by` (`created_by`),
+  CONSTRAINT `Auto_TestCaseTasks_ibfk_1` FOREIGN KEY (`project_id`) REFERENCES `Auto_TestCaseProjects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `Auto_TestCaseTasks_ibfk_2` FOREIGN KEY (`environment_id`) REFERENCES `Auto_TestEnvironments` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `Auto_TestCaseTasks_ibfk_3` FOREIGN KEY (`created_by`) REFERENCES `Auto_Users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试任务表';

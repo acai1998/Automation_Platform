@@ -1,4 +1,4 @@
-import { DataSource, QueryRunner, In, Repository } from 'typeorm';
+import { DataSource, QueryRunner, In, Repository, QueryDeepPartialEntity } from 'typeorm';
 import { TaskExecution, TestRun, TestRunResult, TestCase } from '../entities/index';
 import { BaseRepository } from './BaseRepository';
 import { User } from '../entities/User';
@@ -10,7 +10,6 @@ export interface ExecutionDetail {
 
 export interface RecentExecution {
   id: number;
-  runId?: number;
   taskId?: number;
   taskName?: string;
   status: string;
@@ -66,7 +65,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
    * 创建任务执行记录
    */
   async createTaskExecution(executionData: {
-    runId?: number;
     taskId?: number;
     taskName?: string;
     totalCases: number;
@@ -156,7 +154,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       .leftJoin('execution.executedByUser', 'user')
       .select([
         'execution.id',
-        'execution.runId',
         'execution.taskId',
         'execution.taskName',
         'execution.status',
@@ -185,7 +182,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     await this.repository.update(
       { id: executionId, status: In(['pending', 'running']) },
       {
-        status: 'aborted',
+        status: 'cancelled',
         endTime: new Date(),
       }
     );
@@ -197,7 +194,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async updateExecutionResults(
     executionId: number,
     results: {
-      status: 'success' | 'failed' | 'aborted';
+      status: 'success' | 'failed' | 'cancelled';
       passedCases: number;
       failedCases: number;
       skippedCases: number;
@@ -216,7 +213,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async updateTestRunResults(
     runId: number,
     results: {
-      status: 'success' | 'failed' | 'aborted';
+      status: 'success' | 'failed' | 'cancelled';
       passedCases: number;
       failedCases: number;
       skippedCases: number;
@@ -224,7 +221,11 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     }
   ): Promise<void> {
     await this.testRunRepository.update(runId, {
-      ...results,
+      status: results.status === 'cancelled' ? 'aborted' : results.status,
+      passedCases: results.passedCases,
+      failedCases: results.failedCases,
+      skippedCases: results.skippedCases,
+      durationMs: results.durationMs,
       endTime: new Date(),
     });
   }
@@ -252,12 +253,19 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       buildUrl: string;
     }
   ): Promise<void> {
-    await this.testRunRepository.update(runId, {
+    const jobMatch = jenkinsInfo.buildUrl.match(/\/job\/([^/]+)\//);
+    const updateData: QueryDeepPartialEntity<TestRun> = {
       jenkinsBuildId: jenkinsInfo.buildId,
       jenkinsUrl: jenkinsInfo.buildUrl,
       status: 'running',
       startTime: new Date(),
-    });
+    };
+
+    if (jobMatch) {
+      updateData.jenkinsJob = jobMatch[1];
+    }
+
+    await this.testRunRepository.update(runId, updateData);
   }
 
   /**
@@ -382,6 +390,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
   /**
    * 查找执行ID
+   * @deprecated 使用 findExecutionIdByRunId 替代，此方法只返回最新的 executionId，不够精确
    */
   async findExecutionId(): Promise<number | null> {
     const result = await this.testRunResultRepository.createQueryBuilder('result')
@@ -392,6 +401,58 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       .getRawOne();
 
     return result?.executionId || null;
+  }
+
+  /**
+   * 根据 runId 查找关联的 executionId
+   * 
+   * 设计说明：
+   * - Auto_TestRun 和 Auto_TestCaseTaskExecutions 同时创建（时间相近）
+   * - Auto_TestRunResults 的 execution_id 指向 Auto_TestCaseTaskExecutions.id
+   * - 通过 Auto_TestRunResults 表，用该批次的结果记录反查 executionId
+   * 
+   * 查询策略：
+   * 1. 从 Auto_TestRunResults 查询该 runId 对应的 executionId（通过时间窗口关联）
+   * 2. 如果没有找到结果，通过时间窗口从最近的 TaskExecution 获取（降级方案）
+   * 
+   * @param runId 执行批次ID
+   * @returns 关联的执行记录ID，如果找不到则返回 null
+   */
+  async findExecutionIdByRunId(runId: number): Promise<number | null> {
+    // 方法1：从 Auto_TestRunResults 反查（最可靠）
+    // 获取该批次的创建时间，然后通过时间窗口找到关联的 executionId
+    const testRun = await this.testRunRepository.findOne({
+      where: { id: runId },
+      select: ['createdAt'],
+    });
+
+    if (!testRun) {
+      return null;
+    }
+
+    // 在该批次创建后的结果中查找 executionId
+    const result = await this.testRunResultRepository.query(`
+      SELECT DISTINCT execution_id
+      FROM Auto_TestRunResults
+      WHERE execution_id IS NOT NULL
+        AND created_at >= ?
+      ORDER BY id DESC
+      LIMIT 1
+    `, [testRun.createdAt]);
+
+    if (result && result.length > 0 && result[0].execution_id) {
+      return result[0].execution_id;
+    }
+
+    // 方法2：如果结果表中没有记录，尝试查询最新的 TaskExecution（降级方案）
+    // 这种情况通常发生在还没有添加任何结果记录时
+    const execution = await this.repository.createQueryBuilder('exec')
+      .select('exec.id')
+      .orderBy('exec.createdAt', 'DESC')  // 按创建时间排序以获取最新
+      .limit(1)
+      .getRawOne();
+
+    return execution?.id || null;
   }
 
   /**
@@ -450,7 +511,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
    */
   async markExecutionAsTimedOut(runId: number): Promise<void> {
     await this.testRunRepository.update(runId, {
-      status: 'aborted' as any,
+      status: 'cancelled' as any,
       endTime: new Date(),
     });
   }
@@ -485,6 +546,28 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       .where('testRun.jenkinsJob IS NOT NULL')
       .andWhere('testRun.jenkinsBuildId IS NOT NULL')
       .orderBy('testRun.createdAt', 'DESC')
+      .limit(limit)
+      .getRawMany();
+  }
+
+  /**
+   * 获取可能卡住的执行记录（用于 ExecutionMonitorService）
+   * 查询状态为 pending/running 且超过指定时间阈值的执行记录
+   */
+  async getPotentiallyStuckExecutions(thresholdSeconds: number, limit: number = 20): Promise<any[]> {
+    return this.testRunRepository.createQueryBuilder('testRun')
+      .select([
+        'testRun.id as id',
+        'testRun.status as status',
+        'testRun.jenkinsJob as jenkinsJob',
+        'testRun.jenkinsBuildId as jenkinsBuildId',
+        'testRun.startTime as startTime',
+        'TIMESTAMPDIFF(SECOND, testRun.startTime, NOW()) as durationSeconds',
+      ])
+      .where('testRun.status IN (:...statuses)', { statuses: ['pending', 'running'] })
+      .andWhere('testRun.startTime IS NOT NULL')
+      .andWhere('TIMESTAMPDIFF(SECOND, testRun.startTime, NOW()) > :thresholdSeconds', { thresholdSeconds })
+      .orderBy('testRun.startTime', 'ASC')
       .limit(limit)
       .getRawMany();
   }
@@ -536,7 +619,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
       // 3. 创建任务执行记录
       const taskExecution = await this.createTaskExecution({
-        runId: testRun.id,
         taskId: undefined,
         taskName: undefined,
         totalCases: cases.length,
@@ -564,11 +646,21 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
   /**
    * 完成批次执行
+   * 
+   * 改进：
+   * - 支持可选的 executionId 参数（来自缓存或已知值）
+   * - 如果未提供 executionId，则从数据库查询
+   * - 增强错误日志，提供更多调试信息
+   * - 自动将 'cancelled' 状态映射为 'aborted'（以支持数据库枚举）
+   * 
+   * @param runId 执行批次ID
+   * @param results 执行结果
+   * @param executionId 可选的执行ID（来自缓存，用于优化）
    */
   async completeBatch(
     runId: number,
     results: {
-      status: 'success' | 'failed' | 'aborted';
+      status: 'success' | 'failed' | 'cancelled' | 'aborted';
       passedCases: number;
       failedCases: number;
       skippedCases: number;
@@ -586,12 +678,14 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         assertionsPassed?: number;
         responseData?: string;
       }>;
-    }
+    },
+    executionId?: number
   ): Promise<void> {
     return this.executeInTransaction(async (queryRunner) => {
-      // 1. 更新 TestRun 记录
+      // 1. 更新 TestRun 记录 - 将 cancelled 映射为 aborted（兼容数据库枚举）
+      const mappedStatus = results.status === 'cancelled' ? 'aborted' : results.status;
       await this.testRunRepository.update(runId, {
-        status: results.status as any,
+        status: mappedStatus as any,
         passedCases: results.passedCases,
         failedCases: results.failedCases,
         skippedCases: results.skippedCases,
@@ -601,36 +695,20 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
       // 2. 如果有详细结果，更新每个测试结果
       if (results.results && results.results.length > 0) {
-        // 查找 executionId
-        const executionId = await this.findExecutionId();
-        if (!executionId) {
-          throw new Error(`Could not determine executionId for runId ${runId}`);
+        // 如果未传入 executionId，则尝试从数据库查询
+        let actualExecutionId = executionId;
+        if (!actualExecutionId) {
+          actualExecutionId = await this.findExecutionIdByRunId(runId) || undefined;
         }
-
-        // 批量处理结果（允许部分失败）
-        for (const result of results.results) {
-          try {
-            // 尝试更新
-            const updated = await this.updateTestResult(executionId, result.caseId, {
-              status: result.status,
-              duration: result.duration,
-              errorMessage: result.errorMessage,
-              errorStack: result.stackTrace,
-              screenshotPath: result.screenshotPath,
-              logPath: result.logPath,
-              assertionsTotal: result.assertionsTotal,
-              assertionsPassed: result.assertionsPassed,
-              responseData: result.responseData,
-              startTime: new Date(),
-              endTime: new Date(),
-            });
-
-            // 如果更新失败，插入新记录
-            if (!updated) {
-              await this.createTestResult({
-                executionId,
-                caseId: result.caseId,
-                caseName: result.caseName,
+        
+        // 只有当找到 executionId 时才更新详细结果
+        // 如果找不到，说明还没有创建结果记录，这种情况下可以稍后通过其他方式更新
+        if (actualExecutionId) {
+          // 批量处理结果（允许部分失败）
+          for (const result of results.results) {
+            try {
+              // 尝试更新
+              const updated = await this.updateTestResult(actualExecutionId, result.caseId, {
                 status: result.status,
                 duration: result.duration,
                 errorMessage: result.errorMessage,
@@ -643,11 +721,35 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
                 startTime: new Date(),
                 endTime: new Date(),
               });
+
+              // 如果更新失败，插入新记录
+              if (!updated) {
+                await this.createTestResult({
+                  executionId: actualExecutionId,
+                  caseId: result.caseId,
+                  caseName: result.caseName,
+                  status: result.status,
+                  duration: result.duration,
+                  errorMessage: result.errorMessage,
+                  errorStack: result.stackTrace,
+                  screenshotPath: result.screenshotPath,
+                  logPath: result.logPath,
+                  assertionsTotal: result.assertionsTotal,
+                  assertionsPassed: result.assertionsPassed,
+                  responseData: result.responseData,
+                  startTime: new Date(),
+                  endTime: new Date(),
+                });
+              }
+            } catch (error) {
+              // 记录但不中断整个流程
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              console.warn(`Failed to process result for case ${result.caseId} (executionId: ${actualExecutionId}):`, errorMsg);
             }
-          } catch (error) {
-            // 记录但不中断整个流程
-            console.warn(`Failed to process result for case ${result.caseId}:`, error);
           }
+        } else {
+          // 无法找到 executionId，仅更新批次统计，结果详情可在后续补充
+          console.warn(`Could not determine executionId for runId ${runId}, skipping detailed result updates. Summary statistics have been updated.`);
         }
       }
     });

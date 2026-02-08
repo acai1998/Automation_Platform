@@ -1,55 +1,84 @@
-# Docker ignore file for Automation Platform
-
-# Node modules (will be installed in container)
-node_modules
-npm-debug.log*
-
-# Build outputs (will be built in container)
-dist
-
-# Development files
+# 构建缓存
 .git
 .gitignore
-.github
-README.md
-docs/
+.gitattributes
 
-# IDE files
-.vscode/
-.idea/
+# Node 构建产物
+node_modules
+dist
+.next
+.nuxt
+build
+
+# 开发工具配置
+.vscode
+.idea
 *.swp
 *.swo
-
-# OS files
+*~
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
 
-# Environment files
+# 测试相关
+tests
+src/components/__tests__
+coverage
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+vitest.config.ts
+jest.config.js
+
+# 文档
+docs
+README.md
+CHANGELOG.md
+LICENSE
+*.md
+deployment/Dockerfile
+deployment/README.md
+deployment/*.md
+
+# 临时文件
+tmp
+temp
+*.log
+.env.local
+.env.*.local
+
+# 构建脚本
+scripts
+*.sh
+Jenkinsfile
+
+# 其他不需要的文件
+archive
+.aiconfig
+.catpaw
+.npm
+.prettier
+.eslintcache
+.turbo
+dist-old
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.circleci
+
+# 依赖缓存
+package-lock.json
+npm-shrinkwrap.json
+
+# IDE 特定文件
+.vscode
+.idea
+*.iml
+.editorconfig
+
+# 系统文件
+Thumbs.db
+.DS_Store
 .env
 .env.*
-
-# Test files
-coverage/
-.nyc_output
-.coverage
-*.cover
-.pytest_cache/
-
-# Temporary files
-tmp/
-archive/
-*.log
-*.db
-
-# Vercel
-.vercel/
-
-# Custom
-deepseek_*
-test_crypto.py
-.mcp.json
+!.env.example

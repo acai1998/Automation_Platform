@@ -7,7 +7,7 @@ import { Auto_TestRunResultsInput } from './ExecutionService';
  */
 export interface CallbackData {
   runId: number;
-  status: 'success' | 'failed' | 'aborted';
+  status: 'success' | 'failed' | 'aborted' | 'cancelled';
   passedCases: number;
   failedCases: number;
   skippedCases: number;

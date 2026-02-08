@@ -44,7 +44,7 @@ export interface ExecutionProgress {
   passedCases: number;
   failedCases: number;
   skippedCases: number;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'aborted';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 }
 
 export interface Auto_TestRunResultsInput {
@@ -64,7 +64,7 @@ export interface Auto_TestRunResultsInput {
 
 export interface ExecutionCallbackInput {
   executionId: number;
-  status: 'success' | 'failed' | 'aborted';
+  status: 'success' | 'failed' | 'cancelled' | 'aborted';
   results: Auto_TestRunResultsInput[];
   duration: number;
   reportUrl?: string;
@@ -91,9 +91,33 @@ export interface ExecutionTriggerResult {
  */
 export class ExecutionService {
   private executionRepository: ExecutionRepository;
+  // 缓存 runId 到 executionId 的映射，用于处理 Jenkins 回调
+  // 格式: { runId: executionId }
+  // 该缓存会在应用启动时保持，旧的条目会被清理
+  private runIdToExecutionIdCache: Map<number, number> = new Map();
 
   constructor() {
     this.executionRepository = new ExecutionRepository(AppDataSource);
+    // 初始化缓存清理任务（每小时清理一次1小时前的条目）
+    this.initializeCacheCleanup();
+  }
+
+  /**
+   * 初始化缓存清理任务
+   */
+  private initializeCacheCleanup() {
+    // 每10分钟检查一次，清理所有缓存（因为是内存缓存，应用重启后丢失）
+    // 但我们也可以通过 created_at timestamp 来限制缓存大小
+    setInterval(() => {
+      if (this.runIdToExecutionIdCache.size > 10000) {
+        logger.warn('RunId cache size exceeds 10000, clearing oldest entries', {
+          cacheSize: this.runIdToExecutionIdCache.size,
+        }, LOG_CONTEXTS.EXECUTION);
+        // 清理一半的缓存
+        const entriesToDelete = Array.from(this.runIdToExecutionIdCache.keys()).slice(0, 5000);
+        entriesToDelete.forEach(key => this.runIdToExecutionIdCache.delete(key));
+      }
+    }, 10 * 60 * 1000);
   }
 
   /**
@@ -164,8 +188,16 @@ export class ExecutionService {
         }
 
         // 2.3 更新执行记录
+        // TaskExecution 状态不支持 'aborted'，需要映射为 'cancelled'
+        let executionStatus: 'success' | 'failed' | 'cancelled';
+        if (input.status === 'aborted') {
+          executionStatus = 'cancelled';
+        } else {
+          executionStatus = input.status;
+        }
+
         await this.executionRepository.updateExecutionResults(input.executionId, {
-          status: input.status,
+          status: executionStatus,
           passedCases,
           failedCases,
           skippedCases,
@@ -252,6 +284,13 @@ export class ExecutionService {
         jenkinsJob: input.jenkinsJob,
         runConfig: input.runConfig,
       });
+
+      // 3. 保存 runId 到 executionId 的映射到缓存（用于 Jenkins 回调）
+      this.runIdToExecutionIdCache.set(result.runId, result.executionId);
+      logger.debug('RunId to executionId mapping cached', {
+        runId: result.runId,
+        executionId: result.executionId,
+      }, LOG_CONTEXTS.EXECUTION);
 
       const duration = timer();
       logger.info('Test execution triggered successfully', {
@@ -341,17 +380,19 @@ export class ExecutionService {
    * 完成执行批次
    * 
    * 改进：
-   * - 简化 executionId 查找逻辑（3 层 fallback → 直接查询）
+   * - 从缓存中优先查找 executionId（最快、最可靠）
+   * - 使用缓存作为第一层 fallback，数据库查询作为第二层 fallback
    * - 使用事务确保数据一致性
    * - 批量更新提升性能
    * - 使用日志库替代 console.log
+   * - 自动将 'cancelled' 状态映射为 'aborted'（以支持数据库枚举）
    * 
    * @param runId 运行批次ID
    * @param results 执行结果，包括状态、统计和详细结果
    * @throws Error 如果找不到执行记录或数据库操作失败
    */
   async completeBatchExecution(runId: number, results: {
-    status: 'success' | 'failed' | 'aborted';
+    status: 'success' | 'failed' | 'cancelled' | 'aborted';
     passedCases: number;
     failedCases: number;
     skippedCases: number;
@@ -383,10 +424,28 @@ export class ExecutionService {
         currentStatus: execution.status,
       }, LOG_CONTEXTS.EXECUTION);
 
-      // 2. 使用 ExecutionRepository 完成批次执行
-      await this.executionRepository.completeBatch(runId, results);
+      // 2. 尝试从缓存获取 executionId（最快）
+      let executionId = this.runIdToExecutionIdCache.get(runId);
+      if (executionId) {
+        logger.debug('ExecutionId found in cache', {
+          runId,
+          executionId,
+          cacheSize: this.runIdToExecutionIdCache.size,
+        }, LOG_CONTEXTS.EXECUTION);
+      } else {
+        logger.debug('ExecutionId not in cache, querying database', {
+          runId,
+          cacheSize: this.runIdToExecutionIdCache.size,
+        }, LOG_CONTEXTS.EXECUTION);
+        // 降级：从数据库查询
+        executionId = await this.executionRepository.findExecutionIdByRunId(runId) || undefined;
+      }
 
-      // 3. 触发每日汇总数据刷新（异步，不影响主流程）
+      // 3. 完成批次执行，同时传递 executionId 以提高效率
+      // 注：completeBatch 会自动将 'cancelled' 映射为 'aborted'
+      await this.executionRepository.completeBatch(runId, results, executionId);
+
+      // 4. 触发每日汇总数据刷新（异步，不影响主流程）
       try {
         const executionDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式
         await dashboardService.refreshDailySummary(executionDate);
@@ -594,7 +653,7 @@ export class ExecutionService {
         return 'failed';
       case 'ABORTED':
         console.log('Mapping ABORTED to aborted');
-        return 'aborted';
+        return 'cancelled';
       case 'NOT_BUILT':
         console.log('Mapping NOT_BUILT to pending');
         return 'pending';

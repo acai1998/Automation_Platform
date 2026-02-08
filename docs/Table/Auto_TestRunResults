@@ -1,0 +1,26 @@
+-- autotest.Auto_TestRunResults definition
+
+CREATE TABLE `Auto_TestRunResults` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '结果记录唯一标识',
+  `execution_id` int(11) NOT NULL COMMENT '关联的执行记录ID',
+  `case_id` int(11) DEFAULT NULL COMMENT '关联的用例ID',
+  `case_name` varchar(200) DEFAULT NULL COMMENT '用例名称快照',
+  `status` enum('passed','failed','skipped','error') DEFAULT NULL COMMENT '执行结果',
+  `start_time` datetime DEFAULT NULL COMMENT '用例开始执行时间',
+  `end_time` datetime DEFAULT NULL COMMENT '用例执行结束时间',
+  `duration` int(11) DEFAULT NULL COMMENT '执行耗时（毫秒）',
+  `error_message` text DEFAULT NULL COMMENT '错误信息',
+  `error_stack` text DEFAULT NULL COMMENT '错误堆栈信息',
+  `screenshot_path` varchar(500) DEFAULT NULL COMMENT '失败截图路径',
+  `log_path` varchar(500) DEFAULT NULL COMMENT '执行日志路径',
+  `assertions_total` int(11) DEFAULT 0 COMMENT '断言总数',
+  `assertions_passed` int(11) DEFAULT 0 COMMENT '断言通过数',
+  `response_data` text DEFAULT NULL COMMENT '响应数据JSON',
+  `created_at` datetime DEFAULT current_timestamp() COMMENT '记录创建时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_result_execution` (`execution_id`),
+  KEY `idx_result_case` (`case_id`),
+  KEY `idx_result_status` (`status`),
+  CONSTRAINT `Auto_TestRunResults_ibfk_1` FOREIGN KEY (`execution_id`) REFERENCES `Auto_TestCaseTaskExecutions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `Auto_TestRunResults_ibfk_2` FOREIGN KEY (`case_id`) REFERENCES `Auto_TestCase` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB AUTO_INCREMENT=53 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例执行结果表';

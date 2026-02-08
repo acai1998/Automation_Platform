@@ -20,9 +20,6 @@ export class TestRunResult {
   @Column({ type: 'enum', enum: ['passed', 'failed', 'skipped', 'error'], default: 'error' })
   status: 'passed' | 'failed' | 'skipped' | 'error';
 
-  @Column({ type: 'text', name: 'result', nullable: true })
-  result: string | null;
-
   @Column({ type: 'int', nullable: true })
   duration: number | null;
 

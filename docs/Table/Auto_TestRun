@@ -1,0 +1,24 @@
+-- autotest.Auto_TestRun definition
+
+CREATE TABLE `Auto_TestRun` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '运行ID',
+  `project_id` int(11) NOT NULL COMMENT '项目ID',
+  `trigger_type` enum('manual','jenkins','schedule') NOT NULL COMMENT '触发方式',
+  `trigger_by` int(11) DEFAULT NULL COMMENT '触发人',
+  `jenkins_job` varchar(200) DEFAULT NULL COMMENT 'Jenkins Job 名称',
+  `jenkins_build_id` varchar(100) DEFAULT NULL COMMENT 'Jenkins Build ID',
+  `jenkins_url` varchar(500) DEFAULT NULL COMMENT 'Jenkins 构建地址',
+  `status` enum('pending','running','success','failed','aborted') DEFAULT 'pending',
+  `start_time` datetime DEFAULT NULL,
+  `end_time` datetime DEFAULT NULL,
+  `duration_ms` int(11) DEFAULT NULL,
+  `run_config` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '运行参数（环境 / 变量等）' CHECK (json_valid(`run_config`)),
+  `total_cases` int(11) DEFAULT 0,
+  `passed_cases` int(11) DEFAULT 0,
+  `failed_cases` int(11) DEFAULT 0,
+  `skipped_cases` int(11) DEFAULT 0,
+  `created_at` datetime DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `idx_project` (`project_id`),
+  KEY `idx_status` (`status`)
+) ENGINE=InnoDB AUTO_INCREMENT=78 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='测试执行批次表';

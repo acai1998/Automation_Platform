@@ -209,58 +209,60 @@ export function TodayExecution({
             {chartData.isEmpty ? (
               <EmptyChart />
             ) : (
-              <ResponsiveContainer width={160} height={160}>
-                <PieChart key={animationKey}>
-                  <Pie
-                    data={chartData.segments as any}
-                    cx={80}
-                    cy={80}
-                    startAngle={-90}
-                    endAngle={270}
-                    innerRadius={55}
-                    outerRadius={80}
-                    paddingAngle={2}
-                    dataKey="value"
-                    animationBegin={200}
-                    animationDuration={1000}
-                    animationEasing="ease-out"
-                    onClick={handleSegmentClick}
-                  >
-                    {chartData.segments.map((entry, index) =>
-                      renderCustomizedCell(entry, index)
-                    )}
-                  </Pie>
-                  <RechartsTooltip
-                    content={<CustomTooltip />}
-                    wrapperStyle={{ outline: 'none' }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
+              <>
+                <ResponsiveContainer width={160} height={160}>
+                  <PieChart key={animationKey}>
+                    <Pie
+                      data={chartData.segments as any}
+                      cx={80}
+                      cy={80}
+                      startAngle={-90}
+                      endAngle={270}
+                      innerRadius={55}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      dataKey="value"
+                      animationBegin={200}
+                      animationDuration={1000}
+                      animationEasing="ease-out"
+                      onClick={handleSegmentClick}
+                    >
+                      {chartData.segments.map((entry, index) =>
+                        renderCustomizedCell(entry, index)
+                      )}
+                    </Pie>
+                    <RechartsTooltip
+                      content={<CustomTooltip />}
+                      wrapperStyle={{ outline: 'none' }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
 
-            {/* Interactive Center Content */}
-            <div
-              className="absolute inset-0 flex items-center justify-center cursor-pointer"
-              onClick={handleCenterClick}
-              role="button"
-              tabIndex={0}
-              aria-label={`总计 ${chartData.total} 个测试用例，点击清除筛选`}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleCenterClick();
-                }
-              }}
-            >
-              <div className="text-center pointer-events-none">
-                <div className="text-3xl font-bold text-slate-900 dark:text-white">
-                  {chartData.total}
+                {/* Interactive Center Content */}
+                <div
+                  className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                  onClick={handleCenterClick}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`总计 ${chartData.total} 个测试用例，点击清除筛选`}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleCenterClick();
+                    }
+                  }}
+                >
+                  <div className="text-center pointer-events-none">
+                    <div className="text-3xl font-bold text-slate-900 dark:text-white">
+                      {chartData.total}
+                    </div>
+                    <div className="text-sm text-slate-600 dark:text-gray-300 tracking-normal font-medium text-crisp">
+                      {selectedFilter !== 'all' ? '点击清除' : '测试用例'}
+                    </div>
+                  </div>
                 </div>
-                <div className="text-sm text-slate-600 dark:text-gray-300 tracking-normal font-medium text-crisp">
-                  {selectedFilter !== 'all' ? '点击清除' : '测试用例'}
-                </div>
-              </div>
-            </div>
+              </>
+            )}
           </div>
 
           {/* Interactive Legend */}

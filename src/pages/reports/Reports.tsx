@@ -280,6 +280,7 @@ function StatusBadge({ status }: { status: string }) {
     running: { label: '运行中', variant: 'secondary', icon: Loader2 },
     pending: { label: '等待中', variant: 'outline', icon: Clock },
     aborted: { label: '已中止', variant: 'warning', icon: AlertCircle },
+    cancelled: { label: '已取消', variant: 'warning', icon: AlertCircle },
   };
 
   const config = configs[status] || { label: status, variant: 'outline', icon: AlertCircle };

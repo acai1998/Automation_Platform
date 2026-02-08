@@ -39,10 +39,11 @@ export class JenkinsService {
   constructor() {
     // 从 Docker Secrets 或环境变量加载 Jenkins 配置
     const { getSecretOrEnv } = require('../utils/secrets');
+    const logger = require('../utils/logger').default;
 
     const token = getSecretOrEnv('JENKINS_TOKEN');
     if (!token) {
-      console.warn('[JenkinsService] JENKINS_TOKEN not set, Jenkins integration disabled');
+      logger.warn('JENKINS_TOKEN not set, Jenkins integration disabled', {}, 'JENKINS');
       this.enabled = false;
       return;
     }
@@ -57,6 +58,12 @@ export class JenkinsService {
         performance: process.env.JENKINS_JOB_PERF || 'performance-automation',
       },
     };
+
+    logger.info('JenkinsService initialized', {
+      baseUrl: this.config.baseUrl,
+      username: this.config.username,
+      jobs: this.config.jobs,
+    }, 'JENKINS');
   }
 
   /**
@@ -149,7 +156,13 @@ export class JenkinsService {
     scriptPaths: string[],
     callbackUrl?: string
   ): Promise<JenkinsTriggerResult> {
+    const logger = require('../utils/logger').default;
+
     if (!this.enabled) {
+      logger.warn('Jenkins integration not enabled', {
+        runId,
+        caseCount: caseIds.length,
+      }, 'JENKINS');
       return {
         success: false,
         message: 'Jenkins integration is not configured',
@@ -171,17 +184,20 @@ export class JenkinsService {
     }
 
     try {
-      console.log(`[JenkinsService.triggerBatchJob] Starting:`, {
+      logger.debug('Starting batch job trigger', {
         runId,
         jobName,
         caseCount: caseIds.length,
-        baseUrl: this.config.baseUrl,
-        triggerUrl
-      });
+        hasCallbackUrl: !!callbackUrl,
+      }, 'JENKINS');
 
       // 调用 Jenkins API
       const fullUrl = `${triggerUrl}?${params.toString()}`;
-      console.log(`[JenkinsService.triggerBatchJob] Making request to:`, fullUrl.split('?')[0] + '?[PARAMS]');
+      logger.debug('Making Jenkins API request', {
+        runId,
+        url: `${triggerUrl}?[PARAMS_REDACTED]`,
+        method: 'POST',
+      }, 'JENKINS');
       
       const response = await fetch(fullUrl, {
         method: 'POST',
@@ -191,23 +207,33 @@ export class JenkinsService {
         },
       });
 
-      console.log(`[JenkinsService.triggerBatchJob] Response status:`, {
+      logger.debug('Jenkins API response received', {
+        runId,
         status: response.status,
         statusText: response.statusText,
-        location: response.headers.get('Location')
-      });
+        location: response.headers.get('Location'),
+      }, 'JENKINS');
 
       if (response.status === 201 || response.status === 200) {
         // 从 Location header 获取 queue ID
         const location = response.headers.get('Location');
         const queueId = location ? this.extractQueueId(location) : undefined;
 
-        console.log(`[JenkinsService.triggerBatchJob] Queue ID extracted:`, queueId);
+        logger.debug('Queue ID extracted', {
+          runId,
+          queueId,
+          location,
+        }, 'JENKINS');
 
         // 获取最新构建信息
         const buildInfo = await this.getLatestBuildInfo(jobName);
         
-        console.log(`[JenkinsService.triggerBatchJob] Build info:`, buildInfo);
+        logger.info('Batch job triggered successfully', {
+          runId,
+          queueId,
+          buildNumber: buildInfo?.buildNumber,
+          buildUrl: buildInfo?.buildUrl,
+        }, 'JENKINS');
 
         return {
           success: true,
@@ -217,7 +243,12 @@ export class JenkinsService {
         };
       } else {
         const errorText = await response.text().catch(() => 'Unable to read response');
-        console.error(`[JenkinsService.triggerBatchJob] Failed with status ${response.status}:`, errorText);
+        logger.warn('Jenkins API request failed', {
+          runId,
+          status: response.status,
+          statusText: response.statusText,
+          errorText: errorText.substring(0, 500), // Limit error text length
+        }, 'JENKINS');
         
         return {
           success: false,
@@ -226,10 +257,9 @@ export class JenkinsService {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : 'N/A';
-      console.error(`[JenkinsService.triggerBatchJob] Exception:`, {
-        message: errorMessage,
-        stack: errorStack
+      logger.errorLog(error, 'Exception during batch job trigger', {
+        runId,
+        caseCount: caseIds.length,
       });
       
       return {
@@ -262,6 +292,8 @@ export class JenkinsService {
    * 获取最新构建信息
    */
   private async getLatestBuildInfo(jobName: string): Promise<{ buildNumber: number; buildUrl: string } | null> {
+    const logger = require('../utils/logger').default;
+
     if (!this.enabled) {
       return null;
     }
@@ -276,13 +308,25 @@ export class JenkinsService {
 
       if (response.ok) {
         const data = await response.json() as { number: number; url: string };
+        logger.debug('Latest build info retrieved', {
+          jobName,
+          buildNumber: data.number,
+        }, 'JENKINS');
         return {
           buildNumber: data.number,
           buildUrl: this.normalizeJenkinsUrl(data.url),
         };
+      } else {
+        logger.warn('Failed to fetch latest build info', {
+          jobName,
+          status: response.status,
+        }, 'JENKINS');
       }
     } catch (error) {
-      console.error('Failed to get latest build info:', error);
+      logger.debug('Exception while fetching latest build info', {
+        jobName,
+        error: error instanceof Error ? error.message : String(error),
+      }, 'JENKINS');
     }
     return null;
   }
