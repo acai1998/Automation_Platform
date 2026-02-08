@@ -123,8 +123,8 @@ router.post('/run-case', [
       caseIds: execution.caseIds,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 触发Jenkins Job
-    const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/executions/callback`;
+    // 触发Jenkins Job - 使用 /api/jenkins/callback 接收回调
+    const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
     logger.debug('Triggering Jenkins job', {
       runId: execution.runId,
       caseId,
@@ -230,8 +230,8 @@ router.post('/run-batch', [
       caseIds: execution.caseIds,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 触发Jenkins Job
-    const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/executions/callback`;
+    // 触发Jenkins Job - 使用 /api/jenkins/callback 接收回调
+    const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
     logger.debug('Triggering Jenkins job for batch', {
       runId: execution.runId,
       caseCount: caseIds.length,
@@ -407,6 +407,7 @@ router.post('/callback', [
     }
 
     // Validate status value
+    // 注：'cancelled' 会在 completeBatch 中自动映射为 'aborted' 以支持数据库枚举
     const validStatuses = ['success', 'failed', 'cancelled'];
     if (!validStatuses.includes(status)) {
       logger.warn('Invalid status received', {
@@ -423,7 +424,7 @@ router.post('/callback', [
       resultsCount: results.length,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 完成执行批次
+    // 完成执行批次 - status 会自动被正规化处理
     await executionService.completeBatchExecution(runId, {
       status: validStatuses.includes(status) ? status : 'failed',
       passedCases,

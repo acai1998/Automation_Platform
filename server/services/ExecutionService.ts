@@ -64,7 +64,7 @@ export interface Auto_TestRunResultsInput {
 
 export interface ExecutionCallbackInput {
   executionId: number;
-  status: 'success' | 'failed' | 'cancelled';
+  status: 'success' | 'failed' | 'cancelled' | 'aborted';
   results: Auto_TestRunResultsInput[];
   duration: number;
   reportUrl?: string;
@@ -188,8 +188,16 @@ export class ExecutionService {
         }
 
         // 2.3 更新执行记录
+        // TaskExecution 状态不支持 'aborted'，需要映射为 'cancelled'
+        let executionStatus: 'success' | 'failed' | 'cancelled';
+        if (input.status === 'aborted') {
+          executionStatus = 'cancelled';
+        } else {
+          executionStatus = input.status;
+        }
+
         await this.executionRepository.updateExecutionResults(input.executionId, {
-          status: input.status,
+          status: executionStatus,
           passedCases,
           failedCases,
           skippedCases,
@@ -377,13 +385,14 @@ export class ExecutionService {
    * - 使用事务确保数据一致性
    * - 批量更新提升性能
    * - 使用日志库替代 console.log
+   * - 自动将 'cancelled' 状态映射为 'aborted'（以支持数据库枚举）
    * 
    * @param runId 运行批次ID
    * @param results 执行结果，包括状态、统计和详细结果
    * @throws Error 如果找不到执行记录或数据库操作失败
    */
   async completeBatchExecution(runId: number, results: {
-    status: 'success' | 'failed' | 'cancelled';
+    status: 'success' | 'failed' | 'cancelled' | 'aborted';
     passedCases: number;
     failedCases: number;
     skippedCases: number;
@@ -433,6 +442,7 @@ export class ExecutionService {
       }
 
       // 3. 完成批次执行，同时传递 executionId 以提高效率
+      // 注：completeBatch 会自动将 'cancelled' 映射为 'aborted'
       await this.executionRepository.completeBatch(runId, results, executionId);
 
       // 4. 触发每日汇总数据刷新（异步，不影响主流程）

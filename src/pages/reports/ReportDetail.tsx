@@ -257,6 +257,7 @@ function StatusBadge({ status }: { status: string }) {
     pending: { label: '等待中', variant: 'outline', icon: Clock },
     skipped: { label: '跳过', variant: 'outline', icon: AlertCircle },
     aborted: { label: '已中止', variant: 'warning', icon: AlertCircle },
+    cancelled: { label: '已取消', variant: 'warning', icon: AlertCircle },
   };
 
   const config = configs[status] || { label: status, variant: 'outline', icon: AlertCircle };

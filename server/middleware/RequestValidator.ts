@@ -36,7 +36,7 @@ export class RequestValidator {
           field: 'status',
           type: 'string',
           required: true,
-          allowedValues: ['success', 'failed', 'aborted']
+          allowedValues: ['success', 'failed', 'aborted', 'cancelled']
         },
         {
           field: 'passedCases',

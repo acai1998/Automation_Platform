@@ -1,4 +1,4 @@
-import { DataSource, QueryRunner, In, Repository } from 'typeorm';
+import { DataSource, QueryRunner, In, Repository, QueryDeepPartialEntity } from 'typeorm';
 import { TaskExecution, TestRun, TestRunResult, TestCase } from '../entities/index';
 import { BaseRepository } from './BaseRepository';
 import { User } from '../entities/User';
@@ -253,12 +253,19 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       buildUrl: string;
     }
   ): Promise<void> {
-    await this.testRunRepository.update(runId, {
+    const jobMatch = jenkinsInfo.buildUrl.match(/\/job\/([^/]+)\//);
+    const updateData: QueryDeepPartialEntity<TestRun> = {
       jenkinsBuildId: jenkinsInfo.buildId,
       jenkinsUrl: jenkinsInfo.buildUrl,
       status: 'running',
       startTime: new Date(),
-    });
+    };
+
+    if (jobMatch) {
+      updateData.jenkinsJob = jobMatch[1];
+    }
+
+    await this.testRunRepository.update(runId, updateData);
   }
 
   /**
@@ -644,6 +651,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
    * - 支持可选的 executionId 参数（来自缓存或已知值）
    * - 如果未提供 executionId，则从数据库查询
    * - 增强错误日志，提供更多调试信息
+   * - 自动将 'cancelled' 状态映射为 'aborted'（以支持数据库枚举）
    * 
    * @param runId 执行批次ID
    * @param results 执行结果
@@ -652,7 +660,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async completeBatch(
     runId: number,
     results: {
-      status: 'success' | 'failed' | 'cancelled';
+      status: 'success' | 'failed' | 'cancelled' | 'aborted';
       passedCases: number;
       failedCases: number;
       skippedCases: number;
@@ -674,9 +682,10 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     executionId?: number
   ): Promise<void> {
     return this.executeInTransaction(async (queryRunner) => {
-      // 1. 更新 TestRun 记录
+      // 1. 更新 TestRun 记录 - 将 cancelled 映射为 aborted（兼容数据库枚举）
+      const mappedStatus = results.status === 'cancelled' ? 'aborted' : results.status;
       await this.testRunRepository.update(runId, {
-        status: results.status as any,
+        status: mappedStatus as any,
         passedCases: results.passedCases,
         failedCases: results.failedCases,
         skippedCases: results.skippedCases,
