@@ -51,12 +51,20 @@ export class HybridSyncService {
   private pollTimers = new Map<number, NodeJS.Timeout>();
 
   constructor() {
+    // 从环境变量读取配置，针对内网稳定环境优化
     this.config = {
-      callbackTimeout: 2 * 60 * 1000,        // 2分钟回调超时
-      pollInterval: 30 * 1000,               // 30秒轮询间隔
-      maxPollAttempts: 20,                   // 最多轮询20次（总计10分钟）
-      consistencyCheckInterval: 5 * 60 * 1000 // 5分钟一致性检查
+      callbackTimeout: parseInt(process.env.CALLBACK_TIMEOUT || '30000'),        // 30秒回调超时（内网环境优化）
+      pollInterval: parseInt(process.env.POLL_INTERVAL || '10000'),              // 10秒轮询间隔（平衡 Jenkins 负载）
+      maxPollAttempts: parseInt(process.env.MAX_POLL_ATTEMPTS || '40'),          // 最多轮询40次（总计6.7分钟）
+      consistencyCheckInterval: parseInt(process.env.CONSISTENCY_CHECK_INTERVAL || '300000') // 5分钟一致性检查
     };
+
+    console.log('[HybridSyncService] Initialized with config:', {
+      callbackTimeout: `${this.config.callbackTimeout}ms`,
+      pollInterval: `${this.config.pollInterval}ms`,
+      maxPollAttempts: this.config.maxPollAttempts,
+      consistencyCheckInterval: `${this.config.consistencyCheckInterval}ms`
+    });
 
     // 启动定期一致性检查
     this.startConsistencyCheck();

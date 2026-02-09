@@ -20,8 +20,8 @@ import { AppDataSource } from '../config/database';
  */
 
 export interface MonitorConfig {
-  checkInterval: number;          // How often to scan (default: 60000ms = 1 min)
-  compilationCheckWindow: number; // Check compilation fails quickly (default: 120000ms = 2 min)
+  checkInterval: number;          // How often to scan (default: 15000ms = 15 sec - optimized for quick fail)
+  compilationCheckWindow: number; // Check compilation fails quickly (default: 30000ms = 30 sec - quick fail detection)
   batchSize: number;              // Max executions to process per cycle (default: 20)
   enabled: boolean;               // Feature flag
   rateLimitDelay: number;         // Delay between Jenkins API calls (default: 100ms)
@@ -67,12 +67,20 @@ export class ExecutionMonitorService {
   constructor() {
     this.executionRepository = new ExecutionRepository(AppDataSource);
     this.config = {
-      checkInterval: parseInt(process.env.EXECUTION_MONITOR_INTERVAL || '60000', 10),
-      compilationCheckWindow: parseInt(process.env.COMPILATION_CHECK_WINDOW || '120000', 10),
+      checkInterval: parseInt(process.env.EXECUTION_MONITOR_INTERVAL || '15000', 10),          // 15秒检查间隔（快速失败优化）
+      compilationCheckWindow: parseInt(process.env.COMPILATION_CHECK_WINDOW || '30000', 10),   // 30秒编译检查窗口（快速失败检测）
       batchSize: parseInt(process.env.EXECUTION_MONITOR_BATCH_SIZE || '20', 10),
       enabled: process.env.EXECUTION_MONITOR_ENABLED !== 'false',
       rateLimitDelay: parseInt(process.env.EXECUTION_MONITOR_RATE_LIMIT || '100', 10),
     };
+
+    logger.info('[ExecutionMonitorService] Initialized with config:', {
+      checkInterval: `${this.config.checkInterval}ms`,
+      compilationCheckWindow: `${this.config.compilationCheckWindow}ms`,
+      batchSize: this.config.batchSize,
+      enabled: this.config.enabled,
+      rateLimitDelay: `${this.config.rateLimitDelay}ms`
+    }, LOG_CONTEXTS.MONITOR);
   }
 
   /**

@@ -402,7 +402,15 @@ export class ExecutionService {
     const timer = createTimer();
 
     try {
-      logger.info('Batch execution processing started', {
+      // 1. 验证执行记录是否存在
+      const execution = await this.executionRepository.getTestRunDetail(runId);
+
+      // 计算回调延迟（从执行创建到回调接收的时间）
+      const callbackLatency = execution?.startTime
+        ? Date.now() - new Date(execution.startTime).getTime()
+        : undefined;
+
+      logger.info('Jenkins callback received', {
         runId,
         status: results.status,
         passedCases: results.passedCases,
@@ -410,10 +418,9 @@ export class ExecutionService {
         skippedCases: results.skippedCases,
         durationMs: results.durationMs,
         resultsCount: results.results?.length || 0,
+        callbackLatency: callbackLatency ? `${callbackLatency}ms` : 'unknown',
+        source: 'callback'
       }, LOG_CONTEXTS.EXECUTION);
-
-      // 1. 验证执行记录是否存在
-      const execution = await this.executionRepository.getTestRunDetail(runId);
 
       if (!execution) {
         throw new Error(`Execution not found: runId=${runId}`);
