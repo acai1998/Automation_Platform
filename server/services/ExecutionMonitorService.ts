@@ -272,11 +272,12 @@ export class ExecutionMonitorService {
       const syncResult = await executionService.syncExecutionStatusFromJenkins(runId);
 
       if (syncResult.success && syncResult.updated) {
-        logger.info('Execution status updated via monitor', {
+        logger.info(`Execution status updated via monitor (runId=${runId})`, {
           runId,
           previousStatus: syncResult.currentStatus,
           newStatus: syncResult.jenkinsStatus,
           durationSeconds: execution.durationSeconds,
+          updateSource: 'monitor_poll',
         }, LOG_CONTEXTS.MONITOR);
 
         return {

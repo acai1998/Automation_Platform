@@ -441,6 +441,14 @@ router.post('/callback', [
       processingTimeMs: processingTime,
     }, LOG_CONTEXTS.JENKINS);
 
+    logger.info(`Execution status updated from Jenkins callback (runId=${runId})`, {
+      runId,
+      status: callbackStatus,
+      resultsCount: results.length,
+      updateSource: 'jenkins_callback',
+      clientIP,
+    }, LOG_CONTEXTS.JENKINS);
+
     res.json({
       success: true,
       message: 'Callback processed successfully',

@@ -359,3 +359,61 @@ pipeline {
         }
     }
 }
+            when {
+                expression { return currentBuild.result == 'SUCCESS' }
+            }
+            steps {
+                script {
+                    echo "构建Docker镜像并推送到阿里云容器镜像服务..."
+                    
+                    def dockerRegistry = "crpi-dytkl1o45qyeksph.cn-hangzhou.personal.cr.aliyuncs.com"
+                    def imageRepo = "caijinwei/auto_test"
+                    def imageTag = "${BUILD_NUMBER}"
+                    def fullImageName = "${dockerRegistry}/${imageRepo}:${imageTag}"
+                    
+                    try {
+                        // 1. 登录阿里云容器镜像服务
+                        withCredentials([usernamePassword(credentialsId: 'aliyun-docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                            sh """
+                                echo "登录阿里云容器镜像服务..."
+                                docker login --username=${DOCKER_USERNAME} --password=${DOCKER_PASSWORD} ${dockerRegistry}
+                            """
+                        }
+                        
+                        // 2. 构建Docker镜像
+                        echo "构建Docker镜像..."
+                        sh """
+                            docker build -t ${imageRepo}:${imageTag} .
+                        """
+                        
+                        // 3. 标签镜像
+                        echo "为阿里云仓库标签镜像..."
+                        sh """
+                            docker tag ${imageRepo}:${imageTag} ${fullImageName}
+                        """
+                        
+                        // 4. 推送镜像到阿里云
+                        echo "推送镜像到阿里云容器镜像服务..."
+                        sh """
+                            docker push ${fullImageName}
+                        """
+                        
+                        echo "✅ 镜像构建和推送成功: ${fullImageName}"
+                        
+                        // 5. 推送到GitHub（强制推送）
+                        echo "推送代码到GitHub..."
+                        withCredentials([usernamePassword(credentialsId: 'git-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                            sh """
+                                git push https://${GIT_USER}:${GIT_PASS}@github.com/ImAcaiy/Automation_Platform.git HEAD:master --force
+                                echo "✅ GitHub推送成功"
+                            """
+                        }
+                    } catch (Exception e) {
+                        echo "❌ 镜像构建或推送失败: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        throw e
+                    }
+                }
+            }
+        }
+    }
