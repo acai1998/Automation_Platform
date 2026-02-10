@@ -2,6 +2,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS } from '../config/logging';
+import { WEBSOCKET_CONFIG } from '../config/monitoring';
 
 /**
  * WebSocket 服务
@@ -25,32 +26,34 @@ export class WebSocketService {
   private enabled: boolean;
 
   constructor(httpServer: HttpServer) {
-    this.enabled = process.env.WEBSOCKET_ENABLED !== 'false';
+    this.enabled = WEBSOCKET_CONFIG.ENABLED;
 
     if (!this.enabled) {
       logger.info('[WebSocket] WebSocket is disabled', {}, LOG_CONTEXTS.WEBSOCKET);
-      // 创建一个空的 SocketIOServer 以避免空指针
+      // Create empty SocketIOServer to avoid null pointer
       this.io = new SocketIOServer(httpServer, { serveClient: false });
       return;
     }
 
     this.io = new SocketIOServer(httpServer, {
       cors: {
-        origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+        origin: WEBSOCKET_CONFIG.FRONTEND_URL,
         credentials: true
       },
-      path: '/api/ws',
+      path: WEBSOCKET_CONFIG.PATH,
       transports: ['websocket', 'polling'],
-      pingTimeout: 60000,
-      pingInterval: 25000
+      pingTimeout: WEBSOCKET_CONFIG.PING_TIMEOUT,
+      pingInterval: WEBSOCKET_CONFIG.PING_INTERVAL
     });
 
     this.setupEventHandlers();
 
     logger.info('[WebSocket] WebSocket service initialized', {
-      path: '/api/ws',
-      frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
-      transports: ['websocket', 'polling']
+      path: WEBSOCKET_CONFIG.PATH,
+      frontendUrl: WEBSOCKET_CONFIG.FRONTEND_URL,
+      transports: ['websocket', 'polling'],
+      pingTimeout: `${WEBSOCKET_CONFIG.PING_TIMEOUT}ms`,
+      pingInterval: `${WEBSOCKET_CONFIG.PING_INTERVAL}ms`,
     }, LOG_CONTEXTS.WEBSOCKET);
   }
 
@@ -235,7 +238,7 @@ export let webSocketService: WebSocketService | null = null;
 export function initializeWebSocketService(httpServer: HttpServer) {
   webSocketService = new WebSocketService(httpServer);
   logger.info('[WebSocket] WebSocket service ready', {
-    enabled: process.env.WEBSOCKET_ENABLED !== 'false'
+    enabled: WEBSOCKET_CONFIG.ENABLED
   }, LOG_CONTEXTS.WEBSOCKET);
   return webSocketService;
 }

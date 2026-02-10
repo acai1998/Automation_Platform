@@ -20,13 +20,7 @@ import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
 import { ExecutionRepository } from '../repositories/ExecutionRepository';
 import { dashboardService } from './DashboardService';
-
-// 已废弃：由于没有远程 tasks 表，建议使用 CaseExecutionInput
-export interface TaskExecutionInput {
-  taskId: number;
-  triggeredBy: number;
-  triggerType: 'manual' | 'scheduled' | 'ci_triggered';
-}
+import { webSocketService } from './WebSocketService';
 
 export interface CaseExecutionInput {
   caseIds: number[];
@@ -95,6 +89,8 @@ export class ExecutionService {
   // 格式: { runId: executionId }
   // 该缓存会在应用启动时保持，旧的条目会被清理
   private runIdToExecutionIdCache: Map<number, number> = new Map();
+  // 缓存清理定时器
+  private cacheCleanupTimer?: NodeJS.Timeout;
 
   constructor() {
     this.executionRepository = new ExecutionRepository(AppDataSource);
@@ -106,9 +102,8 @@ export class ExecutionService {
    * 初始化缓存清理任务
    */
   private initializeCacheCleanup() {
-    // 每10分钟检查一次，清理所有缓存（因为是内存缓存，应用重启后丢失）
-    // 但我们也可以通过 created_at timestamp 来限制缓存大小
-    setInterval(() => {
+    // 每10分钟检查一次，清理超过限制的缓存
+    this.cacheCleanupTimer = setInterval(() => {
       if (this.runIdToExecutionIdCache.size > 10000) {
         logger.warn('RunId cache size exceeds 10000, clearing oldest entries', {
           cacheSize: this.runIdToExecutionIdCache.size,
@@ -118,6 +113,20 @@ export class ExecutionService {
         entriesToDelete.forEach(key => this.runIdToExecutionIdCache.delete(key));
       }
     }, 10 * 60 * 1000);
+  }
+
+  /**
+   * 清理资源，防止内存泄漏
+   * 应该在应用关闭时调用
+   */
+  public destroy(): void {
+    if (this.cacheCleanupTimer) {
+      clearInterval(this.cacheCleanupTimer);
+      this.cacheCleanupTimer = undefined;
+      logger.debug('Cache cleanup timer cleared', {}, LOG_CONTEXTS.EXECUTION);
+    }
+    this.runIdToExecutionIdCache.clear();
+    logger.info('ExecutionService destroyed and resources cleaned up', {}, LOG_CONTEXTS.EXECUTION);
   }
 
   /**
@@ -426,6 +435,18 @@ export class ExecutionService {
         throw new Error(`Execution not found: runId=${runId}`);
       }
 
+      // 2. 幂等性检查：如果执行已经完成，避免重复更新
+      const finalStatuses = ['success', 'failed', 'cancelled', 'aborted'];
+      if (finalStatuses.includes(execution.status)) {
+        logger.warn('Execution already completed, skipping duplicate callback', {
+          runId,
+          currentStatus: execution.status,
+          newStatus: results.status,
+          source: 'idempotency_check'
+        }, LOG_CONTEXTS.EXECUTION);
+        return;
+      }
+
       logger.debug('Found execution record', {
         runId,
         currentStatus: execution.status,
@@ -452,7 +473,17 @@ export class ExecutionService {
       // 注：completeBatch 会自动将 'cancelled' 映射为 'aborted'
       await this.executionRepository.completeBatch(runId, results, executionId);
 
-      // 4. 触发每日汇总数据刷新（异步，不影响主流程）
+      // 4. 推送 WebSocket 更新（实时通知前端）
+      webSocketService?.pushExecutionUpdate(runId, {
+        status: results.status,
+        passedCases: results.passedCases,
+        failedCases: results.failedCases,
+        skippedCases: results.skippedCases,
+        durationMs: results.durationMs,
+        source: 'callback'
+      });
+
+      // 5. 触发每日汇总数据刷新（异步，不影响主流程）
       try {
         const executionDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式
         await dashboardService.refreshDailySummary(executionDate);
@@ -570,7 +601,8 @@ export class ExecutionService {
       // 4. 映射Jenkins状态到内部状态
       const jenkinsStatusMapped = this.mapJenkinsStatusToInternal(buildStatus.result, buildStatus.building);
 
-      console.log(`Jenkins status sync for runId ${runId}:`, {
+      logger.debug('Jenkins status sync for runId', {
+        runId,
         currentStatus: execution.status,
         jenkinsBuilding: buildStatus.building,
         jenkinsResult: buildStatus.result,
@@ -578,11 +610,16 @@ export class ExecutionService {
         buildNumber: buildStatus.number,
         buildUrl: buildStatus.url,
         buildDuration: buildStatus.duration
-      });
+      }, LOG_CONTEXTS.EXECUTION);
 
       // 5. Check for status inconsistencies and log them
       if (execution.status === 'running' && !buildStatus.building && buildStatus.result) {
-        console.warn(`Status inconsistency detected for runId ${runId}: platform shows 'running' but Jenkins shows completed with result '${buildStatus.result}'`);
+        logger.warn('Status inconsistency detected', {
+          runId,
+          platformStatus: 'running',
+          jenkinsResult: buildStatus.result,
+          message: `Platform shows 'running' but Jenkins shows completed with result '${buildStatus.result}'`
+        }, LOG_CONTEXTS.EXECUTION);
       }
 
       // 6. 检查状态是否需要更新
@@ -622,7 +659,9 @@ export class ExecutionService {
       };
 
     } catch (error) {
-      console.error(`Failed to sync status for runId ${runId}:`, error);
+      logger.errorLog(error, 'Failed to sync status for runId', {
+        runId,
+      });
       return {
         success: false,
         updated: false,
@@ -636,7 +675,7 @@ export class ExecutionService {
    */
   private mapJenkinsStatusToInternal(result: string | null, building: boolean): string {
     // Log the status mapping decision for debugging
-    console.log(`Mapping Jenkins status: building=${building}, result=${result}`);
+    logger.debug(`Mapping Jenkins status: building=${building}, result=${result}`, {}, LOG_CONTEXTS.EXECUTION);
 
     if (building) {
       return 'running';
@@ -644,7 +683,7 @@ export class ExecutionService {
 
     // Handle null result (build may still be pending or just finished)
     if (result === null) {
-      console.warn('Jenkins result is null - build may still be in progress or just finished');
+      logger.warn('Jenkins result is null - build may still be in progress or just finished', {}, LOG_CONTEXTS.EXECUTION);
       return 'pending';
     }
 
@@ -652,20 +691,16 @@ export class ExecutionService {
 
     switch (normalizedResult) {
       case 'SUCCESS':
-        console.log('Mapping SUCCESS to success');
         return 'success';
       case 'FAILURE':
       case 'UNSTABLE':
-        console.log(`Mapping ${normalizedResult} to failed`);
         return 'failed';
       case 'ABORTED':
-        console.log('Mapping ABORTED to aborted');
         return 'cancelled';
       case 'NOT_BUILT':
-        console.log('Mapping NOT_BUILT to pending');
         return 'pending';
       default:
-        console.warn(`Unknown Jenkins result status: ${result}, defaulting to failed`);
+        logger.warn(`Unknown Jenkins result status: ${result}, defaulting to failed`, {}, LOG_CONTEXTS.EXECUTION);
         // For unknown statuses, default to failed to ensure stuck executions are resolved
         return 'failed';
     }
@@ -689,6 +724,12 @@ export class ExecutionService {
           status: 'running',
           updateSource: 'jenkins_poll',
         }, LOG_CONTEXTS.EXECUTION);
+
+        // 推送 WebSocket 更新
+        webSocketService?.pushExecutionUpdate(runId, {
+          status: 'running',
+          source: 'polling'
+        });
       } else {
         // 构建完成，更新最终状态
         await this.executionRepository.updateTestRunStatus(runId, jenkinsData.status, {
@@ -705,6 +746,16 @@ export class ExecutionService {
           resultsCount: jenkinsData.testResults?.results.length || 0,
         }, LOG_CONTEXTS.EXECUTION);
 
+        // 推送 WebSocket 更新
+        webSocketService?.pushExecutionUpdate(runId, {
+          status: jenkinsData.status,
+          passedCases: jenkinsData.testResults?.passedCases,
+          failedCases: jenkinsData.testResults?.failedCases,
+          skippedCases: jenkinsData.testResults?.skippedCases,
+          durationMs: jenkinsData.duration,
+          source: 'polling'
+        });
+
         // 2. 如果有详细测试结果，更新 Auto_TestRunResults
         if (jenkinsData.testResults && jenkinsData.testResults.results.length > 0) {
           await this.updateTestResultsFromJenkins(runId, jenkinsData.testResults);
@@ -713,7 +764,9 @@ export class ExecutionService {
 
       return true;
     } catch (error) {
-      console.error(`Failed to update execution status for runId ${runId}:`, error);
+      logger.errorLog(error, 'Failed to update execution status', {
+        runId,
+      });
       return false;
     }
   }
@@ -723,8 +776,8 @@ export class ExecutionService {
    */
   private async updateTestResultsFromJenkins(runId: number, testResults: TestResults): Promise<void> {
     // 首先找到关联的 executionId
-    const executionId = await this.executionRepository.findExecutionId();
-    
+    const executionId = await this.executionRepository.findExecutionIdByRunId(runId);
+
     if (!executionId) {
       throw new Error(`Could not find executionId for runId ${runId}`);
     }
@@ -769,7 +822,11 @@ export class ExecutionService {
           });
         }
       } catch (error) {
-        console.error(`Failed to update test result for case ${result.caseId}:`, error);
+        logger.errorLog(error, 'Failed to update test result for case', {
+          runId,
+          caseId: result.caseId,
+          caseName: result.caseName,
+        });
       }
     }
   }
@@ -788,7 +845,7 @@ export class ExecutionService {
       const timeoutThreshold = new Date(Date.now() - timeoutMs);
       const runningExecutions = await this.executionRepository.getPotentiallyTimedOutExecutions(timeoutThreshold);
 
-      console.log(`Checking ${runningExecutions.length} potentially timed out executions`);
+      logger.info(`Checking ${runningExecutions.length} potentially timed out executions`, {}, LOG_CONTEXTS.EXECUTION);
 
       let timedOutCount = 0;
       let updatedCount = 0;
@@ -819,7 +876,10 @@ export class ExecutionService {
             }, LOG_CONTEXTS.EXECUTION);
           }
         } catch (error) {
-          console.error(`Failed to handle timeout for execution ${execution.id}:`, error);
+          logger.error('Failed to handle timeout for execution', {
+            runId: execution.id,
+            error: error instanceof Error ? error.message : String(error)
+          }, LOG_CONTEXTS.EXECUTION);
         }
       }
 
@@ -829,7 +889,7 @@ export class ExecutionService {
         updated: updatedCount
       };
     } catch (error) {
-      console.error('Failed to check timeouts:', error);
+      logger.errorLog(error, 'Failed to check timeouts', {});
       return { checked: 0, timedOut: 0, updated: 0 };
     }
   }
@@ -849,7 +909,7 @@ export class ExecutionService {
    * 验证执行状态一致性
    * 比较平台状态与 Jenkins 状态，返回不一致的执行列表
    */
-  async verifyStatusConsistency(limit: number = 50): Promise<{
+  async verifyStatusConsistency(options: { limit?: number; runId?: number } = {}): Promise<{
     total: number;
     inconsistent: Array<{
       runId: number;
@@ -859,9 +919,26 @@ export class ExecutionService {
       jobName: string;
     }>;
   }> {
+    const { limit = 50, runId } = options;
+
     try {
-      // 获取最近的有 Jenkins 信息的执行记录
-      const executions = await this.executionRepository.getExecutionsWithJenkinsInfo(limit);
+      let executions: Array<{
+        id: number;
+        status: string;
+        jenkinsJob: string;
+        jenkinsBuildId: string;
+      }> = [];
+
+      if (runId) {
+        // 获取单个执行记录
+        const execution = await this.executionRepository.getTestRunStatus(runId);
+        if (execution && execution.jenkinsJob && execution.jenkinsBuildId) {
+          executions = [execution];
+        }
+      } else {
+        // 获取最近的有 Jenkins 信息的执行记录
+        executions = await this.executionRepository.getExecutionsWithJenkinsInfo(limit);
+      }
 
       const inconsistent: Array<{
         runId: number;
@@ -892,7 +969,10 @@ export class ExecutionService {
             }
           }
         } catch (error) {
-          console.error(`Failed to verify consistency for execution ${execution.id}:`, error);
+          logger.error('Failed to verify consistency for execution', {
+            runId: execution.id,
+            error: error instanceof Error ? error.message : String(error)
+          }, LOG_CONTEXTS.EXECUTION);
         }
       }
 
@@ -901,7 +981,7 @@ export class ExecutionService {
         inconsistent
       };
     } catch (error) {
-      console.error('Failed to verify status consistency:', error);
+      logger.errorLog(error, 'Failed to verify status consistency', { options });
       return { total: 0, inconsistent: [] };
     }
   }

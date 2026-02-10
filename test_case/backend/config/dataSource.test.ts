@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock dependencies before importing modules
-vi.mock('../../utils/logger', () => ({
+vi.mock('../../../server/utils/logger', () => ({
   default: {
     info: vi.fn(),
     error: vi.fn(),
@@ -10,7 +10,7 @@ vi.mock('../../utils/logger', () => ({
   },
 }));
 
-vi.mock('../dbConfig', () => ({
+vi.mock('../../../server/config/dbConfig', () => ({
   getTypeOrmConfig: vi.fn(() => ({
     type: 'mysql',
     host: 'localhost',
@@ -57,13 +57,6 @@ vi.mock('typeorm', () => ({
   },
 }));
 
-// Mock path module
-vi.mock('path', () => ({
-  default: {
-    resolve: vi.fn((...args) => args.join('/')),
-  },
-}));
-
 describe('DataSource Configuration', () => {
   let mockLogger: any;
 
@@ -79,7 +72,7 @@ describe('DataSource Configuration', () => {
     mockDataSourceInstance.query.mockReset();
 
     // Import logger mock
-    const loggerModule = await import('../../utils/logger');
+    const loggerModule = await import('../../../server/utils/logger');
     mockLogger = loggerModule.default;
   });
 
@@ -94,7 +87,7 @@ describe('DataSource Configuration', () => {
       mockDataSourceInstance.initialize.mockResolvedValue(undefined);
 
       // Act
-      const { initializeDataSource } = await import('../dataSource');
+      const { initializeDataSource } = await import('../../../server/config/dataSource');
       const result = await initializeDataSource();
 
       // Assert
@@ -118,7 +111,7 @@ describe('DataSource Configuration', () => {
       mockDataSourceInstance.isInitialized = true;
 
       // Act
-      const { initializeDataSource } = await import('../dataSource');
+      const { initializeDataSource } = await import('../../../server/config/dataSource');
       const result = await initializeDataSource();
 
       // Assert
@@ -136,7 +129,7 @@ describe('DataSource Configuration', () => {
       mockDataSourceInstance.initialize.mockRejectedValue(initError);
 
       // Act & Assert
-      const { initializeDataSource } = await import('../dataSource');
+      const { initializeDataSource } = await import('../../../server/config/dataSource');
       await expect(initializeDataSource()).rejects.toThrow(
         'Database initialization failed: Connection failed'
       );
@@ -158,7 +151,7 @@ describe('DataSource Configuration', () => {
       mockDataSourceInstance.destroy.mockResolvedValue(undefined);
 
       // Act
-      const { closeDataSource } = await import('../dataSource');
+      const { closeDataSource } = await import('../../../server/config/dataSource');
       await closeDataSource();
 
       // Assert
@@ -175,7 +168,7 @@ describe('DataSource Configuration', () => {
       mockDataSourceInstance.isInitialized = false;
 
       // Act
-      const { closeDataSource } = await import('../dataSource');
+      const { closeDataSource } = await import('../../../server/config/dataSource');
       await closeDataSource();
 
       // Assert
@@ -193,7 +186,7 @@ describe('DataSource Configuration', () => {
       mockDataSourceInstance.query.mockResolvedValue([{ health_check: 1 }]);
 
       // Act
-      const { checkDataSourceHealth } = await import('../dataSource');
+      const { checkDataSourceHealth } = await import('../../../server/config/dataSource');
       const result = await checkDataSourceHealth();
 
       // Assert
@@ -207,7 +200,7 @@ describe('DataSource Configuration', () => {
       mockDataSourceInstance.isInitialized = false;
 
       // Act
-      const { checkDataSourceHealth } = await import('../dataSource');
+      const { checkDataSourceHealth } = await import('../../../server/config/dataSource');
       const result = await checkDataSourceHealth();
 
       // Assert
@@ -223,7 +216,7 @@ describe('DataSource Configuration', () => {
       mockDataSourceInstance.isInitialized = true;
 
       // Act
-      const { getDataSourceStats } = await import('../dataSource');
+      const { getDataSourceStats } = await import('../../../server/config/dataSource');
       const stats = getDataSourceStats();
 
       // Assert
@@ -241,7 +234,7 @@ describe('DataSource Configuration', () => {
       mockDataSourceInstance.isInitialized = false;
 
       // Act
-      const { getDataSourceStats } = await import('../dataSource');
+      const { getDataSourceStats } = await import('../../../server/config/dataSource');
       const stats = getDataSourceStats();
 
       // Assert
