@@ -678,6 +678,10 @@ export class ExecutionService {
       if (jenkinsData.building) {
         // 如果还在构建中，只更新为 running 状态
         await this.executionRepository.updateTestRunStatus(runId, 'running');
+        logger.debug(`Execution status refreshed from Jenkins (runId=${runId})`, {
+          status: 'running',
+          updateSource: 'jenkins_poll',
+        }, LOG_CONTEXTS.EXECUTION);
       } else {
         // 构建完成，更新最终状态
         await this.executionRepository.updateTestRunStatus(runId, jenkinsData.status, {
@@ -686,6 +690,13 @@ export class ExecutionService {
           failedCases: jenkinsData.testResults?.failedCases,
           skippedCases: jenkinsData.testResults?.skippedCases,
         });
+
+        logger.info(`Execution status updated from Jenkins poll (runId=${runId})`, {
+          status: jenkinsData.status,
+          durationMs: jenkinsData.duration,
+          updateSource: 'jenkins_poll',
+          resultsCount: jenkinsData.testResults?.results.length || 0,
+        }, LOG_CONTEXTS.EXECUTION);
 
         // 2. 如果有详细测试结果，更新 Auto_TestRunResults
         if (jenkinsData.testResults && jenkinsData.testResults.results.length > 0) {
@@ -782,7 +793,11 @@ export class ExecutionService {
 
           if (syncResult.success && syncResult.updated) {
             updatedCount++;
-            console.log(`Updated execution ${execution.id} from Jenkins: ${syncResult.message}`);
+            logger.info(`Execution updated from Jenkins during timeout check (runId=${execution.id})`, {
+              runId: execution.id,
+              message: syncResult.message,
+              updateSource: 'jenkins_poll',
+            }, LOG_CONTEXTS.EXECUTION);
             continue;
           }
 
@@ -790,7 +805,11 @@ export class ExecutionService {
           if (!syncResult.success) {
             await this.markExecutionAsTimedOut(execution.id);
             timedOutCount++;
-            console.log(`Marked execution ${execution.id} as timed out: ${syncResult.message}`);
+            logger.warn('Execution marked as timed out during timeout check', {
+              runId: execution.id,
+              message: syncResult.message,
+              updateSource: 'timeout',
+            }, LOG_CONTEXTS.EXECUTION);
           }
         } catch (error) {
           console.error(`Failed to handle timeout for execution ${execution.id}:`, error);
@@ -813,7 +832,10 @@ export class ExecutionService {
    */
   private async markExecutionAsTimedOut(runId: number): Promise<void> {
     await this.executionRepository.markExecutionAsTimedOut(runId);
-    console.log(`Execution ${runId} marked as timed out`);
+    logger.warn('Execution marked as timed out', {
+      runId,
+      updateSource: 'timeout',
+    }, LOG_CONTEXTS.EXECUTION);
   }
 
   /**
