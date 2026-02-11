@@ -256,55 +256,53 @@ pipeline {
     
     post {
         always {
-            node {
-                script {
-                    echo "清理环境..."
-                    
+            script {
+                echo "清理环境..."
+
+                try {
+                    archiveArtifacts artifacts: 'test-cases/test-report.json', allowEmptyArchive: true, fingerprint: true
+                    echo "测试报告已归档"
+                } catch (Exception e) {
+                    echo "归档测试报告失败: ${e.message}"
+                }
+
+                try {
+                    junit allowEmptyResults: true, testResults: '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
+                } catch (Exception e) {
+                    echo "JUnit报告处理失败: ${e.message}"
+                }
+
+                // 最终回调 - 确保状态同步
+                if (params.RUN_ID) {
+                    echo "========== 最终回调 =========="
+                    def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
+                    def finalStatus = currentBuild.result == 'SUCCESS' ? 'success' : 'failed'
+
+                    echo "回调地址: ${callbackUrl}"
+                    echo "运行ID: ${params.RUN_ID}"
+                    echo "最终状态: ${finalStatus}"
+
+                    // 使用 curl 进行回调（简化方案）
                     try {
-                        archiveArtifacts artifacts: 'test-cases/test-report.json', allowEmptyArchive: true, fingerprint: true
-                        echo "测试报告已归档"
+                        sh """
+                            curl -X POST '${callbackUrl}' \
+                                -H 'Content-Type: application/json' \
+                                -H 'X-Api-Key: ${env.JENKINS_API_KEY}' \
+                                -d '{
+                                    "runId": ${params.RUN_ID},
+                                    "status": "${finalStatus}",
+                                    "passedCases": 0,
+                                    "failedCases": ${currentBuild.result == 'SUCCESS' ? 0 : 1},
+                                    "skippedCases": 0,
+                                    "durationMs": ${currentBuild.durationMillis ?: 0}
+                                }' \
+                                || echo '❌ curl 回调失败'
+                        """
+                        echo "✅ 回调成功"
                     } catch (Exception e) {
-                        echo "归档测试报告失败: ${e.message}"
+                        echo "⚠️ 回调失败: ${e.message}"
                     }
-                    
-                    try {
-                        junit allowEmptyResults: true, testResults: '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
-                    } catch (Exception e) {
-                        echo "JUnit报告处理失败: ${e.message}"
-                    }
-                    
-                    // 最终回调 - 确保状态同步
-                    if (params.RUN_ID) {
-                        echo "========== 最终回调 =========="
-                        def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
-                        def finalStatus = currentBuild.result == 'SUCCESS' ? 'success' : 'failed'
-                        
-                        echo "回调地址: ${callbackUrl}"
-                        echo "运行ID: ${params.RUN_ID}"
-                        echo "最终状态: ${finalStatus}"
-                        
-                        // 使用 curl 进行回调（简化方案）
-                        try {
-                            sh """
-                                curl -X POST '${callbackUrl}' \
-                                    -H 'Content-Type: application/json' \
-                                    -H 'X-Api-Key: ${env.JENKINS_API_KEY}' \
-                                    -d '{
-                                        "runId": ${params.RUN_ID},
-                                        "status": "${finalStatus}",
-                                        "passedCases": 0,
-                                        "failedCases": ${currentBuild.result == 'SUCCESS' ? 0 : 1},
-                                        "skippedCases": 0,
-                                        "durationMs": ${currentBuild.durationMillis ?: 0}
-                                    }' \
-                                    || echo '❌ curl 回调失败'
-                            """
-                            echo "✅ 回调成功"
-                        } catch (Exception e) {
-                            echo "⚠️ 回调失败: ${e.message}"
-                        }
-                        echo "==============================="
-                    }
+                    echo "==============================="
                 }
             }
         }
@@ -316,31 +314,29 @@ pipeline {
         }
         
         failure {
-            node {
-                script {
-                    echo "❌ Pipeline执行失败"
-                    
-                    // 回调平台，标记为失败
-                    if (params.RUN_ID && params.CALLBACK_URL) {
-                        sh '''
-                            BUILD_DURATION_MS=$((BUILD_DURATION * 1000))
-                            
-                            echo "正在回调失败状态到平台..."
-                            curl -X POST "${CALLBACK_URL}" \
-                                -H "Content-Type: application/json" \
-                                -H "X-Api-Key: ${JENKINS_API_KEY}" \
-                                -d "{
-                                    \\"runId\\": ${RUN_ID},
-                                    \\"status\\": \\"failed\\",
-                                    \\"passedCases\\": 0,
-                                    \\"failedCases\\": 0,
-                                    \\"skippedCases\\": 0,
-                                    \\"durationMs\\": $BUILD_DURATION_MS,
-                                    \\"buildUrl\\": \\"${BUILD_URL}\\"
-                                }" \
-                                || echo "失败回调请求失败，但继续处理"
-                        '''
-                    }
+            script {
+                echo "❌ Pipeline执行失败"
+
+                // 回调平台，标记为失败
+                if (params.RUN_ID && params.CALLBACK_URL) {
+                    sh '''
+                        BUILD_DURATION_MS=$((BUILD_DURATION * 1000))
+
+                        echo "正在回调失败状态到平台..."
+                        curl -X POST "${CALLBACK_URL}" \
+                            -H "Content-Type: application/json" \
+                            -H "X-Api-Key: ${JENKINS_API_KEY}" \
+                            -d "{
+                                \\"runId\\": ${RUN_ID},
+                                \\"status\\": \\"failed\\",
+                                \\"passedCases\\": 0,
+                                \\"failedCases\\": 0,
+                                \\"skippedCases\\": 0,
+                                \\"durationMs\\": $BUILD_DURATION_MS,
+                                \\"buildUrl\\": \\"${BUILD_URL}\\"
+                            }" \
+                            || echo "失败回调请求失败，但继续处理"
+                    '''
                 }
             }
         }

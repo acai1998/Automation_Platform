@@ -1,0 +1,720 @@
+// ==================== 配置常量 ====================
+@Library('shared-pipeline-library') _
+
+def CONFIG = [
+    // 平台配置
+    platformUrl: env.PLATFORM_API_URL ?: 'http://localhost:3000',
+    apiKey: env.JENKINS_API_KEY ?: '',
+
+    // Python 环境
+    pythonVersion: '3.9',
+    virtualEnvPath: "${WORKSPACE}/venv",
+
+    // 测试配置
+    testCaseDir: 'test-cases',
+    reportFile: 'test-report.json',
+    junitFile: 'junit.xml',
+
+    // Docker 配置
+    dockerRegistry: 'crpi-dytkl1o45qyeksph.cn-hangzhou.personal.cr.aliyuncs.com',
+    dockerRepo: 'caijinwei/auto_test',
+
+    // 重试配置
+    maxRetries: 3,
+    retryDelay: 5
+]
+
+// ==================== Pipeline 定义 ====================
+pipeline {
+    agent any
+
+    // ==================== 参数定义 ====================
+    parameters {
+        string(
+            name: 'RUN_ID',
+            description: '执行批次ID',
+            defaultValue: ''
+        )
+        string(
+            name: 'CASE_IDS',
+            description: '用例ID列表(JSON数组)',
+            defaultValue: '[]'
+        )
+        string(
+            name: 'SCRIPT_PATHS',
+            description: '脚本路径(逗号分隔,支持pytest格式)',
+            defaultValue: ''
+        )
+        string(
+            name: 'CALLBACK_URL',
+            description: '回调URL(可选,默认使用平台URL)',
+            defaultValue: ''
+        )
+        string(
+            name: 'MARKER',
+            description: 'Pytest marker标记(可选)',
+            defaultValue: ''
+        )
+        string(
+            name: 'REPO_URL',
+            description: '测试用例仓库URL(可选)',
+            defaultValue: ''
+        )
+        string(
+            name: 'REPO_BRANCH',
+            description: '仓库分支(默认main)',
+            defaultValue: 'main'
+        )
+        choice(
+            name: 'PYTHON_VERSION',
+            choices: ['3.9', '3.10', '3.11'],
+            description: 'Python版本'
+        )
+        booleanParam(
+            name: 'ENABLE_PARALLEL',
+            defaultValue: false,
+            description: '启用并行执行(仅适用于多用例)'
+        )
+        booleanParam(
+            name: 'BUILD_DOCKER_IMAGE',
+            defaultValue: false,
+            description: '构建并推送Docker镜像'
+        )
+        booleanParam(
+            name: 'SKIP_CLEANUP',
+            defaultValue: false,
+            description: '跳过清理步骤(用于调试)'
+        )
+    }
+
+    // ==================== 环境变量 ====================
+    environment {
+        // 平台配置
+        PLATFORM_API_URL = "${CONFIG.platformUrl}"
+        JENKINS_API_KEY = credentials('jenkins-api-key')
+
+        // Git 凭据
+        GIT_CREDENTIALS = credentials('git-credentials')
+
+        // Docker 凭据
+        DOCKER_CREDENTIALS = credentials('aliyun-docker')
+
+        // Python 环境
+        PYTHON_ENV = "${CONFIG.virtualEnvPath}"
+        PYTHONUNBUFFERED = '1'
+
+        // 测试目录
+        TEST_CASE_DIR = "${CONFIG.testCaseDir}"
+
+        // 时间戳
+        BUILD_TIMESTAMP = sh(script: 'date +%s%3N', returnStdout: true).trim()
+    }
+
+    // ==================== 选项配置 ====================
+    options {
+        // 保留构建历史
+        buildDiscarder(logRotator(numToKeepStr: '30', daysToKeepStr: '30'))
+
+        // 超时设置
+        timeout(time: 2, unit: 'HOURS')
+
+        // 并发构建限制
+        disableConcurrentBuilds()
+
+        // 时间戳
+        timestamps()
+
+        // ANSI 颜色输出
+        ansiColor('xterm')
+    }
+
+    // ==================== 阶段定义 ====================
+    stages {
+        // ==================== 1. 初始化 ====================
+        stage('初始化') {
+            steps {
+                script {
+                    // 打印构建信息
+                    printBuildInfo()
+
+                    // 验证参数
+                    validateParameters()
+
+                    // 通知平台执行开始
+                    if (params.RUN_ID) {
+                        notifyPlatform('start', [runId: params.RUN_ID])
+                    }
+                }
+            }
+        }
+
+        // ==================== 2. 检出代码 ====================
+        stage('检出代码') {
+            steps {
+                script {
+                    checkoutTestCode()
+                }
+            }
+        }
+
+        // ==================== 3. 准备环境 ====================
+        stage('准备环境') {
+            steps {
+                script {
+                    setupPythonEnvironment()
+                }
+            }
+        }
+
+        // ==================== 4. 执行测试 ====================
+        stage('执行测试') {
+            steps {
+                script {
+                    def testResults = executeTests()
+                    env.TEST_RESULTS = writeJSON(returnText: true, json: testResults)
+                }
+            }
+        }
+
+        // ==================== 5. 收集结果 ====================
+        stage('收集结果') {
+            steps {
+                script {
+                    def results = collectTestResults()
+                    env.COLLECTED_RESULTS = writeJSON(returnText: true, json: results)
+                }
+            }
+        }
+
+        // ==================== 6. 回调平台 ====================
+        stage('回调平台') {
+            steps {
+                script {
+                    def results = readJSON(text: env.COLLECTED_RESULTS)
+                    notifyPlatform('complete', results)
+                }
+            }
+        }
+
+        // ==================== 7. 构建镜像(可选) ====================
+        stage('构建镜像') {
+            when {
+                expression {
+                    return params.BUILD_DOCKER_IMAGE && currentBuild.result == null
+                }
+            }
+            steps {
+                script {
+                    buildAndPushDockerImage()
+                }
+            }
+        }
+    }
+
+    // ==================== 后处理 ====================
+    post {
+        always {
+            script {
+                // 归档测试报告
+                archiveTestReports()
+
+                // 最终回调(确保状态同步)
+                finalCallback()
+
+                // 清理环境
+                if (!params.SKIP_CLEANUP) {
+                    cleanup()
+                }
+            }
+        }
+
+        success {
+            script {
+                echo "✅ Pipeline执行成功"
+                sendNotification('success')
+            }
+        }
+
+        failure {
+            script {
+                echo "❌ Pipeline执行失败"
+                sendNotification('failure')
+
+                // 确保失败状态回调
+                if (params.RUN_ID) {
+                    notifyPlatform('failed', [
+                        runId: params.RUN_ID,
+                        status: 'failed',
+                        errorMessage: "Pipeline执行失败: ${currentBuild.result}"
+                    ])
+                }
+            }
+        }
+
+        unstable {
+            script {
+                echo "⚠️ Pipeline执行不稳定"
+                sendNotification('unstable')
+            }
+        }
+
+        aborted {
+            script {
+                echo "🛑 Pipeline被中止"
+                if (params.RUN_ID) {
+                    notifyPlatform('aborted', [
+                        runId: params.RUN_ID,
+                        status: 'aborted'
+                    ])
+                }
+            }
+        }
+    }
+}
+
+// ==================== 辅助函数 ====================
+
+/**
+ * 打印构建信息
+ */
+def printBuildInfo() {
+    echo """
+╔════════════════════════════════════════════════════════════════╗
+║                      构建信息                                  ║
+╠════════════════════════════════════════════════════════════════╣
+║ 构建编号: ${BUILD_NUMBER}
+║ 运行ID: ${params.RUN_ID ?: '未指定'}
+║ 用例IDs: ${params.CASE_IDS}
+║ 脚本路径: ${params.SCRIPT_PATHS ?: '未指定'}
+║ Marker: ${params.MARKER ?: '未指定'}
+║ 仓库URL: ${params.REPO_URL ?: '未指定'}
+║ 仓库分支: ${params.REPO_BRANCH}
+║ Python版本: ${params.PYTHON_VERSION}
+║ 并行执行: ${params.ENABLE_PARALLEL}
+║ 构建镜像: ${params.BUILD_DOCKER_IMAGE}
+║ 回调地址: ${params.CALLBACK_URL ?: CONFIG.platformUrl + '/api/jenkins/callback'}
+║ 构建时间: ${new Date()}
+╚════════════════════════════════════════════════════════════════╝
+    """
+}
+
+/**
+ * 验证参数
+ */
+def validateParameters() {
+    echo "🔍 验证参数..."
+
+    def errors = []
+
+    // 验证 RUN_ID
+    if (!params.RUN_ID || params.RUN_ID.trim() == '') {
+        errors.add("RUN_ID 不能为空")
+    }
+
+    // 验证执行方式(至少指定一种)
+    if (!params.SCRIPT_PATHS && !params.MARKER) {
+        errors.add("必须指定 SCRIPT_PATHS 或 MARKER 之一")
+    }
+
+    // 如果有错误,抛出异常
+    if (errors.size() > 0) {
+        error("参数验证失败:\n" + errors.join("\n"))
+    }
+
+    echo "✅ 参数验证通过"
+}
+
+/**
+ * 检出测试代码
+ */
+def checkoutTestCode() {
+    echo "📦 检出测试代码..."
+
+    if (params.REPO_URL && params.REPO_URL.trim() != '') {
+        dir(CONFIG.testCaseDir) {
+            if (fileExists('.git')) {
+                echo "更新现有仓库..."
+                sh """
+                    git fetch origin
+                    git checkout ${params.REPO_BRANCH}
+                    git pull origin ${params.REPO_BRANCH}
+                """
+            } else {
+                echo "克隆新仓库..."
+                sh """
+                    git clone -b ${params.REPO_BRANCH} ${params.REPO_URL} .
+                """
+            }
+        }
+    } else {
+        echo "⚠️ 未指定仓库URL,使用默认测试用例目录"
+
+        // 检查目录是否存在
+        if (!fileExists(CONFIG.testCaseDir)) {
+            error("测试用例目录不存在: ${CONFIG.testCaseDir}")
+        }
+    }
+
+    echo "✅ 代码检出完成"
+}
+
+/**
+ * 准备 Python 环境
+ */
+def setupPythonEnvironment() {
+    echo "🐍 准备Python环境..."
+
+    dir(CONFIG.testCaseDir) {
+        retry(CONFIG.maxRetries) {
+            sh """
+                # 创建虚拟环境
+                if [ ! -d "${PYTHON_ENV}" ]; then
+                    echo "创建虚拟环境..."
+                    python${params.PYTHON_VERSION} -m venv ${PYTHON_ENV}
+                fi
+
+                # 激活虚拟环境
+                source ${PYTHON_ENV}/bin/activate
+
+                # 升级 pip
+                python -m pip install --upgrade pip setuptools wheel -q
+
+                # 安装测试依赖
+                if [ -f "requirements.txt" ]; then
+                    echo "安装 requirements.txt 依赖..."
+                    pip install -r requirements.txt -q
+                else
+                    echo "安装默认测试依赖..."
+                    pip install pytest pytest-json-report pytest-html pytest-xdist -q
+                fi
+
+                # 验证安装
+                python --version
+                pip list | grep pytest
+
+                # 列出可用测试文件
+                echo ""
+                echo "可用的测试文件(前20个):"
+                find . -type f \\( -name "test_*.py" -o -name "*_test.py" \\) | head -20
+            """
+        }
+    }
+
+    echo "✅ Python环境准备完成"
+}
+
+/**
+ * 执行测试
+ */
+def executeTests() {
+    echo "🧪 执行测试..."
+
+    def startTime = System.currentTimeMillis()
+    def testCommand = buildTestCommand()
+    def exitCode = 0
+
+    dir(CONFIG.testCaseDir) {
+        sh """
+            source ${PYTHON_ENV}/bin/activate
+
+            echo "执行命令: ${testCommand}"
+            echo ""
+
+            ${testCommand} || EXIT_CODE=\$?
+
+            echo ""
+            echo "测试执行完成,退出码: \${EXIT_CODE:-0}"
+
+            exit \${EXIT_CODE:-0}
+        """
+
+        exitCode = sh(script: 'echo $?', returnStatus: true)
+    }
+
+    def endTime = System.currentTimeMillis()
+    def duration = endTime - startTime
+
+    echo "✅ 测试执行完成,耗时: ${duration}ms"
+
+    return [
+        exitCode: exitCode,
+        duration: duration,
+        success: exitCode == 0
+    ]
+}
+
+/**
+ * 构建测试命令
+ */
+def buildTestCommand() {
+    def command = "pytest"
+
+    // 添加脚本路径
+    if (params.SCRIPT_PATHS && params.SCRIPT_PATHS.trim() != '') {
+        def paths = params.SCRIPT_PATHS.split(',').collect { it.trim() }
+        command += " " + paths.join(' ')
+    }
+
+    // 添加 marker
+    if (params.MARKER && params.MARKER.trim() != '') {
+        command += " -m ${params.MARKER}"
+    }
+
+    // 添加报告参数
+    command += " --json-report --json-report-file=${CONFIG.reportFile}"
+    command += " --junitxml=${CONFIG.junitFile}"
+    command += " --html=report.html --self-contained-html"
+    command += " -v --tb=short"
+
+    // 并行执行
+    if (params.ENABLE_PARALLEL) {
+        command += " -n auto"
+    }
+
+    // 失败时继续执行
+    command += " || true"
+
+    return command
+}
+
+/**
+ * 收集测试结果
+ */
+def collectTestResults() {
+    echo "📊 收集测试结果..."
+
+    def results = [
+        runId: params.RUN_ID.toInteger(),
+        status: 'success',
+        passedCases: 0,
+        failedCases: 0,
+        skippedCases: 0,
+        totalCases: 0,
+        durationMs: 0,
+        buildUrl: BUILD_URL,
+        buildNumber: BUILD_NUMBER,
+        results: []
+    ]
+
+    dir(CONFIG.testCaseDir) {
+        // 读取 JSON 报告
+        if (fileExists(CONFIG.reportFile)) {
+            def reportContent = readFile(CONFIG.reportFile)
+            def report = readJSON(text: reportContent)
+
+            // 提取汇总信息
+            if (report.summary) {
+                results.totalCases = report.summary.total ?: 0
+                results.passedCases = report.summary.passed ?: 0
+                results.failedCases = report.summary.failed ?: 0
+                results.skippedCases = report.summary.skipped ?: 0
+                results.durationMs = (report.duration * 1000).toInteger()
+            }
+
+            // 提取详细结果
+            if (report.tests) {
+                results.results = report.tests.collect { test ->
+                    [
+                        caseName: test.nodeid,
+                        status: test.outcome,
+                        duration: (test.duration * 1000).toInteger(),
+                        errorMessage: test.call?.longrepr ?: null
+                    ]
+                }
+            }
+
+            // 确定最终状态
+            results.status = results.failedCases > 0 ? 'failed' : 'success'
+
+            echo """
+测试结果汇总:
+  总数: ${results.totalCases}
+  通过: ${results.passedCases}
+  失败: ${results.failedCases}
+  跳过: ${results.skippedCases}
+  状态: ${results.status}
+  耗时: ${results.durationMs}ms
+            """
+        } else {
+            echo "⚠️ 未找到测试报告文件,生成默认结果"
+            results.status = 'failed'
+            results.failedCases = 1
+        }
+    }
+
+    echo "✅ 结果收集完成"
+
+    return results
+}
+
+/**
+ * 通知平台
+ */
+def notifyPlatform(event, data = [:]) {
+    def callbackUrl = params.CALLBACK_URL ?: "${CONFIG.platformUrl}/api/jenkins/callback"
+
+    echo "🔔 通知平台: ${event}"
+    echo "回调地址: ${callbackUrl}"
+
+    def payload = [
+        event: event,
+        timestamp: System.currentTimeMillis()
+    ] + data
+
+    def payloadJson = writeJSON(returnText: true, json: payload)
+
+    retry(CONFIG.maxRetries) {
+        sh """
+            curl -X POST '${callbackUrl}' \
+                -H 'Content-Type: application/json' \
+                -H 'X-Api-Key: ${env.JENKINS_API_KEY}' \
+                -d '${payloadJson}' \
+                --max-time 30 \
+                --retry 3 \
+                --retry-delay ${CONFIG.retryDelay} \
+                -w '\\nHTTP Status: %{http_code}\\n' \
+                || (echo '❌ 回调失败' && exit 1)
+        """
+    }
+
+    echo "✅ 通知发送成功"
+}
+
+/**
+ * 最终回调
+ */
+def finalCallback() {
+    echo "📞 发送最终回调..."
+
+    if (!params.RUN_ID) {
+        echo "⚠️ 未指定RUN_ID,跳过最终回调"
+        return
+    }
+
+    def finalStatus = currentBuild.result ?: 'SUCCESS'
+    def status = (finalStatus == 'SUCCESS') ? 'success' : 'failed'
+
+    try {
+        def results = env.COLLECTED_RESULTS ?
+            readJSON(text: env.COLLECTED_RESULTS) :
+            [
+                runId: params.RUN_ID.toInteger(),
+                status: status,
+                passedCases: 0,
+                failedCases: finalStatus == 'SUCCESS' ? 0 : 1,
+                skippedCases: 0,
+                durationMs: currentBuild.duration ?: 0
+            ]
+
+        notifyPlatform('final', results)
+    } catch (Exception e) {
+        echo "⚠️ 最终回调失败: ${e.message}"
+        // 不抛出异常,避免影响构建状态
+    }
+}
+
+/**
+ * 归档测试报告
+ */
+def archiveTestReports() {
+    echo "📦 归档测试报告..."
+
+    dir(CONFIG.testCaseDir) {
+        // 归档 JSON 报告
+        archiveArtifacts(
+            artifacts: "${CONFIG.reportFile},${CONFIG.junitFile},report.html,**/*.log",
+            allowEmptyArchive: true,
+            fingerprint: true
+        )
+
+        // 发布 JUnit 报告
+        junit(
+            testResults: CONFIG.junitFile,
+            allowEmptyResults: true,
+            skipPublishingChecks: true
+        )
+
+        // 发布 HTML 报告
+        publishHTML([
+            allowMissing: true,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: '.',
+            reportFiles: 'report.html',
+            reportName: 'Test Report'
+        ])
+    }
+
+    echo "✅ 报告归档完成"
+}
+
+/**
+ * 构建并推送 Docker 镜像
+ */
+def buildAndPushDockerImage() {
+    echo "🐳 构建并推送Docker镜像..."
+
+    def imageTag = "${BUILD_NUMBER}"
+    def fullImageName = "${CONFIG.dockerRegistry}/${CONFIG.dockerRepo}:${imageTag}"
+
+    try {
+        // 登录 Docker Registry
+        sh """
+            echo ${DOCKER_CREDENTIALS_PSW} | docker login \
+                --username ${DOCKER_CREDENTIALS_USR} \
+                --password-stdin \
+                ${CONFIG.dockerRegistry}
+        """
+
+        // 构建镜像
+        sh "docker build -t ${fullImageName} ."
+
+        // 推送镜像
+        sh "docker push ${fullImageName}"
+
+        // 标记为 latest
+        sh """
+            docker tag ${fullImageName} ${CONFIG.dockerRegistry}/${CONFIG.dockerRepo}:latest
+            docker push ${CONFIG.dockerRegistry}/${CONFIG.dockerRepo}:latest
+        """
+
+        echo "✅ 镜像构建和推送成功: ${fullImageName}"
+
+    } catch (Exception e) {
+        echo "❌ 镜像构建或推送失败: ${e.message}"
+        throw e
+    } finally {
+        // 清理本地镜像
+        sh "docker rmi ${fullImageName} || true"
+    }
+}
+
+/**
+ * 发送通知
+ */
+def sendNotification(status) {
+    // TODO: 实现邮件/钉钉/企业微信通知
+    echo "📧 发送通知: ${status}"
+}
+
+/**
+ * 清理环境
+ */
+def cleanup() {
+    echo "🧹 清理环境..."
+
+    try {
+        // 清理 Python 缓存
+        dir(CONFIG.testCaseDir) {
+            sh """
+                find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+                find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
+                find . -type f -name '*.pyc' -delete 2>/dev/null || true
+            """
+        }
+
+        echo "✅ 清理完成"
+    } catch (Exception e) {
+        echo "⚠️ 清理失败: ${e.message}"
+    }
+}
