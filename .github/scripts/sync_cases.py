@@ -6,7 +6,7 @@
 """
 import os
 import re
-import pymysql
+import pymysql  # type: ignore
 from pathlib import Path
 
 def get_db_connection():
