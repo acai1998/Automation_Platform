@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import GitHubRepositoryForm from '../GitHubRepositoryForm';
+import GitHubRepositoryForm from '@/components/GitHubRepositoryForm';
 
 // Mock Tooltip components
 vi.mock('@/components/ui/tooltip', () => ({

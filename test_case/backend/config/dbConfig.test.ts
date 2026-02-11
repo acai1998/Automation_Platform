@@ -5,7 +5,7 @@ import {
   getTypeOrmConfig,
   sanitizeConfigForLogging,
   DB_CONFIG_CONSTANTS
-} from '../dbConfig';
+} from '../../../server/config/dbConfig';
 
 describe('Database Configuration', () => {
   const originalEnv = process.env;

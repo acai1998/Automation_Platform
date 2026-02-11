@@ -1,22 +1,14 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { request } from '../api';
+import { wsClient } from '../services/websocket';
+import {
+  POLLING_CONFIG,
+  calculatePollingInterval,
+  checkStuckStatus,
+  getStuckMessage,
+} from '../config/polling';
 
-/**
- * 轮询相关常量配置
- * 用于统一管理轮询间隔、超时时间等魔法数字
- */
-const POLLING_CONSTANTS = {
-  FAST_INTERVAL: 3000,           // 3秒 - pending状态快速轮询
-  NORMAL_INTERVAL: 5000,         // 5秒 - 运行初期
-  MEDIUM_INTERVAL: 10000,        // 10秒 - 运行中期
-  SLOW_INTERVAL: 30000,          // 30秒 - 运行后期
-  MAX_EXECUTION_TIME: 10 * 60 * 1000,     // 10分钟 - 最大轮询时长
-  STUCK_DETECTION_TIME: 5 * 60 * 1000,    // 5分钟 - 卡住检测时间
-  PENDING_FAST_POLL_WINDOW: 30 * 1000,    // 30秒 - pending状态快速轮询窗口
-  EARLY_EXECUTION_WINDOW: 2 * 60 * 1000,  // 2分钟 - 执行早期窗口
-  MID_EXECUTION_WINDOW: 5 * 60 * 1000,    // 5分钟 - 执行中期窗口
-} as const;
 
 export interface ExecuteResult {
   runId: number;
@@ -113,21 +105,96 @@ export function useManualSync() {
  * 4. 支持手动重试和状态强制同步
  */
 export function useBatchExecution(runId: number | null, options?: {
-  pollInterval?: number;
   enableSmartPolling?: boolean;
   onStatusChange?: (status: string, prevStatus?: string) => void;
   onSyncIssue?: (issue: string) => void;
 }) {
   const {
-    pollInterval = 10000,
     enableSmartPolling = true,
     onStatusChange,
     onSyncIssue
   } = options || {};
 
+  const queryClient = useQueryClient();
   const prevStatusRef = useRef<string | null>(null);
   const lastSyncAttemptRef = useRef<number>(0);
   const stuckDetectionRef = useRef<number>(0);
+  const wsConnectedRef = useRef(false);
+
+  // WebSocket 订阅
+  useEffect(() => {
+    if (!runId) return;
+
+    const isConnected = wsClient.isConnected();
+    wsConnectedRef.current = isConnected;
+
+    if (!isConnected) {
+      console.log('[WebSocket] Not connected, using polling fallback');
+      return;
+    }
+
+    console.log('[WebSocket] Subscribing to execution updates for runId:', runId);
+
+    // 订阅 WebSocket 更新 (异步操作)
+    let isMounted = true;
+    let unsubscribeFn: (() => void) | null = null;
+    
+    wsClient.subscribeToExecution(runId, {
+      onUpdate: (data) => {
+        if (!isMounted) return;
+        
+        console.log('[WebSocket] Execution update received:', data);
+
+        // 立即更新缓存（使用泛型替代 any）
+        queryClient.setQueryData<BatchExecution>(
+          ['batch-execution', runId],
+          (old) => {
+            if (!old) return old;
+
+            return {
+              ...old,
+              status: data.status,
+              passed_cases: data.passedCases ?? old.passed_cases,
+              failed_cases: data.failedCases ?? old.failed_cases,
+              skipped_cases: data.skippedCases ?? old.skipped_cases,
+              duration_ms: data.durationMs ?? old.duration_ms
+            };
+          }
+        );
+
+        // 触发状态变化回调
+        if (prevStatusRef.current !== data.status) {
+          onStatusChange?.(data.status, prevStatusRef.current || undefined);
+          prevStatusRef.current = data.status;
+        }
+      },
+      onQuickFail: (data) => {
+        if (!isMounted) return;
+        
+        console.warn('[WebSocket] Quick fail detected:', data);
+        onSyncIssue?.(`Quick fail: ${data.message} (${data.duration}ms)`);
+      }
+    }).then((unsubscribe) => {
+      if (isMounted) {
+        unsubscribeFn = unsubscribe;
+      } else {
+        // If component unmounted, clean up immediately
+        unsubscribe();
+      }
+    }).catch((error) => {
+      if (!isMounted) return;
+      console.error('[WebSocket] Subscription error:', error);
+      onSyncIssue?.(`WebSocket 订阅失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    });
+
+    return () => {
+      isMounted = false;
+      // Clean up WebSocket subscription on unmount
+      if (unsubscribeFn) {
+        unsubscribeFn();
+      }
+    };
+  }, [runId, queryClient, onStatusChange, onSyncIssue]);
 
   const query = useQuery({
     queryKey: ['batch-execution', runId],
@@ -142,45 +209,33 @@ export function useBatchExecution(runId: number | null, options?: {
 
       const status = data.status;
 
-      // 检查是否已完成或失败
+      // Check if execution is completed
       if (['success', 'failed', 'aborted'].includes(status)) {
         console.log(`[Polling] Execution completed with status: ${status}, stopping polling`);
         return false;
       }
 
-      // 对于 pending 和 running 状态继续轮询
+      // Continue polling for pending and running states
       if (status === 'pending' || status === 'running') {
-        // 检查是否超过最大轮询时长 (基于 start_time)
-        if (data.start_time) {
-          const startTime = new Date(data.start_time).getTime();
-          const elapsedTime = Date.now() - startTime;
-          if (elapsedTime > POLLING_CONSTANTS.MAX_EXECUTION_TIME) {
-            console.log('[Polling] 已达到最大轮询时长（10分钟），停止轮询');
-            return false;
-          }
+        // Use centralized polling interval calculation
+        const interval = calculatePollingInterval(status, data.start_time, wsConnectedRef.current);
+
+        if (interval === false) {
+          console.log('[Polling] Max execution time reached, stopping polling');
+          return false;
         }
 
-        // 智能轮询间隔调整
-        if (enableSmartPolling) {
-          let duration = 0;
-          if (data.start_time) {
-            duration = Date.now() - new Date(data.start_time).getTime();
-          }
-          
-          // pending 状态下快速轮询（等待 Jenkins 接收）
-          if (status === 'pending' && duration < POLLING_CONSTANTS.PENDING_FAST_POLL_WINDOW) {
-            console.log('[Polling] In pending state, fast polling (3 seconds)');
-            return POLLING_CONSTANTS.FAST_INTERVAL;
-          }
-
-          // 根据执行时长动态调整轮询间隔
-          if (duration < POLLING_CONSTANTS.EARLY_EXECUTION_WINDOW) return POLLING_CONSTANTS.NORMAL_INTERVAL;
-          if (duration < POLLING_CONSTANTS.MID_EXECUTION_WINDOW) return POLLING_CONSTANTS.MEDIUM_INTERVAL;
-          return POLLING_CONSTANTS.SLOW_INTERVAL;
+        // Log polling strategy
+        if (wsConnectedRef.current) {
+          console.log('[Polling] WebSocket connected, using backup polling (60 seconds)');
+        } else if (enableSmartPolling) {
+          const elapsedTime = data.start_time
+            ? Date.now() - new Date(data.start_time).getTime()
+            : 0;
+          console.log(`[Polling] Smart polling: ${interval}ms (elapsed: ${Math.round(elapsedTime / 1000)}s)`);
         }
 
-        // 传统轮询逻辑
-        return pollInterval;
+        return interval;
       }
 
       return false;
@@ -190,7 +245,7 @@ export function useBatchExecution(runId: number | null, options?: {
     refetchOnMount: false,
   });
 
-  // 使用 useEffect 处理状态变化副作用
+  // Handle status change side effects
   useEffect(() => {
     const data = query.data;
     if (data && prevStatusRef.current && prevStatusRef.current !== data.status) {
@@ -199,23 +254,21 @@ export function useBatchExecution(runId: number | null, options?: {
     if (data) {
       prevStatusRef.current = data.status;
 
-      // 检测可能的卡住状态
-      if (['running', 'pending'].includes(data.status) && data.start_time) {
-        const startTime = new Date(data.start_time).getTime();
-        const elapsedTime = Date.now() - startTime;
+      // Check for stuck execution using centralized helper
+      const stuckStatus = checkStuckStatus(data.status, data.start_time);
 
-        // 如果执行时间超过5分钟且状态未变化，标记为可能卡住
-        if (elapsedTime > POLLING_CONSTANTS.STUCK_DETECTION_TIME) {
-          const now = Date.now();
-          if (now - stuckDetectionRef.current > 60 * 1000) { // 每分钟最多提醒一次
-            stuckDetectionRef.current = now;
-            onSyncIssue?.(`Execution ${data.id} has been ${data.status} for ${Math.round(elapsedTime / 60000)} minutes. This may indicate a sync issue.`);
-          }
+      if (stuckStatus.isStuck) {
+        const now = Date.now();
+        // Alert cooldown: only alert once per minute
+        if (now - stuckDetectionRef.current > POLLING_CONFIG.STUCK_DETECTION.ALERT_COOLDOWN) {
+          stuckDetectionRef.current = now;
+          const message = getStuckMessage(stuckStatus.severity, stuckStatus.elapsedTime);
+          onSyncIssue?.(message);
         }
       }
     }
 
-    // 清理函数：重置检测状态
+    // Cleanup: reset detection state when execution completes
     return () => {
       if (!query.data || ['success', 'failed', 'aborted'].includes(query.data.status)) {
         stuckDetectionRef.current = 0;
@@ -224,18 +277,25 @@ export function useBatchExecution(runId: number | null, options?: {
     };
   }, [query.data, onStatusChange, onSyncIssue]);
 
+  // Calculate stuck status using centralized helper (memoized to avoid unnecessary recalculations)
+  const stuckStatus = useMemo(() => {
+    if (!query.data) {
+      return { isStuck: false, isEarlyStuck: false, isCriticallyStuck: false, elapsedTime: 0, severity: 'none' as const };
+    }
+    return checkStuckStatus(query.data.status, query.data.start_time);
+  }, [query.data?.status, query.data?.start_time]);
+
   return {
     ...query,
-    // 添加便捷的状态检查方法
-    isStuck: query.data && query.data.start_time && ['running', 'pending'].includes(query.data.status)
-      ? (Date.now() - new Date(query.data.start_time).getTime()) > POLLING_CONSTANTS.STUCK_DETECTION_TIME
-      : false,
-    isPotentiallyStuck: query.data && query.data.start_time && ['running', 'pending'].includes(query.data.status)
-      ? (Date.now() - new Date(query.data.start_time).getTime()) > POLLING_CONSTANTS.EARLY_EXECUTION_WINDOW
-      : false,
-    executionDuration: query.data && query.data.start_time
-      ? Date.now() - new Date(query.data.start_time).getTime()
-      : 0
+    // WebSocket connection status
+    wsConnected: wsConnectedRef.current,
+    // Stuck detection status
+    isStuck: stuckStatus.isCriticallyStuck,
+    isPotentiallyStuck: stuckStatus.isEarlyStuck,
+    isEarlyStuck: stuckStatus.isEarlyStuck,
+    isCriticallyStuck: stuckStatus.isCriticallyStuck,
+    stuckSeverity: stuckStatus.severity,
+    executionDuration: stuckStatus.elapsedTime,
   };
 }
 
@@ -265,10 +325,11 @@ export function useTestExecution(options?: {
     onStatusChange: (status, prevStatus) => {
       options?.onStatusChange?.(status, prevStatus);
 
-      // 检测执行完成
+      // 检测执行完成（安全检查，避免非空断言）
       if (prevStatus && ['running', 'pending'].includes(prevStatus) &&
-          ['success', 'failed', 'aborted'].includes(status)) {
-        options?.onExecutionComplete?.(batchExecution.data!);
+          ['success', 'failed', 'aborted'].includes(status) &&
+          batchExecution.data) {
+        options?.onExecutionComplete?.(batchExecution.data);
       }
     },
     onSyncIssue: (issue) => {
@@ -346,11 +407,10 @@ export function useTestExecution(options?: {
     setLastManualSync(null);
   }, []);
 
-  // 检测长时间运行
-  const isLongRunning = batchExecution.data &&
-    batchExecution.data.start_time &&
-    ['running', 'pending'].includes(batchExecution.data.status) &&
-    (Date.now() - new Date(batchExecution.data.start_time).getTime()) > POLLING_CONSTANTS.STUCK_DETECTION_TIME;
+  // Detect long-running execution using centralized config
+  const isLongRunning = batchExecution.data
+    ? checkStuckStatus(batchExecution.data.status, batchExecution.data.start_time).isCriticallyStuck
+    : false;
 
   return {
     // 执行状态

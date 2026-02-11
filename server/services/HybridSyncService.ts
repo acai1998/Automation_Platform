@@ -1,6 +1,9 @@
 import { executionService } from './ExecutionService';
 import { jenkinsStatusService } from './JenkinsStatusService';
 import { Auto_TestRunResultsInput } from './ExecutionService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
+import { HYBRID_SYNC_CONFIG } from '../config/monitoring';
 
 /**
  * 回调数据接口
@@ -51,14 +54,23 @@ export class HybridSyncService {
   private pollTimers = new Map<number, NodeJS.Timeout>();
 
   constructor() {
+    // Use centralized configuration optimized for intranet environment
     this.config = {
-      callbackTimeout: 2 * 60 * 1000,        // 2分钟回调超时
-      pollInterval: 30 * 1000,               // 30秒轮询间隔
-      maxPollAttempts: 20,                   // 最多轮询20次（总计10分钟）
-      consistencyCheckInterval: 5 * 60 * 1000 // 5分钟一致性检查
+      callbackTimeout: HYBRID_SYNC_CONFIG.CALLBACK_TIMEOUT,
+      pollInterval: HYBRID_SYNC_CONFIG.POLL_INTERVAL_NORMAL, // Default to normal interval
+      maxPollAttempts: HYBRID_SYNC_CONFIG.MAX_POLL_ATTEMPTS,
+      consistencyCheckInterval: HYBRID_SYNC_CONFIG.CONSISTENCY_CHECK_INTERVAL,
     };
 
-    // 启动定期一致性检查
+    logger.info('[HybridSyncService] Initialized with config:', {
+      callbackTimeout: `${this.config.callbackTimeout}ms`,
+      pollInterval: `${this.config.pollInterval}ms`,
+      maxPollAttempts: this.config.maxPollAttempts,
+      consistencyCheckInterval: `${this.config.consistencyCheckInterval}ms`,
+      adaptivePolling: HYBRID_SYNC_CONFIG.ADAPTIVE_POLLING_ENABLED ? 'Enabled' : 'Disabled',
+    }, LOG_CONTEXTS.HYBRID_SYNC);
+
+    // Start periodic consistency check
     this.startConsistencyCheck();
   }
 
@@ -69,7 +81,7 @@ export class HybridSyncService {
   async startMonitoring(runId: number, options?: Partial<MonitoringConfig>): Promise<void> {
     const config = { ...this.config, ...options };
 
-    console.log(`Starting hybrid monitoring for runId: ${runId}`);
+    logger.info(`Starting hybrid monitoring for runId: ${runId}`, {}, LOG_CONTEXTS.HYBRID_SYNC);
 
     // 初始化同步状态
     this.syncStatuses.set(runId, {
@@ -97,19 +109,19 @@ export class HybridSyncService {
     const runId = data.runId;
 
     try {
-      console.log(`Processing callback for runId: ${runId}`, {
+      logger.info(`Processing callback for runId: ${runId}`, {
         status: data.status,
         passedCases: data.passedCases,
         failedCases: data.failedCases,
         skippedCases: data.skippedCases,
         durationMs: data.durationMs,
         resultsCount: data.results?.length || 0
-      });
+      }, LOG_CONTEXTS.HYBRID_SYNC);
 
       // 1. 验证是否在监控中
       const syncStatus = this.syncStatuses.get(runId);
       if (!syncStatus) {
-        console.warn(`Received callback for unmonitored runId: ${runId}`);
+        logger.warn(`Received callback for unmonitored runId: ${runId}`, {}, LOG_CONTEXTS.HYBRID_SYNC);
         // 即使不在监控中，也处理回调
       }
 
@@ -126,7 +138,7 @@ export class HybridSyncService {
       // 4. 清理定时器
       this.stopMonitoring(runId);
 
-      console.log(`Callback processed successfully for runId: ${runId}`);
+      logger.info(`Callback processed successfully for runId: ${runId}`, {}, LOG_CONTEXTS.HYBRID_SYNC);
 
       return {
         success: true,
@@ -134,7 +146,9 @@ export class HybridSyncService {
       };
 
     } catch (error) {
-      console.error(`Failed to process callback for runId: ${runId}:`, error);
+      logger.error(`Failed to process callback for runId: ${runId}`, {
+        error: error instanceof Error ? error.message : String(error)
+      }, LOG_CONTEXTS.HYBRID_SYNC);
 
       this.updateSyncStatus(runId, {
         status: 'failed',
@@ -154,7 +168,7 @@ export class HybridSyncService {
    * 当回调超时时，切换到API轮询策略
    */
   private async handleCallbackTimeout(runId: number): Promise<void> {
-    console.log(`Callback timeout for runId: ${runId}, switching to API polling`);
+    logger.info(`Callback timeout for runId: ${runId}, switching to API polling`, {}, LOG_CONTEXTS.HYBRID_SYNC);
 
     this.updateSyncStatus(runId, {
       status: 'polling',
@@ -174,34 +188,36 @@ export class HybridSyncService {
   }
 
   /**
-   * 开始API轮询监控
-   * 备用同步策略
+   * Start API polling monitoring
+   * Backup sync strategy with adaptive intervals
    */
   private async startApiPolling(runId: number): Promise<void> {
     const syncStatus = this.syncStatuses.get(runId);
     if (!syncStatus) {
-      console.error(`No sync status found for runId: ${runId}`);
+      logger.error(`No sync status found for runId: ${runId}`, {}, LOG_CONTEXTS.HYBRID_SYNC);
       return;
     }
 
-    console.log(`Starting API polling for runId: ${runId}`);
+    logger.info(`Starting API polling for runId: ${runId}`, {
+      adaptivePolling: HYBRID_SYNC_CONFIG.ADAPTIVE_POLLING_ENABLED,
+    }, LOG_CONTEXTS.HYBRID_SYNC);
 
     const pollExecution = async () => {
       try {
         const currentStatus = this.syncStatuses.get(runId);
         if (!currentStatus || currentStatus.status !== 'polling') {
-          console.log(`Stopping polling for runId: ${runId} - status changed`);
+          logger.info(`Stopping polling for runId: ${runId} - status changed`, {}, LOG_CONTEXTS.HYBRID_SYNC);
           return;
         }
 
-        // 检查轮询次数限制
+        // Check polling attempts limit
         if (currentStatus.attempts >= this.config.maxPollAttempts) {
-          console.log(`Max polling attempts reached for runId: ${runId}`);
+          logger.info(`Max polling attempts reached for runId: ${runId}`, {}, LOG_CONTEXTS.HYBRID_SYNC);
           await this.handlePollingTimeout(runId);
           return;
         }
 
-        // 执行状态同步
+        // Execute status sync
         const syncResult = await executionService.syncExecutionStatusFromJenkins(runId);
 
         this.updateSyncStatus(runId, {
@@ -211,12 +227,12 @@ export class HybridSyncService {
 
         if (syncResult.success) {
           if (syncResult.updated) {
-            // 状态已更新，检查是否完成
+            // Status updated, check if completed
             const isCompleted = syncResult.jenkinsStatus &&
               ['success', 'failed', 'aborted'].includes(syncResult.jenkinsStatus);
 
             if (isCompleted) {
-              console.log(`Execution completed via polling for runId: ${runId}`);
+              logger.info(`Execution completed via polling for runId: ${runId}`, {}, LOG_CONTEXTS.HYBRID_SYNC);
               this.updateSyncStatus(runId, {
                 status: 'completed',
                 method: 'polling',
@@ -227,48 +243,120 @@ export class HybridSyncService {
             }
           }
 
-          // 继续轮询
-          const pollTimer = setTimeout(pollExecution, this.config.pollInterval);
+          // Calculate next polling interval using adaptive strategy
+          const nextInterval = this.calculatePollInterval(currentStatus.attempts + 1);
+
+          logger.debug(`Scheduling next poll for runId: ${runId}`, {
+            attempt: currentStatus.attempts + 1,
+            nextInterval: `${nextInterval}ms`,
+          }, LOG_CONTEXTS.HYBRID_SYNC);
+
+          // Continue polling
+          const pollTimer = setTimeout(pollExecution, nextInterval);
           this.pollTimers.set(runId, pollTimer);
         } else {
-          console.error(`Polling failed for runId: ${runId}: ${syncResult.message}`);
-          // 轮询失败，继续尝试
-          const pollTimer = setTimeout(pollExecution, this.config.pollInterval);
+          logger.error(`Polling failed for runId: ${runId}: ${syncResult.message}`, {}, LOG_CONTEXTS.HYBRID_SYNC);
+          // Continue polling on failure
+          const nextInterval = this.calculatePollInterval(currentStatus.attempts + 1);
+          const pollTimer = setTimeout(pollExecution, nextInterval);
           this.pollTimers.set(runId, pollTimer);
         }
 
       } catch (error) {
-        console.error(`Polling error for runId: ${runId}:`, error);
+        logger.error(`Polling error for runId: ${runId}`, {
+          error: error instanceof Error ? error.message : String(error)
+        }, LOG_CONTEXTS.HYBRID_SYNC);
         this.updateSyncStatus(runId, {
           attempts: (this.syncStatuses.get(runId)?.attempts || 0) + 1,
           message: `Polling error: ${error instanceof Error ? error.message : String(error)}`
         });
 
-        // 继续轮询
-        const pollTimer = setTimeout(pollExecution, this.config.pollInterval);
+        // Continue polling on error
+        const nextInterval = this.calculatePollInterval((this.syncStatuses.get(runId)?.attempts || 0) + 1);
+        const pollTimer = setTimeout(pollExecution, nextInterval);
         this.pollTimers.set(runId, pollTimer);
       }
     };
 
-    // 立即开始第一次轮询
+    // Start first polling immediately
     await pollExecution();
   }
 
   /**
-   * 处理轮询超时
-   * 兜底策略：标记为超时状态
+   * Calculate adaptive polling interval based on attempt number
+   * Uses tiered approach: fast → normal → slow
+   *
+   * @param attempt - Current attempt number (1-based)
+   * @returns Polling interval in milliseconds
+   */
+  private calculatePollInterval(attempt: number): number {
+    if (!HYBRID_SYNC_CONFIG.ADAPTIVE_POLLING_ENABLED) {
+      // Use fixed interval if adaptive polling is disabled
+      return this.config.pollInterval;
+    }
+
+    // Fast polling for initial attempts (1-3): 5s
+    if (attempt <= HYBRID_SYNC_CONFIG.FAST_POLL_ATTEMPTS) {
+      return HYBRID_SYNC_CONFIG.POLL_INTERVAL_FAST;
+    }
+
+    // Normal polling for mid-range attempts (4-8): 10s
+    if (attempt <= HYBRID_SYNC_CONFIG.FAST_POLL_ATTEMPTS + HYBRID_SYNC_CONFIG.NORMAL_POLL_ATTEMPTS) {
+      return HYBRID_SYNC_CONFIG.POLL_INTERVAL_NORMAL;
+    }
+
+    // Slow polling for later attempts (9+): 15s
+    return HYBRID_SYNC_CONFIG.POLL_INTERVAL_SLOW;
+  }
+
+  /**
+   * Calculate total polling duration based on max attempts and adaptive intervals
+   *
+   * @returns Total duration in milliseconds
+   */
+  private calculateTotalPollingDuration(): number {
+    if (!HYBRID_SYNC_CONFIG.ADAPTIVE_POLLING_ENABLED) {
+      // Fixed interval: total = maxAttempts × interval
+      return this.config.maxPollAttempts * this.config.pollInterval;
+    }
+
+    // Calculate duration for each tier
+    const fastAttempts = Math.min(HYBRID_SYNC_CONFIG.FAST_POLL_ATTEMPTS, this.config.maxPollAttempts);
+    const fastDuration = fastAttempts * HYBRID_SYNC_CONFIG.POLL_INTERVAL_FAST;
+
+    const normalAttempts = Math.min(
+      HYBRID_SYNC_CONFIG.NORMAL_POLL_ATTEMPTS,
+      Math.max(0, this.config.maxPollAttempts - HYBRID_SYNC_CONFIG.FAST_POLL_ATTEMPTS)
+    );
+    const normalDuration = normalAttempts * HYBRID_SYNC_CONFIG.POLL_INTERVAL_NORMAL;
+
+    const slowAttempts = Math.max(
+      0,
+      this.config.maxPollAttempts - HYBRID_SYNC_CONFIG.FAST_POLL_ATTEMPTS - HYBRID_SYNC_CONFIG.NORMAL_POLL_ATTEMPTS
+    );
+    const slowDuration = slowAttempts * HYBRID_SYNC_CONFIG.POLL_INTERVAL_SLOW;
+
+    return fastDuration + normalDuration + slowDuration;
+  }
+
+  /**
+   * Handle polling timeout
+   * Fallback strategy: mark as timed out
    */
   private async handlePollingTimeout(runId: number): Promise<void> {
-    console.log(`Polling timeout for runId: ${runId}, marking as timed out`);
+    logger.info(`Polling timeout for runId: ${runId}, marking as timed out`, {}, LOG_CONTEXTS.HYBRID_SYNC);
 
     try {
-      // 标记执行为超时
+      // Calculate total timeout duration based on adaptive polling
+      const totalDuration = this.calculateTotalPollingDuration();
+
+      // Mark execution as timed out
       await executionService.completeBatchExecution(runId, {
         status: 'aborted',
         passedCases: 0,
         failedCases: 0,
         skippedCases: 0,
-        durationMs: this.config.callbackTimeout + this.config.maxPollAttempts * this.config.pollInterval,
+        durationMs: this.config.callbackTimeout + totalDuration,
         results: []
       });
 
@@ -281,7 +369,9 @@ export class HybridSyncService {
       this.stopMonitoring(runId);
 
     } catch (error) {
-      console.error(`Failed to handle polling timeout for runId: ${runId}:`, error);
+      logger.error(`Failed to handle polling timeout for runId: ${runId}`, {
+        error: error instanceof Error ? error.message : String(error)
+      }, LOG_CONTEXTS.HYBRID_SYNC);
 
       this.updateSyncStatus(runId, {
         status: 'failed',
@@ -295,7 +385,7 @@ export class HybridSyncService {
    * 停止监控
    */
   stopMonitoring(runId: number): void {
-    console.log(`Stopping monitoring for runId: ${runId}`);
+    logger.info(`Stopping monitoring for runId: ${runId}`, {}, LOG_CONTEXTS.HYBRID_SYNC);
 
     // 清理回调定时器
     const callbackTimer = this.callbackTimers.get(runId);
@@ -362,15 +452,16 @@ export class HybridSyncService {
     try {
       if (runId) {
         // 验证单个执行的状态一致性
-        const result = await executionService.verifyStatusConsistency(1);
-        // 过滤指定的runId（这里需要ExecutionService支持按runId过滤）
+        const result = await executionService.verifyStatusConsistency({ runId });
         return result;
       } else {
         // 验证所有执行的状态一致性
-        return await executionService.verifyStatusConsistency(50);
+        return await executionService.verifyStatusConsistency({ limit: 50 });
       }
     } catch (error) {
-      console.error('Failed to verify status consistency:', error);
+      logger.error('Failed to verify status consistency', {
+        error: error instanceof Error ? error.message : String(error)
+      }, LOG_CONTEXTS.HYBRID_SYNC);
       return { total: 0, inconsistent: [] };
     }
   }
@@ -385,7 +476,7 @@ export class HybridSyncService {
     updated: boolean;
   }> {
     try {
-      console.log(`Manual sync triggered for runId: ${runId}`);
+      logger.info(`Manual sync triggered for runId: ${runId}`, {}, LOG_CONTEXTS.HYBRID_SYNC);
 
       const syncResult = await executionService.syncExecutionStatusFromJenkins(runId);
 

@@ -27,20 +27,28 @@ npm run server:build
 ## 测试
 
 ```bash
-# 运行前端测试（Vitest + React Testing Library）
+# 运行所有测试（Vitest + React Testing Library）
+npm run test
+# 或
 npx vitest
 
+# 运行前端测试
+npm run test:frontend
+
+# 运行后端测试
+npm run test:backend
+
 # 运行测试并监听文件变化
-npx vitest --watch
+npm run test:watch
 
 # 运行单次测试
 npx vitest run
 
 # 运行测试并生成覆盖率报告
-npx vitest --coverage
+npm run test:coverage
 
 # 运行特定测试文件
-npx vitest src/components/__tests__/GitHubRepositoryTable.test.tsx
+npx vitest test_case/frontend/components/GitHubRepositoryTable.test.tsx
 ```
 
 ## 类型检查
@@ -197,8 +205,7 @@ npx tsc --noEmit -p tsconfig.server.json
 │   │   ├── auth/            # 认证相关组件
 │   │   ├── cases/           # 用例管理组件
 │   │   ├── dashboard/       # 仪表盘组件
-│   │   ├── ui/              # UI 基础组件
-│   │   └── __tests__/       # 组件测试
+│   │   └── ui/              # UI 基础组件
 │   ├── contexts/            # React Context
 │   ├── hooks/               # 自定义 Hooks
 │   ├── pages/               # 页面组件
@@ -211,14 +218,20 @@ npx tsc --noEmit -p tsconfig.server.json
 │   └── test/                # 测试配置
 ├── server/                   # 后端源代码（Express）
 │   ├── config/              # 配置文件
-│   │   └── __tests__/       # 配置测试
 │   ├── entities/            # TypeORM 实体
 │   ├── middleware/         # Express 中间件
 │   ├── repositories/        # 数据仓库层
 │   ├── routes/              # API 路由
 │   ├── services/            # 业务服务层
-│   ├── tests/               # 后端测试
 │   └── utils/               # 工具函数
+├── test_case/                # 测试文件目录
+│   ├── frontend/            # 前端测试
+│   │   ├── components/     # 组件测试
+│   │   └── hooks/          # Hook 测试
+│   ├── backend/             # 后端测试
+│   │   ├── config/         # 配置测试
+│   │   └── services/       # 服务测试
+│   └── scripts/             # Shell 脚本测试
 ├── shared/                   # 共享类型定义
 │   └── types/               # TypeScript 共享类型
 ├── configs/                  # 配置文件
@@ -240,7 +253,9 @@ npx tsc --noEmit -p tsconfig.server.json
 ### 前端测试
 - **框架**：Vitest + React Testing Library + jsdom
 - **配置**：测试配置在 `vite.config.ts`，设置文件在 `src/test/setup.ts`
-- **位置**：测试文件放在 `src/components/__tests__/` 目录
+- **位置**：测试文件放在 `test_case/frontend/` 目录
+  - 组件测试：`test_case/frontend/components/`
+  - Hook 测试：`test_case/frontend/hooks/`
 - **命名**：测试文件以 `.test.tsx` 结尾
 - **模式**：使用 `describe()` 和 `it()` 组织测试用例
 - **模拟**：UI 组件使用 `vi.mock()` 进行模拟
@@ -264,9 +279,19 @@ describe('Component', () => {
 ```
 
 ### 后端测试
-- **测试位置**：`server/__tests__/` 和 `server/config/__tests__/`
+- **测试位置**：`test_case/backend/` 目录
+  - 配置测试：`test_case/backend/config/`
+  - 服务测试：`test_case/backend/services/`
 - **测试类型**：单元测试、集成测试
 - **使用 Vitest** 作为测试框架
+
+### Shell 脚本测试
+- **测试位置**：`test_case/scripts/` 目录
+- **测试脚本**：
+  - `test-websocket.sh` - WebSocket 集成测试
+  - `quick-verify.sh` - 快速验证脚本
+  - `test-callback.sh` - Jenkins 回调测试
+  - `check-env.sh` - 环境检查脚本
 
 ## 开发规范
 
@@ -277,7 +302,7 @@ describe('Component', () => {
   - `@/*` → `src/*`（前端）
   - `@shared/*` → `shared/*`（共享类型）
 - **React 组件**：必须用函数组件 + hooks，文件名与组件名一致（如 `Button.tsx`）
-- **测试文件**：新组件必须包含对应的测试文件，放在 `src/components/__tests__/` 目录
+- **测试文件**：新组件必须包含对应的测试文件，放在 `test_case/frontend/components/` 目录
 - **所有说明文件**必须放在对应目录，如 `docs/` 文件下
 - **不要生成过多的说明文件，会显得文件结构太杂乱**
 
@@ -570,7 +595,7 @@ npx vitest run
 npx vitest --coverage
 
 # 运行特定测试文件
-npx vitest src/components/__tests__/GitHubRepositoryTable.test.tsx
+npx vitest test_case/frontend/components/GitHubRepositoryTable.test.tsx
 ```
 
 ### 类型检查
