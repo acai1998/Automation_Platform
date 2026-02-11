@@ -1,5 +1,8 @@
 name: Sync Test Cases
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: '0 */6 * * *'  # 每 6 小时执行一次
