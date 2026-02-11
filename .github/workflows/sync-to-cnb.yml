@@ -27,15 +27,63 @@ jobs:
       run: |
         git remote add cnb https://cnb.cool/ImAcaiy/Automation_Platform.git || git remote set-url cnb https://cnb.cool/ImAcaiy/Automation_Platform.git
 
+    - name: Check CNB connectivity
+      continue-on-error: true
+      id: cnb-check
+      run: |
+        echo "Testing connectivity to cnb.cool..."
+        ping -c 3 cnb.cool || echo "Ping failed"
+        nslookup cnb.cool || echo "DNS lookup failed"
+        curl -I https://cnb.cool --connect-timeout 10 || echo "HTTPS connection failed"
+
     - name: Sync to CNB
+      continue-on-error: true
+      id: cnb-sync
+      if: steps.cnb-check.outcome == 'success'
       env:
         CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
       run: |
         echo "Syncing to CNB..."
-        git fetch https://x-access-token:${CNB_TOKEN}@cnb.cool/ImAcaiy/Automation_Platform.git master
-        git rebase origin/master HEAD
-        git push https://x-access-token:${CNB_TOKEN}@cnb.cool/ImAcaiy/Automation_Platform.git HEAD:master --force
-        echo "CNB sync completed!"
+
+        # Set Git timeout
+        git config --global http.lowSpeedLimit 1000
+        git config --global http.lowSpeedTime 60
+        git config --global http.postBuffer 524288000
+
+        # Retry logic
+        MAX_RETRIES=3
+        RETRY_COUNT=0
+
+        while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+          echo "Attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES..."
+
+          if git fetch https://x-access-token:${CNB_TOKEN}@cnb.cool/ImAcaiy/Automation_Platform.git master && \
+             git rebase origin/master HEAD && \
+             git push https://x-access-token:${CNB_TOKEN}@cnb.cool/ImAcaiy/Automation_Platform.git HEAD:master --force; then
+            echo "CNB sync completed successfully!"
+            exit 0
+          fi
+
+          RETRY_COUNT=$((RETRY_COUNT + 1))
+          if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            echo "Sync failed, retrying in 10 seconds..."
+            sleep 10
+          fi
+        done
+
+        echo "CNB sync failed after $MAX_RETRIES attempts"
+        exit 1
+
+    - name: Report CNB sync status
+      if: always()
+      run: |
+        if [ "${{ steps.cnb-sync.outcome }}" == "success" ]; then
+          echo "✅ CNB sync succeeded"
+        else
+          echo "⚠️ CNB sync failed or was skipped"
+          echo "This may be due to network connectivity issues between GitHub Actions and cnb.cool"
+          echo "GitHub sync will continue regardless"
+        fi
 
     - name: Add GitHub remote
       run: |
