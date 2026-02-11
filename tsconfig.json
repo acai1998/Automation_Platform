@@ -22,10 +22,11 @@
     "paths": {
       "@/*": ["./src/*"],
       "@shared/*": ["./shared/*"],
-      "@configs/*": ["./configs/*"]
+      "@configs/*": ["./configs/*"],
+      "@test/*": ["./test_case/*"]
     }
   },
-  "include": ["src", "shared"],
+  "include": ["src", "shared", "test_case/frontend"],
   "exclude": ["node_modules", "dist", "archive", "tmp", ".aiconfig"]
 }
 

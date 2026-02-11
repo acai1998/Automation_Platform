@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import 'dotenv/config';
 import express from 'express';
+import { createServer } from 'http';
 import cors from 'cors';
 import path from 'path';
 import rateLimit from 'express-rate-limit';
@@ -18,6 +19,7 @@ import repositoriesRoutes from './routes/repositories';
 import { schedulerService } from './services/SchedulerService';
 import { dailySummaryScheduler } from './services/DailySummaryScheduler';
 import { executionMonitorService } from './services/ExecutionMonitorService';
+import { initializeWebSocketService, webSocketService } from './services/WebSocketService';
 
 const app = express();
 const BASE_PORT = parseInt(process.env.PORT || '3000', 10);
@@ -196,13 +198,21 @@ app.use(errorLoggingMiddleware);
 
 // 启动服务器（支持端口重试）
 function startServer(port: number, attempt: number = 1): void {
-  const server = app.listen(port, () => {
+  // 创建 HTTP 服务器以支持 WebSocket
+  const httpServer = createServer(app);
+
+  // 初始化 WebSocket 服务
+  initializeWebSocketService(httpServer);
+
+  const server = httpServer.listen(port, () => {
     logger.info(`Server started successfully`, {
       port,
       url: `http://localhost:${port}`,
       apiUrl: `http://localhost:${port}/api`,
+      wsUrl: `ws://localhost:${port}/api/ws`,
       environment: process.env.NODE_ENV || 'development',
       attempt,
+      webSocketEnabled: process.env.WEBSOCKET_ENABLED !== 'false'
     }, LOG_CONTEXTS.HTTP);
 
     // 启动定时任务调度器
@@ -253,6 +263,7 @@ process.on('SIGTERM', () => {
   schedulerService.stop();
   dailySummaryScheduler.stop();
   executionMonitorService.stop();
+  webSocketService?.close();
   process.exit(0);
 });
 
@@ -264,6 +275,7 @@ process.on('SIGINT', () => {
   schedulerService.stop();
   dailySummaryScheduler.stop();
   executionMonitorService.stop();
+  webSocketService?.close();
   process.exit(0);
 });
 

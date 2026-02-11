@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import GitHubRepositoryTable from '../GitHubRepositoryTable';
+import GitHubRepositoryTable from '@/components/GitHubRepositoryTable';
 import { GitHubRepository } from '@/types/repository';
 
 // Mock Checkbox

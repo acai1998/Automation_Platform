@@ -87,3 +87,30 @@ export class ServiceError extends Error {
     };
   }
 }
+
+/**
+ * Extract error message from unknown error type
+ * Used for consistent error handling across the application
+ *
+ * @param error - Unknown error object
+ * @returns Error message string
+ */
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+/**
+ * Extract error stack trace from unknown error type
+ *
+ * @param error - Unknown error object
+ * @returns Stack trace string or undefined
+ */
+export function getErrorStack(error: unknown): string | undefined {
+  if (error instanceof Error) {
+    return error.stack;
+  }
+  return undefined;
+}

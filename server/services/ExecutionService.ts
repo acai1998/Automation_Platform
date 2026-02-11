@@ -20,13 +20,7 @@ import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
 import { ExecutionRepository } from '../repositories/ExecutionRepository';
 import { dashboardService } from './DashboardService';
-
-// 已废弃：由于没有远程 tasks 表，建议使用 CaseExecutionInput
-export interface TaskExecutionInput {
-  taskId: number;
-  triggeredBy: number;
-  triggerType: 'manual' | 'scheduled' | 'ci_triggered';
-}
+import { webSocketService } from './WebSocketService';
 
 export interface CaseExecutionInput {
   caseIds: number[];
@@ -88,13 +82,31 @@ export interface ExecutionTriggerResult {
  * 执行服务
  * 负责创建执行记录、处理外部系统回调、状态更新
  * 注：实际测试执行由 Jenkins 等外部系统完成
+ * 
+ * 核心职责：
+ * 1. 触发测试执行，创建 Auto_TestRun 和 Auto_TestCaseTaskExecutions 记录
+ * 2. 处理 Jenkins 回调，更新执行结果和统计数据
+ * 3. 实时同步 Jenkins 执行状态，处理超时执行
+ * 4. WebSocket 推送执行进度更新给前端
  */
 export class ExecutionService {
   private executionRepository: ExecutionRepository;
+  
   // 缓存 runId 到 executionId 的映射，用于处理 Jenkins 回调
   // 格式: { runId: executionId }
-  // 该缓存会在应用启动时保持，旧的条目会被清理
+  // 该缓存会在应用启动时保持，旧的条目会被 LRU 策略清理
+  // 最大容量 10000，超过时保留最新的 5000 条
   private runIdToExecutionIdCache: Map<number, number> = new Map();
+  
+  // 缓存清理定时器
+  private cacheCleanupTimer?: NodeJS.Timeout;
+
+  // 错误消息常量
+  private static readonly ERROR_MESSAGES = {
+    CASE_IDS_EMPTY: 'Case IDs cannot be empty',
+    EXECUTION_NOT_FOUND: (id: number | string) => `Execution not found: ${id}`,
+    BATCH_NOT_FOUND: (id: number) => `Batch not found: ${id}`,
+  } as const;
 
   constructor() {
     this.executionRepository = new ExecutionRepository(AppDataSource);
@@ -104,20 +116,42 @@ export class ExecutionService {
 
   /**
    * 初始化缓存清理任务
+   * 使用 LRU 策略：保持最新的执行记录，删除最旧的
    */
   private initializeCacheCleanup() {
-    // 每10分钟检查一次，清理所有缓存（因为是内存缓存，应用重启后丢失）
-    // 但我们也可以通过 created_at timestamp 来限制缓存大小
-    setInterval(() => {
+    // 每10分钟检查一次，清理超过限制的缓存
+    this.cacheCleanupTimer = setInterval(() => {
       if (this.runIdToExecutionIdCache.size > 10000) {
-        logger.warn('RunId cache size exceeds 10000, clearing oldest entries', {
+        logger.warn('RunId cache size exceeds 10000, clearing oldest entries using LRU', {
           cacheSize: this.runIdToExecutionIdCache.size,
         }, LOG_CONTEXTS.EXECUTION);
-        // 清理一半的缓存
-        const entriesToDelete = Array.from(this.runIdToExecutionIdCache.keys()).slice(0, 5000);
-        entriesToDelete.forEach(key => this.runIdToExecutionIdCache.delete(key));
+        
+        // LRU 策略：保持最新的 5000 条，删除最旧的 5000 条
+        // Map 保证插入顺序，所以最早插入的条目在前面
+        const allKeys = Array.from(this.runIdToExecutionIdCache.keys());
+        const keysToDelete = allKeys.slice(0, allKeys.length - 5000);
+        keysToDelete.forEach(key => this.runIdToExecutionIdCache.delete(key));
+        
+        logger.debug('Cache cleanup completed', {
+          deleted: keysToDelete.length,
+          remaining: this.runIdToExecutionIdCache.size,
+        }, LOG_CONTEXTS.EXECUTION);
       }
     }, 10 * 60 * 1000);
+  }
+
+  /**
+   * 清理资源，防止内存泄漏
+   * 应该在应用关闭时调用
+   */
+  public destroy(): void {
+    if (this.cacheCleanupTimer) {
+      clearInterval(this.cacheCleanupTimer);
+      this.cacheCleanupTimer = undefined;
+      logger.debug('Cache cleanup timer cleared', {}, LOG_CONTEXTS.EXECUTION);
+    }
+    this.runIdToExecutionIdCache.clear();
+    logger.info('ExecutionService destroyed and resources cleaned up', {}, LOG_CONTEXTS.EXECUTION);
   }
 
   /**
@@ -402,7 +436,15 @@ export class ExecutionService {
     const timer = createTimer();
 
     try {
-      logger.info('Batch execution processing started', {
+      // 1. 验证执行记录是否存在
+      const execution = await this.executionRepository.getTestRunDetail(runId);
+
+      // 计算回调延迟（从执行创建到回调接收的时间）
+      const callbackLatency = execution?.startTime
+        ? Date.now() - new Date(execution.startTime).getTime()
+        : undefined;
+
+      logger.info('Jenkins callback received', {
         runId,
         status: results.status,
         passedCases: results.passedCases,
@@ -410,13 +452,24 @@ export class ExecutionService {
         skippedCases: results.skippedCases,
         durationMs: results.durationMs,
         resultsCount: results.results?.length || 0,
+        callbackLatency: callbackLatency ? `${callbackLatency}ms` : 'unknown',
+        source: 'callback'
       }, LOG_CONTEXTS.EXECUTION);
-
-      // 1. 验证执行记录是否存在
-      const execution = await this.executionRepository.getTestRunDetail(runId);
 
       if (!execution) {
         throw new Error(`Execution not found: runId=${runId}`);
+      }
+
+      // 2. 幂等性检查：如果执行已经完成，避免重复更新
+      const finalStatuses = ['success', 'failed', 'cancelled', 'aborted'];
+      if (finalStatuses.includes(execution.status)) {
+        logger.warn('Execution already completed, skipping duplicate callback', {
+          runId,
+          currentStatus: execution.status,
+          newStatus: results.status,
+          source: 'idempotency_check'
+        }, LOG_CONTEXTS.EXECUTION);
+        return;
       }
 
       logger.debug('Found execution record', {
@@ -445,21 +498,43 @@ export class ExecutionService {
       // 注：completeBatch 会自动将 'cancelled' 映射为 'aborted'
       await this.executionRepository.completeBatch(runId, results, executionId);
 
-      // 4. 触发每日汇总数据刷新（异步，不影响主流程）
+      // 4. 推送 WebSocket 更新（实时通知前端）
       try {
-        const executionDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式
-        await dashboardService.refreshDailySummary(executionDate);
-        logger.debug('Daily summary refreshed after execution completion', {
+        webSocketService?.pushExecutionUpdate(runId, {
+          status: results.status,
+          passedCases: results.passedCases,
+          failedCases: results.failedCases,
+          skippedCases: results.skippedCases,
+          durationMs: results.durationMs,
+          source: 'callback'
+        });
+      } catch (wsError) {
+        // WebSocket 推送失败不影响主流程，前端会通过轮询获取最新状态
+        logger.warn('Failed to push WebSocket update, but execution completed successfully', {
           runId,
-          executionDate,
-        }, LOG_CONTEXTS.EXECUTION);
-      } catch (summaryError) {
-        // 记录错误但不影响主流程
-        logger.warn('Failed to refresh daily summary after execution completion', {
-          runId,
-          error: summaryError instanceof Error ? summaryError.message : String(summaryError),
+          wsError: wsError instanceof Error ? wsError.message : String(wsError),
+          fallback: 'Frontend will use polling mechanism'
         }, LOG_CONTEXTS.EXECUTION);
       }
+
+      // 5. 触发每日汇总数据刷新（异步后台任务，不影响主流程）
+      // 使用 setImmediate 避免阻塞当前事件循环
+      setImmediate(async () => {
+        try {
+          const executionDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式
+          await dashboardService.refreshDailySummary(executionDate);
+          logger.debug('Daily summary refreshed after execution completion', {
+            runId,
+            executionDate,
+          }, LOG_CONTEXTS.EXECUTION);
+        } catch (summaryError) {
+          // 记录错误但不影响主流程
+          logger.warn('Failed to refresh daily summary after execution completion', {
+            runId,
+            error: summaryError instanceof Error ? summaryError.message : String(summaryError),
+          }, LOG_CONTEXTS.EXECUTION);
+        }
+      });
 
       const duration = timer();
       logger.info('Batch execution completed successfully', {
@@ -484,12 +559,22 @@ export class ExecutionService {
 
   /**
    * 获取执行批次的用例列表
+   * 
+   * @deprecated 该方法不完整，建议使用 getRunCases() 替代以获取完整的用例列表
+   * @param runId 运行批次ID
+   * @returns 用例总数
+   * 
+   * 注意：当前实现仅返回用例总数，不包含具体用例列表。
+   * 完整功能需要在 Auto_TestRun 中存储 case_ids 字段。
+   * 可以通过 getRunCases(runId) 获取关联的用例列表。
+   * 
+   * @throws Error 如果找不到执行批次记录
    */
   async getBatchCases(runId: number) {
     const batch = await this.executionRepository.getTestRunBasicInfo(runId);
 
     if (!batch) {
-      throw new Error(`Batch not found: ${runId}`);
+      throw new Error(ExecutionService.ERROR_MESSAGES.BATCH_NOT_FOUND(runId));
     }
 
     // 注意：这里需要补充存储关联用例ID的逻辑
@@ -563,7 +648,8 @@ export class ExecutionService {
       // 4. 映射Jenkins状态到内部状态
       const jenkinsStatusMapped = this.mapJenkinsStatusToInternal(buildStatus.result, buildStatus.building);
 
-      console.log(`Jenkins status sync for runId ${runId}:`, {
+      logger.debug('Jenkins status sync for runId', {
+        runId,
         currentStatus: execution.status,
         jenkinsBuilding: buildStatus.building,
         jenkinsResult: buildStatus.result,
@@ -571,11 +657,16 @@ export class ExecutionService {
         buildNumber: buildStatus.number,
         buildUrl: buildStatus.url,
         buildDuration: buildStatus.duration
-      });
+      }, LOG_CONTEXTS.EXECUTION);
 
       // 5. Check for status inconsistencies and log them
       if (execution.status === 'running' && !buildStatus.building && buildStatus.result) {
-        console.warn(`Status inconsistency detected for runId ${runId}: platform shows 'running' but Jenkins shows completed with result '${buildStatus.result}'`);
+        logger.warn('Status inconsistency detected', {
+          runId,
+          platformStatus: 'running',
+          jenkinsResult: buildStatus.result,
+          message: `Platform shows 'running' but Jenkins shows completed with result '${buildStatus.result}'`
+        }, LOG_CONTEXTS.EXECUTION);
       }
 
       // 6. 检查状态是否需要更新
@@ -615,7 +706,9 @@ export class ExecutionService {
       };
 
     } catch (error) {
-      console.error(`Failed to sync status for runId ${runId}:`, error);
+      logger.errorLog(error, 'Failed to sync status for runId', {
+        runId,
+      });
       return {
         success: false,
         updated: false,
@@ -626,41 +719,46 @@ export class ExecutionService {
 
   /**
    * 映射Jenkins状态到内部状态
+   * 支持 Jenkins 所有可能的构建状态
    */
   private mapJenkinsStatusToInternal(result: string | null, building: boolean): string {
     // Log the status mapping decision for debugging
-    console.log(`Mapping Jenkins status: building=${building}, result=${result}`);
+    logger.debug(`Mapping Jenkins status: building=${building}, result=${result}`, {}, LOG_CONTEXTS.EXECUTION);
 
+    // 如果还在构建中，返回 running 状态
     if (building) {
       return 'running';
     }
 
     // Handle null result (build may still be pending or just finished)
     if (result === null) {
-      console.warn('Jenkins result is null - build may still be in progress or just finished');
+      logger.warn('Jenkins result is null - build may still be in progress or just finished', {}, LOG_CONTEXTS.EXECUTION);
       return 'pending';
     }
 
     const normalizedResult = result.toUpperCase();
 
+    // 完整的 Jenkins 构建结果映射
     switch (normalizedResult) {
       case 'SUCCESS':
-        console.log('Mapping SUCCESS to success');
         return 'success';
       case 'FAILURE':
       case 'UNSTABLE':
-        console.log(`Mapping ${normalizedResult} to failed`);
         return 'failed';
       case 'ABORTED':
-        console.log('Mapping ABORTED to aborted');
         return 'cancelled';
       case 'NOT_BUILT':
-        console.log('Mapping NOT_BUILT to pending');
+      case 'QUEUED':        // 在队列中等待执行
+      case 'PAUSED':        // 构建已暂停
         return 'pending';
       default:
-        console.warn(`Unknown Jenkins result status: ${result}, defaulting to failed`);
-        // For unknown statuses, default to failed to ensure stuck executions are resolved
-        return 'failed';
+        logger.warn(`Unknown Jenkins result status: ${result}, defaulting to pending (not failed)`, {
+          result,
+          building,
+        }, LOG_CONTEXTS.EXECUTION);
+        // 对于未知状态，默认返回 pending 而不是 failed
+        // 以避免误标记执行失败，应该等待更多信息或手动干预
+        return 'pending';
     }
   }
 
@@ -682,6 +780,12 @@ export class ExecutionService {
           status: 'running',
           updateSource: 'jenkins_poll',
         }, LOG_CONTEXTS.EXECUTION);
+
+        // 推送 WebSocket 更新
+        webSocketService?.pushExecutionUpdate(runId, {
+          status: 'running',
+          source: 'polling'
+        });
       } else {
         // 构建完成，更新最终状态
         await this.executionRepository.updateTestRunStatus(runId, jenkinsData.status, {
@@ -698,6 +802,16 @@ export class ExecutionService {
           resultsCount: jenkinsData.testResults?.results.length || 0,
         }, LOG_CONTEXTS.EXECUTION);
 
+        // 推送 WebSocket 更新
+        webSocketService?.pushExecutionUpdate(runId, {
+          status: jenkinsData.status,
+          passedCases: jenkinsData.testResults?.passedCases,
+          failedCases: jenkinsData.testResults?.failedCases,
+          skippedCases: jenkinsData.testResults?.skippedCases,
+          durationMs: jenkinsData.duration,
+          source: 'polling'
+        });
+
         // 2. 如果有详细测试结果，更新 Auto_TestRunResults
         if (jenkinsData.testResults && jenkinsData.testResults.results.length > 0) {
           await this.updateTestResultsFromJenkins(runId, jenkinsData.testResults);
@@ -706,7 +820,9 @@ export class ExecutionService {
 
       return true;
     } catch (error) {
-      console.error(`Failed to update execution status for runId ${runId}:`, error);
+      logger.errorLog(error, 'Failed to update execution status', {
+        runId,
+      });
       return false;
     }
   }
@@ -716,8 +832,8 @@ export class ExecutionService {
    */
   private async updateTestResultsFromJenkins(runId: number, testResults: TestResults): Promise<void> {
     // 首先找到关联的 executionId
-    const executionId = await this.executionRepository.findExecutionId();
-    
+    const executionId = await this.executionRepository.findExecutionIdByRunId(runId);
+
     if (!executionId) {
       throw new Error(`Could not find executionId for runId ${runId}`);
     }
@@ -762,7 +878,11 @@ export class ExecutionService {
           });
         }
       } catch (error) {
-        console.error(`Failed to update test result for case ${result.caseId}:`, error);
+        logger.errorLog(error, 'Failed to update test result for case', {
+          runId,
+          caseId: result.caseId,
+          caseName: result.caseName,
+        });
       }
     }
   }
@@ -770,6 +890,11 @@ export class ExecutionService {
   /**
    * 检查并处理超时的执行
    * 超过指定时间仍在运行状态的执行将被标记为超时
+   * 
+   * 改进：
+   * - 使用并发处理而非串行处理，限制并发数为 5 提升性能
+   * - 收集所有处理结果用于汇总统计
+   * - 详细的日志记录便于监控
    */
   async checkAndHandleTimeouts(timeoutMs: number = 10 * 60 * 1000): Promise<{
     checked: number;
@@ -781,40 +906,75 @@ export class ExecutionService {
       const timeoutThreshold = new Date(Date.now() - timeoutMs);
       const runningExecutions = await this.executionRepository.getPotentiallyTimedOutExecutions(timeoutThreshold);
 
-      console.log(`Checking ${runningExecutions.length} potentially timed out executions`);
+      logger.info(`Checking ${runningExecutions.length} potentially timed out executions`, {
+        threshold: timeoutThreshold.toISOString(),
+      }, LOG_CONTEXTS.EXECUTION);
 
       let timedOutCount = 0;
       let updatedCount = 0;
 
-      for (const execution of runningExecutions) {
-        try {
-          // 先尝试从 Jenkins 同步状态
-          const syncResult = await this.syncExecutionStatusFromJenkins(execution.id);
+      // 使用并发处理，限制并发数为 5 以避免过载
+      const concurrencyLimit = 5;
+      
+      for (let i = 0; i < runningExecutions.length; i += concurrencyLimit) {
+        const batch = runningExecutions.slice(i, i + concurrencyLimit);
+        
+        // 并发处理一个批次
+        const results = await Promise.allSettled(
+          batch.map(async (execution) => {
+            try {
+              // 先尝试从 Jenkins 同步状态
+              const syncResult = await this.syncExecutionStatusFromJenkins(execution.id);
 
-          if (syncResult.success && syncResult.updated) {
-            updatedCount++;
-            logger.info(`Execution updated from Jenkins during timeout check (runId=${execution.id})`, {
-              runId: execution.id,
-              message: syncResult.message,
-              updateSource: 'jenkins_poll',
-            }, LOG_CONTEXTS.EXECUTION);
-            continue;
-          }
+              if (syncResult.success && syncResult.updated) {
+                logger.info(`Execution updated from Jenkins during timeout check (runId=${execution.id})`, {
+                  runId: execution.id,
+                  message: syncResult.message,
+                  updateSource: 'jenkins_poll',
+                }, LOG_CONTEXTS.EXECUTION);
+                return { type: 'updated' as const, runId: execution.id };
+              }
 
-          // 如果同步失败或没有更新，且确实超时，标记为超时
-          if (!syncResult.success) {
-            await this.markExecutionAsTimedOut(execution.id);
-            timedOutCount++;
-            logger.warn('Execution marked as timed out during timeout check', {
-              runId: execution.id,
-              message: syncResult.message,
-              updateSource: 'timeout',
+              // 如果同步失败或没有更新，且确实超时，标记为超时
+              if (!syncResult.success) {
+                await this.markExecutionAsTimedOut(execution.id);
+                logger.warn('Execution marked as timed out during timeout check', {
+                  runId: execution.id,
+                  message: syncResult.message,
+                  updateSource: 'timeout',
+                }, LOG_CONTEXTS.EXECUTION);
+                return { type: 'timedOut' as const, runId: execution.id };
+              }
+
+              return { type: 'none' as const, runId: execution.id };
+            } catch (error) {
+              logger.error('Failed to handle timeout for execution', {
+                runId: execution.id,
+                error: error instanceof Error ? error.message : String(error)
+              }, LOG_CONTEXTS.EXECUTION);
+              return { type: 'error' as const, runId: execution.id, error };
+            }
+          })
+        );
+
+        // 统计本批次的结果
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            if (result.value.type === 'updated') updatedCount++;
+            else if (result.value.type === 'timedOut') timedOutCount++;
+          } else {
+            logger.error('Promise rejected during timeout check', {
+              reason: result.reason instanceof Error ? result.reason.message : String(result.reason)
             }, LOG_CONTEXTS.EXECUTION);
           }
-        } catch (error) {
-          console.error(`Failed to handle timeout for execution ${execution.id}:`, error);
         }
       }
+
+      logger.info('Timeout check completed', {
+        total: runningExecutions.length,
+        updated: updatedCount,
+        timedOut: timedOutCount,
+      }, LOG_CONTEXTS.EXECUTION);
 
       return {
         checked: runningExecutions.length,
@@ -822,7 +982,7 @@ export class ExecutionService {
         updated: updatedCount
       };
     } catch (error) {
-      console.error('Failed to check timeouts:', error);
+      logger.errorLog(error, 'Failed to check timeouts', {});
       return { checked: 0, timedOut: 0, updated: 0 };
     }
   }
@@ -842,7 +1002,7 @@ export class ExecutionService {
    * 验证执行状态一致性
    * 比较平台状态与 Jenkins 状态，返回不一致的执行列表
    */
-  async verifyStatusConsistency(limit: number = 50): Promise<{
+  async verifyStatusConsistency(options: { limit?: number; runId?: number } = {}): Promise<{
     total: number;
     inconsistent: Array<{
       runId: number;
@@ -852,9 +1012,31 @@ export class ExecutionService {
       jobName: string;
     }>;
   }> {
+    const { limit = 50, runId } = options;
+
     try {
-      // 获取最近的有 Jenkins 信息的执行记录
-      const executions = await this.executionRepository.getExecutionsWithJenkinsInfo(limit);
+      let executions: Array<{
+        id: number;
+        status: string;
+        jenkinsJob: string | null;
+        jenkinsBuildId: string | null;
+      }> = [];
+
+      if (runId) {
+        // 获取单个执行记录
+        const execution = await this.executionRepository.getTestRunStatus(runId);
+        if (execution && execution.jenkinsJob && execution.jenkinsBuildId) {
+          executions = [execution];
+        }
+      } else {
+        // 获取最近的有 Jenkins 信息的执行记录
+        const allExecutions = await this.executionRepository.getExecutionsWithJenkinsInfo(limit);
+        // 过滤掉没有 Jenkins 信息的执行记录
+        executions = allExecutions.filter((e): e is typeof e & { jenkinsJob: string; jenkinsBuildId: string } => 
+          e.jenkinsJob !== null && e.jenkinsJob !== undefined &&
+          e.jenkinsBuildId !== null && e.jenkinsBuildId !== undefined
+        );
+      }
 
       const inconsistent: Array<{
         runId: number;
@@ -866,6 +1048,16 @@ export class ExecutionService {
 
       for (const execution of executions) {
         try {
+          // Type guard: ensure jenkinsJob and jenkinsBuildId are non-null before using
+          if (!execution.jenkinsJob || !execution.jenkinsBuildId) {
+            logger.debug('Skipping execution with missing Jenkins info', {
+              runId: execution.id,
+              hasJob: !!execution.jenkinsJob,
+              hasBuildId: !!execution.jenkinsBuildId,
+            }, LOG_CONTEXTS.EXECUTION);
+            continue;
+          }
+
           const buildStatus = await jenkinsStatusService.getBuildStatus(
             execution.jenkinsJob,
             execution.jenkinsBuildId
@@ -885,7 +1077,10 @@ export class ExecutionService {
             }
           }
         } catch (error) {
-          console.error(`Failed to verify consistency for execution ${execution.id}:`, error);
+          logger.error('Failed to verify consistency for execution', {
+            runId: execution.id,
+            error: error instanceof Error ? error.message : String(error)
+          }, LOG_CONTEXTS.EXECUTION);
         }
       }
 
@@ -894,7 +1089,7 @@ export class ExecutionService {
         inconsistent
       };
     } catch (error) {
-      console.error('Failed to verify status consistency:', error);
+      logger.errorLog(error, 'Failed to verify status consistency', { options });
       return { total: 0, inconsistent: [] };
     }
   }

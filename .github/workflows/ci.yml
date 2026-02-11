@@ -6,11 +6,11 @@ on:
   push:
     branches: [main, master]
     paths:
-      - 'test_case/**'
+      - 'test_case/**/*.py'  # 只监听 Python 文件变化
   workflow_dispatch:  # 支持手动触发
 
 jobs:
-  sync:
+  sync-python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,3 +31,20 @@ jobs:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           DB_NAME: ${{ secrets.DB_NAME }}
         run: python .github/scripts/sync_cases.py
+
+  test-typescript:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript tests
+        run: npm run test
