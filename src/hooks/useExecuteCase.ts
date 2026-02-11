@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { request } from '../api';
 import { wsClient } from '../services/websocket';
@@ -9,22 +9,6 @@ import {
   getStuckMessage,
 } from '../config/polling';
 
-/**
- * Legacy polling constants (deprecated - use POLLING_CONFIG instead)
- * Kept for backward compatibility
- * @deprecated Use POLLING_CONFIG from '../config/polling' instead
- */
-const POLLING_CONSTANTS = {
-  FAST_INTERVAL: POLLING_CONFIG.INTERVALS.FAST,
-  NORMAL_INTERVAL: POLLING_CONFIG.INTERVALS.NORMAL,
-  MEDIUM_INTERVAL: POLLING_CONFIG.INTERVALS.MEDIUM,
-  SLOW_INTERVAL: POLLING_CONFIG.INTERVALS.SLOW,
-  MAX_EXECUTION_TIME: POLLING_CONFIG.WINDOWS.MAX_EXECUTION_TIME,
-  STUCK_DETECTION_TIME: POLLING_CONFIG.STUCK_DETECTION.CRITICAL_THRESHOLD,
-  PENDING_FAST_POLL_WINDOW: POLLING_CONFIG.WINDOWS.PENDING_FAST_POLL,
-  EARLY_EXECUTION_WINDOW: POLLING_CONFIG.WINDOWS.EARLY_EXECUTION,
-  MID_EXECUTION_WINDOW: POLLING_CONFIG.WINDOWS.MID_EXECUTION,
-} as const;
 
 export interface ExecuteResult {
   runId: number;
@@ -121,13 +105,11 @@ export function useManualSync() {
  * 4. 支持手动重试和状态强制同步
  */
 export function useBatchExecution(runId: number | null, options?: {
-  pollInterval?: number;
   enableSmartPolling?: boolean;
   onStatusChange?: (status: string, prevStatus?: string) => void;
   onSyncIssue?: (issue: string) => void;
 }) {
   const {
-    pollInterval = 10000,
     enableSmartPolling = true,
     onStatusChange,
     onSyncIssue
@@ -137,14 +119,14 @@ export function useBatchExecution(runId: number | null, options?: {
   const prevStatusRef = useRef<string | null>(null);
   const lastSyncAttemptRef = useRef<number>(0);
   const stuckDetectionRef = useRef<number>(0);
-  const [wsConnected, setWsConnected] = useState(false);
+  const wsConnectedRef = useRef(false);
 
   // WebSocket 订阅
   useEffect(() => {
     if (!runId) return;
 
     const isConnected = wsClient.isConnected();
-    setWsConnected(isConnected);
+    wsConnectedRef.current = isConnected;
 
     if (!isConnected) {
       console.log('[WebSocket] Not connected, using polling fallback');
@@ -153,24 +135,32 @@ export function useBatchExecution(runId: number | null, options?: {
 
     console.log('[WebSocket] Subscribing to execution updates for runId:', runId);
 
-    // 订阅 WebSocket 更新
-    const unsubscribe = wsClient.subscribeToExecution(runId, {
+    // 订阅 WebSocket 更新 (异步操作)
+    let isMounted = true;
+    let unsubscribeFn: (() => void) | null = null;
+    
+    wsClient.subscribeToExecution(runId, {
       onUpdate: (data) => {
+        if (!isMounted) return;
+        
         console.log('[WebSocket] Execution update received:', data);
 
-        // 立即更新缓存
-        queryClient.setQueryData(['batch-execution', runId], (old: any) => {
-          if (!old) return old;
+        // 立即更新缓存（使用泛型替代 any）
+        queryClient.setQueryData<BatchExecution>(
+          ['batch-execution', runId],
+          (old) => {
+            if (!old) return old;
 
-          return {
-            ...old,
-            status: data.status,
-            passedCases: data.passedCases ?? old.passedCases,
-            failedCases: data.failedCases ?? old.failedCases,
-            skippedCases: data.skippedCases ?? old.skippedCases,
-            durationMs: data.durationMs ?? old.durationMs
-          };
-        });
+            return {
+              ...old,
+              status: data.status,
+              passed_cases: data.passedCases ?? old.passed_cases,
+              failed_cases: data.failedCases ?? old.failed_cases,
+              skipped_cases: data.skippedCases ?? old.skipped_cases,
+              duration_ms: data.durationMs ?? old.duration_ms
+            };
+          }
+        );
 
         // 触发状态变化回调
         if (prevStatusRef.current !== data.status) {
@@ -179,12 +169,31 @@ export function useBatchExecution(runId: number | null, options?: {
         }
       },
       onQuickFail: (data) => {
+        if (!isMounted) return;
+        
         console.warn('[WebSocket] Quick fail detected:', data);
         onSyncIssue?.(`Quick fail: ${data.message} (${data.duration}ms)`);
       }
+    }).then((unsubscribe) => {
+      if (isMounted) {
+        unsubscribeFn = unsubscribe;
+      } else {
+        // If component unmounted, clean up immediately
+        unsubscribe();
+      }
+    }).catch((error) => {
+      if (!isMounted) return;
+      console.error('[WebSocket] Subscription error:', error);
+      onSyncIssue?.(`WebSocket 订阅失败: ${error instanceof Error ? error.message : '未知错误'}`);
     });
 
-    return unsubscribe;
+    return () => {
+      isMounted = false;
+      // Clean up WebSocket subscription on unmount
+      if (unsubscribeFn) {
+        unsubscribeFn();
+      }
+    };
   }, [runId, queryClient, onStatusChange, onSyncIssue]);
 
   const query = useQuery({
@@ -209,7 +218,7 @@ export function useBatchExecution(runId: number | null, options?: {
       // Continue polling for pending and running states
       if (status === 'pending' || status === 'running') {
         // Use centralized polling interval calculation
-        const interval = calculatePollingInterval(status, data.start_time, wsConnected);
+        const interval = calculatePollingInterval(status, data.start_time, wsConnectedRef.current);
 
         if (interval === false) {
           console.log('[Polling] Max execution time reached, stopping polling');
@@ -217,7 +226,7 @@ export function useBatchExecution(runId: number | null, options?: {
         }
 
         // Log polling strategy
-        if (wsConnected) {
+        if (wsConnectedRef.current) {
           console.log('[Polling] WebSocket connected, using backup polling (60 seconds)');
         } else if (enableSmartPolling) {
           const elapsedTime = data.start_time
@@ -268,15 +277,18 @@ export function useBatchExecution(runId: number | null, options?: {
     };
   }, [query.data, onStatusChange, onSyncIssue]);
 
-  // Calculate stuck status using centralized helper
-  const stuckStatus = query.data
-    ? checkStuckStatus(query.data.status, query.data.start_time)
-    : { isStuck: false, isEarlyStuck: false, isCriticallyStuck: false, elapsedTime: 0, severity: 'none' as const };
+  // Calculate stuck status using centralized helper (memoized to avoid unnecessary recalculations)
+  const stuckStatus = useMemo(() => {
+    if (!query.data) {
+      return { isStuck: false, isEarlyStuck: false, isCriticallyStuck: false, elapsedTime: 0, severity: 'none' as const };
+    }
+    return checkStuckStatus(query.data.status, query.data.start_time);
+  }, [query.data?.status, query.data?.start_time]);
 
   return {
     ...query,
     // WebSocket connection status
-    wsConnected,
+    wsConnected: wsConnectedRef.current,
     // Stuck detection status
     isStuck: stuckStatus.isCriticallyStuck,
     isPotentiallyStuck: stuckStatus.isEarlyStuck,
@@ -313,10 +325,11 @@ export function useTestExecution(options?: {
     onStatusChange: (status, prevStatus) => {
       options?.onStatusChange?.(status, prevStatus);
 
-      // 检测执行完成
+      // 检测执行完成（安全检查，避免非空断言）
       if (prevStatus && ['running', 'pending'].includes(prevStatus) &&
-          ['success', 'failed', 'aborted'].includes(status)) {
-        options?.onExecutionComplete?.(batchExecution.data!);
+          ['success', 'failed', 'aborted'].includes(status) &&
+          batchExecution.data) {
+        options?.onExecutionComplete?.(batchExecution.data);
       }
     },
     onSyncIssue: (issue) => {
