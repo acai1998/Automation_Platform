@@ -6,13 +6,6 @@ import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/comp
 import { StatCardSkeleton } from "@/components/ui/StatCardSkeleton";
 import type { DashboardResponse } from "@/types/dashboard";
 
-interface DashboardStats {
-  totalCases: number;
-  todayRuns: number;
-  todaySuccessRate: number | null;
-  runningTasks: number;
-}
-
 interface StatCardProps {
   icon: React.ReactNode;
   iconBg: string;
@@ -101,7 +94,7 @@ interface StatsCardsProps {
   onRefresh?: () => Promise<void>;
 }
 
-export function StatsCards({ data, onRefresh }: StatsCardsProps) {
+export function StatsCards({ data }: StatsCardsProps) {
   const [, setLocation] = useLocation();
   const [loading, setLoading] = useState(false);
   const [, setError] = useState<string | null>(null);
