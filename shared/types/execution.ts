@@ -79,7 +79,7 @@ export type TaskExecutionTriggerTypeType = `${TaskExecutionTriggerType}`;
 export function mapTaskExecutionStatusToTestRunStatus(
   status: TaskExecutionStatusType | TestRunStatusType
 ): TestRunStatusType {
-  if (status === TaskExecutionStatus.CANCELLED || status === 'cancelled') {
+  if (status === TaskExecutionStatus.CANCELLED) {
     return TestRunStatus.ABORTED;
   }
   return status as TestRunStatusType;
@@ -91,7 +91,7 @@ export function mapTaskExecutionStatusToTestRunStatus(
 export function mapTestRunStatusToTaskExecutionStatus(
   status: TestRunStatusType | TaskExecutionStatusType
 ): TaskExecutionStatusType {
-  if (status === TestRunStatus.ABORTED || status === 'aborted') {
+  if (status === TestRunStatus.ABORTED) {
     return TaskExecutionStatus.CANCELLED;
   }
   return status as TaskExecutionStatusType;

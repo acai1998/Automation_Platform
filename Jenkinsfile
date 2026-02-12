@@ -256,9 +256,8 @@ pipeline {
     
     post {
         always {
-            script {
-                // 使用 Scripted Pipeline 语法获取工作空间
-                node {
+            node('') {
+                script {
                     echo "清理环境..."
 
                     try {
