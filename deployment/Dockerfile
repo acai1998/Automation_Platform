@@ -54,7 +54,9 @@ RUN npm config set proxy null && \
 COPY package*.json ./
 
 # 安装所有依赖（包括 devDependencies，后端编译需要 typescript）
-RUN npm ci --prefer-offline --no-audit 2>&1 | grep -v "^npm notice"
+RUN npm ci --prefer-offline --no-audit 2>&1 | grep -v "^npm notice" && \
+    # 验证 typescript 是否安装成功
+    test -f node_modules/.bin/tsc || (echo "ERROR: typescript not installed" && exit 1)
 
 # 复制后端源代码和配置
 COPY tsconfig.server.json ./
@@ -64,7 +66,7 @@ COPY shared/ ./shared/
 # 编译 TypeScript 后端代码
 # 注意：tsconfig.server.json 中 outDir 为 ./dist/server
 # 编译后会生成 dist/server/server/ 和 dist/server/shared/ 的嵌套结构
-RUN npm run server:build && \
+RUN npx tsc -p tsconfig.server.json && \
     # 验证编译产物
     test -d dist/server || exit 1
 
