@@ -1,84 +1,68 @@
-# 构建缓存
+# Git
 .git
 .gitignore
 .gitattributes
 
-# Node 构建产物
+# Node
 node_modules
-dist
-.next
-.nuxt
-build
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
 
-# 开发工具配置
+# Build outputs
+dist
+build
+.next
+
+# Development
+.env.local
+.env.*.local
 .vscode
 .idea
 *.swp
 *.swo
 *~
 .DS_Store
+.AppleDouble
+.LSOverride
 
-# 测试相关
-tests
-src/components/__tests__
+# Testing
 coverage
-*.test.ts
-*.test.tsx
-*.spec.ts
-*.spec.tsx
-vitest.config.ts
-jest.config.js
+.nyc_output
+.jest
+.mocha
 
-# 文档
-docs
-README.md
-CHANGELOG.md
-LICENSE
-*.md
-deployment/Dockerfile
-deployment/README.md
-deployment/*.md
-
-# 临时文件
-tmp
-temp
+# Logs
+logs
 *.log
-.env.local
-.env.*.local
 
-# 构建脚本
-scripts
-*.sh
-Jenkinsfile
+# Package managers
+package-lock.json.bak
 
-# 其他不需要的文件
-archive
-.aiconfig
-.catpaw
-.npm
-.prettier
-.eslintcache
-.turbo
-dist-old
+# Docker
+Dockerfile.dev
+docker-compose.dev.yml
 
 # CI/CD
 .github
 .gitlab-ci.yml
 .circleci
+.travis.yml
 
-# 依赖缓存
-package-lock.json
-npm-shrinkwrap.json
+# Documentation
+*.md
+docs
+docs/
 
-# IDE 特定文件
-.vscode
-.idea
-*.iml
+# Archives
+archive
+tmp
+.tmp
+
+# IDE configs
+*.code-workspace
 .editorconfig
 
-# 系统文件
-Thumbs.db
+# OS files
 .DS_Store
-.env
-.env.*
-!.env.example
+Thumbs.db
