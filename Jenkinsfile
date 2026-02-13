@@ -11,7 +11,6 @@ pipeline {
     }
     
     environment {
-        GIT_CREDENTIALS = credentials('git-credentials')
         PLATFORM_API_URL = 'http://localhost:3000'
         PYTHON_ENV = "${WORKSPACE}/venv"
     }
