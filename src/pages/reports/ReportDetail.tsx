@@ -1,24 +1,21 @@
 import { useState } from 'react';
 import { useRoute } from 'wouter';
-import { 
-  ArrowLeft, 
-  Clock, 
-  Calendar, 
-  User, 
-  ExternalLink, 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle, 
+import {
+  ArrowLeft,
+  Clock,
+  ExternalLink,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
   Loader2,
   Search,
-  Filter,
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { useTestRunDetail, useTestRunResults, type Auto_TestRunResults } from '@/hooks/useExecutions';
+import { useTestRunDetail, useTestRunResults } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
 
 export default function ReportDetail() {

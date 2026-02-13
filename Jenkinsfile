@@ -11,8 +11,7 @@ pipeline {
     }
     
     environment {
-        GIT_CREDENTIALS = credentials('git-credentials')
-        PLATFORM_API_URL = 'http://localhost:3000'
+        PLATFORM_API_URL = 'http://117.72.182.23:3000'
         PYTHON_ENV = "${WORKSPACE}/venv"
     }
     
@@ -31,7 +30,9 @@ pipeline {
                     if (params.RUN_ID) {
                         sh '''
                             curl -X POST "${PLATFORM_API_URL}/api/executions/${RUN_ID}/start" \
-                                -H "Content-Type: application/json"
+                                -H "Content-Type: application/json" \
+                                --connect-timeout 5 \
+                                --max-time 10 || echo "⚠️ 标记执行开始失败，继续处理"
                         '''
                     }
                 }
@@ -177,7 +178,6 @@ pipeline {
                         if [ ! -z "${CALLBACK_URL}" ]; then
                             curl -X POST "${CALLBACK_URL}" \
                                 -H "Content-Type: application/json" \
-                                -H "X-Api-Key: ${JENKINS_API_KEY}" \
                                 -d "{
                                     \"runId\": ${RUN_ID},
                                     \"status\": \"$STATUS\",
@@ -290,7 +290,6 @@ pipeline {
                             sh """
                                 curl -X POST '${callbackUrl}' \
                                     -H 'Content-Type: application/json' \
-                                    -H 'X-Api-Key: ${env.JENKINS_API_KEY}' \
                                     -d '{
                                         "runId": ${params.RUN_ID},
                                         "status": "${finalStatus}",
@@ -330,7 +329,6 @@ pipeline {
                             echo "正在回调失败状态到平台..."
                             curl -X POST "${params.CALLBACK_URL}" \
                                 -H "Content-Type: application/json" \
-                                -H "X-Api-Key: ${env.JENKINS_API_KEY}" \
                                 -d '{
                                     "runId": ${params.RUN_ID},
                                     "status": "failed",

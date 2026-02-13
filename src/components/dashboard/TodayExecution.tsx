@@ -19,7 +19,6 @@ interface TodayExecutionProps {
 
 export function TodayExecution({
   data,
-  onRefresh,
   onFilterChange,
   selectedFilter = 'all'
 }: TodayExecutionProps) {
