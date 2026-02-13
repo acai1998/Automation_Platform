@@ -178,7 +178,6 @@ pipeline {
                         if [ ! -z "${CALLBACK_URL}" ]; then
                             curl -X POST "${CALLBACK_URL}" \
                                 -H "Content-Type: application/json" \
-                                -H "X-Api-Key: ${JENKINS_API_KEY}" \
                                 -d "{
                                     \"runId\": ${RUN_ID},
                                     \"status\": \"$STATUS\",
@@ -291,7 +290,6 @@ pipeline {
                             sh """
                                 curl -X POST '${callbackUrl}' \
                                     -H 'Content-Type: application/json' \
-                                    -H 'X-Api-Key: ${env.JENKINS_API_KEY}' \
                                     -d '{
                                         "runId": ${params.RUN_ID},
                                         "status": "${finalStatus}",
@@ -331,7 +329,6 @@ pipeline {
                             echo "正在回调失败状态到平台..."
                             curl -X POST "${params.CALLBACK_URL}" \
                                 -H "Content-Type: application/json" \
-                                -H "X-Api-Key: ${env.JENKINS_API_KEY}" \
                                 -d '{
                                     "runId": ${params.RUN_ID},
                                     "status": "failed",
