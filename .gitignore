@@ -16,6 +16,12 @@ __pycache__/
 .env
 .env.example
 
+# 规则忽略文件
+CLAUDE.md
+AGENTS.md
+Jenkinsfile.bak
+Jenkinsfile.optimized
+
 
 # Distribution / packaging
 .Python
