@@ -11,7 +11,7 @@ pipeline {
     }
     
     environment {
-        PLATFORM_API_URL = 'http://localhost:3000'
+        PLATFORM_API_URL = 'http://117.72.182.23:3000'
         PYTHON_ENV = "${WORKSPACE}/venv"
     }
     
@@ -30,7 +30,9 @@ pipeline {
                     if (params.RUN_ID) {
                         sh '''
                             curl -X POST "${PLATFORM_API_URL}/api/executions/${RUN_ID}/start" \
-                                -H "Content-Type: application/json"
+                                -H "Content-Type: application/json" \
+                                --connect-timeout 5 \
+                                --max-time 10 || echo "⚠️ 标记执行开始失败，继续处理"
                         '''
                     }
                 }
