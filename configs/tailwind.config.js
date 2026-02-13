@@ -103,11 +103,35 @@ export default {
             transform: "scale(1)",
           },
         },
+        themeSwitch: {
+          "0%": {
+            transform: "rotate(0deg) scale(1)",
+            opacity: "1",
+          },
+          "50%": {
+            transform: "rotate(180deg) scale(1.2)",
+            opacity: "0.8",
+          },
+          "100%": {
+            transform: "rotate(360deg) scale(1)",
+            opacity: "1",
+          },
+        },
+        pulseSubtle: {
+          "0%, 100%": {
+            opacity: "0.2",
+          },
+          "50%": {
+            opacity: "0.3",
+          },
+        },
       },
       animation: {
         "fade-in-up": "fadeInUp 0.6s ease-out forwards",
         "skeleton-pulse": "skeleton 1.5s ease-in-out infinite",
         "scale-in": "scaleIn 0.2s ease-out",
+        "theme-switch": "themeSwitch 0.5s ease-in-out",
+        "pulse-subtle": "pulseSubtle 2s ease-in-out infinite",
       },
     },
   },

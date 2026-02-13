@@ -432,8 +432,8 @@ export class ExecutionScheduler {
             triggerType: execution.trigger_type,
             totalCases: execution.total_cases,
             startTime: new Date(execution.start_time || Date.now()),
-            jenkinsJob: execution.jenkins_job,
-            jenkinsBuildId: execution.jenkins_build_id
+            jenkinsJob: execution.jenkins_job || undefined,
+            jenkinsBuildId: execution.jenkins_build_id || undefined
           });
 
           if (result.success) {

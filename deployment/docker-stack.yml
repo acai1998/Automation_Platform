@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  app:
+    image: ghcr.io/acai1998/automation-platform:latest
+    
+    ports:
+      - "3000:3000"
+    
+    # 非敏感环境变量配置
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # 数据库配置（非敏感信息）
+      - DB_HOST=117.72.182.23
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_NAME=autotest
+      # Jenkins 配置（非敏感信息）
+      - JENKINS_URL=http://jenkins.wiac.xyz:8080
+      - JENKINS_USER=root
+      - JENKINS_JOB_NAME=AutoTest
+      - JENKINS_JOB_API=SeleniumBaseCi-AutoTest
+      - JENKINS_JOB_UI=ui-automation
+      - JENKINS_JOB_PERF=performance-automation
+      - JENKINS_ALLOWED_IPS=localhost,127.0.0.1,jenkins.wiac.xyz
+      - API_CALLBACK_URL=http://localhost:3000/api/jenkins/callback
+      - JENKINS_DEBUG_IP=true
+      - CORS_ORIGIN=http://localhost:5173
+      - JWT_EXPIRES_IN=7d
+      # 告诉应用从 Docker Secrets 文件中读取敏感信息
+      - DB_PASSWORD_FILE=/run/secrets/db_password
+      - JENKINS_TOKEN_FILE=/run/secrets/jenkins_token
+    
+    # 挂载 Docker Secrets（容器内路径: /run/secrets/）
+    secrets:
+      - db_password
+      - jenkins_token
+    
+    networks:
+      - automation-network
+    
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+networks:
+  automation-network:
+    driver: overlay
+
+# 引用外部已创建的 Docker Secrets
+# 这些 secrets 已经通过 'docker secret create' 命令创建
+# Docker Swarm 会自动将它们挂载到容器的 /run/secrets/ 目录
+secrets:
+  db_password:
+    external: true
+  jenkins_token:
+    external: true

@@ -1,0 +1,335 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'RUN_ID', description: '执行批次ID', defaultValue: '')
+        string(name: 'SCRIPT_PATHS', description: '脚本路径(逗号分隔)', defaultValue: '')
+        string(name: 'CALLBACK_URL', description: '回调URL', defaultValue: '')
+        string(name: 'MARKER', description: 'Pytest marker标记', defaultValue: '')
+        string(name: 'REPO_URL', description: '测试用例仓库URL', defaultValue: '')
+        string(name: 'JENKINS_API_KEY', description: 'Jenkins API密钥用于回调认证', defaultValue: '')
+    }
+
+    environment {
+        PLATFORM_API_URL = 'http://localhost:3000'
+        PYTHON_ENV = "${WORKSPACE}/venv"
+    }
+
+    stages {
+        stage('准备') {
+            steps {
+                script {
+                    echo "========== 执行信息 =========="
+                    echo "运行ID: ${params.RUN_ID}"
+                    echo "脚本路径: ${params.SCRIPT_PATHS}"
+                    echo "回调地址: ${params.CALLBACK_URL}"
+                    echo "==============================="
+
+                    // 标记执行开始（可选）
+                    if (params.RUN_ID) {
+                        sh '''
+                            curl -X POST "${PLATFORM_API_URL}/api/executions/${RUN_ID}/start" \
+                                -H "Content-Type: application/json"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('检出代码') {
+            steps {
+                script {
+                    echo "正在克隆/更新测试用例仓库..."
+
+                    if (params.REPO_URL) {
+                        if (fileExists('test-cases')) {
+                            dir('test-cases') {
+                                sh 'git pull origin main'
+                            }
+                        } else {
+                            sh 'git clone ${params.REPO_URL} test-cases'
+                        }
+                    } else {
+                        echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出"
+                        echo "使用默认的测试用例目录"
+                    }
+                }
+            }
+        }
+
+        stage('准备环境') {
+            steps {
+                script {
+                    echo "准备Python环境..."
+
+                    sh '''
+                        cd test-cases
+
+                        # 创建虚拟环境（如果不存在）
+                        if [ ! -d "${PYTHON_ENV}" ]; then
+                            python3 -m venv ${PYTHON_ENV}
+                        fi
+
+                        # 激活虚拟环境并安装依赖
+                        source ${PYTHON_ENV}/bin/activate
+                        pip install -q pytest pytest-json-report
+
+                        # 列出可用的用例
+                        echo "可用的测试文件:"
+                        find . -name "test_*.py" -o -name "*_test.py" | head -20
+                    '''
+                }
+            }
+        }
+
+        stage('执行测试') {
+            steps {
+                script {
+                    def scriptPaths = params.SCRIPT_PATHS
+                    def marker = params.MARKER
+                    def testCommand = "source ${PYTHON_ENV}/bin/activate && "
+
+                    if (scriptPaths) {
+                        // 执行指定的脚本路径
+                        def paths = scriptPaths.split(',')
+                        testCommand += "pytest ${paths.join(' ')}"
+                    } else if (marker) {
+                        // 使用marker标记执行
+                        testCommand += "pytest -m ${marker}"
+                    } else {
+                        // 执行所有测试
+                        testCommand += "pytest"
+                    }
+
+                    // 添加报告输出参数
+                    testCommand += " --json-report --json-report-file=test-report.json -v"
+
+                    sh '''
+                        cd test-cases
+                        ''' + testCommand + ''' || true
+                    '''
+                }
+            }
+        }
+
+        stage('回调平台') {
+            steps {
+                script {
+                    echo "回调测试结果到平台..."
+
+                    // 使用Jenkins native API获取执行时长
+                    def durationMs = currentBuild.duration ?: 0
+                    def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
+
+                    try {
+                        // 解析测试结果
+                        def testReport = null
+                        def total = 0
+                        def passed = 0
+                        def failed = 0
+                        def skipped = 0
+                        def status = "success"
+
+                        // 检查测试报告文件是否存在
+                        if (fileExists('test-cases/test-report.json')) {
+                            echo "✅ 找到测试报告文件，解析结果..."
+                            def reportContent = sh(
+                                script: '''
+                                    cd test-cases
+                                    if command -v jq >/dev/null 2>&1; then
+                                        jq -c '.summary' test-report.json 2>/dev/null || echo '{"total":0,"passed":0,"failed":0,"skipped":0}'
+                                    else
+                                        echo '{"total":0,"passed":0,"failed":0,"skipped":0}'
+                                    fi
+                                ''',
+                                returnStdout: true
+                            ).trim()
+
+                            testReport = readJSON text: reportContent
+                            total = testReport.total ?: 0
+                            passed = testReport.passed ?: 0
+                            failed = testReport.failed ?: 0
+                            skipped = testReport.skipped ?: 0
+                            status = (failed == 0) ? "success" : "failed"
+                        } else {
+                            echo "⚠️ 未找到测试报告文件，使用默认值"
+                            // 如果没有报告文件，根据构建状态推断
+                            def buildResult = currentBuild.result ?: 'SUCCESS'
+                            status = (buildResult == 'SUCCESS') ? 'success' : 'failed'
+                            failed = (status == 'failed') ? 1 : 0
+                        }
+
+                        echo "测试结果汇总:"
+                        echo "  总数: ${total}"
+                        echo "  通过: ${passed}"
+                        echo "  失败: ${failed}"
+                        echo "  跳过: ${skipped}"
+                        echo "  状态: ${status}"
+                        echo "  耗时: ${durationMs}ms"
+
+                        // 回调到平台
+                        if (params.RUN_ID && callbackUrl) {
+                            echo "发送回调到: ${callbackUrl}"
+                            def response = sh(
+                                script: """
+                                    curl -X POST '${callbackUrl}' \
+                                        -H 'Content-Type: application/json' \
+                                        -H 'X-Api-Key: ${params.JENKINS_API_KEY}' \
+                                        -w '\\n%{http_code}' \
+                                        -d '{
+                                            "runId": ${params.RUN_ID},
+                                            "status": "${status}",
+                                            "passedCases": ${passed},
+                                            "failedCases": ${failed},
+                                            "skippedCases": ${skipped},
+                                            "durationMs": ${durationMs},
+                                            "buildUrl": "${BUILD_URL}"
+                                        }'
+                                """,
+                                returnStdout: true
+                            ).trim()
+
+                            def lines = response.split('\n')
+                            def httpCode = lines[-1]
+                            if (httpCode == '200' || httpCode == '201') {
+                                echo "✅ 回调成功 (HTTP ${httpCode})"
+                            } else {
+                                echo "⚠️ 回调返回非成功状态码: HTTP ${httpCode}"
+                                echo "响应内容: ${lines[0..-2].join('\n')}"
+                            }
+                        } else {
+                            echo "⚠️ 跳过回调: RUN_ID=${params.RUN_ID}, CALLBACK_URL=${callbackUrl}"
+                        }
+                    } catch (Exception e) {
+                        echo "❌ 回调处理失败: ${e.message}"
+                        echo "堆栈跟踪: ${e.toString()}"
+                        // 不抛出异常，允许pipeline继续执行
+                    }
+                }
+            }
+        }
+
+        // ✅ 新增: 归档报告阶段 - 在 stages 中执行,有工作空间上下文
+        stage('归档报告') {
+            steps {
+                script {
+                    echo "归档测试报告..."
+
+                    try {
+                        archiveArtifacts artifacts: 'test-cases/test-report.json',
+                                       allowEmptyArchive: true,
+                                       fingerprint: true
+                        echo "✅ 测试报告已归档"
+                    } catch (Exception e) {
+                        echo "⚠️ 归档测试报告失败: ${e.message}"
+                    }
+
+                    try {
+                        junit allowEmptyResults: true,
+                              testResults: '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
+                        echo "✅ JUnit报告已发布"
+                    } catch (Exception e) {
+                        echo "⚠️ JUnit报告处理失败: ${e.message}"
+                    }
+                }
+            }
+        }
+
+        stage('构建镜像') {
+            when {
+                expression { return currentBuild.result == 'SUCCESS' }
+            }
+            steps {
+                script {
+                    echo "构建Docker镜像并推送到阿里云容器镜像服务..."
+
+                    def dockerRegistry = "crpi-dytkl1o45qyeksph.cn-hangzhou.personal.cr.aliyuncs.com"
+                    def imageRepo = "caijinwei/auto_test"
+                    def imageTag = "${BUILD_NUMBER}"
+                    def fullImageName = "${dockerRegistry}/${imageRepo}:${imageTag}"
+
+                    try {
+                        // 1. 登录阿里云容器镜像服务
+                        withCredentials([usernamePassword(credentialsId: 'aliyun-docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                            sh """
+                                echo "登录阿里云容器镜像服务..."
+                                docker login --username=${DOCKER_USERNAME} --password=${DOCKER_PASSWORD} ${dockerRegistry}
+                            """
+                        }
+
+                        // 2. 构建Docker镜像
+                        echo "构建Docker镜像..."
+                        sh """
+                            docker build -t ${imageRepo}:${imageTag} .
+                        """
+
+                        // 3. 标签镜像
+                        echo "为阿里云仓库标签镜像..."
+                        sh """
+                            docker tag ${imageRepo}:${imageTag} ${fullImageName}
+                        """
+
+                        // 4. 推送镜像到阿里云
+                        echo "推送镜像到阿里云容器镜像服务..."
+                        sh """
+                            docker push ${fullImageName}
+                        """
+
+                        echo "✅ 镜像构建和推送成功: ${fullImageName}"
+
+                        // 5. 推送到GitHub（强制推送）
+                        echo "推送代码到GitHub..."
+                        withCredentials([usernamePassword(credentialsId: 'git-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                            sh """
+                                git push https://${GIT_USER}:${GIT_PASS}@github.com/ImAcaiy/Automation_Platform.git HEAD:master --force
+                                echo "✅ GitHub推送成功"
+                            """
+                        }
+                    } catch (Exception e) {
+                        echo "❌ 镜像构建或推送失败: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        throw e
+                    }
+                }
+            }
+        }
+    }
+
+    // ✅ post 块只做简单的日志输出,不做文件操作
+    post {
+        always {
+            script {
+                echo "========== Pipeline 执行完成 =========="
+                echo "构建编号: ${BUILD_NUMBER}"
+                echo "构建结果: ${currentBuild.result ?: 'SUCCESS'}"
+                echo "构建时长: ${currentBuild.duration ?: 0}ms"
+                echo "======================================"
+            }
+        }
+
+        success {
+            script {
+                echo "✅ Pipeline执行成功"
+            }
+        }
+
+        failure {
+            script {
+                echo "❌ Pipeline执行失败"
+                echo "请查看构建日志了解详情"
+            }
+        }
+
+        unstable {
+            script {
+                echo "⚠️ Pipeline执行不稳定"
+            }
+        }
+
+        aborted {
+            script {
+                echo "🛑 Pipeline被中止"
+            }
+        }
+    }
+}
