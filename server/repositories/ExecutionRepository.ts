@@ -18,7 +18,7 @@ import {
   mapTaskExecutionStatusToTestRunStatus,
   isValidTestRunStatus,
   isValidTaskExecutionStatus,
-} from '@shared/types/execution';
+} from '../../shared/types/execution';
 
 /**
  * 带用户信息的 TaskExecution 接口
