@@ -31,17 +31,11 @@ services:
       # 告诉应用从 Docker Secrets 文件中读取敏感信息
       - DB_PASSWORD_FILE=/run/secrets/db_password
       - JENKINS_TOKEN_FILE=/run/secrets/jenkins_token
-      - JENKINS_API_KEY_FILE=/run/secrets/jenkins_api_key
-      - JENKINS_JWT_SECRET_FILE=/run/secrets/jenkins_jwt_secret
-      - JENKINS_SIGNATURE_SECRET_FILE=/run/secrets/jenkins_signature_secret
     
     # 挂载 Docker Secrets（容器内路径: /run/secrets/）
     secrets:
       - db_password
       - jenkins_token
-      - jenkins_api_key
-      - jenkins_jwt_secret
-      - jenkins_signature_secret
     
     networks:
       - automation-network
@@ -74,10 +68,4 @@ secrets:
   db_password:
     external: true
   jenkins_token:
-    external: true
-  jenkins_api_key:
-    external: true
-  jenkins_jwt_secret:
-    external: true
-  jenkins_signature_secret:
     external: true

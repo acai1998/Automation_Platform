@@ -30,7 +30,6 @@ function createWrapper() {
     defaultOptions: {
       queries: {
         retry: false,
-        gcTime: 0,
         staleTime: 0,
       },
       mutations: {
@@ -276,7 +275,7 @@ describe('useManualSync', () => {
 
     const queryClient = new QueryClient({
       defaultOptions: {
-        queries: { retry: false, gcTime: 0 },
+        queries: { retry: false },
         mutations: { retry: false },
       },
     });
@@ -424,7 +423,7 @@ describe('useBatchExecution', () => {
   it('should subscribe to WebSocket when connected', async () => {
     const mockUnsubscribe = vi.fn();
     vi.mocked(wsClient.isConnected).mockReturnValue(true);
-    vi.mocked(wsClient.subscribeToExecution).mockReturnValue(mockUnsubscribe);
+    vi.mocked(wsClient.subscribeToExecution).mockReturnValue(mockUnsubscribe as any);
 
     const mockBatchData = {
       success: true,
@@ -475,7 +474,7 @@ describe('useBatchExecution', () => {
 
     vi.mocked(api.request).mockResolvedValue(mockBatchData);
     vi.mocked(wsClient.isConnected).mockReturnValue(true);
-    vi.mocked(wsClient.subscribeToExecution).mockReturnValue(vi.fn());
+    vi.mocked(wsClient.subscribeToExecution).mockReturnValue(vi.fn() as any);
 
     const { result } = renderHook(() => useBatchExecution(123), {
       wrapper: createWrapper(),

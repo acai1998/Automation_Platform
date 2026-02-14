@@ -1,0 +1,40 @@
+# 简单部署模式 - 仅应用容器，连接外部数据库
+version: '3.8'
+
+services:
+  app:
+    image: automation-platform:latest
+    container_name: automation-platform-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      - JENKINS_URL=${JENKINS_URL}
+      - JENKINS_USER=${JENKINS_USER}
+      - JENKINS_TOKEN=${JENKINS_TOKEN}
+      - JENKINS_JOB_NAME=${JENKINS_JOB_NAME}
+      - JENKINS_JOB_API=${JENKINS_JOB_API}
+      - JENKINS_JOB_UI=${JENKINS_JOB_UI}
+      - JENKINS_JOB_PERF=${JENKINS_JOB_PERF}
+      - API_CALLBACK_URL=${API_CALLBACK_URL}
+      - CORS_ORIGIN=${CORS_ORIGIN}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
