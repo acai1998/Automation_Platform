@@ -56,7 +56,11 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
  */
 router.post('/trigger', async (req: Request, res: Response) => {
   try {
-    const { caseIds, projectId = 1, triggeredBy = 1, jenkinsJobName } = req.body;
+    const triggerBody = (req.body ?? {}) as Record<string, unknown>;
+    const caseIds = triggerBody['caseIds'];
+    const projectId = typeof triggerBody['projectId'] === 'number' ? triggerBody['projectId'] : 1;
+    const triggeredBy = typeof triggerBody['triggeredBy'] === 'number' ? triggerBody['triggeredBy'] : 1;
+    const jenkinsJobName = typeof triggerBody['jenkinsJobName'] === 'string' ? triggerBody['jenkinsJobName'] : undefined;
 
     if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
       return res.status(400).json({
@@ -339,20 +343,20 @@ router.get('/status/:executionId', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Execution not found' });
     }
 
-    const execution = detail.execution as any;
+    const execution = detail.execution as unknown as Record<string, unknown>;
 
     res.json({
       success: true,
       data: {
         executionId,
-        status: execution.status,
-        totalCases: execution.total_cases,
-        passedCases: execution.passed_cases,
-        failedCases: execution.failed_cases,
-        skippedCases: execution.skipped_cases,
-        startTime: execution.start_time,
-        endTime: execution.end_time,
-        duration: execution.duration,
+        status: execution['status'],
+        totalCases: execution['total_cases'],
+        passedCases: execution['passed_cases'],
+        failedCases: execution['failed_cases'],
+        skippedCases: execution['skipped_cases'],
+        startTime: execution['start_time'],
+        endTime: execution['end_time'],
+        duration: execution['duration'],
         // Jenkins 相关字段（预留）
         jenkinsStatus: null,
         buildNumber: null,
@@ -718,15 +722,14 @@ router.post('/callback/manual-sync/:runId', [
 ], async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.params.runId);
-    const { 
-      status, 
-      passedCases, 
-      failedCases, 
-      skippedCases, 
-      durationMs, 
-      results,
-      force = false 
-    } = req.body;
+    const syncBody = (req.body ?? {}) as Record<string, unknown>;
+    const status = syncBody['status'];
+    const passedCases = syncBody['passedCases'];
+    const failedCases = syncBody['failedCases'];
+    const skippedCases = syncBody['skippedCases'];
+    const durationMs = syncBody['durationMs'];
+    const results = syncBody['results'];
+    const force = typeof syncBody['force'] === 'boolean' ? syncBody['force'] : false;
 
     if (isNaN(runId)) {
       return res.status(400).json({
@@ -742,7 +745,7 @@ router.post('/callback/manual-sync/:runId', [
       failedCases,
       skippedCases,
       durationMs,
-      resultsCount: results?.length || 0,
+      resultsCount: Array.isArray(results) ? results.length : 0,
       force,
       timestamp: new Date().toISOString()
     }, LOG_CONTEXTS.JENKINS);
@@ -757,22 +760,22 @@ router.post('/callback/manual-sync/:runId', [
       });
     }
 
-    const executionData = execution.execution as any;
-    const currentStatus = executionData.status;
+    const executionData = execution.execution as unknown as Record<string, unknown>;
+    const currentStatus = executionData['status'];
 
     // 检查是否允许更新
-    if (!force && ['success', 'failed', 'cancelled'].includes(currentStatus)) {
+    if (!force && ['success', 'failed', 'cancelled'].includes(currentStatus as string)) {
       return res.status(400).json({
         success: false,
         message: `Execution is already completed with status: ${currentStatus}. Use force=true to override.`,
         current: {
           id: runId,
           status: currentStatus,
-          totalCases: executionData.total_cases,
-          passedCases: executionData.passed_cases,
-          failedCases: executionData.failed_cases,
-          skippedCases: executionData.skipped_cases,
-          updatedAt: executionData.updated_at || executionData.created_at
+          totalCases: executionData['total_cases'],
+          passedCases: executionData['passed_cases'],
+          failedCases: executionData['failed_cases'],
+          skippedCases: executionData['skipped_cases'],
+          updatedAt: executionData['updated_at'] ?? executionData['created_at']
         }
       });
     }
@@ -790,11 +793,11 @@ router.post('/callback/manual-sync/:runId', [
 
     await executionService.completeBatchExecution(runId, {
       status: status as 'success' | 'failed' | 'cancelled',
-      passedCases: passedCases || 0,
-      failedCases: failedCases || 0,
-      skippedCases: skippedCases || 0,
-      durationMs: durationMs || 0,
-      results: results || [],
+      passedCases: typeof passedCases === 'number' ? passedCases : 0,
+      failedCases: typeof failedCases === 'number' ? failedCases : 0,
+      skippedCases: typeof skippedCases === 'number' ? skippedCases : 0,
+      durationMs: typeof durationMs === 'number' ? durationMs : 0,
+      results: Array.isArray(results) ? results : [],
     });
 
     const processingTime = Date.now() - startTime;
@@ -808,7 +811,7 @@ router.post('/callback/manual-sync/:runId', [
     // 查询更新后的数据
     const updated = await executionService.getBatchExecution(runId);
 
-    const updatedData = updated.execution as any;
+    const updatedData = updated.execution as unknown as Record<string, unknown>;
 
     res.json({
       success: true,
@@ -816,20 +819,20 @@ router.post('/callback/manual-sync/:runId', [
       previous: {
         id: runId,
         status: currentStatus,
-        totalCases: executionData.total_cases,
-        passedCases: executionData.passed_cases,
-        failedCases: executionData.failed_cases,
-        skippedCases: executionData.skipped_cases
+        totalCases: executionData['total_cases'],
+        passedCases: executionData['passed_cases'],
+        failedCases: executionData['failed_cases'],
+        skippedCases: executionData['skipped_cases']
       },
       updated: {
         id: runId,
-        status: updatedData.status,
-        totalCases: updatedData.total_cases,
-        passedCases: updatedData.passed_cases,
-        failedCases: updatedData.failed_cases,
-        skippedCases: updatedData.skipped_cases,
-        endTime: updatedData.end_time,
-        durationMs: updatedData.duration_ms
+        status: updatedData['status'],
+        totalCases: updatedData['total_cases'],
+        passedCases: updatedData['passed_cases'],
+        failedCases: updatedData['failed_cases'],
+        skippedCases: updatedData['skipped_cases'],
+        endTime: updatedData['end_time'],
+        durationMs: updatedData['duration_ms']
       },
       timing: {
         processingTimeMs: processingTime,
@@ -884,19 +887,27 @@ router.post('/callback/diagnose',
     }, LOG_CONTEXTS.JENKINS);
 
     // 分析回调配置
-    const diagnostics: any = {
+    const envConfig = {
+      jenkins_url: !!process.env.JENKINS_URL,
+      jenkins_user: !!process.env.JENKINS_USER,
+      jenkins_token: !!process.env.JENKINS_TOKEN,
+      jenkins_allowed_ips: !!process.env.JENKINS_ALLOWED_IPS,
+    };
+    const diagnostics: {
+      timestamp: string;
+      clientIP: string;
+      environmentVariablesConfigured: typeof envConfig;
+      requestHeaders: Record<string, unknown>;
+      suggestions: string[];
+      nextSteps?: string[];
+    } = {
       timestamp,
       clientIP,
-      environmentVariablesConfigured: {
-        jenkins_url: !!process.env.JENKINS_URL,
-        jenkins_user: !!process.env.JENKINS_USER,
-        jenkins_token: !!process.env.JENKINS_TOKEN,
-        jenkins_allowed_ips: !!process.env.JENKINS_ALLOWED_IPS,
-      },
+      environmentVariablesConfigured: envConfig,
       requestHeaders: {
         hasContentType: !!req.headers['content-type'],
       },
-      suggestions: [] as string[],
+      suggestions: [],
     };
 
     // 分析问题并给出建议
@@ -958,7 +969,14 @@ router.get('/health', async (req: Request, res: Response) => {
     const jenkinsToken = process.env.JENKINS_TOKEN || '';
     
     // 健康检查数据
-    const healthCheckData: any = {
+    const healthCheckData: {
+      timestamp: string;
+      duration: number;
+      checks: Record<string, { success: boolean; duration: number }>;
+      diagnostics: Record<string, unknown>;
+      issues: string[];
+      recommendations: string[];
+    } = {
       timestamp: new Date().toISOString(),
       duration: 0,
       checks: {
@@ -1023,7 +1041,7 @@ router.get('/health', async (req: Request, res: Response) => {
       }, LOG_CONTEXTS.JENKINS);
 
       if (response.ok) {
-        const data = await response.json() as any;
+        const data = await response.json() as Record<string, unknown>;
         healthCheckData.checks.authenticationTest.success = true;
         healthCheckData.checks.apiResponseTest.success = true;
         
@@ -1032,7 +1050,7 @@ router.get('/health', async (req: Request, res: Response) => {
           data: {
             connected: true,
             jenkinsUrl,
-            version: data.version || 'unknown',
+            version: typeof data['version'] === 'string' ? data['version'] : 'unknown',
             timestamp: new Date().toISOString(),
             details: healthCheckData,
           },
@@ -1357,7 +1375,9 @@ router.get('/monitoring/stats', async (_req, res) => {
  */
 router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
   try {
-    const { timeoutMinutes = 5, dryRun = false } = req.body;
+    const fixBody = (req.body ?? {}) as Record<string, unknown>;
+    const timeoutMinutes = typeof fixBody['timeoutMinutes'] === 'number' ? fixBody['timeoutMinutes'] : 5;
+    const dryRun = typeof fixBody['dryRun'] === 'boolean' ? fixBody['dryRun'] : false;
 
     logger.info(`${dryRun ? 'Simulating' : 'Starting'} fix for stuck executions`, {
       timeoutMinutes,

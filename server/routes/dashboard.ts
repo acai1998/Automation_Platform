@@ -183,40 +183,47 @@ router.get('/recent-runs', async (req, res) => {
 });
 
 // 辅助验证函数
-const validateStats = (stats: any) => {
-  if (stats && typeof stats === 'object') {
+const validateStats = (stats: unknown) => {
+  if (stats !== null && typeof stats === 'object' && !Array.isArray(stats)) {
+    const s = stats as Record<string, unknown>;
     return {
-      totalCases: Number.isInteger(stats.totalCases) ? stats.totalCases : 0,
-      todayRuns: Number.isInteger(stats.todayRuns) ? stats.todayRuns : 0,
-      todaySuccessRate: typeof stats.todaySuccessRate === 'number' ? stats.todaySuccessRate : null,
-      runningTasks: Number.isInteger(stats.runningTasks) ? stats.runningTasks : 0,
+      totalCases: Number.isInteger(s['totalCases']) ? (s['totalCases'] as number) : 0,
+      todayRuns: Number.isInteger(s['todayRuns']) ? (s['todayRuns'] as number) : 0,
+      todaySuccessRate: typeof s['todaySuccessRate'] === 'number' ? (s['todaySuccessRate'] as number) : null,
+      runningTasks: Number.isInteger(s['runningTasks']) ? (s['runningTasks'] as number) : 0,
     };
   }
   return { totalCases: 0, todayRuns: 0, todaySuccessRate: null, runningTasks: 0 };
 };
 
-const validateTodayExecution = (data: any) => {
-  if (data && typeof data === 'object') {
+const validateTodayExecution = (data: unknown) => {
+  if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+    const d = data as Record<string, unknown>;
     return {
-      total: Number.isInteger(data.total) ? data.total : 0,
-      passed: Number.isInteger(data.passed) ? data.passed : 0,
-      failed: Number.isInteger(data.failed) ? data.failed : 0,
-      skipped: Number.isInteger(data.skipped) ? data.skipped : 0,
+      total: Number.isInteger(d['total']) ? (d['total'] as number) : 0,
+      passed: Number.isInteger(d['passed']) ? (d['passed'] as number) : 0,
+      failed: Number.isInteger(d['failed']) ? (d['failed'] as number) : 0,
+      skipped: Number.isInteger(d['skipped']) ? (d['skipped'] as number) : 0,
     };
   }
   return { total: 0, passed: 0, failed: 0, skipped: 0 };
 };
 
-const validateTrendData = (data: any[]) => {
+const validateTrendData = (data: unknown[]) => {
   if (Array.isArray(data)) {
-    return data.map(item => ({
-      date: item?.date || '',
-      totalExecutions: Number.isInteger(item?.totalExecutions) ? item.totalExecutions : 0,
-      passedCases: Number.isInteger(item?.passedCases) ? item.passedCases : 0,
-      failedCases: Number.isInteger(item?.failedCases) ? item.failedCases : 0,
-      skippedCases: Number.isInteger(item?.skippedCases) ? item.skippedCases : 0,
-      successRate: typeof item?.successRate === 'number' ? item.successRate : 0,
-    }));
+    return data.map((rawItem: unknown) => {
+      const item = (rawItem !== null && typeof rawItem === 'object' && !Array.isArray(rawItem))
+        ? (rawItem as Record<string, unknown>)
+        : null;
+      return {
+        date: typeof item?.['date'] === 'string' ? item['date'] : '',
+        totalExecutions: Number.isInteger(item?.['totalExecutions']) ? (item!['totalExecutions'] as number) : 0,
+        passedCases: Number.isInteger(item?.['passedCases']) ? (item!['passedCases'] as number) : 0,
+        failedCases: Number.isInteger(item?.['failedCases']) ? (item!['failedCases'] as number) : 0,
+        skippedCases: Number.isInteger(item?.['skippedCases']) ? (item!['skippedCases'] as number) : 0,
+        successRate: typeof item?.['successRate'] === 'number' ? (item['successRate'] as number) : 0,
+      };
+    });
   }
   return [];
 };

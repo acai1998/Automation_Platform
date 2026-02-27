@@ -10,7 +10,7 @@ interface ValidationRule {
   max?: number;
   pattern?: RegExp;
   arrayItemType?: 'string' | 'number';
-  allowedValues?: any[];
+  allowedValues?: unknown[];
 }
 
 interface ValidationSchema {
@@ -234,24 +234,27 @@ export class RequestValidator {
 
     // 校验请求体
     if (schema.body) {
+      const body = (req.body ?? {}) as Record<string, unknown>;
       for (const rule of schema.body) {
-        const error = this.validateField(req.body, rule, 'body');
+        const error = this.validateField(body, rule, 'body');
         if (error) errors.push(error);
       }
     }
 
     // 校验路径参数
     if (schema.params) {
+      const params: Record<string, unknown> = req.params;
       for (const rule of schema.params) {
-        const error = this.validateField(req.params, rule, 'params');
+        const error = this.validateField(params, rule, 'params');
         if (error) errors.push(error);
       }
     }
 
     // 校验查询参数
     if (schema.query) {
+      const query: Record<string, unknown> = req.query as Record<string, unknown>;
       for (const rule of schema.query) {
-        const error = this.validateField(req.query, rule, 'query');
+        const error = this.validateField(query, rule, 'query');
         if (error) errors.push(error);
       }
     }
@@ -265,8 +268,8 @@ export class RequestValidator {
   /**
    * 校验单个字段
    */
-  private validateField(data: any, rule: ValidationRule, source: string): string | null {
-    const value = data[rule.field];
+  private validateField(data: Record<string, unknown>, rule: ValidationRule, source: string): string | null {
+    const value: unknown = data[rule.field];
     const fieldPath = `${source}.${rule.field}`;
 
     // 必填字段检查
@@ -283,8 +286,8 @@ export class RequestValidator {
     const typeError = this.validateType(value, rule.type, fieldPath);
     if (typeError) return typeError;
 
-    // 字符串长度检查
-    if (rule.type === 'string') {
+    // 字符串长度检查（通过 validateType 已确认为 string）
+    if (rule.type === 'string' && typeof value === 'string') {
       if (rule.minLength && value.length < rule.minLength) {
         return `${fieldPath} must be at least ${rule.minLength} characters long`;
       }
@@ -296,8 +299,8 @@ export class RequestValidator {
       }
     }
 
-    // 数字范围检查
-    if (rule.type === 'number') {
+    // 数字范围检查（通过 validateType 已确认为 number）
+    if (rule.type === 'number' && typeof value === 'number') {
       if (rule.min !== undefined && value < rule.min) {
         return `${fieldPath} must be at least ${rule.min}`;
       }
@@ -306,8 +309,11 @@ export class RequestValidator {
       }
     }
 
-    // 数组类型检查
+    // 数组类型检查：显式用 Array.isArray 确认，防止字符串被当作类数组对象遍历（type confusion）
     if (rule.type === 'array') {
+      if (!Array.isArray(value)) {
+        return `${fieldPath} must be an array`;
+      }
       if (rule.arrayItemType) {
         for (let i = 0; i < value.length; i++) {
           const itemTypeError = this.validateType(value[i], rule.arrayItemType, `${fieldPath}[${i}]`);
@@ -327,7 +333,7 @@ export class RequestValidator {
   /**
    * 类型校验
    */
-  private validateType(value: any, expectedType: string, fieldPath: string): string | null {
+  private validateType(value: unknown, expectedType: string, fieldPath: string): string | null {
     switch (expectedType) {
       case 'string':
         if (typeof value !== 'string') {
@@ -361,68 +367,71 @@ export class RequestValidator {
   /**
    * 校验测试结果数组
    */
-  private validateResults(results: any[]): { isValid: boolean; errors: string[] } {
+  private validateResults(results: unknown[]): { isValid: boolean; errors: string[] } {
     const errors: string[] = [];
 
     for (let i = 0; i < results.length; i++) {
-      const result = results[i];
+      const result: unknown = results[i];
       const prefix = `results[${i}]`;
 
-      if (typeof result !== 'object' || result === null) {
+      if (typeof result !== 'object' || result === null || Array.isArray(result)) {
         errors.push(`${prefix} must be an object`);
         continue;
       }
 
+      // 收窄类型为可索引对象
+      const r = result as Record<string, unknown>;
+
       // 校验必填字段
-      if (typeof result.caseId !== 'number' || result.caseId <= 0) {
+      if (typeof r['caseId'] !== 'number' || (r['caseId'] as number) <= 0) {
         errors.push(`${prefix}.caseId must be a positive number`);
       }
 
-      if (typeof result.caseName !== 'string' || result.caseName.trim().length === 0) {
+      if (typeof r['caseName'] !== 'string' || (r['caseName'] as string).trim().length === 0) {
         errors.push(`${prefix}.caseName must be a non-empty string`);
       }
 
-      if (!['passed', 'failed', 'skipped', 'error'].includes(result.status)) {
+      if (!['passed', 'failed', 'skipped', 'error'].includes(r['status'] as string)) {
         errors.push(`${prefix}.status must be one of: passed, failed, skipped, error`);
       }
 
-      if (typeof result.duration !== 'number' || result.duration < 0) {
+      if (typeof r['duration'] !== 'number' || (r['duration'] as number) < 0) {
         errors.push(`${prefix}.duration must be a non-negative number`);
       }
 
       // 可选字段校验
-      if (result.errorMessage !== undefined && typeof result.errorMessage !== 'string') {
+      if (r['errorMessage'] !== undefined && typeof r['errorMessage'] !== 'string') {
         errors.push(`${prefix}.errorMessage must be a string`);
       }
 
       // 新增诊断字段校验 (可选)
-      if (result.stackTrace !== undefined && typeof result.stackTrace !== 'string') {
+      if (r['stackTrace'] !== undefined && typeof r['stackTrace'] !== 'string') {
         errors.push(`${prefix}.stackTrace must be a string`);
       }
 
-      if (result.screenshotPath !== undefined && typeof result.screenshotPath !== 'string') {
+      if (r['screenshotPath'] !== undefined && typeof r['screenshotPath'] !== 'string') {
         errors.push(`${prefix}.screenshotPath must be a string`);
       }
 
-      if (result.logPath !== undefined && typeof result.logPath !== 'string') {
+      if (r['logPath'] !== undefined && typeof r['logPath'] !== 'string') {
         errors.push(`${prefix}.logPath must be a string`);
       }
 
-      if (result.assertionsTotal !== undefined && (typeof result.assertionsTotal !== 'number' || result.assertionsTotal < 0)) {
+      if (r['assertionsTotal'] !== undefined && (typeof r['assertionsTotal'] !== 'number' || (r['assertionsTotal'] as number) < 0)) {
         errors.push(`${prefix}.assertionsTotal must be a non-negative number`);
       }
 
-      if (result.assertionsPassed !== undefined && (typeof result.assertionsPassed !== 'number' || result.assertionsPassed < 0)) {
+      if (r['assertionsPassed'] !== undefined && (typeof r['assertionsPassed'] !== 'number' || (r['assertionsPassed'] as number) < 0)) {
         errors.push(`${prefix}.assertionsPassed must be a non-negative number`);
       }
 
-      if (result.responseData !== undefined && typeof result.responseData !== 'string') {
+      if (r['responseData'] !== undefined && typeof r['responseData'] !== 'string') {
         errors.push(`${prefix}.responseData must be a string`);
       }
 
       // 逻辑校验：通过的断言数不能超过总断言数
-      if (result.assertionsTotal !== undefined && result.assertionsPassed !== undefined) {
-        if (result.assertionsPassed > result.assertionsTotal) {
+      if (typeof r['assertionsTotal'] === 'number' && typeof r['assertionsPassed'] === 'number') {
+        if ((r['assertionsPassed'] as number) > (r['assertionsTotal'] as number)) {
           errors.push(`${prefix}.assertionsPassed cannot exceed assertionsTotal`);
         }
       }

@@ -1,13 +1,24 @@
 import { Router, Request, Response } from 'express';
 import { authService } from '../services/AuthService';
 import { authenticate } from '../middleware/auth';
+import {
+  loginRateLimiter,
+  registerRateLimiter,
+  forgotPasswordRateLimiter,
+  resetPasswordRateLimiter,
+  refreshRateLimiter,
+  generalAuthRateLimiter,
+} from '../middleware/authRateLimiter';
 
 const router = Router();
 
 // 用户注册
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', registerRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, username } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const email = typeof body['email'] === 'string' ? body['email'] : '';
+    const password = typeof body['password'] === 'string' ? body['password'] : '';
+    const username = typeof body['username'] === 'string' ? body['username'] : '';
 
     // 参数验证
     if (!email || !password || !username) {
@@ -16,7 +27,16 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     // 邮箱格式验证
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    // 先限制长度（防止超长输入对正则引擎造成 ReDoS 攻击）
+    if (email.length > 254) {
+      res.status(400).json({ success: false, message: '邮箱格式不正确' });
+      return;
+    }
+    // 使用明确上界的正则，避免多项式级回溯（Polynomial ReDoS）：
+    // - 本地部分限制在 1~64 个字符（RFC 5321 规范上限）
+    // - 域名部分限制在 1~255 个字符
+    // - 使用具体字符集而非开放的否定字符类 [^\s@]
+    const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?){0,10}\.[a-zA-Z]{2,}$/;
     if (!emailRegex.test(email)) {
       res.status(400).json({ success: false, message: '邮箱格式不正确' });
       return;
@@ -43,9 +63,12 @@ router.post('/register', async (req: Request, res: Response) => {
 });
 
 // 用户登录
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', loginRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, remember = false } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const email = typeof body['email'] === 'string' ? body['email'] : '';
+    const password = typeof body['password'] === 'string' ? body['password'] : '';
+    const remember = typeof body['remember'] === 'boolean' ? body['remember'] : false;
 
     if (!email || !password) {
       res.status(400).json({ success: false, message: '请提供邮箱和密码' });
@@ -61,7 +84,7 @@ router.post('/login', async (req: Request, res: Response) => {
 });
 
 // 用户登出
-router.post('/logout', authenticate, async (req: Request, res: Response) => {
+router.post('/logout', authenticate, generalAuthRateLimiter, async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       res.status(401).json({ success: false, message: '未认证' });
@@ -77,9 +100,10 @@ router.post('/logout', authenticate, async (req: Request, res: Response) => {
 });
 
 // 忘记密码
-router.post('/forgot-password', async (req: Request, res: Response) => {
+router.post('/forgot-password', forgotPasswordRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const email = typeof body['email'] === 'string' ? body['email'] : '';
 
     if (!email) {
       res.status(400).json({ success: false, message: '请提供邮箱地址' });
@@ -95,9 +119,11 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
 });
 
 // 重置密码
-router.post('/reset-password', async (req: Request, res: Response) => {
+router.post('/reset-password', resetPasswordRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { token, password } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const token = typeof body['token'] === 'string' ? body['token'] : '';
+    const password = typeof body['password'] === 'string' ? body['password'] : '';
 
     if (!token || !password) {
       res.status(400).json({ success: false, message: '请提供重置令牌和新密码' });
@@ -118,7 +144,7 @@ router.post('/reset-password', async (req: Request, res: Response) => {
 });
 
 // 获取当前用户信息
-router.get('/me', authenticate, async (req: Request, res: Response) => {
+router.get('/me', authenticate, generalAuthRateLimiter, async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       res.status(401).json({ success: false, message: '未认证' });
@@ -139,9 +165,10 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
 });
 
 // 刷新 Token
-router.post('/refresh', async (req: Request, res: Response) => {
+router.post('/refresh', refreshRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { refreshToken } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const refreshToken = typeof body['refreshToken'] === 'string' ? body['refreshToken'] : '';
 
     if (!refreshToken) {
       res.status(400).json({ success: false, message: '请提供刷新令牌' });

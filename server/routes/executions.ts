@@ -221,7 +221,7 @@ router.post('/:id/sync', async (req, res) => {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[MANUAL-SYNC] Failed to sync execution ${req.params.id}:`, message);
+    console.error('[MANUAL-SYNC] Failed to sync execution %s:', req.params.id, message);
     res.status(500).json({ success: false, message });
   }
 });
@@ -232,7 +232,10 @@ router.post('/:id/sync', async (req, res) => {
  */
 router.post('/sync-stuck', async (req, res) => {
   try {
-    const { timeoutMinutes = 10, maxExecutions = 20 } = req.body;
+    const rawTimeoutMinutes = (req.body as Record<string, unknown>)['timeoutMinutes'];
+    const rawMaxExecutions = (req.body as Record<string, unknown>)['maxExecutions'];
+    const timeoutMinutes = typeof rawTimeoutMinutes === 'number' ? rawTimeoutMinutes : 10;
+    const maxExecutions = typeof rawMaxExecutions === 'number' ? rawMaxExecutions : 20;
     const timeoutMs = timeoutMinutes * 60 * 1000;
 
     console.log(`[BULK-SYNC] Starting bulk sync for stuck executions (timeout: ${timeoutMinutes}min, max: ${maxExecutions})`);
