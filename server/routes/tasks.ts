@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query, queryOne, getPool } from '../config/database';
+import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 
 const router = Router();
 
@@ -142,7 +143,7 @@ router.get('/:id', async (req, res) => {
  * POST /api/tasks
  * 创建任务
  */
-router.post('/', async (req, res) => {
+router.post('/', generalAuthRateLimiter, async (req, res) => {
   try {
     const {
       name,
@@ -192,7 +193,7 @@ router.post('/', async (req, res) => {
  * PUT /api/tasks/:id
  * 更新任务
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', generalAuthRateLimiter, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const {
@@ -261,7 +262,7 @@ router.put('/:id', async (req, res) => {
  * DELETE /api/tasks/:id
  * 删除任务
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', generalAuthRateLimiter, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
