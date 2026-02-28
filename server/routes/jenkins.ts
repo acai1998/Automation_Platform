@@ -3,6 +3,7 @@ import { executionService } from '../services/ExecutionService';
 import { jenkinsService } from '../services/JenkinsService';
 import { ipWhitelistMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
 import { requestValidator } from '../middleware/RequestValidator';
+import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
 
@@ -54,7 +55,7 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
  * 此接口创建执行记录并返回 executionId，供 Jenkins 后续回调使用
  * 实际触发 Jenkins Job 的逻辑需要在此处或由调用方完成
  */
-router.post('/trigger', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
+router.post('/trigger', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const triggerBody = (req.body ?? {}) as Record<string, unknown>;
     const caseIds = triggerBody['caseIds'];
@@ -99,6 +100,7 @@ router.post('/trigger', rateLimitMiddleware.limit, async (req: Request, res: Res
  * 触发单个用例执行
  */
 router.post('/run-case', [
+  generalAuthRateLimiter,
   rateLimitMiddleware.limit,
   requestValidator.validateSingleExecution
 ], async (req: Request, res: Response) => {
@@ -205,6 +207,7 @@ router.post('/run-case', [
  * 触发批量用例执行
  */
 router.post('/run-batch', [
+  generalAuthRateLimiter,
   rateLimitMiddleware.limit,
   requestValidator.validateBatchExecution
 ], async (req: Request, res: Response) => {
@@ -313,7 +316,7 @@ router.post('/run-batch', [
  *
  * Jenkins Job 可以调用此接口获取需要执行的用例信息
  */
-router.get('/tasks/:taskId/cases', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
+router.get('/tasks/:taskId/cases', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const taskId = parseInt(req.params.taskId);
     const cases = await executionService.getRunCases(taskId);
@@ -334,7 +337,7 @@ router.get('/tasks/:taskId/cases', rateLimitMiddleware.limit, async (req: Reques
  *
  * 用于查询 Jenkins Job 的执行状态
  */
-router.get('/status/:executionId', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
+router.get('/status/:executionId', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const executionId = parseInt(req.params.executionId);
     const detail = await executionService.getExecutionDetail(executionId);
@@ -375,6 +378,7 @@ router.get('/status/:executionId', rateLimitMiddleware.limit, async (req: Reques
  * 通过 IP 白名单验证，无需额外认证
  */
 router.post('/callback', [
+  generalAuthRateLimiter,
   ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit,
   requestValidator.validateCallback
@@ -513,7 +517,7 @@ router.post('/callback', [
  * GET /api/jenkins/batch/:runId
  * 获取执行批次详情
  */
-router.get('/batch/:runId', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
+router.get('/batch/:runId', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.params.runId);
     const batch = await executionService.getBatchExecution(runId);
@@ -536,6 +540,7 @@ router.get('/batch/:runId', rateLimitMiddleware.limit, async (req: Request, res:
  * 通过 IP 白名单验证
  */
 router.post('/callback/test', [
+  generalAuthRateLimiter,
   ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit
 ], async (req: Request, res: Response) => {
@@ -717,6 +722,7 @@ router.post('/callback/test', [
  * 通过 IP 白名单验证
  */
 router.post('/callback/manual-sync/:runId', [
+  generalAuthRateLimiter,
   ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit
 ], async (req: Request, res: Response) => {
@@ -873,6 +879,7 @@ router.post('/callback/manual-sync/:runId', [
  * 诊断回调连接问题 - 通过 IP 白名单验证以保护系统信息
  */
 router.post('/callback/diagnose',
+  generalAuthRateLimiter,
   rateLimitMiddleware.limit,
   ipWhitelistMiddleware.verify,
   async (req: Request, res: Response) => {
@@ -957,7 +964,7 @@ router.post('/callback/diagnose',
  * GET /api/jenkins/health
  * Jenkins 连接健康检查 - 包括详细的诊断信息
  */
-router.get('/health', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
+router.get('/health', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
@@ -1143,6 +1150,7 @@ router.get('/health', rateLimitMiddleware.limit, async (req: Request, res: Respo
  * 诊断执行问题 - 通过 IP 白名单验证以保护系统信息
  */
 router.get('/diagnose',
+  generalAuthRateLimiter,
   rateLimitMiddleware.limit,
   ipWhitelistMiddleware.verify,
   async (req: Request, res: Response) => {
@@ -1309,7 +1317,7 @@ router.get('/diagnose',
  * GET /api/jenkins/monitoring/stats
  * 获取监控统计信息
  */
-router.get('/monitoring/stats', rateLimitMiddleware.limit, async (_req, res) => {
+router.get('/monitoring/stats', generalAuthRateLimiter, rateLimitMiddleware.limit, async (_req, res) => {
   try {
     logger.info(`Getting monitoring statistics...`, {}, LOG_CONTEXTS.JENKINS);
 
@@ -1373,7 +1381,7 @@ router.get('/monitoring/stats', rateLimitMiddleware.limit, async (_req, res) => 
  * POST /api/jenkins/monitoring/fix-stuck
  * 修复卡住的执行
  */
-router.post('/monitoring/fix-stuck', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
+router.post('/monitoring/fix-stuck', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const fixBody = (req.body ?? {}) as Record<string, unknown>;
     const timeoutMinutes = typeof fixBody['timeoutMinutes'] === 'number' ? fixBody['timeoutMinutes'] : 5;
@@ -1441,7 +1449,7 @@ router.post('/monitoring/fix-stuck', rateLimitMiddleware.limit, async (req: Requ
  * GET /api/jenkins/monitor/status
  * Get execution monitor service status and statistics
  */
-router.get('/monitor/status', rateLimitMiddleware.limit, async (_req: Request, res: Response) => {
+router.get('/monitor/status', generalAuthRateLimiter, rateLimitMiddleware.limit, async (_req: Request, res: Response) => {
   try {
     const { executionMonitorService } = await import('../services/ExecutionMonitorService');
 
