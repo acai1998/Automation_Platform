@@ -84,7 +84,8 @@ router.post('/login', loginRateLimiter, async (req: Request, res: Response) => {
 });
 
 // 用户登出
-router.post('/logout', authenticate, generalAuthRateLimiter, async (req: Request, res: Response) => {
+// generalAuthRateLimiter 放在 authenticate 之前，确保未认证请求（包括暴力攻击）也受速率限制保护
+router.post('/logout', generalAuthRateLimiter, authenticate, async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       res.status(401).json({ success: false, message: '未认证' });
@@ -144,7 +145,8 @@ router.post('/reset-password', resetPasswordRateLimiter, async (req: Request, re
 });
 
 // 获取当前用户信息
-router.get('/me', authenticate, generalAuthRateLimiter, async (req: Request, res: Response) => {
+// generalAuthRateLimiter 放在 authenticate 之前，确保未认证请求也受速率限制保护
+router.get('/me', generalAuthRateLimiter, authenticate, async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       res.status(401).json({ success: false, message: '未认证' });

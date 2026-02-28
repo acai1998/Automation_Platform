@@ -62,7 +62,8 @@ export class IPWhitelistMiddleware {
     const clientIP = ipStr.split(',')[0].trim();
 
     if (process.env.NODE_ENV === 'development' && process.env.JENKINS_DEBUG_IP === 'true') {
-      console.debug(`[IP-DETECTION] Detected IP: ${clientIP}`, {
+      // 使用固定格式字符串作为第一参数，防止 clientIP 中包含 %s/%d 等格式说明符被解析（format string injection）
+      console.debug('[IP-DETECTION] Detected IP: %s', clientIP, {
         sources: {
           forwarded: Array.isArray(forwarded) ? forwarded[0] : forwarded,
           xRealIp,
@@ -162,10 +163,8 @@ export class IPWhitelistMiddleware {
     });
 
     if (!isAllowed) {
-      console.warn(
-        `Jenkins callback: IP ${clientIP} not in allowed list:`,
-        this.allowedIPs
-      );
+      // 使用固定格式字符串，将 clientIP 作为数据参数传入，防止格式字符串注入
+      console.warn('[Jenkins callback] IP %s not in allowed list:', clientIP, this.allowedIPs);
     }
 
     return isAllowed;
@@ -190,7 +189,8 @@ export class IPWhitelistMiddleware {
       }
 
       const clientIP = this.getClientIP(req);
-      console.log(`[Jenkins IP Whitelist] ✅ Access allowed from IP: ${clientIP}`, {
+      // 使用固定格式字符串，将 clientIP 作为数据参数传入，防止格式字符串注入
+      console.log('[Jenkins IP Whitelist] ✅ Access allowed from IP: %s', clientIP, {
         endpoint: `${req.method} ${req.path}`,
         timestamp: new Date().toISOString(),
       });

@@ -54,7 +54,7 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
  * 此接口创建执行记录并返回 executionId，供 Jenkins 后续回调使用
  * 实际触发 Jenkins Job 的逻辑需要在此处或由调用方完成
  */
-router.post('/trigger', async (req: Request, res: Response) => {
+router.post('/trigger', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const triggerBody = (req.body ?? {}) as Record<string, unknown>;
     const caseIds = triggerBody['caseIds'];
@@ -313,7 +313,7 @@ router.post('/run-batch', [
  *
  * Jenkins Job 可以调用此接口获取需要执行的用例信息
  */
-router.get('/tasks/:taskId/cases', async (req: Request, res: Response) => {
+router.get('/tasks/:taskId/cases', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const taskId = parseInt(req.params.taskId);
     const cases = await executionService.getRunCases(taskId);
@@ -334,7 +334,7 @@ router.get('/tasks/:taskId/cases', async (req: Request, res: Response) => {
  *
  * 用于查询 Jenkins Job 的执行状态
  */
-router.get('/status/:executionId', async (req: Request, res: Response) => {
+router.get('/status/:executionId', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const executionId = parseInt(req.params.executionId);
     const detail = await executionService.getExecutionDetail(executionId);
@@ -513,7 +513,7 @@ router.post('/callback', [
  * GET /api/jenkins/batch/:runId
  * 获取执行批次详情
  */
-router.get('/batch/:runId', async (req: Request, res: Response) => {
+router.get('/batch/:runId', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.params.runId);
     const batch = await executionService.getBatchExecution(runId);
@@ -957,7 +957,7 @@ router.post('/callback/diagnose',
  * GET /api/jenkins/health
  * Jenkins 连接健康检查 - 包括详细的诊断信息
  */
-router.get('/health', async (req: Request, res: Response) => {
+router.get('/health', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
@@ -1309,7 +1309,7 @@ router.get('/diagnose',
  * GET /api/jenkins/monitoring/stats
  * 获取监控统计信息
  */
-router.get('/monitoring/stats', async (_req, res) => {
+router.get('/monitoring/stats', rateLimitMiddleware.limit, async (_req, res) => {
   try {
     logger.info(`Getting monitoring statistics...`, {}, LOG_CONTEXTS.JENKINS);
 
@@ -1373,7 +1373,7 @@ router.get('/monitoring/stats', async (_req, res) => {
  * POST /api/jenkins/monitoring/fix-stuck
  * 修复卡住的执行
  */
-router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
+router.post('/monitoring/fix-stuck', rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const fixBody = (req.body ?? {}) as Record<string, unknown>;
     const timeoutMinutes = typeof fixBody['timeoutMinutes'] === 'number' ? fixBody['timeoutMinutes'] : 5;
@@ -1441,7 +1441,7 @@ router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
  * GET /api/jenkins/monitor/status
  * Get execution monitor service status and statistics
  */
-router.get('/monitor/status', async (_req: Request, res: Response) => {
+router.get('/monitor/status', rateLimitMiddleware.limit, async (_req: Request, res: Response) => {
   try {
     const { executionMonitorService } = await import('../services/ExecutionMonitorService');
 
