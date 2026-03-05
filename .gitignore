@@ -15,6 +15,7 @@ __pycache__/
 .venv/
 .env
 .env.example
+.mrules
 
 # 规则忽略文件
 CLAUDE.md
