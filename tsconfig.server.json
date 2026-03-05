@@ -12,19 +12,30 @@
     "outDir": "./dist/server",
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["./shared/*"],
-      "@configs/*": ["./configs/*"],
-      "@test/*": ["./test_case/*"]
+      "@shared/*": [
+        "./shared/*"
+      ],
+      "@configs/*": [
+        "./configs/*"
+      ],
+      "@test/*": [
+        "./test_case/*"
+      ]
     },
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["server", "shared", "test_case/backend"],
-  "exclude": ["node_modules", "dist", "archive", "tmp", ".aiconfig"],
-  "ts-node": {
-    "transpileOnly": true,
-    "compilerOptions": {
-      "module": "CommonJS"
-    },
-    "require": ["tsconfig-paths/register"]
-  }
+  "include": [
+    "server",
+    "shared",
+    "test_case/backend"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "archive",
+    "tmp",
+    ".aiconfig"
+  ]
 }

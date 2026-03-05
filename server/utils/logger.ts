@@ -199,18 +199,37 @@ class Logger {
     const logMessage = parts.join(' ');
 
     // 根据级别选择输出方法
+    // 注意：使用固定字面量 '%s' 作为格式字符串，将 logMessage 作为数据参数传入，
+    // 防止外部输入（如用户提供的 message）中包含 %s/%d/%o 等格式说明符被解析（format string injection）
+    const sanitizedData = data ? this.sanitizeData(data) : undefined;
     switch (level) {
       case LogLevel.DEBUG:
-        console.debug(logMessage, data ? this.sanitizeData(data) : '');
+        if (sanitizedData !== undefined) {
+          console.debug('%s', logMessage, sanitizedData);
+        } else {
+          console.debug('%s', logMessage);
+        }
         break;
       case LogLevel.INFO:
-        console.info(logMessage, data ? this.sanitizeData(data) : '');
+        if (sanitizedData !== undefined) {
+          console.info('%s', logMessage, sanitizedData);
+        } else {
+          console.info('%s', logMessage);
+        }
         break;
       case LogLevel.WARN:
-        console.warn(logMessage, data ? this.sanitizeData(data) : '');
+        if (sanitizedData !== undefined) {
+          console.warn('%s', logMessage, sanitizedData);
+        } else {
+          console.warn('%s', logMessage);
+        }
         break;
       case LogLevel.ERROR:
-        console.error(logMessage, data ? this.sanitizeData(data) : '');
+        if (sanitizedData !== undefined) {
+          console.error('%s', logMessage, sanitizedData);
+        } else {
+          console.error('%s', logMessage);
+        }
         break;
     }
   }

@@ -145,7 +145,8 @@ app.get('/api/health', (req, res) => {
 });
 
 // 静态文件服务 - 提供前端构建文件
-const distPath = path.join(__dirname, '../');
+// 编译后路径为 dist/server/server/index.js，需上溯3层到达 dist/
+const distPath = path.join(__dirname, '../../');
 logger.info('Setting up static file serving', { distPath }, LOG_CONTEXTS.HTTP);
 app.use(express.static(distPath));
 
