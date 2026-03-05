@@ -64,14 +64,16 @@ npm install --production=false
 log_info "依赖安装完成"
 
 echo ""
-log_step "步骤 2/4：构建后端（TypeScript 编译）"
-npm run server:build
-log_info "后端编译完成 → dist/server/server/"
-
-echo ""
-log_step "步骤 3/4：构建前端（Vite 打包）"
+log_step "步骤 2/4：构建前端（Vite 打包）"
+# 注意：必须先构建前端，因为 vite build 会清空 dist/ 目录
 npm run build
 log_info "前端构建完成 → dist/"
+
+echo ""
+log_step "步骤 3/4：构建后端（TypeScript 编译）"
+# 后端在前端构建完成后编译，避免被 vite 清空
+npm run server:build
+log_info "后端编译完成 → dist/server/server/"
 
 echo ""
 log_step "步骤 4/4：热重载应用（零停机）"

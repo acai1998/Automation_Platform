@@ -119,11 +119,11 @@ log_step "步骤 6/6：首次构建并启动应用"
 log_info "安装项目依赖..."
 npm install --production=false
 
+log_info "构建前端（先构建，避免被 vite 清空 dist/）..."
+npm run build
+
 log_info "编译后端 TypeScript..."
 npm run server:build
-
-log_info "构建前端..."
-npm run build
 
 log_info "启动应用..."
 pm2 start ecosystem.config.js --env production
