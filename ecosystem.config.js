@@ -7,7 +7,7 @@ module.exports = {
       // ─── 应用基础配置 ─────────────────────────────────────────
       name: 'autotest-platform',
       // 生产模式：运行编译后的 JS 文件
-      script: 'dist/server/index.js',
+      script: 'dist/server/server/index.js',
       // 需要 tsconfig-paths 来解析路径别名（@shared/* 等）
       // TS_NODE_PROJECT 指定使用后端专属的 tsconfig，确保路径别名正确解析
       node_args: '-r tsconfig-paths/register',

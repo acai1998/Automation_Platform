@@ -66,7 +66,7 @@ log_info "依赖安装完成"
 echo ""
 log_step "步骤 2/4：构建后端（TypeScript 编译）"
 npm run server:build
-log_info "后端编译完成 → dist/server/"
+log_info "后端编译完成 → dist/server/server/"
 
 echo ""
 log_step "步骤 3/4：构建前端（Vite 打包）"
