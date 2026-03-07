@@ -458,7 +458,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
           e.task_name as taskName,
           e.status,
           COALESCE(e.duration, 0) as duration,
-          e.start_time as startTime,
+          COALESCE(e.start_time, e.created_at) as startTime,
           COALESCE(e.total_cases, 0) as totalCases,
           COALESCE(e.passed_cases, 0) as passedCases,
           COALESCE(e.failed_cases, 0) as failedCases,
@@ -466,8 +466,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
           u.id as executedById
         FROM Auto_TestCaseTaskExecutions e
         LEFT JOIN Auto_Users u ON e.executed_by = u.id
-        WHERE e.start_time IS NOT NULL
-        ORDER BY e.start_time DESC
+        ORDER BY e.created_at DESC
         LIMIT ?
       `, [limit]) as RecentRunRaw[];
 

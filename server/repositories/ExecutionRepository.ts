@@ -832,6 +832,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     triggerType: 'manual' | 'jenkins' | 'schedule';
     jenkinsJob?: string;
     runConfig?: Record<string, unknown>;
+    taskId?: number;
+    taskName?: string;
   }): Promise<{ runId: number; executionId: number; totalCases: number; caseIds: number[] }> {
     return this.executeInTransaction(async (queryRunner) => {
       // 1. 获取活跃用例
@@ -859,8 +861,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
       // 3. 创建任务执行记录
       const taskExecution = await this.createTaskExecution({
-        taskId: undefined,
-        taskName: undefined,
+        taskId: input.taskId,
+        taskName: input.taskName,
         totalCases: cases.length,
         executedBy: input.triggeredBy,
       });
