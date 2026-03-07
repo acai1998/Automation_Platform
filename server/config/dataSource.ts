@@ -9,10 +9,17 @@ import * as path from 'path';
  */
 function getEntityPaths(): string[] {
   const isJsRuntime = path.extname(__filename) === '.js';
-  const entityPath = isJsRuntime
-    ? path.resolve(process.cwd(), 'dist', 'server', 'entities', '*.js')
-    : path.resolve(process.cwd(), 'server', 'entities', '*.ts');
-  return [entityPath];
+  if (isJsRuntime) {
+    // 生产环境：TypeScript 编译时 outDir=dist/server，源码在 server/ 目录
+    // 所以实体文件实际路径是 dist/server/server/entities/*.js
+    // 同时兼容旧路径 dist/server/entities/*.js（以防万一）
+    return [
+      path.resolve(process.cwd(), 'dist', 'server', 'server', 'entities', '*.js'),
+      path.resolve(process.cwd(), 'dist', 'server', 'entities', '*.js'),
+    ];
+  }
+  // 开发环境：直接读取 TypeScript 源文件
+  return [path.resolve(process.cwd(), 'server', 'entities', '*.ts')];
 }
 
 /**
