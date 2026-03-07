@@ -28,12 +28,12 @@ pipeline {
                     
                     // 标记执行开始（可选）
                     if (params.RUN_ID) {
-                        sh '''
-                            curl -X POST "${PLATFORM_API_URL}/api/executions/${RUN_ID}/start" \
-                                -H "Content-Type: application/json" \
-                                --connect-timeout 5 \
-                                --max-time 10 || echo "⚠️ 标记执行开始失败，继续处理"
-                        '''
+                        sh """
+                            curl -X POST "${PLATFORM_API_URL}/api/executions/${params.RUN_ID}/start" \\
+                                -H 'Content-Type: application/json' \\
+                                --connect-timeout 5 \\
+                                --max-time 10 || echo '⚠️ 标记执行开始失败，继续处理'
+                        """
                     }
                 }
             }
@@ -298,6 +298,8 @@ pipeline {
                     // 最终回调 - 确保状态同步
                     if (params.RUN_ID) {
                         echo "========== 最终回调 =========="
+                        // CALLBACK_URL 由服务端构造，已包含完整路径（含 /api/jenkins/callback）
+                        // 若未传入则使用平台默认回调地址
                         def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
                         def finalStatus = currentBuild.result == 'SUCCESS' ? 'success' : 'failed'
                         def duration = currentBuild.duration ?: 0
@@ -309,17 +311,13 @@ pipeline {
 
                         // 使用 curl 进行回调（简化方案）
                         try {
+                            def failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
                             sh """
-                                curl -X POST '${callbackUrl}' \
-                                    -H 'Content-Type: application/json' \
-                                    -d '{
-                                        "runId": ${params.RUN_ID},
-                                        "status": "${finalStatus}",
-                                        "passedCases": 0,
-                                        "failedCases": ${currentBuild.result == 'SUCCESS' ? 0 : 1},
-                                        "skippedCases": 0,
-                                        "durationMs": ${duration}
-                                    }' \
+                                curl -X POST '${callbackUrl}' \\
+                                    -H 'Content-Type: application/json' \\
+                                    --connect-timeout 10 \\
+                                    --max-time 30 \\
+                                    -d '{"runId": ${params.RUN_ID}, "status": "${finalStatus}", "passedCases": 0, "failedCases": ${failedCount}, "skippedCases": 0, "durationMs": ${duration}}' \\
                                     || echo '❌ curl 回调失败'
                             """
                             echo "✅ 回调成功"
@@ -346,20 +344,14 @@ pipeline {
                     // 回调平台，标记为失败
                     if (params.RUN_ID && params.CALLBACK_URL) {
                         def duration = currentBuild.duration ?: 0
-
+                        // CALLBACK_URL 由服务端构造，已包含完整路径（含 /api/jenkins/callback）
                         sh """
                             echo "正在回调失败状态到平台..."
-                            curl -X POST "${params.CALLBACK_URL}" \
-                                -H "Content-Type: application/json" \
-                                -d '{
-                                    "runId": ${params.RUN_ID},
-                                    "status": "failed",
-                                    "passedCases": 0,
-                                    "failedCases": 0,
-                                    "skippedCases": 0,
-                                    "durationMs": ${duration},
-                                    "buildUrl": "${BUILD_URL}"
-                                }' \
+                            curl -X POST '${params.CALLBACK_URL}' \\
+                                -H 'Content-Type: application/json' \\
+                                --connect-timeout 10 \\
+                                --max-time 30 \\
+                                -d '{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}, "buildUrl": "${BUILD_URL}"}' \\
                                 || echo "失败回调请求失败，但继续处理"
                         """
                     }
