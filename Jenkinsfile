@@ -50,7 +50,7 @@ pipeline {
                                 sh 'git pull origin main'
                             }
                         } else {
-                            sh 'git clone ${params.REPO_URL} test-cases'
+                            sh "git clone ${params.REPO_URL} test-cases"
                         }
                     } else {
                         echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出"
@@ -154,64 +154,8 @@ pipeline {
         stage('回调平台') {
             steps {
                 script {
-                    echo "回调测试结果到平台..."
-
-                    if (!params.RUN_ID && !params.CALLBACK_URL) {
-                        echo "⚠️ 未传入 RUN_ID 或 CALLBACK_URL，跳过回调"
-                        return
-                    }
-
-                    def testDir = params.REPO_URL ? 'test-cases' : '.'
-                    sh """
-                        cd ${testDir}
-
-                        # 解析测试结果（示例）
-                        if [ -f "test-report.json" ]; then
-                            TOTAL=$(jq '.summary.total' test-report.json || echo "0")
-                            PASSED=$(jq '.summary.passed' test-report.json || echo "0")
-                            FAILED=$(jq '.summary.failed' test-report.json || echo "0")
-                            SKIPPED=$(jq '.summary.skipped' test-report.json || echo "0")
-                        else
-                            TOTAL=0
-                            PASSED=0
-                            FAILED=0
-                            SKIPPED=0
-                        fi
-
-                        # 计算执行时长
-                        BUILD_DURATION_MS=$((BUILD_DURATION * 1000))
-
-                        # 确定状态
-                        if [ $FAILED -eq 0 ]; then
-                            STATUS="success"
-                        else
-                            STATUS="failed"
-                        fi
-
-                        echo "测试结果汇总:"
-                        echo "  总数: $TOTAL"
-                        echo "  通过: $PASSED"
-                        echo "  失败: $FAILED"
-                        echo "  跳过: $SKIPPED"
-                        echo "  状态: $STATUS"
-                        echo "  耗时: ${BUILD_DURATION_MS}ms"
-
-                        # 回调到平台
-                        if [ ! -z "${CALLBACK_URL}" ]; then
-                            curl -X POST "${CALLBACK_URL}" \
-                                -H "Content-Type: application/json" \
-                                -d "{
-                                    \"runId\": ${RUN_ID},
-                                    \"status\": \"$STATUS\",
-                                    \"passedCases\": $PASSED,
-                                    \"failedCases\": $FAILED,
-                                    \"skippedCases\": $SKIPPED,
-                                    \"durationMs\": $BUILD_DURATION_MS,
-                                    \"buildUrl\": \"${BUILD_URL}\"
-                                }" \
-                                || echo "回调请求失败，但继续处理"
-                        fi
-                    """
+                    // 回调由 post { always } 统一处理，此阶段仅做日志记录
+                    echo "✅ 测试执行完成，回调将在 post 阶段统一处理"
                 }
             }
         }
