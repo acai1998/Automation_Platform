@@ -11,7 +11,7 @@ pipeline {
     }
     
     environment {
-        PLATFORM_API_URL = 'http://117.72.182.23:3000'
+        PLATFORM_API_URL = 'http://autotest.wiac.xyz'
         PYTHON_ENV = "${WORKSPACE}/venv"
     }
     
@@ -64,23 +64,34 @@ pipeline {
             steps {
                 script {
                     echo "准备Python环境..."
-                    
-                    sh '''
-                        cd test-cases
-                        
+
+                    // 定时触发且无参数时，跳过本阶段
+                    if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
+                        echo "⚠️ 未传入执行参数（可能是定时触发），跳过准备环境"
+                        return
+                    }
+
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    sh """
+                        if [ ! -d "${testDir}" ]; then
+                            echo "❌ 测试目录 '${testDir}' 不存在，请确认 REPO_URL 或代码检出是否成功"
+                            exit 1
+                        fi
+                        cd ${testDir}
+
                         # 创建虚拟环境（如果不存在）
                         if [ ! -d "${PYTHON_ENV}" ]; then
                             python3 -m venv ${PYTHON_ENV}
                         fi
-                        
+
                         # 激活虚拟环境并安装依赖
                         source ${PYTHON_ENV}/bin/activate
                         pip install -q pytest pytest-json-report
-                        
+
                         # 列出可用的用例
                         echo "可用的测试文件:"
                         find . -name "test_*.py" -o -name "*_test.py" | head -20
-                    '''
+                    """
                 }
             }
         }
@@ -88,29 +99,31 @@ pipeline {
         stage('执行测试') {
             steps {
                 script {
+                    // 无参数时跳过
+                    if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
+                        echo "⚠️ 未传入执行参数，跳过执行测试"
+                        return
+                    }
+
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
                     def scriptPaths = params.SCRIPT_PATHS
                     def marker = params.MARKER
                     def testCommand = "source ${PYTHON_ENV}/bin/activate && "
                     
                     if (scriptPaths) {
-                        // 执行指定的脚本路径
                         def paths = scriptPaths.split(',')
                         testCommand += "pytest ${paths.join(' ')}"
                     } else if (marker) {
-                        // 使用marker标记执行
                         testCommand += "pytest -m ${marker}"
                     } else {
-                        // 执行所有测试
                         testCommand += "pytest"
                     }
-                    
-                    // 添加报告输出参数
                     testCommand += " --json-report --json-report-file=test-report.json -v"
                     
-                    sh '''
-                        cd test-cases
-                        ''' + testCommand + ''' || true
-                    '''
+                    sh """
+                        cd ${testDir}
+                        ${testCommand} || true
+                    """
                 }
             }
         }
@@ -119,18 +132,21 @@ pipeline {
             steps {
                 script {
                     echo "收集测试结果..."
-                    
-                    sh '''
-                        cd test-cases
-                        
-                        # 如果生成了报告文件，解析结果
+
+                    if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
+                        echo "⚠️ 未传入执行参数，跳过收集结果"
+                        return
+                    }
+
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    sh """
+                        cd ${testDir}
                         if [ -f "test-report.json" ]; then
                             cat test-report.json
                         else
-                            # 生成默认的结果
-                            echo "未生成详细报告，生成默认结果"
+                            echo "未生成详细报告"
                         fi
-                    '''
+                    """
                 }
             }
         }
@@ -140,8 +156,14 @@ pipeline {
                 script {
                     echo "回调测试结果到平台..."
 
-                    sh '''
-                        cd test-cases
+                    if (!params.RUN_ID && !params.CALLBACK_URL) {
+                        echo "⚠️ 未传入 RUN_ID 或 CALLBACK_URL，跳过回调"
+                        return
+                    }
+
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    sh """
+                        cd ${testDir}
 
                         # 解析测试结果（示例）
                         if [ -f "test-report.json" ]; then
@@ -189,7 +211,7 @@ pipeline {
                                 }" \
                                 || echo "回调请求失败，但继续处理"
                         fi
-                    '''
+                    """
                 }
             }
         }
