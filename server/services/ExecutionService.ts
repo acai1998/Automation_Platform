@@ -29,6 +29,8 @@ export interface CaseExecutionInput {
   triggerType: 'manual' | 'jenkins' | 'schedule';
   jenkinsJob?: string;
   runConfig?: Record<string, unknown>;
+  taskId?: number;
+  taskName?: string;
 }
 
 export interface ExecutionProgress {
@@ -317,6 +319,8 @@ export class ExecutionService {
         triggerType: input.triggerType,
         jenkinsJob: input.jenkinsJob,
         runConfig: input.runConfig,
+        taskId: input.taskId,
+        taskName: input.taskName,
       });
 
       // 3. 保存 runId 到 executionId 的映射到缓存（用于 Jenkins 回调）

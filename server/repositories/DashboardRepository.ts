@@ -245,13 +245,15 @@ export class DashboardRepository extends BaseRepository<TestCase> {
       }
 
       // 优化：使用 UNION ALL 分别查询，避免大表 JOIN
+      // 注意：使用 Auto_TestRun 表统计，因为 Jenkins 执行记录写入该表
+      //       使用 created_at 而非 start_time，确保触发即统计（start_time 可能为 NULL）
       const result = await this.testCaseRepository.query(`
         SELECT
           (SELECT COUNT(*) FROM Auto_TestCase WHERE enabled = 1) as totalCases,
-          (SELECT COUNT(*) FROM Auto_TestCaseTaskExecutions WHERE DATE(start_time) = CURDATE()) as todayRuns,
-          (SELECT COALESCE(SUM(passed_cases), 0) FROM Auto_TestCaseTaskExecutions WHERE DATE(start_time) = CURDATE()) as passedCases,
-          (SELECT COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) FROM Auto_TestCaseTaskExecutions WHERE DATE(start_time) = CURDATE()) as totalCasesRun,
-          (SELECT SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) FROM Auto_TestCaseTaskExecutions) as runningTasks
+          (SELECT COUNT(*) FROM Auto_TestRun WHERE DATE(created_at) = CURDATE()) as todayRuns,
+          (SELECT COALESCE(SUM(passed_cases), 0) FROM Auto_TestRun WHERE DATE(created_at) = CURDATE()) as passedCases,
+          (SELECT COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) FROM Auto_TestRun WHERE DATE(created_at) = CURDATE()) as totalCasesRun,
+          (SELECT COUNT(*) FROM Auto_TestRun WHERE status IN ('pending', 'running')) as runningTasks
       `) as StatsResult[];
 
       const stats = this.parseStatsResult(result, {
@@ -458,7 +460,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
           e.task_name as taskName,
           e.status,
           COALESCE(e.duration, 0) as duration,
-          e.start_time as startTime,
+          COALESCE(e.start_time, e.created_at) as startTime,
           COALESCE(e.total_cases, 0) as totalCases,
           COALESCE(e.passed_cases, 0) as passedCases,
           COALESCE(e.failed_cases, 0) as failedCases,
@@ -466,8 +468,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
           u.id as executedById
         FROM Auto_TestCaseTaskExecutions e
         LEFT JOIN Auto_Users u ON e.executed_by = u.id
-        WHERE e.start_time IS NOT NULL
-        ORDER BY e.start_time DESC
+        ORDER BY e.created_at DESC
         LIMIT ?
       `, [limit]) as RecentRunRaw[];
 
@@ -674,14 +675,16 @@ export class DashboardRepository extends BaseRepository<TestCase> {
    */
   async getTodayExecution(): Promise<TodayExecution> {
     try {
+      // 使用 Auto_TestRun 表，与 getStats() 保持一致
+      // 用 created_at 确保触发即统计（start_time 可能为 NULL）
       const result = await this.taskExecutionRepository.query(`
         SELECT
           COUNT(*) as total,
           COALESCE(SUM(passed_cases), 0) as passed,
           COALESCE(SUM(failed_cases), 0) as failed,
           COALESCE(SUM(skipped_cases), 0) as skipped
-        FROM Auto_TestCaseTaskExecutions
-        WHERE DATE(start_time) = CURDATE()
+        FROM Auto_TestRun
+        WHERE DATE(created_at) = CURDATE()
       `) as ExecutionStats[];
 
       // ✅ Type-safe null safety check with explicit interface
@@ -736,7 +739,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         avgDuration: string;
       }
 
-      // 计算当日统计
+      // 计算当日统计 - 使用 Auto_TestRun 表，duration_ms 转换为秒
       const stats = await this.taskExecutionRepository.query(`
         SELECT
           COUNT(*) as totalExecutions,
@@ -744,9 +747,9 @@ export class DashboardRepository extends BaseRepository<TestCase> {
           COALESCE(SUM(passed_cases), 0) as passedCases,
           COALESCE(SUM(failed_cases), 0) as failedCases,
           COALESCE(SUM(skipped_cases), 0) as skippedCases,
-          COALESCE(AVG(duration), 0) as avgDuration
-        FROM Auto_TestCaseTaskExecutions
-        WHERE DATE(start_time) = ?
+          COALESCE(AVG(duration_ms / 1000), 0) as avgDuration
+        FROM Auto_TestRun
+        WHERE DATE(created_at) = ?
       `, [targetDate]) as DailyStats[];
 
       const activeCases = await this.testCaseRepository.query(`

@@ -53,30 +53,63 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
  * 触发 Jenkins Job 执行
  *
  * 此接口创建执行记录并返回 executionId，供 Jenkins 后续回调使用
- * 实际触发 Jenkins Job 的逻辑需要在此处或由调用方完成
+ * 支持两种模式：
+ * 1. 直接传入 caseIds 数组
+ * 2. 传入 taskId，自动从数据库查找任务的 caseIds 和任务名称
  */
 router.post('/trigger', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const triggerBody = (req.body ?? {}) as Record<string, unknown>;
-    const caseIds = triggerBody['caseIds'];
+    let caseIds = triggerBody['caseIds'];
     const projectId = typeof triggerBody['projectId'] === 'number' ? triggerBody['projectId'] : 1;
     const triggeredBy = typeof triggerBody['triggeredBy'] === 'number' ? triggerBody['triggeredBy'] : 1;
     const jenkinsJobName = typeof triggerBody['jenkinsJobName'] === 'string' ? triggerBody['jenkinsJobName'] : undefined;
+    const taskId = typeof triggerBody['taskId'] === 'number' ? triggerBody['taskId'] : undefined;
+    let taskName: string | undefined;
+
+    // 如果传入了 taskId，从数据库查找任务信息
+    if (taskId !== undefined) {
+      const { queryOne } = await import('../config/database');
+      const task = await queryOne<{ id: number; name: string; case_ids: string; project_id: number }>(
+        'SELECT id, name, case_ids, project_id FROM tasks WHERE id = ?',
+        [taskId]
+      );
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+          message: `Task with id ${taskId} not found`
+        });
+      }
+
+      taskName = task.name;
+
+      // 如果没有直接传入 caseIds，从任务中解析
+      if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
+        try {
+          caseIds = JSON.parse(task.case_ids) as number[];
+        } catch {
+          caseIds = [];
+        }
+      }
+    }
 
     if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'caseIds is required and must be a non-empty array'
+        message: 'caseIds is required and must be a non-empty array (or provide a valid taskId with case_ids)'
       });
     }
 
     // 创建执行记录
     const execution = await executionService.triggerTestExecution({
-      caseIds,
+      caseIds: caseIds as number[],
       projectId,
       triggeredBy,
       triggerType: 'jenkins',
       jenkinsJob: jenkinsJobName,
+      taskId,
+      taskName,
     });
 
     res.json({

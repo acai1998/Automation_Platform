@@ -16,6 +16,7 @@ __pycache__/
 .env
 .env.example
 .mrules
+.catpaw/
 
 # 规则忽略文件
 CLAUDE.md

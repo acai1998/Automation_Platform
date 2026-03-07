@@ -11,7 +11,7 @@ pipeline {
     }
     
     environment {
-        PLATFORM_API_URL = 'http://117.72.182.23:3000'
+        PLATFORM_API_URL = 'http://autotest.wiac.xyz'
         PYTHON_ENV = "${WORKSPACE}/venv"
     }
     
@@ -28,12 +28,12 @@ pipeline {
                     
                     // 标记执行开始（可选）
                     if (params.RUN_ID) {
-                        sh '''
-                            curl -X POST "${PLATFORM_API_URL}/api/executions/${RUN_ID}/start" \
-                                -H "Content-Type: application/json" \
-                                --connect-timeout 5 \
-                                --max-time 10 || echo "⚠️ 标记执行开始失败，继续处理"
-                        '''
+                        sh """
+                            curl -X POST "${PLATFORM_API_URL}/api/executions/${params.RUN_ID}/start" \\
+                                -H 'Content-Type: application/json' \\
+                                --connect-timeout 5 \\
+                                --max-time 10 || echo '⚠️ 标记执行开始失败，继续处理'
+                        """
                     }
                 }
             }
@@ -50,7 +50,7 @@ pipeline {
                                 sh 'git pull origin main'
                             }
                         } else {
-                            sh 'git clone ${params.REPO_URL} test-cases'
+                            sh "git clone ${params.REPO_URL} test-cases"
                         }
                     } else {
                         echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出"
@@ -64,23 +64,34 @@ pipeline {
             steps {
                 script {
                     echo "准备Python环境..."
-                    
-                    sh '''
-                        cd test-cases
-                        
+
+                    // 定时触发且无参数时，跳过本阶段
+                    if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
+                        echo "⚠️ 未传入执行参数（可能是定时触发），跳过准备环境"
+                        return
+                    }
+
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    sh """
+                        if [ ! -d "${testDir}" ]; then
+                            echo "❌ 测试目录 '${testDir}' 不存在，请确认 REPO_URL 或代码检出是否成功"
+                            exit 1
+                        fi
+                        cd ${testDir}
+
                         # 创建虚拟环境（如果不存在）
                         if [ ! -d "${PYTHON_ENV}" ]; then
                             python3 -m venv ${PYTHON_ENV}
                         fi
-                        
+
                         # 激活虚拟环境并安装依赖
                         source ${PYTHON_ENV}/bin/activate
                         pip install -q pytest pytest-json-report
-                        
+
                         # 列出可用的用例
                         echo "可用的测试文件:"
                         find . -name "test_*.py" -o -name "*_test.py" | head -20
-                    '''
+                    """
                 }
             }
         }
@@ -88,29 +99,31 @@ pipeline {
         stage('执行测试') {
             steps {
                 script {
+                    // 无参数时跳过
+                    if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
+                        echo "⚠️ 未传入执行参数，跳过执行测试"
+                        return
+                    }
+
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
                     def scriptPaths = params.SCRIPT_PATHS
                     def marker = params.MARKER
                     def testCommand = "source ${PYTHON_ENV}/bin/activate && "
                     
                     if (scriptPaths) {
-                        // 执行指定的脚本路径
                         def paths = scriptPaths.split(',')
                         testCommand += "pytest ${paths.join(' ')}"
                     } else if (marker) {
-                        // 使用marker标记执行
                         testCommand += "pytest -m ${marker}"
                     } else {
-                        // 执行所有测试
                         testCommand += "pytest"
                     }
-                    
-                    // 添加报告输出参数
                     testCommand += " --json-report --json-report-file=test-report.json -v"
                     
-                    sh '''
-                        cd test-cases
-                        ''' + testCommand + ''' || true
-                    '''
+                    sh """
+                        cd ${testDir}
+                        ${testCommand} || true
+                    """
                 }
             }
         }
@@ -119,18 +132,21 @@ pipeline {
             steps {
                 script {
                     echo "收集测试结果..."
-                    
-                    sh '''
-                        cd test-cases
-                        
-                        # 如果生成了报告文件，解析结果
+
+                    if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
+                        echo "⚠️ 未传入执行参数，跳过收集结果"
+                        return
+                    }
+
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    sh """
+                        cd ${testDir}
                         if [ -f "test-report.json" ]; then
                             cat test-report.json
                         else
-                            # 生成默认的结果
-                            echo "未生成详细报告，生成默认结果"
+                            echo "未生成详细报告"
                         fi
-                    '''
+                    """
                 }
             }
         }
@@ -138,58 +154,8 @@ pipeline {
         stage('回调平台') {
             steps {
                 script {
-                    echo "回调测试结果到平台..."
-
-                    sh '''
-                        cd test-cases
-
-                        # 解析测试结果（示例）
-                        if [ -f "test-report.json" ]; then
-                            TOTAL=$(jq '.summary.total' test-report.json || echo "0")
-                            PASSED=$(jq '.summary.passed' test-report.json || echo "0")
-                            FAILED=$(jq '.summary.failed' test-report.json || echo "0")
-                            SKIPPED=$(jq '.summary.skipped' test-report.json || echo "0")
-                        else
-                            TOTAL=0
-                            PASSED=0
-                            FAILED=0
-                            SKIPPED=0
-                        fi
-
-                        # 计算执行时长
-                        BUILD_DURATION_MS=$((BUILD_DURATION * 1000))
-
-                        # 确定状态
-                        if [ $FAILED -eq 0 ]; then
-                            STATUS="success"
-                        else
-                            STATUS="failed"
-                        fi
-
-                        echo "测试结果汇总:"
-                        echo "  总数: $TOTAL"
-                        echo "  通过: $PASSED"
-                        echo "  失败: $FAILED"
-                        echo "  跳过: $SKIPPED"
-                        echo "  状态: $STATUS"
-                        echo "  耗时: ${BUILD_DURATION_MS}ms"
-
-                        # 回调到平台
-                        if [ ! -z "${CALLBACK_URL}" ]; then
-                            curl -X POST "${CALLBACK_URL}" \
-                                -H "Content-Type: application/json" \
-                                -d "{
-                                    \"runId\": ${RUN_ID},
-                                    \"status\": \"$STATUS\",
-                                    \"passedCases\": $PASSED,
-                                    \"failedCases\": $FAILED,
-                                    \"skippedCases\": $SKIPPED,
-                                    \"durationMs\": $BUILD_DURATION_MS,
-                                    \"buildUrl\": \"${BUILD_URL}\"
-                                }" \
-                                || echo "回调请求失败，但继续处理"
-                        fi
-                    '''
+                    // 回调由 post { always } 统一处理，此阶段仅做日志记录
+                    echo "✅ 测试执行完成，回调将在 post 阶段统一处理"
                 }
             }
         }
@@ -276,6 +242,8 @@ pipeline {
                     // 最终回调 - 确保状态同步
                     if (params.RUN_ID) {
                         echo "========== 最终回调 =========="
+                        // CALLBACK_URL 由服务端构造，已包含完整路径（含 /api/jenkins/callback）
+                        // 若未传入则使用平台默认回调地址
                         def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
                         def finalStatus = currentBuild.result == 'SUCCESS' ? 'success' : 'failed'
                         def duration = currentBuild.duration ?: 0
@@ -287,17 +255,13 @@ pipeline {
 
                         // 使用 curl 进行回调（简化方案）
                         try {
+                            def failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
                             sh """
-                                curl -X POST '${callbackUrl}' \
-                                    -H 'Content-Type: application/json' \
-                                    -d '{
-                                        "runId": ${params.RUN_ID},
-                                        "status": "${finalStatus}",
-                                        "passedCases": 0,
-                                        "failedCases": ${currentBuild.result == 'SUCCESS' ? 0 : 1},
-                                        "skippedCases": 0,
-                                        "durationMs": ${duration}
-                                    }' \
+                                curl -X POST '${callbackUrl}' \\
+                                    -H 'Content-Type: application/json' \\
+                                    --connect-timeout 10 \\
+                                    --max-time 30 \\
+                                    -d '{"runId": ${params.RUN_ID}, "status": "${finalStatus}", "passedCases": 0, "failedCases": ${failedCount}, "skippedCases": 0, "durationMs": ${duration}}' \\
                                     || echo '❌ curl 回调失败'
                             """
                             echo "✅ 回调成功"
@@ -324,20 +288,14 @@ pipeline {
                     // 回调平台，标记为失败
                     if (params.RUN_ID && params.CALLBACK_URL) {
                         def duration = currentBuild.duration ?: 0
-
+                        // CALLBACK_URL 由服务端构造，已包含完整路径（含 /api/jenkins/callback）
                         sh """
                             echo "正在回调失败状态到平台..."
-                            curl -X POST "${params.CALLBACK_URL}" \
-                                -H "Content-Type: application/json" \
-                                -d '{
-                                    "runId": ${params.RUN_ID},
-                                    "status": "failed",
-                                    "passedCases": 0,
-                                    "failedCases": 0,
-                                    "skippedCases": 0,
-                                    "durationMs": ${duration},
-                                    "buildUrl": "${BUILD_URL}"
-                                }' \
+                            curl -X POST '${params.CALLBACK_URL}' \\
+                                -H 'Content-Type: application/json' \\
+                                --connect-timeout 10 \\
+                                --max-time 30 \\
+                                -d '{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}, "buildUrl": "${BUILD_URL}"}' \\
                                 || echo "失败回调请求失败，但继续处理"
                         """
                     }
