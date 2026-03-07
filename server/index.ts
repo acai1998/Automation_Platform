@@ -28,6 +28,10 @@ const MAX_PORT_ATTEMPTS = 10;
 // 初始化日志系统
 initializeLogging();
 
+// 信任反向代理（Nginx），使 express-rate-limit 能正确识别客户端真实 IP
+// 1 表示信任第一层代理（即 Nginx）
+app.set('trust proxy', 1);
+
 // 中间件
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
