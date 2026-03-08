@@ -147,18 +147,18 @@ export function TodayExecution({ data }: TodayExecutionProps) {
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-between gap-4">
-        {/* 中间图表区：圆图居中，hover 时右侧出现信息卡片 */}
+        {/* 中间图表区：圆图绝对居中，hover 卡片用 absolute 定位到右侧不影响圆图位置 */}
         <div className="flex-1 flex items-center justify-center w-full">
-          <div className="flex items-center justify-center gap-3">
-            {/* 圆形甜甜圈图，使用固定尺寸避免 ResponsiveContainer 撑大导致裁切 */}
-            <div className="relative flex-shrink-0" style={{ width: 160, height: 160 }}>
+          <div className="relative flex items-center justify-center">
+            {/* 圆形甜甜圈图，使用固定尺寸避免裁切 */}
+            <div className="relative flex-shrink-0" style={{ width: 172, height: 172 }}>
               {chartData.isEmpty ? (
                 <>
-                  <PieChart width={160} height={160}>
+                  <PieChart width={172} height={172}>
                     <Pie
                       data={[{ name: "empty", value: 1 }]}
-                      cx={80}
-                      cy={80}
+                      cx={86}
+                      cy={86}
                       innerRadius={55}
                       outerRadius={80}
                       dataKey="value"
@@ -178,13 +178,13 @@ export function TodayExecution({ data }: TodayExecutionProps) {
                 <>
                   <PieChart
                     key={animationKey}
-                    width={160}
-                    height={160}
+                    width={172}
+                    height={172}
                   >
                     <Pie
                       data={chartData.segments}
-                      cx={80}
-                      cy={80}
+                      cx={86}
+                      cy={86}
                       startAngle={-90}
                       endAngle={270}
                       innerRadius={55}
@@ -241,9 +241,12 @@ export function TodayExecution({ data }: TodayExecutionProps) {
               )}
             </div>
 
-            {/* 右侧信息卡片：hover 时显示，固定宽度占位防止整体跳动 */}
-            <div className="flex-shrink-0 transition-all duration-200" style={{ width: 108 }}>
-              {hoveredSegment ? (
+            {/* 右侧信息卡片：absolute 定位在圆图右侧，不影响圆图居中 */}
+            {hoveredSegment && (
+              <div
+                className="absolute top-1/2 -translate-y-1/2 transition-all duration-200"
+                style={{ left: "calc(50% + 94px)", width: 108 }}
+              >
                 <div
                   className="rounded-xl border p-3 shadow-md bg-white dark:bg-surface-dark"
                   style={{ borderColor: `${hoveredSegment.color}40` }}
@@ -284,11 +287,8 @@ export function TodayExecution({ data }: TodayExecutionProps) {
                     />
                   </div>
                 </div>
-              ) : (
-                /* 占位防止 hover 时布局跳动 */
-                <div style={{ height: 96 }} />
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
 

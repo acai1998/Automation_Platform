@@ -142,6 +142,17 @@ export class DashboardRepository extends BaseRepository<TestCase> {
   }
 
   /**
+   * 本地日期格式化（YYYY-MM-DD）
+   * 避免 toISOString() 的 UTC 转换导致日期偏移
+   */
+  private formatLocalDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
    * 日期范围生成器
    * 使用生成器减少内存占用，避免创建大数组
    * @param days 天数
@@ -152,7 +163,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
     for (let i = 1; i <= days; i++) {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
-      yield date.toISOString().split('T')[0];
+      yield this.formatLocalDate(date);
     }
   }
 
@@ -201,6 +212,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
 
   /**
    * 统一规范趋势数据类型，避免数据库驱动返回 string 造成前端校验失败
+   * 成功率统一通过 passed/total 重新计算，避免依赖可能滞后的 success_rate 字段
    */
   private normalizeDailySummaryRows(
     rows: Array<{
@@ -212,14 +224,47 @@ export class DashboardRepository extends BaseRepository<TestCase> {
       successRate: string | number | null;
     }>
   ): DailySummaryData[] {
-    return rows.map((row) => ({
-      date: row.date,
-      totalExecutions: this.parseSafeInt(row.totalExecutions, 0),
-      passedCases: this.parseSafeInt(row.passedCases, 0),
-      failedCases: this.parseSafeInt(row.failedCases, 0),
-      skippedCases: this.parseSafeInt(row.skippedCases, 0),
-      successRate: this.parseSafeFloat(row.successRate, 0),
-    }));
+    return rows.map((row) => {
+      const passedCases = this.parseSafeInt(row.passedCases, 0);
+      const failedCases = this.parseSafeInt(row.failedCases, 0);
+      const skippedCases = this.parseSafeInt(row.skippedCases, 0);
+      const totalCases = passedCases + failedCases + skippedCases;
+      const successRate = totalCases > 0
+        ? Math.round((passedCases / totalCases) * 10000) / 100
+        : 0;
+
+      return {
+        date: row.date,
+        totalExecutions: this.parseSafeInt(row.totalExecutions, 0),
+        passedCases,
+        failedCases,
+        skippedCases,
+        successRate,
+      };
+    });
+  }
+
+  /**
+   * 补齐近 N 天趋势数据，确保每天都有一条记录
+   */
+  private buildContinuousTrendData(days: number, rows: DailySummaryData[]): DailySummaryData[] {
+    const rowMap = new Map(rows.map((row) => [row.date, row]));
+    const continuousData: DailySummaryData[] = [];
+
+    for (const date of this.generateDateRange(days)) {
+      continuousData.push(
+        rowMap.get(date) ?? {
+          date,
+          totalExecutions: 0,
+          passedCases: 0,
+          failedCases: 0,
+          skippedCases: 0,
+          successRate: 0,
+        }
+      );
+    }
+
+    return continuousData.reverse();
   }
 
   /**
@@ -421,9 +466,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
 
     if (summaries.length > 0) {
       const normalizedSummaries = this.normalizeDailySummaryRows(summaries);
-      const result = normalizedSummaries.length > queryDays
-        ? normalizedSummaries.slice(-queryDays)
-        : normalizedSummaries;
+      const result = this.buildContinuousTrendData(queryDays, normalizedSummaries);
 
       const duration = Date.now() - startTime;
       this.logDashboard('info', 'Trend data retrieved from daily summary table', {
@@ -431,6 +474,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         days: queryDays,
         recordCount: result.length,
         originalCount: summaries.length,
+        filledDays: result.filter((item) => item.totalExecutions === 0).length,
         durationMs: duration,
       });
       return result;
@@ -451,8 +495,8 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         COALESCE(SUM(skipped_cases), 0) as skippedCases,
         ROUND(SUM(passed_cases) * 100.0 / NULLIF(SUM(passed_cases + failed_cases + skipped_cases), 0), 2) as successRate
       FROM Auto_TestRun
-      WHERE DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-        AND DATE(created_at) < CURDATE()
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND created_at < CURDATE()
       GROUP BY DATE(created_at)
       ORDER BY date ASC
       LIMIT ?
@@ -466,9 +510,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
     }>;
 
     const normalizedTrendData = this.normalizeDailySummaryRows(trendData);
-    const finalResult = normalizedTrendData.length > queryDays
-      ? normalizedTrendData.slice(-queryDays)
-      : normalizedTrendData;
+    const finalResult = this.buildContinuousTrendData(queryDays, normalizedTrendData);
 
     const duration = Date.now() - startTime;
     this.logDashboard('info', 'Trend data calculated from execution records', {
@@ -476,6 +518,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
       days: queryDays,
       recordCount: finalResult.length,
       originalCount: trendData.length,
+      filledDays: finalResult.filter((item) => item.totalExecutions === 0).length,
       durationMs: duration,
     });
 
@@ -779,7 +822,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
    */
   async refreshDailySummary(date?: string): Promise<void> {
     try {
-      const targetDate = date || new Date().toISOString().split('T')[0];
+      const targetDate = date || this.formatLocalDate(new Date());
 
       // 定义查询结果接口
       interface DailyStats {
@@ -801,8 +844,9 @@ export class DashboardRepository extends BaseRepository<TestCase> {
           COALESCE(SUM(skipped_cases), 0) as skippedCases,
           COALESCE(AVG(duration_ms / 1000), 0) as avgDuration
         FROM Auto_TestRun
-        WHERE DATE(created_at) = ?
-      `, [targetDate]) as DailyStats[];
+        WHERE created_at >= ?
+          AND created_at < DATE_ADD(?, INTERVAL 1 DAY)
+      `, [targetDate, targetDate]) as DailyStats[];
 
       const activeCases = await this.testCaseRepository.query(`
         SELECT COUNT(*) as count FROM Auto_TestCase WHERE enabled = 1
@@ -972,8 +1016,8 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         COALESCE(SUM(skipped_cases), 0) as skippedCases,
         COALESCE(AVG(duration_ms / 1000), 0) as avgDuration
       FROM Auto_TestRun
-      WHERE DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-        AND DATE(created_at) < CURDATE()
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND created_at < CURDATE()
       GROUP BY DATE(created_at)
       ORDER BY summaryDate DESC
       LIMIT ?
