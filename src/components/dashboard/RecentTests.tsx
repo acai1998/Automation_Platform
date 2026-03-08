@@ -287,7 +287,7 @@ export function RecentTests({ data, initialData, statusFilter = 'all', lastRefre
         </div>
         <div className="flex items-center gap-3">
           {/* 最后刷新时间 */}
-          {displayRefreshAt && !loading && (
+          {displayRefreshAt && (
             <span className="flex items-center gap-1 text-xs text-slate-400 dark:text-gray-500">
               <RefreshCw className="h-3 w-3" aria-hidden="true" />
               {formatRefreshTime(displayRefreshAt)}
@@ -318,7 +318,7 @@ export function RecentTests({ data, initialData, statusFilter = 'all', lastRefre
       </div>
 
       <div className="w-full overflow-hidden rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark transition-all duration-200 hover:shadow-lg hover:border-primary/10">
-        {loading ? (
+        {loading && runs.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
