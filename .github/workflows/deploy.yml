@@ -1,0 +1,42 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # 避免并发部署冲突
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          script_stop: true   # 任意命令失败立即终止
+          timeout: 120s
+          command_timeout: 10m
+          script: |
+            set -e
+
+            echo "📦 切换到项目目录..."
+            cd /www/wwwroot/autotest.wiac.xyz
+
+            echo "⬇️  拉取最新代码..."
+            git pull origin master
+
+            echo "🔨 构建服务端..."
+            npm run server:build
+
+            echo "♻️  重载 PM2 进程..."
+            pm2 reload autotest-platform --update-env
+
+            echo "✅ 部署完成！"

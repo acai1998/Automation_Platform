@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+
+    // 避免并发部署互相覆盖
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    environment {
+        DEPLOY_DIR = '/opt/autotest/platform'
+        APP_NAME   = 'autotest-platform'
+    }
+
+    stages {
+        stage('拉取代码') {
+            steps {
+                script {
+                    echo "========== 拉取最新代码 =========="
+                    sh """
+                        set -e
+                        cd ${DEPLOY_DIR}
+                        git pull origin master
+                        echo "✅ 代码已更新到最新版本"
+                        git log -1 --pretty=format:'提交: %h  作者: %an  时间: %ai  备注: %s'
+                    """
+                }
+            }
+        }
+
+        stage('安装依赖') {
+            steps {
+                script {
+                    echo "========== 安装 Node 依赖 =========="
+                    sh """
+                        set -e
+                        cd ${DEPLOY_DIR}
+                        npm install --production=false
+                        echo "✅ 依赖安装完成"
+                    """
+                }
+            }
+        }
+
+        stage('构建服务端') {
+            steps {
+                script {
+                    echo "========== 构建服务端 =========="
+                    sh """
+                        set -e
+                        cd ${DEPLOY_DIR}
+                        npm run server:build
+                        echo "✅ 构建完成"
+                    """
+                }
+            }
+        }
+
+        stage('重载服务') {
+            steps {
+                script {
+                    echo "========== 重载 PM2 进程 =========="
+                    sh """
+                        set -e
+                        cd ${DEPLOY_DIR}
+                        pm2 reload ${APP_NAME} --update-env
+                        echo "✅ 服务已重载"
+                        pm2 list
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "🎉 部署成功！应用 ${APP_NAME} 已更新上线。"
+        }
+        failure {
+            echo "❌ 部署失败！请检查上方日志排查问题。"
+        }
+    }
+}
