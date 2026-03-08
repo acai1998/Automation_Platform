@@ -1,115 +1,89 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { DayPicker, DateRange } from 'react-day-picker';
-import { format } from 'date-fns';
+import { format, addMonths, subMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { CalendarDays, X, ChevronLeft, ChevronRight } from 'lucide-react';
-import { Popover, PopoverContent, PopoverTrigger } from './popover';
-import { Button } from './button';
+import { CalendarDays, X, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// 注入日历所需的全局样式（仅一次）
-const STYLE_ID = 'rdp-custom-styles';
+/* ─── 全局 CSS 注入（仅一次） ─────────────────────────────────────── */
+const STYLE_ID = 'rdp-el-styles-v2';
 const CALENDAR_STYLES = `
-  /* react-day-picker v9 custom theme */
-  .rdp-root { --rdp-accent-color: #3b82f6; }
-
-  .rdp-months { display: flex; gap: 1.5rem; }
-  .rdp-month { min-width: 220px; }
-  .rdp-month_caption {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 4px;
-    height: 2rem;
-    margin-bottom: 4px;
-  }
-  .rdp-caption_label { font-size: .875rem; font-weight: 600; color: #1e293b; }
-  .rdp-nav { display: flex; align-items: center; gap: 4px; }
-
-  .rdp-weekdays { display: flex; }
-  .rdp-weekday {
-    width: 2.25rem;
-    height: 2rem;
+  .el-rdp .rdp-months         { display: flex; }
+  .el-rdp .rdp-month          { width: 100%; }
+  .el-rdp .rdp-month_caption  { display: none; }   /* 用自定义 header 替代 */
+  .el-rdp .rdp-nav            { display: none; }   /* 用自定义导航替代 */
+  .el-rdp .rdp-weekdays       { display: flex; border-bottom: 1px solid #f0f0f0; }
+  .el-rdp .rdp-weekday {
+    flex: 1;
+    height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: .625rem;
+    font-size: 11px;
+    color: #909399;
     font-weight: 500;
-    color: #94a3b8;
-    text-transform: uppercase;
   }
-  .rdp-weeks { display: flex; flex-direction: column; gap: 2px; }
-  .rdp-week { display: flex; }
-
-  .rdp-day {
-    position: relative;
+  .el-rdp .rdp-weeks          { display: flex; flex-direction: column; }
+  .el-rdp .rdp-week           { display: flex; }
+  .el-rdp .rdp-day {
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
   }
-  .rdp-day_button {
-    width: 2.25rem;
-    height: 2.25rem;
-    border-radius: 6px;
-    font-size: .875rem;
-    font-weight: 400;
+  .el-rdp .rdp-day_button {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    border-radius: 3px;
+    font-size: 12px;
+    color: #606266;
+    cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
-    user-select: none;
-    transition: background-color 0.15s, color 0.15s;
+    transition: background 0.15s, color 0.15s;
     position: relative;
     z-index: 1;
-    color: #334155;
-    background: transparent;
-    border: none;
     outline: none;
   }
-  .rdp-day_button:hover {
-    background-color: #eff6ff;
-    color: #1d4ed8;
-  }
-  .rdp-day_button:focus-visible {
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+  .el-rdp .rdp-day_button:hover { background: #f2f6fc; color: #409eff; }
+
+  /* today */
+  .el-rdp .rdp-today > .rdp-day_button {
+    color: #409eff;
+    font-weight: 700;
   }
 
-  /* Today */
-  .rdp-today > .rdp-day_button { font-weight: 700; color: #2563eb; }
-
-  /* Selected range */
-  .rdp-range_start > .rdp-day_button,
-  .rdp-range_end > .rdp-day_button {
-    background-color: #3b82f6 !important;
+  /* range endpoints */
+  .el-rdp .rdp-range_start > .rdp-day_button,
+  .el-rdp .rdp-range_end   > .rdp-day_button {
+    background: #409eff !important;
     color: #fff !important;
-    border-radius: 6px;
+    border-radius: 4px;
   }
-  .rdp-range_start > .rdp-day_button:hover,
-  .rdp-range_end > .rdp-day_button:hover {
-    background-color: #2563eb !important;
+
+  /* range middle background strip */
+  .el-rdp .rdp-range_middle {
+    background: #f2f6fc;
   }
-  .rdp-range_middle {
-    background-color: #eff6ff;
-  }
-  .rdp-range_middle > .rdp-day_button {
+  .el-rdp .rdp-range_middle > .rdp-day_button {
     border-radius: 0;
-    color: #1d4ed8;
+    color: #409eff;
   }
-  .rdp-range_middle > .rdp-day_button:hover {
-    background-color: #dbeafe;
-  }
-  .rdp-range_start { border-radius: 6px 0 0 6px; }
-  .rdp-range_end   { border-radius: 0 6px 6px 0; }
-  .rdp-range_start.rdp-range_end { border-radius: 6px; }
+  .el-rdp .rdp-range_middle > .rdp-day_button:hover { background: #e6f0fd; }
 
-  /* Outside days */
-  .rdp-outside { opacity: 0; pointer-events: none; }
+  /* range start / end rounded caps */
+  .el-rdp .rdp-range_start { border-radius: 4px 0 0 4px; background: #f2f6fc; }
+  .el-rdp .rdp-range_end   { border-radius: 0 4px 4px 0; background: #f2f6fc; }
+  .el-rdp .rdp-range_start.rdp-range_end { border-radius: 4px; background: transparent; }
 
-  /* Disabled */
-  .rdp-disabled > .rdp-day_button { opacity: 0.3; cursor: not-allowed; }
-
-  /* Hidden */
-  .rdp-hidden { visibility: hidden; }
+  /* outside / disabled / hidden */
+  .el-rdp .rdp-outside { opacity: 0; pointer-events: none; }
+  .el-rdp .rdp-disabled > .rdp-day_button { opacity: 0.3; cursor: default; }
+  .el-rdp .rdp-hidden  { visibility: hidden; }
 `;
 
 function injectStyles() {
@@ -121,9 +95,76 @@ function injectStyles() {
   document.head.appendChild(el);
 }
 
+/* ─── 快捷选项 ───────────────────────────────────────────────────── */
+const SHORTCUTS = [
+  {
+    label: '最近一周',
+    getValue: () => {
+      const end = new Date(); const start = new Date();
+      start.setDate(end.getDate() - 6);
+      return { start, end };
+    },
+  },
+  {
+    label: '最近一个月',
+    getValue: () => {
+      const end = new Date(); const start = new Date();
+      start.setMonth(end.getMonth() - 1);
+      return { start, end };
+    },
+  },
+  {
+    label: '最近三个月',
+    getValue: () => {
+      const end = new Date(); const start = new Date();
+      start.setMonth(end.getMonth() - 3);
+      return { start, end };
+    },
+  },
+];
+
+/* ─── 自定义月历头部 ─────────────────────────────────────────────── */
+interface MonthHeaderProps {
+  month: Date;
+  side: 'left' | 'right';
+  onPrevYear: () => void;
+  onPrevMonth: () => void;
+  onNextMonth: () => void;
+  onNextYear: () => void;
+  disablePrev?: boolean;
+  disableNext?: boolean;
+}
+function MonthHeader({ month, side, onPrevYear, onPrevMonth, onNextMonth, onNextYear }: MonthHeaderProps) {
+  const navBtn = 'h-5 w-5 inline-flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 hover:text-blue-500 transition-colors cursor-pointer';
+  return (
+    <div className="flex items-center justify-between px-2 py-1.5 select-none">
+      <div className="flex items-center gap-0.5">
+        {side === 'left' && (
+          <>
+            <button className={navBtn} onClick={onPrevYear} title="上一年"><ChevronsLeft className="h-3.5 w-3.5" /></button>
+            <button className={navBtn} onClick={onPrevMonth} title="上一月"><ChevronLeft className="h-3.5 w-3.5" /></button>
+          </>
+        )}
+      </div>
+      <span className="text-[13px] font-semibold text-gray-700">
+        {format(month, 'yyyy年 MM月')}
+      </span>
+      <div className="flex items-center gap-0.5">
+        {side === 'right' && (
+          <>
+            <button className={navBtn} onClick={onNextMonth} title="下一月"><ChevronRight className="h-3.5 w-3.5" /></button>
+            <button className={navBtn} onClick={onNextYear} title="下一年"><ChevronsRight className="h-3.5 w-3.5" /></button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── 类型定义 ───────────────────────────────────────────────────── */
 export interface DateRangeValue {
   startDate?: string; // YYYY-MM-DD
-  endDate?: string;   // YYYY-MM-DD
+  endDate?: string;
 }
 
 interface DateRangePickerProps {
@@ -133,156 +174,275 @@ interface DateRangePickerProps {
   className?: string;
 }
 
-export function DateRangePicker({
-  value,
-  onChange,
-  placeholder = '选择日期范围',
-  className,
-}: DateRangePickerProps) {
+/* ─── 主组件 ─────────────────────────────────────────────────────── */
+export function DateRangePicker({ value, onChange, placeholder = '选择日期范围', className }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
+  // fixed 定位所需的触发器位置
+  const [popPos, setPopPos] = useState({ top: 0, left: 0 });
+  const popRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // 内部临时选择（点击确定才提交）
+  const [tempRange, setTempRange] = useState<DateRange>({});
+
+  // 当前两个面板的月份
+  const today = new Date();
+  const [leftMonth, setLeftMonth] = useState<Date>(new Date(today.getFullYear(), today.getMonth(), 1));
+  const rightMonth = addMonths(leftMonth, 1);
 
   useEffect(() => { injectStyles(); }, []);
 
-  // 将 YYYY-MM-DD 字符串转为 Date（本地时区零点，避免 UTC 偏移）
+  // 打开时同步外部 value → 临时状态
+  useEffect(() => {
+    if (open) {
+      setTempRange({
+        from: value.startDate ? toDate(value.startDate) : undefined,
+        to: value.endDate ? toDate(value.endDate) : undefined,
+      });
+    }
+  }, [open]);
+
+  // 计算 fixed 定位位置
+  const updatePos = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setPopPos({ top: rect.bottom + 4, left: rect.left });
+  }, []);
+
+  useEffect(() => {
+    if (open) { updatePos(); }
+  }, [open, updatePos]);
+
+  // 滚动/resize 时更新位置
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener('scroll', updatePos, true);
+    window.addEventListener('resize', updatePos);
+    return () => {
+      window.removeEventListener('scroll', updatePos, true);
+      window.removeEventListener('resize', updatePos);
+    };
+  }, [open, updatePos]);
+
+  // 点击外部关闭
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        popRef.current && !popRef.current.contains(e.target as Node) &&
+        triggerRef.current && !triggerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
   const toDate = (str?: string): Date | undefined => {
     if (!str) return undefined;
     const [y, m, d] = str.split('-').map(Number);
     return new Date(y, m - 1, d);
   };
 
-  const range: DateRange = {
-    from: toDate(value.startDate),
-    to: toDate(value.endDate),
-  };
-
-  const handleSelect = (selected: DateRange | undefined) => {
-    if (!selected) {
-      onChange({});
-      return;
-    }
-    onChange({
-      startDate: selected.from ? format(selected.from, 'yyyy-MM-dd') : undefined,
-      endDate: selected.to ? format(selected.to, 'yyyy-MM-dd') : undefined,
-    });
-    // 两端都选好后自动关闭
-    if (selected.from && selected.to) {
-      setOpen(false);
-    }
-  };
-
-  const handleClear = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onChange({});
-  };
-
   const hasValue = !!(value.startDate || value.endDate);
-
   const displayText = (() => {
     if (value.startDate && value.endDate) {
       if (value.startDate === value.endDate) return value.startDate;
-      return `${value.startDate} 至 ${value.endDate}`;
+      return `${value.startDate}  至  ${value.endDate}`;
     }
-    if (value.startDate) return `${value.startDate} 起`;
-    if (value.endDate) return `至 ${value.endDate}`;
+    if (value.startDate) return `${value.startDate}  至  ...`;
+    if (value.endDate) return `...  至  ${value.endDate}`;
     return null;
   })();
 
+  // 确定
+  const handleConfirm = () => {
+    onChange({
+      startDate: tempRange.from ? format(tempRange.from, 'yyyy-MM-dd') : undefined,
+      endDate: tempRange.to ? format(tempRange.to, 'yyyy-MM-dd') : undefined,
+    });
+    setOpen(false);
+  };
+
+  // 清空
+  const handleClear = () => {
+    setTempRange({});
+  };
+
+  // 清空并关闭（触发器上的 × 按钮）
+  const handleTriggerClear = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange({});
+    setTempRange({});
+  };
+
+  // 快捷选项
+  const handleShortcut = (getValue: () => { start: Date; end: Date }) => {
+    const { start, end } = getValue();
+    setTempRange({ from: start, to: end });
+    // 同步左月面板到快捷起始月
+    setLeftMonth(new Date(start.getFullYear(), start.getMonth(), 1));
+  };
+
+  // 月份导航（左面板控制，右面板始终 = 左 + 1）
+  const goPrevYear  = () => setLeftMonth(d => subMonths(d, 12));
+  const goPrevMonth = () => setLeftMonth(d => subMonths(d, 1));
+  const goNextMonth = () => setLeftMonth(d => addMonths(d, 1));
+  const goNextYear  = () => setLeftMonth(d => addMonths(d, 12));
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          className={cn(
-            'inline-flex items-center gap-2 h-8 px-3 rounded-md border text-xs transition-all',
-            'bg-white dark:bg-slate-800',
-            'border-slate-200 dark:border-slate-700',
-            'text-slate-700 dark:text-slate-300',
-            'hover:border-blue-400 hover:bg-blue-50/40 dark:hover:border-blue-500 dark:hover:bg-blue-900/20',
-            'focus:outline-none focus:ring-2 focus:ring-blue-500/30',
-            hasValue && 'border-blue-400 bg-blue-50 dark:border-blue-600 dark:bg-blue-900/20',
-            className
-          )}
-        >
-          <CalendarDays className={cn('h-3.5 w-3.5 shrink-0', hasValue ? 'text-blue-500' : 'text-slate-400')} />
-          <span className={hasValue ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-400'}>
-            {displayText ?? placeholder}
-          </span>
-          {hasValue && (
-            <span
-              role="button"
-              onClick={handleClear}
-              className="ml-0.5 rounded-full p-0.5 hover:bg-blue-100 dark:hover:bg-blue-800 text-blue-400 hover:text-blue-600 transition-colors"
-            >
-              <X className="h-3 w-3" />
-            </span>
-          )}
-        </button>
-      </PopoverTrigger>
-
-      <PopoverContent align="start" className="p-0">
-        {/* 标题栏 */}
-        <div className="px-4 pt-3 pb-2 border-b border-slate-100 dark:border-slate-800">
-          <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">选择日期范围</p>
-          <p className="text-[10px] text-slate-400 mt-0.5">
-            {range.from && range.to
-              ? `${format(range.from, 'yyyy年MM月dd日')} — ${format(range.to, 'yyyy年MM月dd日')}`
-              : range.from
-              ? `已选: ${format(range.from, 'yyyy年MM月dd日')}，请选择结束日期`
-              : '点击选择起始日期'}
-          </p>
-        </div>
-
-        {/* 日历 */}
-        <DayPicker
-          mode="range"
-          selected={range}
-          onSelect={handleSelect}
-          locale={zhCN}
-          numberOfMonths={2}
-          showOutsideDays={false}
-          components={{
-            Chevron: ({ orientation }) =>
-              orientation === 'left'
-                ? <ChevronLeft className="h-3.5 w-3.5" />
-                : <ChevronRight className="h-3.5 w-3.5" />,
-          }}
-        />
-
-        {/* 底部快捷操作 */}
-        <div className="px-3 py-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
-          <div className="flex gap-1.5">
-            {[
-              { label: '今天', days: 0 },
-              { label: '最近 7 天', days: 7 },
-              { label: '最近 30 天', days: 30 },
-            ].map(({ label, days }) => (
-              <button
-                key={label}
-                onClick={() => {
-                  const today = new Date();
-                  const start = new Date();
-                  start.setDate(today.getDate() - days);
-                  onChange({
-                    startDate: format(start, 'yyyy-MM-dd'),
-                    endDate: format(today, 'yyyy-MM-dd'),
-                  });
-                  setOpen(false);
-                }}
-                className="px-2 py-1 rounded text-[10px] font-medium text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 dark:hover:text-blue-400 transition-colors"
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => { onChange({}); setOpen(false); }}
-            className="h-7 px-2 text-[10px] text-slate-400 hover:text-slate-600"
+    <div className="relative inline-block">
+      {/* ── 触发器 ── */}
+      <button
+        ref={triggerRef}
+        onClick={() => setOpen(v => !v)}
+        className={cn(
+          'inline-flex items-center gap-2 h-8 px-3 rounded-md border text-xs transition-all',
+          'bg-white border-slate-200 text-slate-700',
+          'hover:border-blue-400 hover:bg-blue-50/40',
+          'focus:outline-none focus:ring-2 focus:ring-blue-500/30',
+          hasValue && 'border-blue-400 bg-blue-50',
+          className
+        )}
+      >
+        <CalendarDays className={cn('h-3.5 w-3.5 shrink-0', hasValue ? 'text-blue-500' : 'text-slate-400')} />
+        <span className={hasValue ? 'text-blue-600 font-medium' : 'text-slate-400'}>
+          {displayText ?? placeholder}
+        </span>
+        {hasValue && (
+          <span
+            role="button"
+            onClick={handleTriggerClear}
+            className="ml-0.5 rounded-full p-0.5 hover:bg-blue-100 text-blue-400 hover:text-blue-600 transition-colors"
           >
-            清空
-          </Button>
+            <X className="h-3 w-3" />
+          </span>
+        )}
+      </button>
+
+      {/* ── Popover 面板（fixed 定位，完全脱离文档流，防穿模） ── */}
+      {open && (
+        <div
+          ref={popRef}
+          className="fixed z-[9999] bg-white rounded-lg border border-gray-200 shadow-2xl overflow-hidden"
+          style={{ top: popPos.top, left: popPos.left, minWidth: 580 }}
+        >
+          <div className="flex">
+            {/* ── 左侧快捷选项 ── */}
+            <div className="w-[88px] border-r border-gray-100 py-1.5 shrink-0">
+              {SHORTCUTS.map(({ label, getValue }) => (
+                <button
+                  key={label}
+                  onClick={() => handleShortcut(getValue)}
+                  className="w-full text-left px-2.5 py-1.5 text-[11px] text-gray-600 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* ── 右侧主体 ── */}
+            <div className="flex flex-col flex-1">
+              {/* 顶部：开始/结束日期展示栏 */}
+              <div className="flex items-center border-b border-gray-100 px-2.5 py-1.5 gap-2 bg-gray-50/60">
+                {/* 开始日期 */}
+                <div className={cn(
+                  'flex-1 flex items-center gap-1 h-6 px-2 rounded border text-[11px] bg-white',
+                  tempRange.from ? 'border-blue-300 text-gray-700' : 'border-gray-200 text-gray-400'
+                )}>
+                  <CalendarDays className="h-3 w-3 text-gray-400 shrink-0" />
+                  <span>{tempRange.from ? format(tempRange.from, 'yyyy-MM-dd') : '开始日期'}</span>
+                </div>
+
+                <ArrowRight className="h-3 w-3 text-gray-400 shrink-0" />
+
+                {/* 结束日期 */}
+                <div className={cn(
+                  'flex-1 flex items-center gap-1 h-6 px-2 rounded border text-[11px] bg-white',
+                  tempRange.to ? 'border-blue-300 text-gray-700' : 'border-gray-200 text-gray-400'
+                )}>
+                  <CalendarDays className="h-3 w-3 text-gray-400 shrink-0" />
+                  <span>{tempRange.to ? format(tempRange.to, 'yyyy-MM-dd') : '结束日期'}</span>
+                </div>
+              </div>
+
+              {/* 双月日历区 */}
+              <div className="flex divide-x divide-gray-100">
+                {/* 左月 */}
+                <div className="flex-1 px-0.5">
+                  <MonthHeader
+                    month={leftMonth}
+                    side="left"
+                    onPrevYear={goPrevYear}
+                    onPrevMonth={goPrevMonth}
+                    onNextMonth={goNextMonth}
+                    onNextYear={goNextYear}
+                  />
+                  <DayPicker
+                    className="el-rdp"
+                    mode="range"
+                    month={leftMonth}
+                    onMonthChange={() => {}}
+                    selected={tempRange}
+                    onSelect={(r) => setTempRange(r ?? {})}
+                    locale={zhCN}
+                    numberOfMonths={1}
+                    showOutsideDays
+                    hideNavigation
+                    components={{
+                      Chevron: () => null,
+                    }}
+                  />
+                </div>
+
+                {/* 右月 */}
+                <div className="flex-1 px-0.5">
+                  <MonthHeader
+                    month={rightMonth}
+                    side="right"
+                    onPrevYear={goPrevYear}
+                    onPrevMonth={goPrevMonth}
+                    onNextMonth={goNextMonth}
+                    onNextYear={goNextYear}
+                  />
+                  <DayPicker
+                    className="el-rdp"
+                    mode="range"
+                    month={rightMonth}
+                    onMonthChange={() => {}}
+                    selected={tempRange}
+                    onSelect={(r) => setTempRange(r ?? {})}
+                    locale={zhCN}
+                    numberOfMonths={1}
+                    showOutsideDays
+                    hideNavigation
+                    components={{
+                      Chevron: () => null,
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* 底部操作栏 */}
+              <div className="flex items-center justify-end gap-2.5 border-t border-gray-100 px-3 py-2 bg-white">
+                <button
+                  onClick={handleClear}
+                  className="text-[11px] text-gray-500 hover:text-blue-500 transition-colors"
+                >
+                  清空
+                </button>
+                <button
+                  onClick={handleConfirm}
+                  className="h-6 px-3 rounded bg-blue-500 hover:bg-blue-600 text-white text-[11px] font-medium transition-colors"
+                >
+                  确定
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-      </PopoverContent>
-    </Popover>
+      )}
+    </div>
   );
 }
