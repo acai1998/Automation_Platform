@@ -91,7 +91,9 @@ export const dashboardApi = {
     request<ComparisonData>(`/dashboard/comparison?days=${days}`),
 
   getRecentRuns: (limit: number = 10) =>
-    request<RecentRun[]>(`/dashboard/recent-runs?limit=${limit}`),
+    request<RecentRun[]>(`/dashboard/recent-runs?limit=${limit}&_ts=${Date.now()}`, {
+      cache: 'no-store',
+    }),
 
   refreshSummary: (date?: string) =>
     request('/dashboard/refresh-summary', {
@@ -100,7 +102,9 @@ export const dashboardApi = {
     }),
 
   getAll: (timeRange: string = '30d') =>
-    request<any>(`/dashboard/all?timeRange=${timeRange}`),
+    request<any>(`/dashboard/all?timeRange=${timeRange}&_ts=${Date.now()}`, {
+      cache: 'no-store',
+    }),
 };
 
 // ==================== Execution API ====================

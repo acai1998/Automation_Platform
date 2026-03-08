@@ -41,6 +41,26 @@ export interface RecentRun {
   executedById?: number;
 }
 
+export interface TrendDebugSourceStats {
+  source: 'daily_summary' | 'test_run' | 'task_execution';
+  rowCount: number;
+  daysWithData: number;
+  totalExecutions: number;
+  passedCases: number;
+  failedCases: number;
+  skippedCases: number;
+  latestDate: string | null;
+}
+
+export interface TrendDebugInfo {
+  days: number;
+  dateRange: {
+    startDate: string;
+    endDate: string;
+  };
+  sources: TrendDebugSourceStats[];
+}
+
 /**
  * 执行统计查询结果接口
  */
@@ -585,6 +605,88 @@ export class DashboardRepository extends BaseRepository<TestCase> {
     });
 
     return finalResult;
+  }
+
+  /**
+   * 趋势数据调试信息
+   * 返回三层数据源在指定时间窗口内的计数，便于定位取值问题
+   */
+  async getTrendDebugInfo(days: number = 30): Promise<TrendDebugInfo> {
+    const maxDays = 365;
+    const queryDays = Math.min(Math.max(days, 1), maxDays);
+
+    const dateList = Array.from(this.generateDateRange(queryDays));
+    const startDate = dateList[dateList.length - 1] || this.formatLocalDate(new Date());
+    const endDate = dateList[0] || this.formatLocalDate(new Date());
+
+    const [summaryRows, testRunRows, taskExecutionRows] = await Promise.all([
+      this.dailySummaryRepository.query(`
+        SELECT
+          COUNT(*) as rowCount,
+          COALESCE(SUM(CASE WHEN total_executions > 0 OR passed_cases > 0 OR failed_cases > 0 OR skipped_cases > 0 THEN 1 ELSE 0 END), 0) as daysWithData,
+          COALESCE(SUM(total_executions), 0) as totalExecutions,
+          COALESCE(SUM(passed_cases), 0) as passedCases,
+          COALESCE(SUM(failed_cases), 0) as failedCases,
+          COALESCE(SUM(skipped_cases), 0) as skippedCases,
+          MAX(DATE_FORMAT(summary_date, '%Y-%m-%d')) as latestDate
+        FROM Auto_TestCaseDailySummaries
+        WHERE summary_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+          AND summary_date < CURDATE()
+      `, [queryDays]),
+      this.taskExecutionRepository.query(`
+        SELECT
+          COUNT(DISTINCT DATE(created_at)) as rowCount,
+          COUNT(DISTINCT CASE WHEN (passed_cases + failed_cases + skipped_cases) > 0 THEN DATE(created_at) END) as daysWithData,
+          COUNT(*) as totalExecutions,
+          COALESCE(SUM(passed_cases), 0) as passedCases,
+          COALESCE(SUM(failed_cases), 0) as failedCases,
+          COALESCE(SUM(skipped_cases), 0) as skippedCases,
+          MAX(DATE_FORMAT(DATE(created_at), '%Y-%m-%d')) as latestDate
+        FROM Auto_TestRun
+        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+          AND created_at < CURDATE()
+      `, [queryDays]),
+      this.taskExecutionRepository.query(`
+        SELECT
+          COUNT(DISTINCT DATE(created_at)) as rowCount,
+          COUNT(DISTINCT CASE WHEN (passed_cases + failed_cases + skipped_cases) > 0 THEN DATE(created_at) END) as daysWithData,
+          COUNT(*) as totalExecutions,
+          COALESCE(SUM(passed_cases), 0) as passedCases,
+          COALESCE(SUM(failed_cases), 0) as failedCases,
+          COALESCE(SUM(skipped_cases), 0) as skippedCases,
+          MAX(DATE_FORMAT(DATE(created_at), '%Y-%m-%d')) as latestDate
+        FROM Auto_TestCaseTaskExecutions
+        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+          AND created_at < CURDATE()
+      `, [queryDays]),
+    ]);
+
+    const buildSourceStats = (
+      source: TrendDebugSourceStats['source'],
+      raw: Record<string, string | number | null | undefined>
+    ): TrendDebugSourceStats => ({
+      source,
+      rowCount: this.parseSafeInt(raw['rowCount'], 0),
+      daysWithData: this.parseSafeInt(raw['daysWithData'], 0),
+      totalExecutions: this.parseSafeInt(raw['totalExecutions'], 0),
+      passedCases: this.parseSafeInt(raw['passedCases'], 0),
+      failedCases: this.parseSafeInt(raw['failedCases'], 0),
+      skippedCases: this.parseSafeInt(raw['skippedCases'], 0),
+      latestDate: raw['latestDate'] ? String(raw['latestDate']) : null,
+    });
+
+    return {
+      days: queryDays,
+      dateRange: {
+        startDate,
+        endDate,
+      },
+      sources: [
+        buildSourceStats('daily_summary', (summaryRows[0] as Record<string, string | number | null | undefined>) || {}),
+        buildSourceStats('test_run', (testRunRows[0] as Record<string, string | number | null | undefined>) || {}),
+        buildSourceStats('task_execution', (taskExecutionRows[0] as Record<string, string | number | null | undefined>) || {}),
+      ],
+    };
   }
 
   /**

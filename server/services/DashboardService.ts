@@ -1,4 +1,4 @@
-import { DashboardRepository } from '../repositories/DashboardRepository';
+import { DashboardRepository, TrendDebugInfo } from '../repositories/DashboardRepository';
 import { AppDataSource } from '../config/database';
 
 export interface DashboardStats {
@@ -66,6 +66,13 @@ export class DashboardService {
    */
   async getComparison(days: number = 30): Promise<ComparisonData> {
     return this.dashboardRepository.getComparison(days);
+  }
+
+  /**
+   * 获取趋势调试信息（三层数据源计数）
+   */
+  async getTrendDebugInfo(days: number = 30): Promise<TrendDebugInfo> {
+    return this.dashboardRepository.getTrendDebugInfo(days);
   }
 
   /**

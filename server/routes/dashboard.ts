@@ -6,6 +6,13 @@ import { LOG_CONTEXTS } from '../config/logging';
 
 const router = Router();
 
+function setNoCacheHeaders(res: { set: (field: string, value: string) => unknown }) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+}
+
 /**
  * GET /api/dashboard/stats
  * 获取核心指标卡片数据
@@ -168,11 +175,42 @@ router.get('/comparison', async (req, res) => {
 });
 
 /**
+ * GET /api/dashboard/trend-debug?days=30
+ * 返回趋势三层数据源计数，便于快速定位取值问题
+ */
+router.get('/trend-debug', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days as string) || 30;
+
+    if (days < 1 || days > 365) {
+      return res.status(400).json({
+        success: false,
+        message: 'Days parameter must be between 1 and 365'
+      });
+    }
+
+    const data = await dashboardService.getTrendDebugInfo(days);
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+
+    logger.errorLog(error, 'Failed to get trend debug info', {
+      endpoint: '/trend-debug',
+      requestedDays: req.query.days,
+      errorType: error instanceof Error ? error.constructor.name : 'Unknown',
+    });
+
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
  * GET /api/dashboard/recent-runs?limit=10
  * 获取最近测试运行
  */
 router.get('/recent-runs', async (req, res) => {
   try {
+    setNoCacheHeaders(res);
     const limit = parseInt(req.query.limit as string) || 10;
     const data = await dashboardService.getRecentRuns(limit);
     res.json({ success: true, data });
@@ -234,6 +272,7 @@ const validateTrendData = (data: unknown[]) => {
  */
 router.get('/all', async (req, res) => {
   try {
+    setNoCacheHeaders(res);
     const { timeRange = '30d' } = req.query;
     const days = parseInt(timeRange as string) || 30;
 
