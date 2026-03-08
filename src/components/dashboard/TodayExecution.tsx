@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { HelpCircle } from "lucide-react";
-import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { PieChart, Pie, Cell } from "recharts";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { DashboardResponse, TestStatusFilter } from "@/types/dashboard";
 
@@ -123,24 +123,6 @@ export function TodayExecution({ data }: TodayExecutionProps) {
     }
   };
 
-  const EmptyChart = () => (
-    <ResponsiveContainer width={160} height={160}>
-      <PieChart>
-        <Pie
-          data={[{ name: "empty", value: 1 }]}
-          cx={80}
-          cy={80}
-          innerRadius={55}
-          outerRadius={80}
-          dataKey="value"
-          isAnimationActive={false}
-        >
-          <Cell fill="#e2e8f0" stroke="transparent" />
-        </Pie>
-      </PieChart>
-    </ResponsiveContainer>
-  );
-
   return (
     <div className="xl:col-span-1 rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark p-6 flex flex-col transition-all duration-200 hover:shadow-lg hover:border-primary/10">
       <div className="mb-4">
@@ -165,12 +147,26 @@ export function TodayExecution({ data }: TodayExecutionProps) {
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-between gap-4">
+        {/* 中间图表区：圆图居中，hover 时右侧出现信息卡片 */}
         <div className="flex-1 flex items-center justify-center w-full">
-          <div className="relative flex items-center justify-center" style={{ width: 280, height: 160 }}>
-            <div className="absolute left-0 top-0" style={{ width: 160, height: 160 }}>
+          <div className="flex items-center justify-center gap-3">
+            {/* 圆形甜甜圈图，使用固定尺寸避免 ResponsiveContainer 撑大导致裁切 */}
+            <div className="relative flex-shrink-0" style={{ width: 160, height: 160 }}>
               {chartData.isEmpty ? (
                 <>
-                  <EmptyChart />
+                  <PieChart width={160} height={160}>
+                    <Pie
+                      data={[{ name: "empty", value: 1 }]}
+                      cx={80}
+                      cy={80}
+                      innerRadius={55}
+                      outerRadius={80}
+                      dataKey="value"
+                      isAnimationActive={false}
+                    >
+                      <Cell fill="#e2e8f0" stroke="transparent" />
+                    </Pie>
+                  </PieChart>
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="text-center">
                       <div className="text-3xl font-bold text-slate-300 dark:text-slate-600">0</div>
@@ -180,38 +176,41 @@ export function TodayExecution({ data }: TodayExecutionProps) {
                 </>
               ) : (
                 <>
-                  <ResponsiveContainer width={160} height={160}>
-                    <PieChart key={animationKey}>
-                      <Pie
-                        data={chartData.segments}
-                        cx={80}
-                        cy={80}
-                        startAngle={-90}
-                        endAngle={270}
-                        innerRadius={55}
-                        outerRadius={80}
-                        paddingAngle={2}
-                        dataKey="value"
-                        animationBegin={200}
-                        animationDuration={1000}
-                        animationEasing="ease-out"
-                        onMouseEnter={handleSegmentHover}
-                        onMouseLeave={() => setHoveredSegment(null)}
-                      >
-                        {chartData.segments.map((entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={entry.color}
-                            stroke={hoveredSegment?.name === entry.name ? entry.color : "transparent"}
-                            strokeWidth={hoveredSegment?.name === entry.name ? 3 : 0}
-                            opacity={hoveredSegment && hoveredSegment.name !== entry.name ? 0.45 : 1}
-                            style={{ cursor: "pointer", transition: "opacity 0.2s" }}
-                          />
-                        ))}
-                      </Pie>
-                    </PieChart>
-                  </ResponsiveContainer>
+                  <PieChart
+                    key={animationKey}
+                    width={160}
+                    height={160}
+                  >
+                    <Pie
+                      data={chartData.segments}
+                      cx={80}
+                      cy={80}
+                      startAngle={-90}
+                      endAngle={270}
+                      innerRadius={55}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      dataKey="value"
+                      animationBegin={200}
+                      animationDuration={1000}
+                      animationEasing="ease-out"
+                      onMouseEnter={handleSegmentHover}
+                      onMouseLeave={() => setHoveredSegment(null)}
+                    >
+                      {chartData.segments.map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={entry.color}
+                          stroke={hoveredSegment?.name === entry.name ? entry.color : "transparent"}
+                          strokeWidth={hoveredSegment?.name === entry.name ? 3 : 0}
+                          opacity={hoveredSegment && hoveredSegment.name !== entry.name ? 0.45 : 1}
+                          style={{ cursor: "pointer", transition: "opacity 0.2s" }}
+                        />
+                      ))}
+                    </Pie>
+                  </PieChart>
 
+                  {/* 圆心文字 */}
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="text-center transition-all duration-200">
                       {hoveredSegment ? (
@@ -242,10 +241,8 @@ export function TodayExecution({ data }: TodayExecutionProps) {
               )}
             </div>
 
-            <div
-              className="absolute right-0 top-1/2 -translate-y-1/2 transition-all duration-200"
-              style={{ width: 108 }}
-            >
+            {/* 右侧信息卡片：hover 时显示，固定宽度占位防止整体跳动 */}
+            <div className="flex-shrink-0 transition-all duration-200" style={{ width: 108 }}>
               {hoveredSegment ? (
                 <div
                   className="rounded-xl border p-3 shadow-md bg-white dark:bg-surface-dark"
@@ -288,6 +285,7 @@ export function TodayExecution({ data }: TodayExecutionProps) {
                   </div>
                 </div>
               ) : (
+                /* 占位防止 hover 时布局跳动 */
                 <div style={{ height: 96 }} />
               )}
             </div>
