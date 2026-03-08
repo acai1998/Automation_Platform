@@ -589,9 +589,19 @@ export class ExecutionService {
 
   /**
    * 获取所有测试运行记录（Auto_TestRun 表）
+   * 支持按触发方式、状态、时间范围筛选
    */
-  async getAllTestRuns(limit = 50, offset = 0) {
-    return this.executionRepository.getAllTestRuns(limit, offset);
+  async getAllTestRuns(
+    limit = 50,
+    offset = 0,
+    filters: {
+      triggerType?: string;
+      status?: string;
+      startDate?: string;
+      endDate?: string;
+    } = {}
+  ) {
+    return this.executionRepository.getAllTestRuns(limit, offset, filters);
   }
 
   /**

@@ -122,12 +122,36 @@ router.post('/:id/start', async (req, res) => {
 /**
  * GET /api/executions/test-runs
  * 获取 Auto_TestRun 表的运行记录列表
+ * 支持筛选参数：triggerType、status、startDate（YYYY-MM-DD）、endDate（YYYY-MM-DD）
  */
 router.get('/test-runs', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
-    const result = await executionService.getAllTestRuns(limit, offset);
+
+    const filters: {
+      triggerType?: string;
+      status?: string;
+      startDate?: string;
+      endDate?: string;
+    } = {};
+
+    if (req.query.triggerType && typeof req.query.triggerType === 'string') {
+      filters.triggerType = req.query.triggerType;
+    }
+    if (req.query.status && typeof req.query.status === 'string') {
+      filters.status = req.query.status;
+    }
+    // 日期格式验证：YYYY-MM-DD
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (req.query.startDate && typeof req.query.startDate === 'string' && dateRegex.test(req.query.startDate)) {
+      filters.startDate = req.query.startDate;
+    }
+    if (req.query.endDate && typeof req.query.endDate === 'string' && dateRegex.test(req.query.endDate)) {
+      filters.endDate = req.query.endDate;
+    }
+
+    const result = await executionService.getAllTestRuns(limit, offset, filters);
     res.json({ success: true, ...result });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

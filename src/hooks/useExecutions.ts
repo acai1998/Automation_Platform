@@ -50,12 +50,27 @@ interface TestRunsResponse {
   total: number;
 }
 
-export function useTestRuns(page = 1, pageSize = 10) {
+export interface TestRunFilters {
+  triggerType?: string;
+  status?: string;
+  startDate?: string; // YYYY-MM-DD
+  endDate?: string;   // YYYY-MM-DD
+}
+
+export function useTestRuns(page = 1, pageSize = 10, filters: TestRunFilters = {}) {
   return useQuery<TestRunsResponse>({
-    queryKey: ['test-runs', page, pageSize],
+    queryKey: ['test-runs', page, pageSize, filters],
     queryFn: async () => {
       const offset = (page - 1) * pageSize;
-      const result = await request<TestRunRecord[]>(`/executions/test-runs?limit=${pageSize}&offset=${offset}`);
+      const params = new URLSearchParams({
+        limit: String(pageSize),
+        offset: String(offset),
+      });
+      if (filters.triggerType) params.set('triggerType', filters.triggerType);
+      if (filters.status) params.set('status', filters.status);
+      if (filters.startDate) params.set('startDate', filters.startDate);
+      if (filters.endDate) params.set('endDate', filters.endDate);
+      const result = await request<TestRunRecord[]>(`/executions/test-runs?${params.toString()}`);
       return result as unknown as TestRunsResponse;
     },
     keepPreviousData: true,

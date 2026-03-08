@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link } from 'wouter';
 import { 
   BarChart3, 
-  Search, 
   RefreshCw, 
   ChevronLeft, 
   ChevronRight, 
@@ -14,28 +13,35 @@ import {
   ExternalLink,
   FileText,
   History,
-  Calendar
+  Calendar,
+  Filter,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { useTestRuns } from '@/hooks/useExecutions';
+import { useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+
 /**
  * 报告中心页面
  * 采用与用例管理一致的现代化 SaaS Dashboard 风格
  * 数据读取自 Auto_TestRun 表
  */
 export default function Reports() {
-  const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  
+
+  // 筛选状态
+  const [filters, setFilters] = useState<TestRunFilters>({});
+  // 时间选择器临时状态（用于 input 绑定，apply 时才更新 filters）
+  const [startDateInput, setStartDateInput] = useState('');
+  const [endDateInput, setEndDateInput] = useState('');
+
   const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
   // 获取运行记录
-  const { data, isLoading, error, refetch } = useTestRuns(page, pageSize);
+  const { data, isLoading, error, refetch } = useTestRuns(page, pageSize, filters);
 
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
   const startIndex = (page - 1) * pageSize + 1;
@@ -47,11 +53,49 @@ export default function Reports() {
     toast.success('数据已更新');
   };
 
+  // 更新单个筛选项，同时重置到第一页
+  const handleFilterChange = (key: keyof TestRunFilters, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value || undefined }));
+    setPage(1);
+  };
+
+  // 应用时间范围筛选
+  const handleDateApply = () => {
+    if (startDateInput && endDateInput && startDateInput > endDateInput) {
+      toast.error('开始日期不能晚于结束日期');
+      return;
+    }
+    setFilters(prev => ({
+      ...prev,
+      startDate: startDateInput || undefined,
+      endDate: endDateInput || undefined,
+    }));
+    setPage(1);
+  };
+
+  // 清空时间范围
+  const handleDateClear = () => {
+    setStartDateInput('');
+    setEndDateInput('');
+    setFilters(prev => ({ ...prev, startDate: undefined, endDate: undefined }));
+    setPage(1);
+  };
+
+  // 清除所有筛选
+  const handleClearAll = () => {
+    setFilters({});
+    setStartDateInput('');
+    setEndDateInput('');
+    setPage(1);
+  };
+
+  // 是否有活跃筛选
+  const hasActiveFilters = !!(filters.triggerType || filters.status || filters.startDate || filters.endDate);
+
   // 状态主题配置
   const theme = {
     gradient: 'from-blue-500/20 via-blue-500/5 to-transparent',
     iconBg: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-    accent: 'blue',
   };
 
   return (
@@ -68,7 +112,7 @@ export default function Reports() {
                 报告中心
               </h1>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                查看和分析自动化测试运行历史记录 (Auto_TestRun)
+                查看和分析自动化测试运行历史记录
               </p>
             </div>
           </div>
@@ -85,19 +129,133 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* 搜索栏 */}
-      <div className="px-4 sm:px-6 py-4 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <Input
-              placeholder="搜索运行 ID 或项目名称..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="pl-10 h-9 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500/20"
-            />
+      {/* 筛选栏 */}
+      <div className="px-4 sm:px-6 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
+        <div className="flex flex-wrap items-end gap-3">
+          {/* 筛选图标+标签 */}
+          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 self-center shrink-0">
+            <Filter className="h-3.5 w-3.5" />
+            <span>筛选</span>
           </div>
+
+          {/* 触发方式 */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">触发方式</label>
+            <select
+              value={filters.triggerType || ''}
+              onChange={(e) => handleFilterChange('triggerType', e.target.value)}
+              className="h-8 pl-2.5 pr-7 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none cursor-pointer min-w-[100px]"
+              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
+            >
+              <option value="">全部</option>
+              <option value="manual">手动</option>
+              <option value="jenkins">Jenkins</option>
+              <option value="schedule">定时</option>
+              <option value="ci_triggered">CI</option>
+            </select>
+          </div>
+
+          {/* 状态 */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">状态</label>
+            <select
+              value={filters.status || ''}
+              onChange={(e) => handleFilterChange('status', e.target.value)}
+              className="h-8 pl-2.5 pr-7 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none cursor-pointer min-w-[100px]"
+              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
+            >
+              <option value="">全部</option>
+              <option value="success">成功</option>
+              <option value="failed">失败</option>
+              <option value="running">运行中</option>
+              <option value="pending">等待中</option>
+              <option value="aborted">已中止</option>
+            </select>
+          </div>
+
+          {/* 时间范围 */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">开始时间范围</label>
+            <div className="flex items-center gap-1.5">
+              <div className="relative">
+                <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                <input
+                  type="date"
+                  value={startDateInput}
+                  onChange={(e) => setStartDateInput(e.target.value)}
+                  className="h-8 pl-7 pr-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-[130px]"
+                />
+              </div>
+              <span className="text-xs text-slate-400 shrink-0">至</span>
+              <div className="relative">
+                <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                <input
+                  type="date"
+                  value={endDateInput}
+                  onChange={(e) => setEndDateInput(e.target.value)}
+                  className="h-8 pl-7 pr-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-[130px]"
+                />
+              </div>
+              <Button
+                size="sm"
+                variant="default"
+                onClick={handleDateApply}
+                disabled={!startDateInput && !endDateInput}
+                className="h-8 px-3 text-xs"
+              >
+                应用
+              </Button>
+              {(filters.startDate || filters.endDate) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleDateClear}
+                  className="h-8 w-8 p-0 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* 清空所有筛选 */}
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearAll}
+              className="h-8 gap-1.5 text-xs text-slate-500 hover:text-slate-700 self-end"
+            >
+              <X className="h-3 w-3" />
+              清空筛选
+            </Button>
+          )}
         </div>
+
+        {/* 已激活的筛选标签（方便用户一眼看到当前生效的筛选） */}
+        {hasActiveFilters && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800">
+            <span className="text-[10px] text-slate-400">已筛选：</span>
+            {filters.triggerType && (
+              <ActiveFilterTag
+                label={`触发方式: ${TRIGGER_TYPE_LABELS[filters.triggerType] || filters.triggerType}`}
+                onRemove={() => handleFilterChange('triggerType', '')}
+              />
+            )}
+            {filters.status && (
+              <ActiveFilterTag
+                label={`状态: ${STATUS_LABELS[filters.status] || filters.status}`}
+                onRemove={() => handleFilterChange('status', '')}
+              />
+            )}
+            {(filters.startDate || filters.endDate) && (
+              <ActiveFilterTag
+                label={`时间: ${filters.startDate || '…'} 至 ${filters.endDate || '…'}`}
+                onRemove={handleDateClear}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {/* 列表内容区 */}
@@ -116,7 +274,10 @@ export default function Reports() {
         ) : data?.data.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-500 dark:text-slate-400">
             <History className="h-10 w-10 opacity-20" />
-            <p className="font-medium">暂无运行记录</p>
+            <p className="font-medium">{hasActiveFilters ? '没有符合筛选条件的记录' : '暂无运行记录'}</p>
+            {hasActiveFilters && (
+              <Button variant="outline" size="sm" onClick={handleClearAll}>清空筛选条件</Button>
+            )}
           </div>
         ) : (
           <div className="h-full flex flex-col">
@@ -125,10 +286,10 @@ export default function Reports() {
               <table className="w-full min-w-[1000px]">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">运行 ID</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">所属项目</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">执行编号</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">触发信息</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">状态</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">用例统计 (P/F/T)</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">用例统计</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">开始时间</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">耗时</th>
                     <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">操作</th>
@@ -137,24 +298,23 @@ export default function Reports() {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {data?.data.map((record) => (
                     <tr key={record.id} className="group hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors duration-150">
-                      <td className="px-4 py-3.5 text-sm font-mono text-slate-500">#{record.id}</td>
+                      <td className="px-4 py-3.5 text-sm font-mono text-slate-700 dark:text-slate-300">{record.id}</td>
                       <td className="px-4 py-3.5">
-                        <div className="font-medium text-slate-900 dark:text-white">{record.project_name || '未分类'}</div>
-                        <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
-                          <Badge variant="outline" className="px-1 py-0 text-[9px] h-auto font-normal uppercase">{record.trigger_type}</Badge>
-                          <span>by {record.trigger_by_name || 'System'}</span>
+                        <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                          <TriggerTypeBadge type={record.trigger_type} />
+                          <span>by {record.trigger_by_name || '系统'}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
                         <StatusBadge status={record.status} />
                       </td>
                       <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-green-600 font-bold">{record.passed_cases}</span>
-                          <span className="text-slate-300">/</span>
-                          <span className="text-red-600 font-bold">{record.failed_cases}</span>
-                          <span className="text-slate-300">/</span>
-                          <span className="text-slate-600 dark:text-slate-400">{record.total_cases}</span>
+                        <div className="flex items-center gap-1.5 text-xs mb-1">
+                          <span className="text-green-600 font-medium">{record.passed_cases} 通过</span>
+                          <span className="text-slate-300">·</span>
+                          <span className="text-red-500 font-medium">{record.failed_cases} 失败</span>
+                          <span className="text-slate-300">·</span>
+                          <span className="text-slate-400">{record.total_cases} 总计</span>
                         </div>
                         <div className="w-24 bg-slate-100 dark:bg-slate-800 rounded-full h-1 overflow-hidden">
                           <div 
@@ -200,12 +360,13 @@ export default function Reports() {
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1.5">
-                          <span className="text-[10px] font-mono text-slate-400">#{record.id}</span>
+                          <span className="text-[10px] font-mono text-slate-400">{record.id}</span>
                           <StatusBadge status={record.status} />
                         </div>
-                        <h3 className="font-medium text-slate-900 dark:text-white text-sm truncate">
-                          {record.project_name || '未分类'}
-                        </h3>
+                        <div className="flex items-center gap-1 mt-1">
+                          <TriggerTypeBadge type={record.trigger_type} />
+                          <span className="text-[10px] text-slate-400">by {record.trigger_by_name || '系统'}</span>
+                        </div>
                       </div>
                       <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" asChild>
                         <Link href={`/reports/${record.id}`}>
@@ -270,6 +431,52 @@ export default function Reports() {
         )}
       </div>
     </div>
+  );
+}
+
+// ─── 常量映射（用于筛选标签显示） ────────────────────────────────────────────
+
+const TRIGGER_TYPE_LABELS: Record<string, string> = {
+  manual: '手动',
+  jenkins: 'Jenkins',
+  schedule: '定时',
+  ci_triggered: 'CI',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  success: '成功',
+  failed: '失败',
+  running: '运行中',
+  pending: '等待中',
+  aborted: '已中止',
+  cancelled: '已取消',
+};
+
+// ─── 子组件 ───────────────────────────────────────────────────────────────────
+
+function ActiveFilterTag({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800">
+      {label}
+      <button onClick={onRemove} className="hover:text-blue-800 dark:hover:text-blue-200 transition-colors">
+        <X className="h-2.5 w-2.5" />
+      </button>
+    </span>
+  );
+}
+
+function TriggerTypeBadge({ type }: { type: string }) {
+  const configs: Record<string, { label: string; className: string }> = {
+    manual: { label: '手动', className: 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800' },
+    jenkins: { label: 'Jenkins', className: 'bg-orange-50 text-orange-600 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-800' },
+    schedule: { label: '定时', className: 'bg-purple-50 text-purple-600 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800' },
+    ci_triggered: { label: 'CI', className: 'bg-green-50 text-green-600 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800' },
+  };
+  const config = configs[type] || { label: type, className: 'bg-slate-50 text-slate-500 border-slate-200' };
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border ${config.className}`}>
+      {config.label}
+    </span>
   );
 }
 
