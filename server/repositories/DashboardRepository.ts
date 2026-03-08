@@ -606,22 +606,26 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         executedById: string | null;
       }
 
-      // 使用直接 SQL 查询，避免 QueryBuilder 字段映射问题
+      // 查询 Auto_TestRun（状态由 Jenkins 回调实时更新，数据最准确）
+      // Auto_TestCaseTaskExecutions 的 status 未被 Jenkins 回调更新，不再使用
       const results = await this.taskExecutionRepository.query(`
         SELECT
-          e.id,
-          e.task_name as taskName,
-          e.status,
-          COALESCE(e.duration, 0) as duration,
-          COALESCE(e.start_time, e.created_at) as startTime,
-          COALESCE(e.total_cases, 0) as totalCases,
-          COALESCE(e.passed_cases, 0) as passedCases,
-          COALESCE(e.failed_cases, 0) as failedCases,
+          r.id,
+          COALESCE(r.jenkins_job, '手动执行') as taskName,
+          CASE r.status
+            WHEN 'aborted' THEN 'cancelled'
+            ELSE r.status
+          END as status,
+          COALESCE(ROUND(r.duration_ms / 1000), 0) as duration,
+          COALESCE(r.start_time, r.created_at) as startTime,
+          COALESCE(r.total_cases, 0) as totalCases,
+          COALESCE(r.passed_cases, 0) as passedCases,
+          COALESCE(r.failed_cases, 0) as failedCases,
           COALESCE(u.display_name, u.username, '系统') as executedBy,
           u.id as executedById
-        FROM Auto_TestCaseTaskExecutions e
-        LEFT JOIN Auto_Users u ON e.executed_by = u.id
-        ORDER BY COALESCE(e.start_time, e.created_at) DESC, e.id DESC
+        FROM Auto_TestRun r
+        LEFT JOIN Auto_Users u ON r.trigger_by = u.id
+        ORDER BY COALESCE(r.start_time, r.created_at) DESC, r.id DESC
         LIMIT ?
       `, [limit]) as RecentRunRaw[];
 

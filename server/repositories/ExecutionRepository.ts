@@ -484,11 +484,48 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   }
 
   /**
-   * 获取所有测试运行记录（分页）
-   * 修复：使用原生SQL确保字段名正确映射，解决前端无法读取数据的问题
+   * 获取所有测试运行记录（分页 + 筛选）
+   * 支持按触发方式、状态、时间范围筛选
    */
-  async getAllTestRuns(limit: number = 50, offset: number = 0): Promise<{ data: TestRunRow[]; total: number }> {
-    // 使用原生SQL查询，确保字段名与前端期望一致
+  async getAllTestRuns(
+    limit: number = 50,
+    offset: number = 0,
+    filters: {
+      triggerType?: string;
+      status?: string;
+      startDate?: string;
+      endDate?: string;
+    } = {}
+  ): Promise<{ data: TestRunRow[]; total: number }> {
+    // 动态拼接 WHERE 条件
+    const conditions: string[] = [];
+    const params: (string | number)[] = [];
+
+    if (filters.triggerType) {
+      conditions.push('tr.trigger_type = ?');
+      params.push(filters.triggerType);
+    }
+
+    if (filters.status) {
+      conditions.push('tr.status = ?');
+      params.push(filters.status);
+    }
+
+    if (filters.startDate) {
+      // 开始日期：当天 00:00:00
+      conditions.push('tr.start_time >= ?');
+      params.push(`${filters.startDate} 00:00:00`);
+    }
+
+    if (filters.endDate) {
+      // 结束日期：当天 23:59:59
+      conditions.push('tr.start_time <= ?');
+      params.push(`${filters.endDate} 23:59:59`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // 数据查询
     const data = await this.testRunRepository.query(`
       SELECT 
         tr.id,
@@ -514,14 +551,17 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         tr.created_at
       FROM Auto_TestRun tr
       LEFT JOIN Auto_Users u ON tr.trigger_by = u.id
+      ${whereClause}
       ORDER BY tr.created_at DESC
       LIMIT ? OFFSET ?
-    `, [limit, offset]);
+    `, [...params, limit, offset]);
 
-    // 获取总数
+    // 总数查询（同样带上筛选条件）
     const countResult = await this.testRunRepository.query(`
-      SELECT COUNT(*) as total FROM Auto_TestRun
-    `);
+      SELECT COUNT(*) as total
+      FROM Auto_TestRun tr
+      ${whereClause}
+    `, params);
     const total = countResult[0]?.total || 0;
 
     return { data, total };
@@ -936,6 +976,31 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         durationMs: results.durationMs,
         endTime: new Date(),
       });
+
+      // 1b. 同步更新对应的 Auto_TestCaseTaskExecutions 记录状态
+      // completeBatch 回调只更新了 Auto_TestRun，需要同步到 Auto_TestCaseTaskExecutions
+      // 这样 getRecentRuns 查 Auto_TestCaseTaskExecutions 时才能拿到最新状态
+      {
+        let taskExecId = executionId;
+        if (!taskExecId) {
+          taskExecId = await this.findExecutionIdByRunId(runId) || undefined;
+        }
+        if (taskExecId) {
+          // 将 Auto_TestRun 的状态枚举('aborted') 转回 TaskExecution 的枚举
+          const taskExecStatus: 'success' | 'failed' | 'cancelled' =
+            results.status === 'aborted' || results.status === 'cancelled' ? 'cancelled'
+            : results.status === 'success' ? 'success'
+            : 'failed';
+          await this.repository.update(taskExecId, {
+            status: taskExecStatus,
+            passedCases: results.passedCases,
+            failedCases: results.failedCases,
+            skippedCases: results.skippedCases,
+            duration: Math.round(results.durationMs / 1000),
+            endTime: new Date(),
+          });
+        }
+      }
 
       // 2. 如果有详细结果，更新每个测试结果
       if (results.results && results.results.length > 0) {
