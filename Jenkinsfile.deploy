@@ -42,7 +42,8 @@ pipeline {
                         set -e
                         git config --global --add safe.directory ${DEPLOY_DIR}
                         cd ${DEPLOY_DIR}
-                        git pull origin master
+                        git fetch origin master
+                        git reset --hard origin/master
                         echo "✅ 当前版本: \$(git log -1 --pretty=format:'%h %s')"
                     """
                 }
@@ -156,8 +157,9 @@ pipeline {
                 echo "  构建编号 : #${BUILD_NUMBER}"
                 echo "  请查看上方日志排查问题"
                 echo "================================================"
-                // 打印最近的 PM2 日志帮助排查
-                sh "pm2 logs ${APP_NAME} --lines 30 --nostream || true"
+                // 打印最近的 PM2 日志帮助排查（使用 env.APP_NAME 防止 checkout 阶段失败时变量未绑定）
+                def appName = env.APP_NAME ?: 'autotest-platform'
+                sh "pm2 logs ${appName} --lines 30 --nostream || true"
             }
         }
     }
