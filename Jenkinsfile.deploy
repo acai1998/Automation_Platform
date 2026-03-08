@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    // 每4小时定时构建一次（0点、4点、8点、12点、16点、20点）
+    triggers {
+        cron('0 0,4,8,12,16,20 * * *')
+    }
+
     // 避免并发部署互相覆盖
     options {
         disableConcurrentBuilds()
