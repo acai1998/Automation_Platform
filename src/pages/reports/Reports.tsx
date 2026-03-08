@@ -104,21 +104,21 @@ export default function Reports() {
       </div>
 
       {/* 筛选栏 */}
-      <div className="px-4 sm:px-6 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
-        <div className="flex flex-wrap items-end gap-3">
+      <div className="relative z-30 overflow-visible px-4 sm:px-6 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
+        <div className="flex flex-wrap items-center gap-3">
           {/* 筛选图标+标签 */}
-          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 self-center shrink-0">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">
             <Filter className="h-3.5 w-3.5" />
             <span>筛选</span>
           </div>
 
-          {/* 触发方式 */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">触发方式</label>
+          {/* 触发方式：左侧文案 + 右侧控件 */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">触发方式</span>
             <select
               value={filters.triggerType || ''}
               onChange={(e) => handleFilterChange('triggerType', e.target.value)}
-              className="h-8 pl-2.5 pr-7 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none cursor-pointer min-w-[100px]"
+              className="h-8 pl-2.5 pr-7 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none cursor-pointer min-w-[108px]"
               style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
             >
               <option value="">全部</option>
@@ -129,13 +129,13 @@ export default function Reports() {
             </select>
           </div>
 
-          {/* 状态 */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">状态</label>
+          {/* 状态：左侧文案 + 右侧控件 */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">状态</span>
             <select
               value={filters.status || ''}
               onChange={(e) => handleFilterChange('status', e.target.value)}
-              className="h-8 pl-2.5 pr-7 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none cursor-pointer min-w-[100px]"
+              className="h-8 pl-2.5 pr-7 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none cursor-pointer min-w-[108px]"
               style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
             >
               <option value="">全部</option>
@@ -147,9 +147,9 @@ export default function Reports() {
             </select>
           </div>
 
-          {/* 时间范围 */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">时间范围</label>
+          {/* 时间范围：左侧文案 + 右侧控件 */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">时间范围</span>
             <DateRangePicker
               value={{ startDate: filters.startDate, endDate: filters.endDate }}
               onChange={(range) => {
@@ -169,38 +169,13 @@ export default function Reports() {
               variant="ghost"
               size="sm"
               onClick={handleClearAll}
-              className="h-8 gap-1.5 text-xs text-slate-500 hover:text-slate-700 self-end"
+              className="h-8 gap-1.5 text-xs text-slate-500 hover:text-slate-700 ml-auto"
             >
               <X className="h-3 w-3" />
               清空筛选
             </Button>
           )}
         </div>
-
-        {/* 已激活的筛选标签（方便用户一眼看到当前生效的筛选） */}
-        {hasActiveFilters && (
-          <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800">
-            <span className="text-[10px] text-slate-400">已筛选：</span>
-            {filters.triggerType && (
-              <ActiveFilterTag
-                label={`触发方式: ${TRIGGER_TYPE_LABELS[filters.triggerType] || filters.triggerType}`}
-                onRemove={() => handleFilterChange('triggerType', '')}
-              />
-            )}
-            {filters.status && (
-              <ActiveFilterTag
-                label={`状态: ${STATUS_LABELS[filters.status] || filters.status}`}
-                onRemove={() => handleFilterChange('status', '')}
-              />
-            )}
-            {(filters.startDate || filters.endDate) && (
-              <ActiveFilterTag
-                label={`时间: ${filters.startDate || '…'} 至 ${filters.endDate || '…'}`}
-                onRemove={() => { setFilters(prev => ({ ...prev, startDate: undefined, endDate: undefined })); setPage(1); }}
-              />
-            )}
-          </div>
-        )}
       </div>
 
       {/* 列表内容区 */}
@@ -379,36 +354,7 @@ export default function Reports() {
   );
 }
 
-// ─── 常量映射（用于筛选标签显示） ────────────────────────────────────────────
-
-const TRIGGER_TYPE_LABELS: Record<string, string> = {
-  manual: '手动',
-  jenkins: 'Jenkins',
-  schedule: '定时',
-  ci_triggered: 'CI',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  success: '成功',
-  failed: '失败',
-  running: '运行中',
-  pending: '等待中',
-  aborted: '已中止',
-  cancelled: '已取消',
-};
-
 // ─── 子组件 ───────────────────────────────────────────────────────────────────
-
-function ActiveFilterTag({ label, onRemove }: { label: string; onRemove: () => void }) {
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800">
-      {label}
-      <button onClick={onRemove} className="hover:text-blue-800 dark:hover:text-blue-200 transition-colors">
-        <X className="h-2.5 w-2.5" />
-      </button>
-    </span>
-  );
-}
 
 function TriggerTypeBadge({ type }: { type: string }) {
   const configs: Record<string, { label: string; className: string }> = {
