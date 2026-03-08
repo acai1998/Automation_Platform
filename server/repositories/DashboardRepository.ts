@@ -420,7 +420,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
     try {
       const result = await this.taskExecutionRepository.createQueryBuilder('execution')
         .select([
-          'COALESCE(SUM(execution.passedCases + execution.failedCases + execution.skippedCases), 0) as total',
+          'COALESCE(SUM(execution.totalCases), 0) as total',
           'COALESCE(SUM(execution.passedCases), 0) as passed',
           'COALESCE(SUM(execution.failedCases), 0) as failed',
           'COALESCE(SUM(execution.skippedCases), 0) as skipped',
@@ -938,7 +938,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
       // 用 created_at 确保触发即统计（start_time 可能为 NULL）
       const result = await this.taskExecutionRepository.query(`
         SELECT
-          COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as total,
+          COALESCE(SUM(total_cases), 0) as total,
           COALESCE(SUM(passed_cases), 0) as passed,
           COALESCE(SUM(failed_cases), 0) as failed,
           COALESCE(SUM(skipped_cases), 0) as skipped

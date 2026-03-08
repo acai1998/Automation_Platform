@@ -135,16 +135,15 @@ export function TodayExecution({ data }: TodayExecutionProps) {
               </button>
             </TooltipTrigger>
             <TooltipContent side="top" sideOffset={12} className="max-w-xs">
-              <div className="text-slate-600 dark:text-gray-400 text-sm space-y-1">
-                <p>显示今天内执行用例的实时状态分布（成功/失败/跳过）。</p>
-                <p className="text-xs text-slate-400">运行次数：触发执行的总次数（每次可包含多个用例）；用例数：所有运行中实际执行的用例总数。</p>
-              </div>
+<div className="text-slate-600 dark:text-gray-400 text-sm">
+显示今天内执行用例的实时状态分布（成功/失败/跳过）。
+</div>
             </TooltipContent>
           </Tooltip>
         </div>
-        <p className="text-slate-500 dark:text-gray-400 text-sm mt-1">
-          今日共运行 <span className="font-semibold text-slate-700 dark:text-gray-200">{data?.stats?.todayRuns ?? chartData.total}</span> 次，执行 <span className="font-semibold text-slate-700 dark:text-gray-200">{chartData.total}</span> 个用例
-        </p>
+<p className="text-slate-500 dark:text-gray-400 text-sm mt-1">
+今日共执行 <span className="font-semibold text-slate-700 dark:text-gray-200">{chartData.total}</span> 个用例
+</p>
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-between gap-4">

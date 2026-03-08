@@ -152,7 +152,7 @@ export function StatsCards({ data }: StatsCardsProps) {
       iconColor: stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "text-danger" : "text-success",
       label: "今日成功率%",
       value: stats && stats.todaySuccessRate !== null ? `${stats.todaySuccessRate}%` : 'N/A',
-      description: "今日 status=success 的运行次数 / 今日总运行次数，低于 80% 会显示为警示颜色。注意：此处为运行级别成功率，与用例级别通过率不同。",
+      description: "今日成功运行次数 / 今日总运行次数，低于 80% 会显示为警示颜色。",
     },
     {
       icon: <Timer className="h-5 w-5" />,
