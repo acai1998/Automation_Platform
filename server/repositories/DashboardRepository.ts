@@ -268,6 +268,18 @@ export class DashboardRepository extends BaseRepository<TestCase> {
   }
 
   /**
+   * 判断趋势数据是否包含有效执行记录
+   */
+  private hasTrendExecutionData(rows: DailySummaryData[]): boolean {
+    return rows.some((row) =>
+      row.totalExecutions > 0 ||
+      row.passedCases > 0 ||
+      row.failedCases > 0 ||
+      row.skippedCases > 0
+    );
+  }
+
+  /**
    * 计算成功率
    * @param passed 通过数量
    * @param total 总数量
@@ -466,27 +478,31 @@ export class DashboardRepository extends BaseRepository<TestCase> {
 
     if (summaries.length > 0) {
       const normalizedSummaries = this.normalizeDailySummaryRows(summaries);
-      const result = this.buildContinuousTrendData(queryDays, normalizedSummaries);
+      if (this.hasTrendExecutionData(normalizedSummaries)) {
+        const result = this.buildContinuousTrendData(queryDays, normalizedSummaries);
+        const duration = Date.now() - startTime;
 
-      const duration = Date.now() - startTime;
-      this.logDashboard('info', 'Trend data retrieved from daily summary table', {
-        dataSource: 'summary_table',
+        this.logDashboard('info', 'Trend data retrieved from daily summary table', {
+          dataSource: 'summary_table',
+          days: queryDays,
+          recordCount: result.length,
+          originalCount: summaries.length,
+          filledDays: result.filter((item) => item.totalExecutions === 0).length,
+          durationMs: duration,
+        });
+
+        return result;
+      }
+
+      this.logDashboard('warn', 'Summary table rows exist but all metrics are zero, falling back to raw tables', {
+        dataSource: 'summary_table_zero_metrics',
         days: queryDays,
-        recordCount: result.length,
-        originalCount: summaries.length,
-        filledDays: result.filter((item) => item.totalExecutions === 0).length,
-        durationMs: duration,
+        recordCount: summaries.length,
       });
-      return result;
     }
 
-    // 汇总表为空时，基于 Auto_TestRun 实时计算，保证与 stats/todayExecution 口径一致
-    this.logDashboard('warn', 'Daily summary table empty, falling back to real-time calculation', {
-      dataSource: 'fallback_calculation',
-      days: queryDays,
-    });
-
-    const trendData = await this.taskExecutionRepository.query(`
+    // 汇总表不可用/无有效数据时，基于 Auto_TestRun 实时计算
+    const testRunTrendData = await this.taskExecutionRepository.query(`
       SELECT
         DATE_FORMAT(DATE(created_at), '%Y-%m-%d') as date,
         COUNT(*) as totalExecutions,
@@ -509,15 +525,61 @@ export class DashboardRepository extends BaseRepository<TestCase> {
       successRate: string;
     }>;
 
-    const normalizedTrendData = this.normalizeDailySummaryRows(trendData);
-    const finalResult = this.buildContinuousTrendData(queryDays, normalizedTrendData);
+    const normalizedTestRunTrendData = this.normalizeDailySummaryRows(testRunTrendData);
+    if (this.hasTrendExecutionData(normalizedTestRunTrendData)) {
+      const result = this.buildContinuousTrendData(queryDays, normalizedTestRunTrendData);
+      const duration = Date.now() - startTime;
+
+      this.logDashboard('info', 'Trend data calculated from Auto_TestRun', {
+        dataSource: 'test_run_table',
+        days: queryDays,
+        recordCount: result.length,
+        originalCount: testRunTrendData.length,
+        filledDays: result.filter((item) => item.totalExecutions === 0).length,
+        durationMs: duration,
+      });
+
+      return result;
+    }
+
+    // 兼容旧数据：Auto_TestCaseTaskExecutions 作为最后兜底
+    this.logDashboard('warn', 'Auto_TestRun has no trend data, fallback to Auto_TestCaseTaskExecutions', {
+      dataSource: 'legacy_task_execution_fallback',
+      days: queryDays,
+    });
+
+    const legacyTrendData = await this.taskExecutionRepository.query(`
+      SELECT
+        DATE_FORMAT(DATE(created_at), '%Y-%m-%d') as date,
+        COUNT(*) as totalExecutions,
+        COALESCE(SUM(passed_cases), 0) as passedCases,
+        COALESCE(SUM(failed_cases), 0) as failedCases,
+        COALESCE(SUM(skipped_cases), 0) as skippedCases,
+        ROUND(SUM(passed_cases) * 100.0 / NULLIF(SUM(passed_cases + failed_cases + skipped_cases), 0), 2) as successRate
+      FROM Auto_TestCaseTaskExecutions
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND created_at < CURDATE()
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+      LIMIT ?
+    `, [queryDays, queryDays]) as Array<{
+      date: string;
+      totalExecutions: string;
+      passedCases: string;
+      failedCases: string;
+      skippedCases: string;
+      successRate: string;
+    }>;
+
+    const normalizedLegacyTrendData = this.normalizeDailySummaryRows(legacyTrendData);
+    const finalResult = this.buildContinuousTrendData(queryDays, normalizedLegacyTrendData);
 
     const duration = Date.now() - startTime;
-    this.logDashboard('info', 'Trend data calculated from execution records', {
-      dataSource: 'fallback_calculation',
+    this.logDashboard('info', 'Trend data calculated from Auto_TestCaseTaskExecutions', {
+      dataSource: 'legacy_task_execution_fallback',
       days: queryDays,
       recordCount: finalResult.length,
-      originalCount: trendData.length,
+      originalCount: legacyTrendData.length,
       filledDays: finalResult.filter((item) => item.totalExecutions === 0).length,
       durationMs: duration,
     });

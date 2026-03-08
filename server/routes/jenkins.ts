@@ -71,7 +71,7 @@ router.post('/trigger', generalAuthRateLimiter, rateLimitMiddleware.limit, async
     if (taskId !== undefined) {
       const { queryOne } = await import('../config/database');
       const task = await queryOne<{ id: number; name: string; case_ids: string; project_id: number }>(
-        'SELECT id, name, case_ids, project_id FROM tasks WHERE id = ?',
+        'SELECT id, name, case_ids, project_id FROM Auto_TestCaseTasks WHERE id = ?',
         [taskId]
       );
 

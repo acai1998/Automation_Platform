@@ -51,9 +51,9 @@ router.get('/', async (req, res) => {
 
     let sql = `
       SELECT t.*, u.display_name as created_by_name, e.name as environment_name
-      FROM tasks t
+      FROM Auto_TestCaseTasks t
       LEFT JOIN Auto_Users u ON t.created_by = u.id
-      LEFT JOIN environments e ON t.environment_id = e.id
+      LEFT JOIN Auto_TestEnvironments e ON t.environment_id = e.id
       WHERE 1=1
     `;
     const params: unknown[] = [];
@@ -89,9 +89,9 @@ router.get('/:id', async (req, res) => {
 
     const task = await queryOne<Task>(`
       SELECT t.*, u.display_name as created_by_name, e.name as environment_name
-      FROM tasks t
+      FROM Auto_TestCaseTasks t
       LEFT JOIN Auto_Users u ON t.created_by = u.id
-      LEFT JOIN environments e ON t.environment_id = e.id
+      LEFT JOIN Auto_TestEnvironments e ON t.environment_id = e.id
       WHERE t.id = ?
     `, [id]);
 
@@ -107,7 +107,7 @@ router.get('/:id', async (req, res) => {
         if (caseIds.length > 0) {
           const placeholders = caseIds.map(() => '?').join(',');
           cases = await query<TestCase[]>(
-            `SELECT id, name, type, status, priority FROM test_cases WHERE id IN (${placeholders})`,
+            `SELECT id, name, type, status, priority FROM Auto_TestCase WHERE id IN (${placeholders})`,
             caseIds
           );
         }
@@ -118,10 +118,10 @@ router.get('/:id', async (req, res) => {
 
     // 获取最近执行记录
     const recentExecutions = await query<TaskExecution[]>(`
-      SELECT id, status, start_time, end_time, duration, passed_cases, failed_cases
-      FROM task_executions
+      SELECT id, status, start_time, end_time, duration, passed_cases, failed_cases, total_cases
+      FROM Auto_TestCaseTaskExecutions
       WHERE task_id = ?
-      ORDER BY start_time DESC
+      ORDER BY COALESCE(start_time, created_at) DESC
       LIMIT 5
     `, [id]);
 
@@ -162,7 +162,7 @@ router.post('/', generalAuthRateLimiter, async (req, res) => {
 
     const pool = getPool();
     const [result] = await pool.execute(
-      `INSERT INTO tasks (name, description, project_id, case_ids, trigger_type, cron_expression, environment_id, created_by)
+      `INSERT INTO Auto_TestCaseTasks (name, description, project_id, case_ids, trigger_type, cron_expression, environment_id, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
@@ -249,7 +249,7 @@ router.put('/:id', generalAuthRateLimiter, async (req, res) => {
 
     params.push(id);
     const pool = getPool();
-    await pool.execute(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, params);
+    await pool.execute(`UPDATE Auto_TestCaseTasks SET ${updates.join(', ')} WHERE id = ?`, params);
 
     res.json({ success: true, message: 'Task updated successfully' });
   } catch (error: unknown) {
@@ -267,7 +267,7 @@ router.delete('/:id', generalAuthRateLimiter, async (req, res) => {
     const id = parseInt(req.params.id);
 
     const pool = getPool();
-    await pool.execute('DELETE FROM tasks WHERE id = ?', [id]);
+    await pool.execute('DELETE FROM Auto_TestCaseTasks WHERE id = ?', [id]);
 
     res.json({ success: true, message: 'Task deleted successfully' });
   } catch (error: unknown) {
@@ -287,10 +287,10 @@ router.get('/:id/executions', async (req, res) => {
 
     const data = await query<TaskExecution[]>(`
       SELECT te.*, u.display_name as executed_by_name
-      FROM task_executions te
-      LEFT JOIN users u ON te.executed_by = u.id
+      FROM Auto_TestCaseTaskExecutions te
+      LEFT JOIN Auto_Users u ON te.executed_by = u.id
       WHERE te.task_id = ?
-      ORDER BY te.start_time DESC
+      ORDER BY COALESCE(te.start_time, te.created_at) DESC
       LIMIT ?
     `, [id, limit]);
 
