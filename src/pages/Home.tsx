@@ -123,7 +123,6 @@ export default function Home() {
             {/* Today's Execution Donut Chart */}
             <TodayExecution
               data={dashboardData || undefined}
-              onRefresh={fetchAllData}
             />
 
             {/* Trend Line Chart */}

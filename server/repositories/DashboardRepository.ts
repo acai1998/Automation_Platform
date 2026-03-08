@@ -961,20 +961,20 @@ export class DashboardRepository extends BaseRepository<TestCase> {
       }
     }
 
-      // 1. 批量查询所有天的执行统计（按日期分组，添加分页限制）
+    // 1. 批量查询所有天的执行统计（按日期分组，添加分页限制）
     const dailyStats = await this.taskExecutionRepository.query(`
       SELECT
-        DATE(start_time) as summaryDate,
+        DATE_FORMAT(DATE(created_at), '%Y-%m-%d') as summaryDate,
         COUNT(*) as totalExecutions,
         COALESCE(SUM(passed_cases + failed_cases + skipped_cases), 0) as totalCasesRun,
         COALESCE(SUM(passed_cases), 0) as passedCases,
         COALESCE(SUM(failed_cases), 0) as failedCases,
         COALESCE(SUM(skipped_cases), 0) as skippedCases,
-        COALESCE(AVG(duration), 0) as avgDuration
-      FROM Auto_TestCaseTaskExecutions
-      WHERE DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-        AND DATE(start_time) < CURDATE()
-      GROUP BY DATE(start_time)
+        COALESCE(AVG(duration_ms / 1000), 0) as avgDuration
+      FROM Auto_TestRun
+      WHERE DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND DATE(created_at) < CURDATE()
+      GROUP BY DATE(created_at)
       ORDER BY summaryDate DESC
       LIMIT ?
     `, [days, days]) as DateStats[];
@@ -991,6 +991,15 @@ export class DashboardRepository extends BaseRepository<TestCase> {
       allDates.push(date);
     }
 
+    // 增量模式仅处理缺失日期，全量模式处理所有日期
+    const datesToProcessSet = datesToProcess ? new Set(datesToProcess) : null;
+    const targetDates = datesToProcessSet
+      ? allDates.filter((date) => datesToProcessSet.has(date))
+      : allDates;
+    const skippedDates = datesToProcessSet
+      ? allDates.filter((date) => !datesToProcessSet.has(date))
+      : [];
+
     // 4. 将查询结果映射到日期
     const statsMap = new Map<string, DateStats>();
     dailyStats.forEach((stat: DateStats) => {
@@ -998,14 +1007,14 @@ export class DashboardRepository extends BaseRepository<TestCase> {
     });
 
     // 5. 批量构建插入数据（包括没有数据的日期，填充为0）
-    const summariesData = allDates.map(date => {
+    const summariesData = targetDates.map(date => {
       const stat = statsMap.get(date);
       const totalExecutions = this.parseSafeInt(stat?.totalExecutions, 0);
       const totalCasesRun = this.parseSafeInt(stat?.totalCasesRun, 0);
       const passedCases = this.parseSafeInt(stat?.passedCases, 0);
       const failedCases = this.parseSafeInt(stat?.failedCases, 0);
       const skippedCases = this.parseSafeInt(stat?.skippedCases, 0);
-      const avgDuration = this.parseSafeInt(stat?.avgDuration, 0);
+      const avgDuration = this.parseSafeFloat(stat?.avgDuration, 0);
 
       const successRate = totalCasesRun > 0
         ? Math.round((passedCases / totalCasesRun) * 10000) / 100
@@ -1102,22 +1111,22 @@ export class DashboardRepository extends BaseRepository<TestCase> {
     }
 
     const duration = Date.now() - startTime;
-    const skippedCount = datesToProcess ? allDates.length - datesToProcess.length : 0;
-    
+    const skippedCount = skippedDates.length;
+
     logger.info('Batch daily summaries refresh completed', {
       days,
       successCount,
       durationMs: duration,
       datesProcessed: processedDates.length,
       skippedCount: skippedCount > 0 ? skippedCount : undefined,
-      queriesExecuted: datesToProcess ? 3 : Math.ceil(summariesData.length / batchSize) + 2, // 检查 + 两次查询 + 分批插入，或仅分批插入
+      queriesExecuted: Math.ceil(summariesData.length / batchSize) + 2 + (datesToProcess ? 1 : 0),
       incrementalBackfill: onlyMissingDates,
     }, LOG_CONTEXTS.DASHBOARD);
 
     return {
       successCount,
       processedDates,
-      skippedDates: datesToProcess && skippedCount > 0 ? allDates.filter(d => !datesToProcess!.includes(d)) : undefined,
+      skippedDates: skippedCount > 0 ? skippedDates : undefined,
     };
   }
 }
