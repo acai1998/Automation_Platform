@@ -97,10 +97,10 @@ export function TodayExecution({
       };
     }
 
-    // 有数据时：只将值>0的部分绘制到饼图中
+    // 有数据时：只将值>0的部分绘制到饼图中（保留完整字段供 tooltip 使用）
     const segments = stats
       .filter(s => s.value > 0)
-      .map(s => ({ name: s.name, value: s.value, color: s.color }));
+      .map(s => ({ name: s.name, value: s.value, color: s.color, percentage: s.percentage, icon: s.icon, status: s.status }));
 
     return {
       total,
@@ -131,7 +131,8 @@ export function TodayExecution({
 
   return (
     <div className="xl:col-span-1 rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark p-6 flex flex-col transition-all duration-200 hover:shadow-lg hover:border-primary/10">
-      <div className="mb-6">
+      {/* 顶部标题区 */}
+      <div className="mb-4">
         <div className="flex items-center gap-2">
           <h3 className="text-slate-900 dark:text-white text-lg font-bold">今日执行统计</h3>
           <Tooltip>
@@ -157,96 +158,86 @@ export function TodayExecution({
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       ) : (
-        <div className="flex-1 flex flex-col items-center justify-center gap-6">
-          {/* Donut Chart */}
-          <div className="relative">
-            {chartData.isEmpty ? (
-              <>
-                <EmptyChart />
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-slate-300 dark:text-slate-600">0</div>
-                    <div className="text-sm text-slate-400 dark:text-slate-500 font-medium">暂无数据</div>
+        <div className="flex-1 flex flex-col items-center justify-between gap-4">
+          {/* 中间：甜甜圈图 */}
+          <div className="flex-1 flex items-center justify-center">
+            <div className="relative">
+              {chartData.isEmpty ? (
+                <>
+                  <EmptyChart />
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-slate-300 dark:text-slate-600">0</div>
+                      <div className="text-sm text-slate-400 dark:text-slate-500 font-medium">总运行</div>
+                    </div>
                   </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <ResponsiveContainer width={160} height={160}>
-                  <PieChart key={animationKey}>
-                    <Pie
-                      data={chartData.segments as any}
-                      cx={80}
-                      cy={80}
-                      startAngle={-90}
-                      endAngle={270}
-                      innerRadius={55}
-                      outerRadius={80}
-                      paddingAngle={2}
-                      dataKey="value"
-                      animationBegin={200}
-                      animationDuration={1000}
-                      animationEasing="ease-out"
-                    >
-                      {chartData.segments.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={entry.color}
-                          stroke="transparent"
-                          strokeWidth={0}
-                        />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip
-                      content={<CustomTooltip />}
-                      wrapperStyle={{ outline: 'none' }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
+                </>
+              ) : (
+                <>
+                  <ResponsiveContainer width={160} height={160}>
+                    <PieChart key={animationKey}>
+                      <Pie
+                        data={chartData.segments as any}
+                        cx={80}
+                        cy={80}
+                        startAngle={-90}
+                        endAngle={270}
+                        innerRadius={55}
+                        outerRadius={80}
+                        paddingAngle={2}
+                        dataKey="value"
+                        animationBegin={200}
+                        animationDuration={1000}
+                        animationEasing="ease-out"
+                      >
+                        {chartData.segments.map((entry, index) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={entry.color}
+                            stroke="transparent"
+                            strokeWidth={0}
+                          />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip
+                        content={<CustomTooltip />}
+                        wrapperStyle={{ outline: 'none', zIndex: 50 }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
 
-                {/* Center Content */}
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-slate-900 dark:text-white">
-                      {chartData.total}
-                    </div>
-                    <div className="text-sm text-slate-600 dark:text-gray-300 font-medium">
-                      测试用例
+                  {/* 圆心内容 */}
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-slate-900 dark:text-white">
+                        {chartData.total}
+                      </div>
+                      <div className="text-sm text-slate-600 dark:text-gray-300 font-medium">
+                        总运行
+                      </div>
                     </div>
                   </div>
-                </div>
-              </>
-            )}
+                </>
+              )}
+            </div>
           </div>
 
-          {/* Stats Legend — 始终展示三项 */}
-          <div className="w-full flex flex-col gap-2 px-1">
+          {/* 底部：三列横排统计 */}
+          <div className="w-full grid grid-cols-3 divide-x divide-slate-100 dark:divide-slate-700/50">
             {chartData.stats.map((stat) => (
               <div
                 key={stat.status}
-                className="flex items-center justify-between rounded-lg px-3 py-2 bg-slate-50 dark:bg-slate-800/50"
+                className="flex flex-col items-center gap-1 py-3 px-2"
               >
-                <div className="flex items-center gap-2">
-                  <span
-                    className="w-3 h-3 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: stat.color }}
-                  />
-                  <span className="text-sm font-medium text-slate-600 dark:text-gray-300">
-                    {stat.name}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="font-semibold text-slate-800 dark:text-white">
-                    {stat.value} 次
-                  </span>
-                  <span className="text-slate-400 dark:text-slate-500">=</span>
-                  <span
-                    className="font-bold min-w-[60px] text-right"
-                    style={{ color: stat.value > 0 ? stat.color : undefined }}
-                  >
-                    {stat.percentage}%
-                  </span>
-                </div>
+                <span className="text-sm font-medium text-slate-500 dark:text-gray-400">
+                  {stat.name}
+                </span>
+                <span
+                  className="text-xl font-bold"
+                  style={{ color: stat.value > 0 ? stat.color : '#94a3b8' }}
+                >
+                  {stat.percentage}%
+                </span>
               </div>
             ))}
           </div>

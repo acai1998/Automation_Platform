@@ -254,7 +254,8 @@ pipeline {
                         echo "最终状态: ${finalStatus}"
                         echo "执行时长: ${duration}ms"
 
-                        // 使用 curl 进行回调（简化方案）
+                        // 使用 curl 进行回调
+                        // 注：成功率由平台直接统计 status='success' 的运行次数，此处 passedCases/failedCases 仅供记录参考
                         try {
                             def failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
                             sh """
