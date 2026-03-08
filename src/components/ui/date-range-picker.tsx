@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DayPicker, DateRange } from 'react-day-picker';
 import { format, addMonths, subMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -6,7 +6,7 @@ import { CalendarDays, X, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight
 import { cn } from '@/lib/utils';
 
 /* ─── 全局 CSS 注入（仅一次） ─────────────────────────────────────── */
-const STYLE_ID = 'rdp-el-styles-v2';
+const STYLE_ID = 'rdp-el-styles-v3';
 const CALENDAR_STYLES = `
   .el-rdp .rdp-months         { display: flex; }
   .el-rdp .rdp-month          { width: 100%; }
@@ -15,7 +15,7 @@ const CALENDAR_STYLES = `
   .el-rdp .rdp-weekdays       { display: flex; border-bottom: 1px solid #f0f0f0; }
   .el-rdp .rdp-weekday {
     flex: 1;
-    height: 24px;
+    height: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -33,12 +33,12 @@ const CALENDAR_STYLES = `
     position: relative;
   }
   .el-rdp .rdp-day_button {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border: none;
     background: transparent;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: 11px;
     color: #606266;
     cursor: pointer;
     display: inline-flex;
@@ -177,7 +177,7 @@ interface DateRangePickerProps {
 /* ─── 主组件 ─────────────────────────────────────────────────────── */
 export function DateRangePicker({ value, onChange, placeholder = '选择日期范围', className }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
-  // fixed 定位所需的触发器位置
+  // fixed 定位所需的触发器位置（同步计算，无延迟）
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
   const popRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -191,38 +191,6 @@ export function DateRangePicker({ value, onChange, placeholder = '选择日期�
   const rightMonth = addMonths(leftMonth, 1);
 
   useEffect(() => { injectStyles(); }, []);
-
-  // 打开时同步外部 value → 临时状态
-  useEffect(() => {
-    if (open) {
-      setTempRange({
-        from: value.startDate ? toDate(value.startDate) : undefined,
-        to: value.endDate ? toDate(value.endDate) : undefined,
-      });
-    }
-  }, [open]);
-
-  // 计算 fixed 定位位置
-  const updatePos = useCallback(() => {
-    if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    setPopPos({ top: rect.bottom + 4, left: rect.left });
-  }, []);
-
-  useEffect(() => {
-    if (open) { updatePos(); }
-  }, [open, updatePos]);
-
-  // 滚动/resize 时更新位置
-  useEffect(() => {
-    if (!open) return;
-    window.addEventListener('scroll', updatePos, true);
-    window.addEventListener('resize', updatePos);
-    return () => {
-      window.removeEventListener('scroll', updatePos, true);
-      window.removeEventListener('resize', updatePos);
-    };
-  }, [open, updatePos]);
 
   // 点击外部关闭
   useEffect(() => {
@@ -239,6 +207,7 @@ export function DateRangePicker({ value, onChange, placeholder = '选择日期�
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
+  // 打开时同步外部 value → 临时状态（在 handleToggle 里同步处理）
   const toDate = (str?: string): Date | undefined => {
     if (!str) return undefined;
     const [y, m, d] = str.split('-').map(Number);
@@ -291,12 +260,27 @@ export function DateRangePicker({ value, onChange, placeholder = '选择日期�
   const goNextMonth = () => setLeftMonth(d => addMonths(d, 1));
   const goNextYear  = () => setLeftMonth(d => addMonths(d, 12));
 
+  // 点击触发器时同步计算位置（避免 useEffect 异步延迟导致位置偏移）
+  const handleToggle = () => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setPopPos({ top: rect.bottom + 4, left: rect.left });
+    if (!open) {
+      // 同时同步外部 value → 临时状态
+      setTempRange({
+        from: value.startDate ? toDate(value.startDate) : undefined,
+        to: value.endDate ? toDate(value.endDate) : undefined,
+      });
+    }
+    setOpen(v => !v);
+  };
+
   return (
     <div className="relative inline-block">
       {/* ── 触发器 ── */}
       <button
         ref={triggerRef}
-        onClick={() => setOpen(v => !v)}
+        onClick={handleToggle}
         className={cn(
           'inline-flex items-center gap-2 h-8 px-3 rounded-md border text-xs transition-all',
           'bg-white border-slate-200 text-slate-700',
