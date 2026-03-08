@@ -382,20 +382,27 @@ async function checkDailySummaryCompleteness(days: number): Promise<{
     const trendData = await dashboardService.getTrendData(days);
 
     // 生成期望的日期列表（T-1 逻辑，不包含今天）
+    const formatLocalDate = (date: Date): string => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
     const expectedDates: string[] = [];
     const today = new Date();
 
     for (let i = 1; i <= days; i++) {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
-      expectedDates.push(date.toISOString().split('T')[0]);
+      expectedDates.push(formatLocalDate(date));
     }
 
     // 检查哪些日期有数据
     const availableDates = trendData.map(item => {
       // 处理不同的日期格式
       if (item.date.includes('T')) {
-        return new Date(item.date).toISOString().split('T')[0];
+        return formatLocalDate(new Date(item.date));
       }
       return item.date;
     });

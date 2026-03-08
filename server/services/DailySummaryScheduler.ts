@@ -11,6 +11,16 @@ export class DailySummaryScheduler {
   private isRunning = false;
 
   /**
+   * 本地日期格式化（YYYY-MM-DD）
+   */
+  private formatLocalDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
    * 启动每日汇总调度器
    * 在每天午夜 00:05 执行前一天的汇总数据生成
    */
@@ -74,7 +84,7 @@ export class DailySummaryScheduler {
       // 生成前一天的汇总数据（T-1 逻辑）
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().split('T')[0]; // YYYY-MM-DD 格式
+      const yesterdayStr = this.formatLocalDate(yesterday);
 
       logger.info('Starting daily summary generation', {
         targetDate: yesterdayStr,
@@ -108,7 +118,7 @@ export class DailySummaryScheduler {
     const targetDate = date || (() => {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      return yesterday.toISOString().split('T')[0];
+      return this.formatLocalDate(yesterday);
     })();
 
     logger.info('Manual daily summary generation triggered', {
@@ -226,7 +236,7 @@ export class DailySummaryScheduler {
       for (let i = 1; i <= days; i++) {
         const targetDate = new Date(today);
         targetDate.setDate(targetDate.getDate() - i);
-        const dateStr = targetDate.toISOString().split('T')[0];
+        const dateStr = this.formatLocalDate(targetDate);
 
         try {
           logger.debug('Generating historical summary (fallback mode)', {

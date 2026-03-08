@@ -559,7 +559,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
           u.id as executedById
         FROM Auto_TestCaseTaskExecutions e
         LEFT JOIN Auto_Users u ON e.executed_by = u.id
-        ORDER BY e.created_at DESC
+        ORDER BY COALESCE(e.start_time, e.created_at) DESC, e.id DESC
         LIMIT ?
       `, [limit]) as RecentRunRaw[];
 

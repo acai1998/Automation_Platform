@@ -27,19 +27,20 @@ export default function Home() {
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      // 并行获取仪表盘数据和最近运行记录（仅首次加载）
-      const shouldFetchRecentRuns = !dashboardData?.recentRuns;
-      
+
+      // 每次刷新都拉取最新 recentRuns，避免列表长期停留在首次加载的数据
       const [dashboardResponse, recentRunsResponse] = await Promise.all([
         dashboardApi.getAll(timeRange),
-        shouldFetchRecentRuns ? dashboardApi.getRecentRuns(10) : Promise.resolve({ success: true, data: dashboardData?.recentRuns || [] })
+        dashboardApi.getRecentRuns(10),
       ]);
 
       if (dashboardResponse.success && dashboardResponse.data) {
-        setDashboardData({
+        setDashboardData((prev) => ({
           ...dashboardResponse.data,
-          recentRuns: recentRunsResponse.success ? recentRunsResponse.data : dashboardData?.recentRuns || []
-        });
+          recentRuns: recentRunsResponse.success
+            ? (recentRunsResponse.data || [])
+            : (prev?.recentRuns || []),
+        }));
       }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);

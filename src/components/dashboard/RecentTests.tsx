@@ -1,7 +1,6 @@
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { MoreVertical, Loader2, Filter } from "lucide-react";
 import { useLocation } from "wouter";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import type { DashboardResponse, TestStatusFilter, RecentRun, TestStatus } from "@/types/dashboard";
 
 // 扩展 DashboardResponse 以支持 recentRuns（用于组件内部）
@@ -196,7 +195,6 @@ export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all'
   const [, setLocation] = useLocation();
   const [runs, setRuns] = useState<RecentRun[]>(() => initialData || []);
   const [loading, setLoading] = useState(() => !initialData);
-  const parentRef = useRef<HTMLDivElement>(null);
 
   // 响应式Grid布局
   const { gridTemplate, showTimeColumn } = useResponsiveGrid();
@@ -217,14 +215,6 @@ export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all'
     const targetStatuses = statusMapping[statusFilter as Exclude<TestStatusFilter, 'all'>];
     return runs.filter(run => targetStatuses?.includes(run.status));
   }, [runs, statusFilter]);
-
-  // 使用虚拟滚动优化性能 - PC端专用
-  const rowVirtualizer = useVirtualizer({
-    count: filteredRuns.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 72, // PC端行高估计值
-    overscan: 5, // 预渲染额外行数
-  });
 
   useEffect(() => {
     if (data?.recentRuns) {
@@ -357,87 +347,64 @@ export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all'
               </div>
             </div>
 
-            {/* 虚拟滚动的表体 */}
-            <div
-              ref={parentRef}
-              className="h-[600px] overflow-auto"
-              style={{
-                contain: 'strict'
-              }}
-              role="rowgroup"
-              aria-label="测试运行记录列表"
-            >
-              <div
-                style={{
-                  height: `${rowVirtualizer.getTotalSize()}px`,
-                  width: '100%',
-                  position: 'relative',
-                }}
-              >
-                {rowVirtualizer.getVirtualItems().map((virtualItem) => {
-                  const run = filteredRuns[virtualItem.index];
-                  return (
-                    <div
-                      key={run.id}
-                      className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-all duration-150 ease-in-out absolute top-0 left-0 right-0 grid items-center border-b border-slate-100 dark:border-border-dark"
-                      style={{
-                        gridTemplateColumns: gridTemplate,
-                        height: `${virtualItem.size}px`,
-                        transform: `translateY(${virtualItem.start}px)`,
-                      }}
-                      role="row"
-                      aria-label={`测试运行: ${run.suiteName}`}
-                    >
-                      {/* 状态列 */}
-                      <div className="px-4 py-3" role="cell" aria-label={`状态: ${statusConfig[run.status].label}`}>
-                        <StatusBadge status={run.status} />
+            {/* 表体：直接渲染最近记录，避免模块内部滚动影响整页滚动 */}
+            <div role="rowgroup" aria-label="测试运行记录列表">
+              {filteredRuns.map((run, index) => (
+                <div
+                  key={run.id}
+                  className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-all duration-150 ease-in-out grid items-center border-b border-slate-100 dark:border-border-dark last:border-b-0"
+                  style={{ gridTemplateColumns: gridTemplate }}
+                  role="row"
+                  aria-label={`测试运行: ${run.suiteName}`}
+                >
+                  {/* 状态列 */}
+                  <div className="px-4 py-3" role="cell" aria-label={`状态: ${statusConfig[run.status].label}`}>
+                    <StatusBadge status={run.status} />
+                  </div>
+                  {/* 计划名称列 */}
+                  <div className="px-4 py-3" role="cell" aria-label={`计划名称: ${run.suiteName}`}>
+                    <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                      {run.suiteName}
+                    </div>
+                  </div>
+                  {/* 耗时列 */}
+                  <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`耗时: ${formatDuration(run.duration)}`}>
+                    <div className="text-sm text-slate-500 dark:text-gray-400">
+                      {formatDuration(run.duration)}
+                    </div>
+                  </div>
+                  {/* 执行者列 */}
+                  <div className="px-4 py-3" role="cell" aria-label={`执行者: ${run.executedBy || '系统'}`}>
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`size-6 rounded-full ${ownerColors[index % ownerColors.length]} flex items-center justify-center text-[10px] text-white font-bold`}
+                        aria-hidden="true"
+                      >
+                        {getInitials(run.executedBy || '系统')}
                       </div>
-                      {/* 计划名称列 */}
-                      <div className="px-4 py-3" role="cell" aria-label={`计划名称: ${run.suiteName}`}>
-                        <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                          {run.suiteName}
-                        </div>
-                      </div>
-                      {/* 耗时列 */}
-                      <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`耗时: ${formatDuration(run.duration)}`}>
-                        <div className="text-sm text-slate-500 dark:text-gray-400">
-                          {formatDuration(run.duration)}
-                        </div>
-                      </div>
-                      {/* 执行者列 */}
-                      <div className="px-4 py-3" role="cell" aria-label={`执行者: ${run.executedBy || '系统'}`}>
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={`size-6 rounded-full ${ownerColors[virtualItem.index % ownerColors.length]} flex items-center justify-center text-[10px] text-white font-bold`}
-                            aria-hidden="true"
-                          >
-                            {getInitials(run.executedBy || '系统')}
-                          </div>
-                          <span className="text-sm text-slate-600 dark:text-gray-300 truncate">{run.executedBy || '系统'}</span>
-                        </div>
-                      </div>
-                      {/* 时间列 - 根据屏幕尺寸动态显示 */}
-                      {showTimeColumn && (
-                        <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`时间: ${formatTime(run.startTime)}`}>
-                          <div className="text-sm text-slate-500 dark:text-gray-400">
-                            {formatTime(run.startTime)}
-                          </div>
-                        </div>
-                      )}
-                      {/* 操作列 */}
-                      <div className="px-4 py-3 flex justify-end" role="cell">
-                        <button
-                          type="button"
-                          aria-label={`${run.suiteName}的更多操作`}
-                          className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
-                        >
-                          <MoreVertical className="h-5 w-5" aria-hidden="true" />
-                        </button>
+                      <span className="text-sm text-slate-600 dark:text-gray-300 truncate">{run.executedBy || '系统'}</span>
+                    </div>
+                  </div>
+                  {/* 时间列 - 根据屏幕尺寸动态显示 */}
+                  {showTimeColumn && (
+                    <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`时间: ${formatTime(run.startTime)}`}>
+                      <div className="text-sm text-slate-500 dark:text-gray-400">
+                        {formatTime(run.startTime)}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  )}
+                  {/* 操作列 */}
+                  <div className="px-4 py-3 flex justify-end" role="cell">
+                    <button
+                      type="button"
+                      aria-label={`${run.suiteName}的更多操作`}
+                      className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                    >
+                      <MoreVertical className="h-5 w-5" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
