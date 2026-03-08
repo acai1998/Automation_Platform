@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -34,9 +35,6 @@ export default function Reports() {
 
   // 筛选状态
   const [filters, setFilters] = useState<TestRunFilters>({});
-  // 时间选择器临时状态（用于 input 绑定，apply 时才更新 filters）
-  const [startDateInput, setStartDateInput] = useState('');
-  const [endDateInput, setEndDateInput] = useState('');
 
   const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
@@ -59,33 +57,9 @@ export default function Reports() {
     setPage(1);
   };
 
-  // 应用时间范围筛选
-  const handleDateApply = () => {
-    if (startDateInput && endDateInput && startDateInput > endDateInput) {
-      toast.error('开始日期不能晚于结束日期');
-      return;
-    }
-    setFilters(prev => ({
-      ...prev,
-      startDate: startDateInput || undefined,
-      endDate: endDateInput || undefined,
-    }));
-    setPage(1);
-  };
-
-  // 清空时间范围
-  const handleDateClear = () => {
-    setStartDateInput('');
-    setEndDateInput('');
-    setFilters(prev => ({ ...prev, startDate: undefined, endDate: undefined }));
-    setPage(1);
-  };
-
   // 清除所有筛选
   const handleClearAll = () => {
     setFilters({});
-    setStartDateInput('');
-    setEndDateInput('');
     setPage(1);
   };
 
@@ -175,47 +149,18 @@ export default function Reports() {
 
           {/* 时间范围 */}
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">开始时间范围</label>
-            <div className="flex items-center gap-1.5">
-              <div className="relative">
-                <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
-                <input
-                  type="date"
-                  value={startDateInput}
-                  onChange={(e) => setStartDateInput(e.target.value)}
-                  className="h-8 pl-7 pr-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-[130px]"
-                />
-              </div>
-              <span className="text-xs text-slate-400 shrink-0">至</span>
-              <div className="relative">
-                <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
-                <input
-                  type="date"
-                  value={endDateInput}
-                  onChange={(e) => setEndDateInput(e.target.value)}
-                  className="h-8 pl-7 pr-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-[130px]"
-                />
-              </div>
-              <Button
-                size="sm"
-                variant="default"
-                onClick={handleDateApply}
-                disabled={!startDateInput && !endDateInput}
-                className="h-8 px-3 text-xs"
-              >
-                应用
-              </Button>
-              {(filters.startDate || filters.endDate) && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={handleDateClear}
-                  className="h-8 w-8 p-0 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              )}
-            </div>
+            <label className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">时间范围</label>
+            <DateRangePicker
+              value={{ startDate: filters.startDate, endDate: filters.endDate }}
+              onChange={(range) => {
+                setFilters(prev => ({
+                  ...prev,
+                  startDate: range.startDate,
+                  endDate: range.endDate,
+                }));
+                setPage(1);
+              }}
+            />
           </div>
 
           {/* 清空所有筛选 */}
@@ -251,7 +196,7 @@ export default function Reports() {
             {(filters.startDate || filters.endDate) && (
               <ActiveFilterTag
                 label={`时间: ${filters.startDate || '…'} 至 ${filters.endDate || '…'}`}
-                onRemove={handleDateClear}
+                onRemove={() => { setFilters(prev => ({ ...prev, startDate: undefined, endDate: undefined })); setPage(1); }}
               />
             )}
           </div>

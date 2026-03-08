@@ -394,12 +394,12 @@ router.post('/trigger-manual-summary', async (req, res) => {
  */
 router.post('/backfill-summaries', async (req, res) => {
   try {
-    const { days = 30 } = req.body;
-    const result = await dailySummaryScheduler.backfillHistoricalSummaries(days);
+    const { days = 30, onlyMissingDates = true } = req.body;
+    const result = await dailySummaryScheduler.backfillHistoricalSummaries(days, onlyMissingDates);
     res.json({
       success: true,
       data: result,
-      message: `Backfill completed: ${result.successCount}/${result.totalDays} days processed`,
+      message: `Backfill completed (${onlyMissingDates ? 'incremental' : 'full'}): ${result.successCount}/${result.totalDays} days processed`,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

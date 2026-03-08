@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
-import { MoreVertical, Loader2, Filter } from "lucide-react";
+import { MoreVertical, Loader2, Filter, RefreshCw } from "lucide-react";
 import { useLocation } from "wouter";
+import { dashboardApi } from "@/api";
 import type { DashboardResponse, TestStatusFilter, RecentRun, TestStatus } from "@/types/dashboard";
 
 // 扩展 DashboardResponse 以支持 recentRuns（用于组件内部）
@@ -187,14 +188,29 @@ function useResponsiveGrid() {
 interface RecentTestsProps {
   data?: DashboardDataWithRuns;
   initialData?: RecentRun[];
-  onRefresh?: () => Promise<void>;
   statusFilter?: TestStatusFilter;
+  lastRefreshAt?: Date | null;
 }
 
-export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all' }: RecentTestsProps) {
+function formatRefreshTime(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+
+  if (diffSecs < 5) return '刚刚';
+  if (diffSecs < 60) return `${diffSecs} 秒前`;
+  if (diffMins < 60) return `${diffMins} 分钟前`;
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
+export function RecentTests({ data, initialData, statusFilter = 'all', lastRefreshAt }: RecentTestsProps) {
   const [, setLocation] = useLocation();
   const [runs, setRuns] = useState<RecentRun[]>(() => initialData || []);
   const [loading, setLoading] = useState(() => !initialData);
+  const [displayRefreshAt, setDisplayRefreshAt] = useState<Date | null>(lastRefreshAt || null);
+  // 用于定期刷新「X秒前」显示的计时器
+  const [, setTick] = useState(0);
 
   // 响应式Grid布局
   const { gridTemplate, showTimeColumn } = useResponsiveGrid();
@@ -223,14 +239,30 @@ export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all'
     }
   }, [data]);
 
+  useEffect(() => {
+    if (lastRefreshAt) {
+      setDisplayRefreshAt(lastRefreshAt);
+    }
+  }, [lastRefreshAt]);
+
+  // 每 10s 重新渲染一次，确保「X秒前」文案实时更新
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 10000);
+    return () => clearInterval(timer);
+  }, []);
+
   const handleRefresh = async () => {
-    if (onRefresh) {
-      setLoading(true);
-      try {
-        await onRefresh();
-      } finally {
-        setLoading(false);
+    setLoading(true);
+    try {
+      const recentRunsResponse = await dashboardApi.getRecentRuns(10);
+      if (recentRunsResponse.success && recentRunsResponse.data) {
+        setRuns(recentRunsResponse.data);
+        setDisplayRefreshAt(new Date());
       }
+    } catch (error) {
+      console.error('Failed to refresh recent runs:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -254,20 +286,27 @@ export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all'
           )}
         </div>
         <div className="flex items-center gap-3">
-          {onRefresh && (
-            <button
-              type="button"
-              onClick={handleRefresh}
-              disabled={loading}
-              className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors disabled:opacity-50"
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <span>刷新</span>
-              )}
-            </button>
+          {/* 最后刷新时间 */}
+          {displayRefreshAt && !loading && (
+            <span className="flex items-center gap-1 text-xs text-slate-400 dark:text-gray-500">
+              <RefreshCw className="h-3 w-3" aria-hidden="true" />
+              {formatRefreshTime(displayRefreshAt)}
+            </span>
           )}
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={loading}
+            title="刷新数据"
+            aria-label="刷新测试运行数据"
+            className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors disabled:opacity-50"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <span>刷新</span>
+            )}
+          </button>
           <button
             type="button"
             onClick={() => setLocation('/reports')}

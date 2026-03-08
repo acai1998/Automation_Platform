@@ -19,6 +19,7 @@ interface DashboardDataWithRuns extends DashboardResponse {
 export default function Home() {
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [dashboardData, setDashboardData] = useState<DashboardDataWithRuns | null>(null);
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
   const [, setLoading] = useState(true);
 
   // Filter state management for chart interactions
@@ -41,6 +42,7 @@ export default function Home() {
             ? (recentRunsResponse.data || [])
             : (prev?.recentRuns || []),
         }));
+        setLastRefreshAt(new Date());
       }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);
@@ -64,6 +66,7 @@ export default function Home() {
             trendData: prev?.trendData || [],
             recentRuns: recentRunsResponse.data || []
           }));
+          setLastRefreshAt(new Date());
         }
       } catch (recentError) {
         console.error('Failed to fetch recent runs:', recentError);
@@ -138,8 +141,8 @@ export default function Home() {
           <div className="animate-fade-in-up animate-delay-400">
             <RecentTests
               data={dashboardData || undefined}
-              onRefresh={fetchAllData}
               statusFilter={filterState.selectedStatus}
+              lastRefreshAt={lastRefreshAt}
             />
           </div>
         </div>

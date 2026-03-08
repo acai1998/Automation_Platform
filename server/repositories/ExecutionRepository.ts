@@ -512,13 +512,13 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     }
 
     if (filters.startDate) {
-      // 开始日期：当天 00:00:00
+      // 数据库 start_time 字段存储的是北京时间（CST），直接与日期字符串比较即可
       conditions.push('tr.start_time >= ?');
       params.push(`${filters.startDate} 00:00:00`);
     }
 
     if (filters.endDate) {
-      // 结束日期：当天 23:59:59
+      // 结束日期：当天 23:59:59（北京时间）
       conditions.push('tr.start_time <= ?');
       params.push(`${filters.endDate} 23:59:59`);
     }
