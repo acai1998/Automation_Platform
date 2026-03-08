@@ -22,7 +22,7 @@ export default function Home() {
   const [, setLoading] = useState(true);
 
   // Filter state management for chart interactions
-  const { filterState, setFilter } = useDashboardFilter();
+  const { filterState } = useDashboardFilter();
 
   const fetchAllData = async () => {
     try {
@@ -124,8 +124,6 @@ export default function Home() {
             <TodayExecution
               data={dashboardData || undefined}
               onRefresh={fetchAllData}
-              onFilterChange={setFilter}
-              selectedFilter={filterState.selectedStatus}
             />
 
             {/* Trend Line Chart */}
