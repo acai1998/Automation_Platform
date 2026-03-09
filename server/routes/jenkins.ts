@@ -555,9 +555,31 @@ router.get('/batch/:runId', generalAuthRateLimiter, rateLimitMiddleware.limit, a
     const runId = parseInt(req.params.runId);
     const batch = await executionService.getBatchExecution(runId);
 
+    const e = batch.execution;
+
+    // 将 TypeORM entity 的 camelCase 字段映射为 snake_case，与前端 TestRunRecord 接口对齐
     res.json({
       success: true,
-      data: batch.execution
+      data: {
+        id: e.id,
+        project_id: e.projectId ?? null,
+        project_name: null,
+        status: e.status,
+        trigger_type: e.triggerType,
+        trigger_by: e.triggerBy,
+        trigger_by_name: e.triggerByName ?? null,
+        jenkins_job: e.jenkinsJob ?? null,
+        jenkins_build_id: e.jenkinsBuildId ?? null,
+        jenkins_url: e.jenkinsUrl ?? null,
+        total_cases: e.totalCases,
+        passed_cases: e.passedCases,
+        failed_cases: e.failedCases,
+        skipped_cases: e.skippedCases,
+        duration_ms: e.durationMs,
+        start_time: e.startTime ?? null,
+        end_time: e.endTime ?? null,
+        created_at: e.createdAt,
+      }
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

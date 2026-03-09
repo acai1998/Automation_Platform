@@ -12,6 +12,13 @@ export class TestRun {
   @Column({ type: 'int', name: 'project_id', nullable: true })
   projectId: number | null;
 
+  /**
+   * 关联的 TaskExecution ID（Auto_TestCaseTaskExecutions.id）
+   * 在 triggerExecution 事务中与 TestRun 同步创建后立即写入，消除对时间窗口反查的依赖
+   */
+  @Column({ type: 'int', name: 'execution_id', nullable: true })
+  executionId: number | null;
+
   @Column({ type: 'enum', enum: ['pending', 'running', 'success', 'failed', 'aborted'], default: 'pending' })
   status: 'pending' | 'running' | 'success' | 'failed' | 'aborted';
 

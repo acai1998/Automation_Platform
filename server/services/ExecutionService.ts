@@ -367,41 +367,41 @@ export class ExecutionService {
   }
 
   /**
-   * 获取批次执行结果列表
-   * 
-   * 改进：澄清查询逻辑，正确使用 executionId（而非 runId）
-   * 注意：此方法需要 executionId，而不是 runId
-   * 
-   * @param executionId 执行ID（来自 Auto_TestCaseTaskExecutions.id）
-   * @returns 执行结果列表，包含用例详情
+   * 获取批次执行详情（snake_case 格式，与 TestRunRecord 接口兼容）
    */
-  async getBatchExecutionResults(executionId: number) {
+  async getTestRunDetailRow(runId: number) {
+    const row = await this.executionRepository.getTestRunDetailRow(runId);
+    if (!row) throw new Error(`Execution not found: ${runId}`);
+    return row;
+  }
+
+
+  /**
+   * 获取批次执行结果列表（支持分页与服务端筛选）
+   * @param executionId 执行ID
+   * @param options 分页与筛选参数
+   */
+  async getBatchExecutionResults(executionId: number, options: { page?: number; pageSize?: number; status?: string; keyword?: string } = {}) {
     const timer = createTimer();
-
     try {
-      logger.debug('Fetching batch execution results', {
-        executionId,
-      }, LOG_CONTEXTS.EXECUTION);
-
-      const results = await this.executionRepository.getExecutionResults(executionId);
-
+      logger.debug("Fetching batch execution results", { executionId, ...options }, LOG_CONTEXTS.EXECUTION);
+      const result = await this.executionRepository.getExecutionResults(executionId, options);
       const duration = timer();
-      logger.debug('Batch execution results fetched', {
-        executionId,
-        resultCount: Array.isArray(results) ? results.length : 0,
-        durationMs: duration,
-      }, LOG_CONTEXTS.EXECUTION);
-
-      return results;
-
+      logger.debug("Batch execution results fetched", { executionId, resultCount: result.data.length, total: result.total, durationMs: duration }, LOG_CONTEXTS.EXECUTION);
+      return result;
     } catch (error) {
       const duration = timer();
-      logger.errorLog(error, 'Failed to fetch batch execution results', {
-        executionId,
-        durationMs: duration,
-      });
+      logger.errorLog(error, "Failed to fetch batch execution results", { executionId, durationMs: duration });
       throw error;
     }
+  }
+
+  /**
+   * 根据 Auto_TestRun.id（runId）查询该批次的所有用例执行结果（支持分页与筛选）
+   * 供 /executions/test-runs/:runId/results 路由使用
+   */
+  async getResultsByRunId(runId: number, options: { page?: number; pageSize?: number; status?: string; keyword?: string; } = {}) {
+    return this.executionRepository.getResultsByRunId(runId, options);
   }
 
   /**
@@ -595,8 +595,8 @@ export class ExecutionService {
     limit = 50,
     offset = 0,
     filters: {
-      triggerType?: string;
-      status?: string;
+      triggerType?: string[];
+      status?: string[];
       startDate?: string;
       endDate?: string;
     } = {}

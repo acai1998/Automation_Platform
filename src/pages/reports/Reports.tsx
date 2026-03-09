@@ -5,6 +5,7 @@ import {
   RefreshCw, 
   ChevronLeft, 
   ChevronRight, 
+  ChevronDown,
   Loader2, 
   CheckCircle2, 
   XCircle, 
@@ -14,12 +15,13 @@ import {
   FileText,
   History,
   Calendar,
-  Filter,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -38,6 +40,21 @@ export default function Reports() {
 
   const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
+  const TRIGGER_TYPE_OPTIONS: MultiSelectOption[] = [
+    { value: 'manual', label: '手动' },
+    { value: 'jenkins', label: 'Jenkins' },
+    { value: 'schedule', label: '定时' },
+    { value: 'ci_triggered', label: 'CI' },
+  ];
+
+  const STATUS_OPTIONS: MultiSelectOption[] = [
+    { value: 'success', label: '成功' },
+    { value: 'failed', label: '失败' },
+    { value: 'running', label: '运行中' },
+    { value: 'pending', label: '等待中' },
+    { value: 'aborted', label: '已中止' },
+  ];
+
   // 获取运行记录
   const { data, isLoading, error, refetch } = useTestRuns(page, pageSize, filters);
 
@@ -51,9 +68,21 @@ export default function Reports() {
     toast.success('数据已更新');
   };
 
-  // 更新单个筛选项，同时重置到第一页
-  const handleFilterChange = (key: keyof TestRunFilters, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value || undefined }));
+  // 更新多选筛选项，同时重置到第一页
+  const handleMultiFilterChange = (key: "triggerType" | "status", values: string[]) => {
+    setFilters(prev => ({
+      ...prev,
+      [key]: values.length > 0 ? values : undefined,
+    }));
+    setPage(1);
+  };
+
+  const handleDateRangeChange = (range: { startDate?: string; endDate?: string }) => {
+    setFilters(prev => ({
+      ...prev,
+      startDate: range.startDate,
+      endDate: range.endDate,
+    }));
     setPage(1);
   };
 
@@ -64,7 +93,7 @@ export default function Reports() {
   };
 
   // 是否有活跃筛选
-  const hasActiveFilters = !!(filters.triggerType || filters.status || filters.startDate || filters.endDate);
+  const hasActiveFilters = !!((filters.triggerType?.length ?? 0) || (filters.status?.length ?? 0) || filters.startDate || filters.endDate);
 
   // 状态主题配置
   const theme = {
@@ -104,66 +133,36 @@ export default function Reports() {
       </div>
 
       {/* 筛选栏 */}
-      <div className="relative z-30 overflow-visible px-4 sm:px-6 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
+      <div className="relative z-30 overflow-visible px-3 sm:px-4 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
         <div className="flex flex-wrap items-center gap-3">
-          {/* 筛选图标+标签 */}
-          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">
-            <Filter className="h-3.5 w-3.5" />
-            <span>筛选</span>
-          </div>
-
-          {/* 触发方式：左侧文案 + 右侧控件 */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">触发方式</span>
-            <select
-              value={filters.triggerType || ''}
-              onChange={(e) => handleFilterChange('triggerType', e.target.value)}
-              className="h-8 pl-2.5 pr-7 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none cursor-pointer min-w-[108px]"
-              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
-            >
-              <option value="">全部</option>
-              <option value="manual">手动</option>
-              <option value="jenkins">Jenkins</option>
-              <option value="schedule">定时</option>
-              <option value="ci_triggered">CI</option>
-            </select>
+            <FilterMultiSelect
+              options={TRIGGER_TYPE_OPTIONS}
+              value={filters.triggerType || []}
+              onChange={(values) => handleMultiFilterChange('triggerType', values)}
+              placeholder="全部"
+            />
           </div>
 
-          {/* 状态：左侧文案 + 右侧控件 */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">状态</span>
-            <select
-              value={filters.status || ''}
-              onChange={(e) => handleFilterChange('status', e.target.value)}
-              className="h-8 pl-2.5 pr-7 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none cursor-pointer min-w-[108px]"
-              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
-            >
-              <option value="">全部</option>
-              <option value="success">成功</option>
-              <option value="failed">失败</option>
-              <option value="running">运行中</option>
-              <option value="pending">等待中</option>
-              <option value="aborted">已中止</option>
-            </select>
+            <FilterMultiSelect
+              options={STATUS_OPTIONS}
+              value={filters.status || []}
+              onChange={(values) => handleMultiFilterChange('status', values)}
+              placeholder="全部"
+            />
           </div>
 
-          {/* 时间范围：左侧文案 + 右侧控件 */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">时间范围</span>
             <DateRangePicker
               value={{ startDate: filters.startDate, endDate: filters.endDate }}
-              onChange={(range) => {
-                setFilters(prev => ({
-                  ...prev,
-                  startDate: range.startDate,
-                  endDate: range.endDate,
-                }));
-                setPage(1);
-              }}
+              onChange={handleDateRangeChange}
             />
           </div>
 
-          {/* 清空所有筛选 */}
           {hasActiveFilters && (
             <Button
               variant="ghost"
@@ -355,6 +354,90 @@ export default function Reports() {
 }
 
 // ─── 子组件 ───────────────────────────────────────────────────────────────────
+
+type MultiSelectOption = {
+  value: string;
+  label: string;
+};
+
+function FilterMultiSelect({
+  options,
+  value,
+  onChange,
+  placeholder = "请选择",
+}: {
+  options: MultiSelectOption[];
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder?: string;
+}) {
+  const optionMap = new Map(options.map((item) => [item.value, item.label]));
+
+  const toggleOption = (optionValue: string) => {
+    if (value.includes(optionValue)) {
+      onChange(value.filter((item) => item !== optionValue));
+      return;
+    }
+    onChange([...value, optionValue]);
+  };
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="min-h-8 min-w-[180px] max-w-[320px] px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-left text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+        >
+          <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
+              {value.length === 0 ? (
+                <span className="text-slate-400">{placeholder}</span>
+              ) : (
+                value.map((item) => (
+                  <span
+                    key={item}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800"
+                  >
+                    {optionMap.get(item) || item}
+                  </span>
+                ))
+              )}
+            </div>
+            <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+          </div>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={6} className="w-52 p-1.5">
+        <div className="space-y-0.5 max-h-56 overflow-auto">
+          {options.map((option) => (
+            <label
+              key={option.value}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+            >
+              <Checkbox
+                checked={value.includes(option.value)}
+                onCheckedChange={() => toggleOption(option.value)}
+                className="h-3.5 w-3.5 rounded border-slate-300 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+              />
+              <span className="text-xs text-slate-700 dark:text-slate-300">{option.label}</span>
+            </label>
+          ))}
+        </div>
+        {value.length > 0 && (
+          <div className="pt-1.5 mt-1.5 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              className="w-full text-left px-2 py-1 text-xs text-slate-500 hover:text-blue-600 transition-colors"
+              onClick={() => onChange([])}
+            >
+              清空选择
+            </button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function TriggerTypeBadge({ type }: { type: string }) {
   const configs: Record<string, { label: string; className: string }> = {

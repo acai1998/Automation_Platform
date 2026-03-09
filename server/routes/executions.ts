@@ -130,18 +130,28 @@ router.get('/test-runs', async (req, res) => {
     const offset = parseInt(req.query.offset as string) || 0;
 
     const filters: {
-      triggerType?: string;
-      status?: string;
+      triggerType?: string[];
+      status?: string[];
       startDate?: string;
       endDate?: string;
     } = {};
 
-    if (req.query.triggerType && typeof req.query.triggerType === 'string') {
-      filters.triggerType = req.query.triggerType;
+    const parseMultiQuery = (value: unknown): string[] | undefined => {
+      if (typeof value !== "string") return undefined;
+      const items = value.split(",").map(item => item.trim()).filter(Boolean);
+      return items.length > 0 ? items : undefined;
+    };
+
+    const triggerTypes = parseMultiQuery(req.query.triggerType);
+    if (triggerTypes) {
+      filters.triggerType = triggerTypes;
     }
-    if (req.query.status && typeof req.query.status === 'string') {
-      filters.status = req.query.status;
+
+    const statuses = parseMultiQuery(req.query.status);
+    if (statuses) {
+      filters.status = statuses;
     }
+
     // 日期格式验证：YYYY-MM-DD
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (req.query.startDate && typeof req.query.startDate === 'string' && dateRegex.test(req.query.startDate)) {
@@ -160,39 +170,52 @@ router.get('/test-runs', async (req, res) => {
 });
 
 /**
- * GET /api/executions/:id/results
- * 获取执行批次的用例结果列表
- * 
- * 改进：现在支持通过 executionId 查询结果
- * 注意：:id 现在指的是 executionId（来自 Auto_TestCaseTaskExecutions.id）
+ * GET /api/executions/test-runs/:runId/results
+ * 根据 Auto_TestRun.id（runId）获取该批次的用例结果列表
+ * 注意：此路由必须放在 /:id/results 之前，防止被 Express 误匹配
  */
-router.get('/:id/results', async (req, res) => {
+router.get("/test-runs/:runId/results", async (req, res) => {
   try {
-    const executionId = parseInt(req.params.id);
-    const results = await executionService.getBatchExecutionResults(executionId);
-    res.json({ success: true, data: results });
+    const runId = parseInt(req.params.runId);
+    const result = await executionService.getResultsByRunId(runId);
+    res.json({ success: true, data: result.data, total: result.total });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : "Unknown error";
     res.status(500).json({ success: false, message });
   }
 });
 
 /**
- * GET /api/executions/:id
- * 获取执行详情
+ * GET /api/executions/:id/results
+ * 获取运行批次的用例结果列表，:id 为 Auto_TestRun.id（runId）
+ * 内部通过 execution_id 字段（优先）或时间窗口反查 executionId，再取用例结果
  */
-router.get('/:id', async (req, res) => {
+router.get("/:id/results", async (req, res) => {
+  try {
+    const runId = parseInt(req.params.id);
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = Math.min(100, parseInt(req.query.pageSize as string) || 20);
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const keyword = typeof req.query.keyword === "string" ? req.query.keyword.trim() || undefined : undefined;
+    const result = await executionService.getResultsByRunId(runId, { page, pageSize, status, keyword });
+    res.json({ success: true, data: result.data, total: result.total, page, pageSize });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ success: false, message });
+  }
+});
+/**
+ * GET /api/executions/:id
+ * 获取 TestRun 运行详情，:id 为 Auto_TestRun.id（runId）
+ */
+router.get("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const data = await executionService.getExecutionDetail(id);
-
-    if (!data || !data.execution) {
-      return res.status(404).json({ success: false, message: 'Execution not found' });
-    }
-
+    const data = await executionService.getTestRunDetailRow(id);
     res.json({ success: true, data });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : "Unknown error";
+    if (message.includes("not found")) return res.status(404).json({ success: false, message });
     res.status(500).json({ success: false, message });
   }
 });

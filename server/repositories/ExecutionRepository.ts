@@ -451,19 +451,68 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   }
 
   /**
-   * 获取执行结果列表
-   * 修复：使用原生SQL确保字段名正确映射
+   * 获取测试运行详情（返回 snake_case 格式，与 TestRunRecord 接口兼容）
    */
-  async getExecutionResults(executionId: number): Promise<ExecutionResultRow[]> {
-    return this.testRunResultRepository.query(`
-      SELECT 
+  async getTestRunDetailRow(runId: number): Promise<TestRunRow | null> {
+    const rows: TestRunRow[] = await this.testRunRepository.query(`
+      SELECT tr.id, tr.project_id,
+        CASE WHEN tr.project_id IS NOT NULL THEN CONCAT("项目 #", tr.project_id) ELSE "未分类" END as project_name,
+        tr.status, tr.trigger_type, tr.trigger_by,
+        COALESCE(u.display_name, u.username, "系统") as trigger_by_name,
+        tr.jenkins_job, tr.jenkins_build_id, tr.jenkins_url,
+        tr.total_cases, tr.passed_cases, tr.failed_cases, tr.skipped_cases,
+        tr.duration_ms, tr.start_time, tr.end_time, tr.created_at
+      FROM Auto_TestRun tr
+      LEFT JOIN Auto_Users u ON tr.trigger_by = u.id
+      WHERE tr.id = ?
+    `, [runId]);
+    return rows[0] ?? null;
+  }
+
+
+  /**
+   * 获取执行结果列表（支持分页与服务端筛选）
+   * @param executionId 执行ID
+   * @param options 分页与筛选参数
+   */
+  async getExecutionResults(
+    executionId: number,
+    options: {
+      page?: number;
+      pageSize?: number;
+      status?: string;
+      keyword?: string;
+    } = {}
+  ): Promise<{ data: ExecutionResultRow[]; total: number }> {
+    const page = Math.max(1, options.page ?? 1);
+    const pageSize = Math.min(100, Math.max(1, options.pageSize ?? 20));
+    const offset = (page - 1) * pageSize;
+
+    const conditions: string[] = ["r.execution_id = ?"];
+    const params: (string | number)[] = [executionId];
+
+    if (options.status && options.status !== "all") {
+      conditions.push("r.status = ?");
+      params.push(options.status);
+    }
+
+    if (options.keyword && options.keyword.trim()) {
+      conditions.push("(r.case_name LIKE ? OR COALESCE(tc.module, '') LIKE ?)");
+      const like = `%${options.keyword.trim()}%`;
+      params.push(like, like);
+    }
+
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
+
+    const data: ExecutionResultRow[] = await this.testRunResultRepository.query(`
+      SELECT
         r.id,
         r.execution_id,
         r.case_id,
         r.case_name,
-        COALESCE(tc.module, '-') as module,
-        COALESCE(tc.priority, 'P2') as priority,
-        COALESCE(tc.type, 'api') as type,
+        COALESCE(tc.module, "-") as module,
+        COALESCE(tc.priority, "P2") as priority,
+        COALESCE(tc.type, "api") as type,
         r.status,
         r.start_time,
         r.end_time,
@@ -478,9 +527,35 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         r.created_at
       FROM Auto_TestRunResults r
       LEFT JOIN Auto_TestCase tc ON r.case_id = tc.id
-      WHERE r.execution_id = ?
+      ${whereClause}
       ORDER BY r.id ASC
-    `, [executionId]);
+      LIMIT ? OFFSET ?
+    `, [...params, pageSize, offset]);
+
+    const countResult = await this.testRunResultRepository.query(`
+      SELECT COUNT(*) as total
+      FROM Auto_TestRunResults r
+      LEFT JOIN Auto_TestCase tc ON r.case_id = tc.id
+      ${whereClause}
+    `, params);
+    const total = Number(countResult[0]?.total ?? 0);
+
+    return { data, total };
+  }
+
+  /**
+   * 根据 runId 查询该批次的用例执行结果（支持分页与筛选）
+   * 查询策略：优先读 Auto_TestRun.execution_id，降级到时间窗口反查
+   */
+  async getResultsByRunId(
+    runId: number,
+    options: { page?: number; pageSize?: number; status?: string; keyword?: string; } = {}
+  ): Promise<{ data: ExecutionResultRow[]; total: number }> {
+    const tr = await this.testRunRepository.findOne({ where: { id: runId }, select: ["executionId"] });
+    let executionId: number | null = tr?.executionId ?? null;
+    if (!executionId) { executionId = await this.findExecutionIdByRunId(runId); }
+    if (!executionId) { logger.warn("Cannot find executionId for runId, returning empty results", { runId }, LOG_CONTEXTS.REPOSITORY); return { data: [], total: 0 }; }
+    return this.getExecutionResults(executionId, options);
   }
 
   /**
@@ -491,8 +566,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     limit: number = 50,
     offset: number = 0,
     filters: {
-      triggerType?: string;
-      status?: string;
+      triggerType?: string[];
+      status?: string[];
       startDate?: string;
       endDate?: string;
     } = {}
@@ -501,14 +576,16 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     const conditions: string[] = [];
     const params: (string | number)[] = [];
 
-    if (filters.triggerType) {
-      conditions.push('tr.trigger_type = ?');
-      params.push(filters.triggerType);
+    if (filters.triggerType?.length) {
+      const placeholders = filters.triggerType.map(() => '?').join(', ');
+      conditions.push('tr.trigger_type IN (' + placeholders + ')');
+      params.push(...filters.triggerType);
     }
 
-    if (filters.status) {
-      conditions.push('tr.status = ?');
-      params.push(filters.status);
+    if (filters.status?.length) {
+      const placeholders = filters.status.map(() => '?').join(', ');
+      conditions.push('tr.status IN (' + placeholders + ')');
+      params.push(...filters.status);
     }
 
     if (filters.startDate) {
@@ -907,7 +984,10 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         executedBy: input.triggeredBy,
       });
 
-      // 4. 批量创建测试结果记录
+      // 4. 回填 executionId 到 TestRun（直接关联，消除时间窗口反查依赖）
+      await this.testRunRepository.update(testRun.id, { executionId: taskExecution.id });
+
+      // 5. 批量创建测试结果记录
       const testResults = cases.map(testCase => ({
         executionId: taskExecution.id,
         caseId: testCase.id,

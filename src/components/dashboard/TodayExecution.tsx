@@ -78,11 +78,17 @@ export function TodayExecution({ data }: TodayExecutionProps) {
 
     const segments = stats.filter((segment) => segment.value > 0);
 
+    // isCountingUp: true when some cases are still running (passed+failed+skipped < total)
+    const finishedCases = passed + failed + skipped;
+    const isCountingUp = total > 0 && finishedCases < total;
+
     return {
       total,
       stats,
       segments,
       isEmpty: total === 0,
+      hasSegments: segments.length > 0,
+      isCountingUp,
     };
   }, [todayData?.total, todayData?.passed, todayData?.failed, todayData?.skipped]);
 
@@ -152,7 +158,7 @@ export function TodayExecution({ data }: TodayExecutionProps) {
           <div className="relative flex items-center justify-center">
             {/* 圆形甜甜圈图，使用固定尺寸避免裁切 */}
             <div className="relative flex-shrink-0" style={{ width: 172, height: 172 }}>
-              {chartData.isEmpty ? (
+              {chartData.isEmpty || chartData.isCountingUp ? (
                 <>
                   <PieChart width={172} height={172}>
                     <Pie
@@ -164,13 +170,18 @@ export function TodayExecution({ data }: TodayExecutionProps) {
                       dataKey="value"
                       isAnimationActive={false}
                     >
-                      <Cell fill="#e2e8f0" stroke="transparent" />
+                      <Cell
+                        fill={chartData.isEmpty ? "#e2e8f0" : "#dbeafe"}
+                        stroke="transparent"
+                      />
                     </Pie>
                   </PieChart>
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="text-center">
-                      <div className="text-3xl font-bold text-slate-300 dark:text-slate-600">0</div>
-                      <div className="text-sm text-slate-400 dark:text-slate-500 font-medium">总用例</div>
+                      <div className="text-3xl font-bold text-slate-600 dark:text-slate-300">{chartData.total}</div>
+                      <div className="text-sm text-slate-400 dark:text-slate-500 font-medium">
+                        {chartData.total > 0 ? "统计中" : "总用例"}
+                      </div>
                     </div>
                   </div>
                 </>
