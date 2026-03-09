@@ -254,21 +254,45 @@ pipeline {
                         echo "最终状态: ${finalStatus}"
                         echo "执行时长: ${duration}ms"
 
-                        // 使用 curl 进行回调
-                        // 注：成功率由平台直接统计 status='success' 的运行次数，此处 passedCases/failedCases 仅供记录参考
+                        // 解析 test-report.json 获取真实的通过/失败/跳过数量
+                        def passedCount = 0
+                        def failedCount = 0
+                        def skippedCount = 0
+                        def testDir = params.REPO_URL ? 'test-cases' : '.'
+
                         try {
-                            def failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
+                            def reportFile = "${testDir}/test-report.json"
+                            if (fileExists(reportFile)) {
+                                def report = readJSON file: reportFile
+                                def summary = report?.summary
+                                if (summary) {
+                                    passedCount = (summary.passed ?: 0) as int
+                                    failedCount = ((summary.failed ?: 0) + (summary.error ?: 0)) as int
+                                    skippedCount = ((summary.skipped ?: 0) + (summary.deselected ?: 0)) as int
+                                    echo "test result: passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount}"
+                                } else {
+                                    failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
+                                }
+                            } else {
+                                failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
+                            }
+                        } catch (Exception parseErr) {
+                            failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
+                        }
+
+                        // use curl to send callback
+                        try {
                             sh """
                                 curl -X POST '${callbackUrl}' \\
                                     -H 'Content-Type: application/json' \\
                                     --connect-timeout 10 \\
                                     --max-time 30 \\
-                                    -d '{"runId": ${params.RUN_ID}, "status": "${finalStatus}", "passedCases": 0, "failedCases": ${failedCount}, "skippedCases": 0, "durationMs": ${duration}}' \\
-                                    || echo '❌ curl 回调失败'
+                                    -d '{"runId": ${params.RUN_ID}, "status": "${finalStatus}", "passedCases": ${passedCount}, "failedCases": ${failedCount}, "skippedCases": ${skippedCount}, "durationMs": ${duration}}' \\
+                                    || echo '❌ curl callback failed'
                             """
-                            echo "✅ 回调成功"
+                            echo "✅ Callback sent (passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount})"
                         } catch (Exception e) {
-                            echo "⚠️ 回调失败: ${e.message}"
+                            echo "⚠️ Callback failed: ${e.message}"
                         }
                         echo "==============================="
                     }
