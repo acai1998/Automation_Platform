@@ -66,6 +66,8 @@ export function useRunTask() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      // 任务触发后，同步使运行报告的缓存失效，确保报告页无需手动刷新即可展示新记录
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
     },
   });
 }

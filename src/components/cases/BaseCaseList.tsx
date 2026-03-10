@@ -289,7 +289,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
               <FileText className="h-8 w-8" />
             </div>
             <p className="font-medium">暂无用例数据</p>
-            <p className="text-sm">请在仓库管理页面同步用例</p>
+            <p className="text-sm">用例由 GitHub Actions 自动同步，请检查仓库 CI 是否已运行</p>
           </div>
         ) : (
           <div className="h-full flex flex-col">

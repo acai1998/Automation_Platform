@@ -12,6 +12,52 @@ const JWT_SECRET = getSecretOrEnv('JWT_SECRET', 'autotest-jwt-secret-key-2025');
 const JWT_EXPIRES_IN = '7d';
 const JWT_REFRESH_EXPIRES_IN = '30d';
 
+const LOGIN_RSA_ALGORITHM = 'RSA-OAEP-256';
+
+interface LoginRsaKeyPair {
+  publicKey: string;
+  privateKey: string;
+  keyId: string;
+}
+
+function normalizePemKey(key: string): string {
+  return key.replace(/\\n/g, '\n').trim();
+}
+
+function createLoginRsaKeyPair(): LoginRsaKeyPair {
+  const envPublicKey = getSecretOrEnv('AUTH_LOGIN_PUBLIC_KEY');
+  const envPrivateKey = getSecretOrEnv('AUTH_LOGIN_PRIVATE_KEY');
+
+  if ((envPublicKey && !envPrivateKey) || (!envPublicKey && envPrivateKey)) {
+    console.warn('[AuthService] AUTH_LOGIN_PUBLIC_KEY/AUTH_LOGIN_PRIVATE_KEY 配置不完整，将使用临时 RSA 密钥对');
+  }
+
+  if (envPublicKey && envPrivateKey) {
+    const publicKey = normalizePemKey(envPublicKey);
+    const privateKey = normalizePemKey(envPrivateKey);
+    const keyId = crypto.createHash('sha256').update(publicKey).digest('hex').slice(0, 16);
+    return { publicKey, privateKey, keyId };
+  }
+
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: {
+      type: 'spki',
+      format: 'pem',
+    },
+    privateKeyEncoding: {
+      type: 'pkcs8',
+      format: 'pem',
+    },
+  });
+
+  const keyId = crypto.createHash('sha256').update(publicKey).digest('hex').slice(0, 16);
+
+  return { publicKey, privateKey, keyId };
+}
+
+const LOGIN_RSA_KEY_PAIR = createLoginRsaKeyPair();
+
 // 返回给前端的用户信息（不包含敏感数据）
 export interface UserInfo {
   id: number;
@@ -85,6 +131,38 @@ export class AuthService {
       const decoded = jwt.verify(token, JWT_SECRET) as { id: number; email: string; role: string };
       return decoded;
     } catch {
+      return null;
+    }
+  }
+
+  // 获取登录加密公钥
+  getLoginPublicKey(): { publicKey: string; keyId: string; algorithm: string } {
+    return {
+      publicKey: LOGIN_RSA_KEY_PAIR.publicKey,
+      keyId: LOGIN_RSA_KEY_PAIR.keyId,
+      algorithm: LOGIN_RSA_ALGORITHM,
+    };
+  }
+
+  // 解密登录请求中的密码
+  decryptLoginPassword(encryptedPassword: string): string | null {
+    if (!encryptedPassword || encryptedPassword.length > 4096) {
+      return null;
+    }
+
+    try {
+      const decrypted = crypto.privateDecrypt(
+        {
+          key: LOGIN_RSA_KEY_PAIR.privateKey,
+          padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+          oaepHash: 'sha256',
+        },
+        Buffer.from(encryptedPassword, 'base64')
+      );
+
+      return decrypted.toString('utf8');
+    } catch (error) {
+      console.error('Decrypt login password error:', error);
       return null;
     }
   }

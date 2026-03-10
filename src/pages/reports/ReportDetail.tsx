@@ -189,7 +189,7 @@ export default function ReportDetail() {
             </button>
             <ChevronDown className="h-3 w-3 -rotate-90" />
             <span className="text-slate-900 dark:text-slate-200 font-medium">
-              运行详情 #{run.id}
+              执行 #{run.id}
             </span>
           </nav>
 

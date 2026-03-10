@@ -13,7 +13,6 @@ import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import ComingSoon from "./pages/ComingSoon";
-import RepositoryManagement from "./pages/RepositoryManagement";
 import APICases from "./pages/cases/APICases";
 import UICases from "./pages/cases/UICases";
 import PerformanceCases from "./pages/cases/PerformanceCases";
@@ -114,13 +113,6 @@ function Router() {
         <ProtectedRoute>
           <Layout>
             <TasksPage />
-          </Layout>
-        </ProtectedRoute>
-      </Route>
-      <Route path="/repositories">
-        <ProtectedRoute>
-          <Layout>
-            <RepositoryManagement />
           </Layout>
         </ProtectedRoute>
       </Route>

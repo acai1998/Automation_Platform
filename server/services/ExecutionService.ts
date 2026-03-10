@@ -205,25 +205,55 @@ export class ExecutionService {
           else skippedCases++;
         }
 
-        // 2.2 批量插入结果（支持扩展字段）
+        // 2.2 更新或插入用例结果记录（先尝试更新预创建记录，再新增，避免重复）
         if (input.results.length > 0) {
-          await this.executionRepository.createTestResults(input.results.map(result => ({
-            executionId: input.executionId,
-            caseId: result.caseId,
-            caseName: result.caseName,
-            status: result.status,
-            duration: result.duration,
-            errorMessage: result.errorMessage,
-            errorStack: result.stackTrace,
-            screenshotPath: result.screenshotPath,
-            logPath: result.logPath,
-            assertionsTotal: result.assertionsTotal,
-            assertionsPassed: result.assertionsPassed,
-            responseData: result.responseData,
-          })));
+          for (const result of input.results) {
+            const updated = await this.executionRepository.updateTestResult(input.executionId, result.caseId, {
+              status: result.status,
+              duration: result.duration,
+              errorMessage: result.errorMessage,
+              errorStack: result.stackTrace,
+              screenshotPath: result.screenshotPath,
+              logPath: result.logPath,
+              assertionsTotal: result.assertionsTotal,
+              assertionsPassed: result.assertionsPassed,
+              responseData: result.responseData,
+              endTime: new Date(),
+            });
+
+            if (!updated) {
+              // 没有预创建记录，则新增
+              await this.executionRepository.createTestResult({
+                executionId: input.executionId,
+                caseId: result.caseId,
+                caseName: result.caseName,
+                status: result.status,
+                duration: result.duration,
+                errorMessage: result.errorMessage,
+                errorStack: result.stackTrace,
+                screenshotPath: result.screenshotPath,
+                logPath: result.logPath,
+                assertionsTotal: result.assertionsTotal,
+                assertionsPassed: result.assertionsPassed,
+                responseData: result.responseData,
+                endTime: new Date(),
+              });
+            }
+          }
+        } else if (passedCases === 0 && failedCases === 0 && skippedCases === 0) {
+          // 没有详细结果且统计数全为0：根据整体状态批量更新预创建的 error 记录
+          const mappedResultStatus: 'passed' | 'failed' =
+            (input.status === 'success') ? 'passed' : 'failed';
+          await this.executionRepository.bulkUpdateErrorResults(input.executionId, mappedResultStatus);
+
+          // 重新汇总统计数
+          const summary = await this.executionRepository.countResultsByStatus(input.executionId);
+          passedCases  = summary.passed;
+          failedCases  = summary.failed;
+          skippedCases = summary.skipped;
         }
 
-        // 2.3 更新执行记录
+        // 2.3 更新 Auto_TestCaseTaskExecutions 记录
         // TaskExecution 状态不支持 'aborted'，需要映射为 'cancelled'
         let executionStatus: 'success' | 'failed' | 'cancelled';
         if (input.status === 'aborted') {
@@ -238,6 +268,15 @@ export class ExecutionService {
           failedCases,
           skippedCases,
           duration: input.duration,
+        });
+
+        // 2.4 同步更新关联的 Auto_TestRun 统计字段（重要：避免前端看到 0%）
+        await this.executionRepository.syncTestRunByExecutionId(input.executionId, {
+          status: input.status,
+          passedCases,
+          failedCases,
+          skippedCases,
+          durationMs: input.duration * 1000,
         });
 
         logger.debug('Execution record updated', {

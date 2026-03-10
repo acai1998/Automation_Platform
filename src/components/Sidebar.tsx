@@ -10,7 +10,6 @@ import {
   LogOut,
   Boxes,
   User,
-  GitBranch,
   ChevronDown,
   Code,
   Monitor,
@@ -42,7 +41,6 @@ const navItems: NavItem[] = [
     ],
   },
   { icon: <Boxes className="h-5 w-5" />, label: "任务管理", href: "/tasks" },
-  { icon: <GitBranch className="h-5 w-5" />, label: "GitHub 仓库", href: "/repositories" },
   { icon: <BarChart3 className="h-5 w-5" />, label: "报告中心", href: "/reports" },
   { icon: <Settings className="h-5 w-5" />, label: "系统设置", href: "/settings" },
 ];

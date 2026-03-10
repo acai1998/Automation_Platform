@@ -15,8 +15,6 @@ import casesRoutes from './routes/cases';
 import tasksRoutes from './routes/tasks';
 import jenkinsRoutes from './routes/jenkins';
 import authRoutes from './routes/auth';
-import repositoriesRoutes from './routes/repositories';
-import { schedulerService } from './services/SchedulerService';
 import { dailySummaryScheduler } from './services/DailySummaryScheduler';
 import { executionMonitorService } from './services/ExecutionMonitorService';
 import { initializeWebSocketService, webSocketService } from './services/WebSocketService';
@@ -134,7 +132,6 @@ app.use('/api/executions', executionRoutes);
 app.use('/api/cases', casesRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/jenkins', jenkinsRoutes);
-app.use('/api/repositories', repositoriesRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {
@@ -220,9 +217,6 @@ function startServer(port: number, attempt: number = 1): void {
       webSocketEnabled: process.env.WEBSOCKET_ENABLED !== 'false'
     }, LOG_CONTEXTS.HTTP);
 
-    // 启动定时任务调度器
-    schedulerService.start();
-
     // 启动执行监控服务
     executionMonitorService.start();
   });
@@ -265,7 +259,6 @@ process.on('SIGTERM', () => {
     signal: 'SIGTERM',
     uptime: process.uptime(),
   }, LOG_CONTEXTS.HTTP);
-  schedulerService.stop();
   dailySummaryScheduler.stop();
   executionMonitorService.stop();
   webSocketService?.close();
@@ -277,7 +270,6 @@ process.on('SIGINT', () => {
     signal: 'SIGINT',
     uptime: process.uptime(),
   }, LOG_CONTEXTS.HTTP);
-  schedulerService.stop();
   dailySummaryScheduler.stop();
   executionMonitorService.stop();
   webSocketService?.close();

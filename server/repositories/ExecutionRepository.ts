@@ -1150,8 +1150,9 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
             );
           }
         } else {
-          // 没有详细结果列表，但有统计汇总数：根据汇总数批量更新预创建的 error 记录
-          // 场景：Jenkins 回调只传 passedCases/failedCases/skippedCases，不传详细 results
+          // 没有详细结果列表
+          // 策略一：Jenkins 传了统计汇总数 (passedCases/failedCases/skippedCases > 0)，按顺序批量更新预创建的 error 记录
+          // 策略二：Jenkins 传的统计数为0，但已有真实结果记录（非 error 状态），则从数据库重新汇总统计数并回填 Auto_TestRun
           const totalSummary = results.passedCases + results.failedCases + results.skippedCases;
           if (totalSummary > 0) {
             logger.info(
@@ -1202,6 +1203,68 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
                 LOG_CONTEXTS.REPOSITORY
               );
             }
+          } else {
+            // 统计数全为0，且没有详细 results 数组
+            // 先查数据库里该 executionId 下的现有记录状态
+            const countRows = await this.testRunResultRepository.query(`
+              SELECT
+                SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) AS passed,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS error_count,
+                SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+                COUNT(*) AS total
+              FROM Auto_TestRunResults
+              WHERE execution_id = ?
+            `, [actualExecutionId]) as Array<{ passed: string; failed: string; error_count: string; skipped: string; total: string }>;
+
+            if (countRows.length > 0) {
+              const dbPassed  = Number(countRows[0].passed      ?? 0);
+              const dbFailed  = Number(countRows[0].failed      ?? 0);
+              const dbError   = Number(countRows[0].error_count ?? 0);
+              const dbSkipped = Number(countRows[0].skipped     ?? 0);
+              const dbTotal   = Number(countRows[0].total       ?? 0);
+              const dbFinished = dbPassed + dbFailed + dbSkipped;
+
+              if (dbTotal > 0 && dbFinished > 0) {
+                // 已有非 error 的真实结果，直接用统计值回填 Auto_TestRun，不覆盖为0
+                await this.testRunRepository.update(runId, {
+                  passedCases:  dbPassed,
+                  failedCases:  dbFailed,
+                  skippedCases: dbSkipped,
+                });
+                logger.info(
+                  `Recalculated stats from existing results and back-filled Auto_TestRun`,
+                  { runId, executionId: actualExecutionId, dbPassed, dbFailed, dbSkipped },
+                  LOG_CONTEXTS.REPOSITORY
+                );
+              } else if (dbTotal > 0 && dbError > 0) {
+                // 全是预创建的 error 记录，根据执行整体状态将它们批量更新
+                // success → passed；failed/aborted/cancelled → failed
+                const mappedStatus: 'passed' | 'failed' =
+                  (results.status === 'success') ? 'passed' : 'failed';
+
+                await this.testRunResultRepository.query(`
+                  UPDATE Auto_TestRunResults
+                  SET status = ?, end_time = NOW()
+                  WHERE execution_id = ? AND status = 'error'
+                `, [mappedStatus, actualExecutionId]);
+
+                // 根据映射结果更新 Auto_TestRun 统计
+                const newPassed  = mappedStatus === 'passed'  ? dbError : 0;
+                const newFailed  = mappedStatus === 'failed'  ? dbError : 0;
+                await this.testRunRepository.update(runId, {
+                  passedCases:  newPassed,
+                  failedCases:  newFailed,
+                  skippedCases: 0,
+                });
+
+                logger.info(
+                  `Bulk-updated pre-created error records based on overall execution status`,
+                  { runId, executionId: actualExecutionId, mappedStatus, updatedCount: dbError, newPassed, newFailed },
+                  LOG_CONTEXTS.REPOSITORY
+                );
+              }
+            }
           }
         }
       } else {
@@ -1248,6 +1311,87 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       where: { id: runId },
       select: ['id', 'status', 'jenkinsJob', 'jenkinsBuildId', 'jenkinsUrl', 'startTime'],
     });
+  }
+
+  /**
+   * 将指定 executionId 下所有 status=error 的预创建记录批量更新为目标状态
+   */
+  async bulkUpdateErrorResults(executionId: number, targetStatus: 'passed' | 'failed'): Promise<number> {
+    const result = await this.testRunResultRepository.query(`
+      UPDATE Auto_TestRunResults
+      SET status = ?, end_time = NOW()
+      WHERE execution_id = ? AND status = 'error'
+    `, [targetStatus, executionId]) as { affectedRows?: number; changedRows?: number };
+    return result?.affectedRows ?? 0;
+  }
+
+  /**
+   * 统计指定 executionId 下各状态的结果数量
+   */
+  async countResultsByStatus(executionId: number): Promise<{ passed: number; failed: number; skipped: number; total: number }> {
+    const rows = await this.testRunResultRepository.query(`
+      SELECT
+        SUM(CASE WHEN status = 'passed'  THEN 1 ELSE 0 END) AS passed,
+        SUM(CASE WHEN status IN ('failed', 'error') THEN 1 ELSE 0 END) AS failed,
+        SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+        COUNT(*) AS total
+      FROM Auto_TestRunResults
+      WHERE execution_id = ?
+    `, [executionId]) as Array<{ passed: string; failed: string; skipped: string; total: string }>;
+
+    if (!rows || rows.length === 0) {
+      return { passed: 0, failed: 0, skipped: 0, total: 0 };
+    }
+    return {
+      passed:  Number(rows[0].passed  ?? 0),
+      failed:  Number(rows[0].failed  ?? 0),
+      skipped: Number(rows[0].skipped ?? 0),
+      total:   Number(rows[0].total   ?? 0),
+    };
+  }
+
+  /**
+   * 通过 executionId（Auto_TestCaseTaskExecutions.id）找到关联的 Auto_TestRun，
+   * 并同步更新其 status/passedCases/failedCases/skippedCases/durationMs 等统计字段。
+   * 用于修复 handleCallback 路径（/api/executions/callback）只更新了 TaskExecution 而未更新 TestRun 的问题。
+   */
+  async syncTestRunByExecutionId(executionId: number, data: {
+    status: 'success' | 'failed' | 'cancelled' | 'aborted';
+    passedCases: number;
+    failedCases: number;
+    skippedCases: number;
+    durationMs: number;
+  }): Promise<boolean> {
+    // Auto_TestRun.execution_id 字段直接关联了 executionId
+    const testRun = await this.testRunRepository.findOne({
+      where: { executionId },
+      select: ['id', 'status'],
+    });
+
+    if (!testRun) {
+      logger.warn('syncTestRunByExecutionId: no TestRun found for executionId', { executionId }, LOG_CONTEXTS.REPOSITORY);
+      return false;
+    }
+
+    const mappedStatus = this.mapStatusForTestRun(data.status);
+    await this.testRunRepository.update(testRun.id, {
+      status:       mappedStatus,
+      passedCases:  data.passedCases,
+      failedCases:  data.failedCases,
+      skippedCases: data.skippedCases,
+      durationMs:   data.durationMs,
+      endTime:      new Date(),
+    });
+
+    logger.debug('syncTestRunByExecutionId: synced TestRun stats', {
+      executionId,
+      runId: testRun.id,
+      passedCases: data.passedCases,
+      failedCases: data.failedCases,
+      skippedCases: data.skippedCases,
+    }, LOG_CONTEXTS.REPOSITORY);
+
+    return true;
   }
 
   /**

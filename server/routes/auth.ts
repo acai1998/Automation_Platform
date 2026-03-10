@@ -62,13 +62,37 @@ router.post('/register', registerRateLimiter, async (req: Request, res: Response
   }
 });
 
+// 获取登录加密公钥
+router.get('/public-key', async (_req: Request, res: Response) => {
+  try {
+    const keyInfo = authService.getLoginPublicKey();
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, ...keyInfo });
+  } catch (error) {
+    console.error('Get login public key route error:', error);
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
 // 用户登录
 router.post('/login', loginRateLimiter, async (req: Request, res: Response) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const email = typeof body['email'] === 'string' ? body['email'] : '';
-    const password = typeof body['password'] === 'string' ? body['password'] : '';
+    const encryptedPassword = typeof body['encryptedPassword'] === 'string' ? body['encryptedPassword'] : '';
+    const plaintextPassword = typeof body['password'] === 'string' ? body['password'] : '';
     const remember = typeof body['remember'] === 'boolean' ? body['remember'] : false;
+
+    let password = plaintextPassword;
+
+    if (encryptedPassword) {
+      const decryptedPassword = authService.decryptLoginPassword(encryptedPassword);
+      if (!decryptedPassword) {
+        res.status(400).json({ success: false, message: '密码解密失败，请刷新页面后重试' });
+        return;
+      }
+      password = decryptedPassword;
+    }
 
     if (!email || !password) {
       res.status(400).json({ success: false, message: '请提供邮箱和密码' });
