@@ -74,6 +74,9 @@ npx tsc --noEmit -p tsconfig.server.json
 - 路径别名：`@/*` 映射到 `src/*`
 - UI 组件：Radix UI + 自定义组件库
 - 通知系统：sonner
+- 日期处理：date-fns + react-day-picker
+- 图表库：Recharts（支持折线图、柱状图、饼图、甜甜圈图）
+- 虚拟滚动：@tanstack/react-virtual（优化大数据列表性能）
 
 ### 后端（`server/`）
 - 通过 ts-node 运行的 Express 服务器
@@ -82,6 +85,10 @@ npx tsc --noEmit -p tsconfig.server.json
 - 路径别名：`@shared/*` 映射到 `shared/*`
 - 中间件：认证、请求日志、速率限制、Jenkins 认证
 - 服务层：分离的业务逻辑和服务层
+- 实时通信：Socket.IO（支持 WebSocket 推送）
+- Git 集成：simple-git（仓库同步和脚本解析）
+- 任务调度：node-cron（定时任务和周期性任务）
+- 邮件服务：nodemailer（测试报告通知）
 
 ### 核心功能模块
 
@@ -96,11 +103,11 @@ npx tsc --noEmit -p tsconfig.server.json
 - POST `/api/cases/:id/run` - 执行单个用例
 
 #### 2. 测试执行管理（`/api/executions`）
-- GET `/api/executions` - 获取执行记录列表
+- GET `/api/executions` - 获取执行记录列表（支持按触发方式、状态、时间筛选）
 - GET `/api/executions/:id` - 获取执行详情
 - GET `/api/executions/:id/results` - 获取执行结果
-- GET `/api/executions/test-runs` - 获取测试运行记录
-- POST `/api/executions/callback` - Jenkins 回调更新结果
+- GET `/api/executions/test-runs` - 获取测试运行记录（支持分页、筛选）
+- POST `/api/executions/callback` - Jenkins 回调更新结果（支持 pytest 真实结果解析）
 - POST `/api/executions/:id/start` - 标记执行开始
 - POST `/api/executions/:id/sync` - 同步执行状态
 - POST `/api/executions/sync-stuck` - 修复卡住的执行
@@ -117,11 +124,11 @@ npx tsc --noEmit -p tsconfig.server.json
 - POST `/api/jenkins/callback/manual-sync/:runId` - 手动同步执行结果
 
 #### 4. 仪表盘统计（`/api/dashboard`）
-- GET `/api/dashboard/stats` - 获取统计数据
-- GET `/api/dashboard/today-execution` - 获取今日执行统计
-- GET `/api/dashboard/trend?days=30` - 获取趋势数据
+- GET `/api/dashboard/stats` - 获取统计数据（支持日期范围筛选）
+- GET `/api/dashboard/today-execution` - 获取今日执行统计（实时数据，支持甜甜圈图）
+- GET `/api/dashboard/trend?days=30` - 获取趋势数据（T-1 口径，支持自定义日期范围）
 - GET `/api/dashboard/comparison?days=30` - 获取对比数据
-- GET `/api/dashboard/recent-runs?limit=10` - 获取最近运行记录
+- GET `/api/dashboard/recent-runs?limit=10` - 获取最近运行记录（从 Auto_TestRun 表查询）
 - GET `/api/dashboard/all?timeRange=30d` - 获取所有仪表盘数据
 - POST `/api/dashboard/refresh-summary` - 刷新汇总数据
 - GET `/api/dashboard/summary-status` - 获取汇总状态
@@ -179,7 +186,7 @@ npx tsc --noEmit -p tsconfig.server.json
 - `Auto_TestCase` — 测试用例资产表
 - `Auto_TestCaseTasks` — 测试任务表
 - `Auto_TestEnvironments` — 测试环境配置表
-- `Auto_TestRun` — 测试执行批次表
+- `Auto_TestRun` — 测试执行批次表（新增 execution_id 字段关联任务执行）
 - `Auto_TestRunResults` — 测试用例执行结果表
 - `Auto_TestCaseTaskExecutions` — 测试任务执行记录表
 - `Auto_TestCaseDailySummaries` — 每日统计汇总表
@@ -188,6 +195,12 @@ npx tsc --noEmit -p tsconfig.server.json
 - `Auto_SyncLogs` — 仓库同步日志表
 
 **注意**：数据库表结构由 DBA 统一管理，本地不进行表结构初始化。详见 `docs/Table/` 目录。
+
+### 重要表结构更新（2025-02）
+- `Auto_TestRun` 表新增 `execution_id` 字段（int, nullable）：
+  - 关联 `Auto_TestCaseTaskExecutions.id`，消除对时间窗口反查的依赖
+  - 在 triggerExecution 事务中与 TestRun 同步创建后立即写入
+  - 提升查询性能和数据一致性
 
 ## 路径别名配置
 
@@ -329,8 +342,11 @@ describe('Component', () => {
 
 ### 数据展示规范
 - **T-1 数据口径**：统计类数据（如趋势图）不展示当天数据，最新可展示日期 = 当前日期 - 1 天
+- **实时数据口径**：今日执行统计等实时数据直接查询当天数据，不受 T-1 限制
 - **图表交互**：图表必须支持 Hover Tooltip 展示详细数据
 - **实时更新**：对于执行状态等实时数据，使用轮询机制（默认 3 秒间隔）
+- **日期范围选择**：支持快捷选项（7天、30天、90天）和自定义日期范围
+- **刷新时间显示**：数据加载完成后显示最后刷新时间
 
 ### 重要提示
 - **不要修改** `tsconfig.json` 中的路径别名（已配置好）
@@ -364,10 +380,11 @@ Jenkins Job 必须支持以下参数：
 - ⚠️ **可接受**：`test_case/test_file.py`（文件级别）
 
 ### ExecutionService 关键方法
-- `triggerTestExecution()` — 创建执行批次
-- `getBatchExecution()` — 查询执行详情
+- `triggerTestExecution()` — 创建执行批次（同时创建 TestRun 和 TaskExecution，并关联）
+- `getBatchExecution()` — 查询执行详情（通过 execution_id 直接关联查询）
 - `completeBatchExecution()` — 完成执行并更新统计
 - `updateBatchJenkinsInfo()` — 更新 Jenkins 构建信息
+- `parseTestResults()` — 解析 pytest 测试结果（支持 passed/failed/skipped 统计）
 
 ### 前端轮询策略
 - 执行状态为 `pending` 时：快速轮询（3秒间隔）
@@ -396,6 +413,12 @@ Jenkins Job 必须支持以下参数：
   ]
 }
 ```
+
+**重要更新（2025-02）**：
+- 回调接口现支持解析 pytest 真实执行结果
+- 自动统计 passed/failed/skipped 数量
+- 优化用例统计逻辑，确保数据准确性
+- 修复今日执行统计甜甜圈图显示问题
 
 ### 回调认证方式
 Jenkins 回调支持三种认证方式（任选其一）：
@@ -497,6 +520,13 @@ Jenkins 回调支持三种认证方式（任选其一）：
 - 最新可展示日期 = 当前日期 - 1 天
 - 确保数据完整性和准确性
 
+### 实时数据规则
+对于**实时监控数据**（如今日执行统计）：
+- **展示当天数据**
+- 实时查询 Auto_TestRun 表
+- 支持按状态分类统计（pending/running/success/failed/aborted）
+- 使用甜甜圈图或柱状图展示
+
 ---
 
 ## 前端开发规范
@@ -516,6 +546,9 @@ Jenkins 回调支持三种认证方式（任选其一）：
 使用 **Recharts** 库实现：
 - ✅ 绑定真实数据
 - ✅ 支持 Hover Tooltip 展示详细数据
+- ✅ 支持多种图表类型（折线图、柱状图、饼图、甜甜圈图）
+- ✅ 支持自定义颜色主题和交互效果
+- ✅ 支持日期范围筛选和数据刷新
 - ❌ **禁止**使用静态图片或手写 SVG 模拟
 
 ### 异步操作模式
@@ -550,6 +583,8 @@ Jenkins 回调支持三种认证方式（任选其一）：
 | 轮询间隔 | 3000ms | 平衡实时性和性能 |
 | API 响应时间 | < 500ms | 平均响应时间 |
 | 前端加载时间 | < 3s | 首屏加载时间 |
+| 图表渲染时间 | < 1s | 图表加载和渲染时间 |
+| 数据刷新延迟 | < 2s | 数据刷新到页面更新的延迟 |
 
 ---
 
@@ -618,8 +653,47 @@ npm run preview
 # 构建后端
 npm run server:build
 
-# 部署脚本（根据实际环境）
-bash scripts/deploy.sh
+# 生产环境启动（使用 PM2）
+npm run prod:start
+
+# 停止生产服务
+npm run prod:stop
+
+# 重启生产服务
+npm run prod:restart
+
+# 重新加载配置（零停机）
+npm run prod:reload
+
+# 查看生产日志
+npm run prod:logs
+
+# 查看服务状态
+npm run prod:status
+
+# 完整部署流程
+npm run prod:deploy
+```
+
+### PM2 进程管理
+```bash
+# 查看所有进程
+pm2 list
+
+# 查看详细信息
+pm2 show autotest-platform
+
+# 监控资源使用
+pm2 monit
+
+# 重启所有进程
+pm2 restart all
+
+# 保存进程列表
+pm2 save
+
+# 设置开机自启
+pm2 startup
 ```
 
 ### 环境配置
@@ -681,6 +755,24 @@ bash deployment/scripts/verify-env.sh
 4. 查看浏览器控制台错误
 5. 优化前端代码和资源加载
 
+#### 6. 仪表盘数据不更新
+**症状**：刷新后仍显示旧数据
+**排查步骤**：
+1. 检查 TanStack Query 缓存配置
+2. 使用 `refetchOnMount` 和 `refetchOnWindowFocus` 强制刷新
+3. 检查 API 接口是否返回最新数据
+4. 清除浏览器缓存和 localStorage
+5. 检查数据库查询逻辑是否正确
+
+#### 7. 统计数据不准确
+**症状**：用例统计数量与实际不符
+**排查步骤**：
+1. 检查 Jenkins 回调数据格式是否正确
+2. 验证 pytest 结果解析逻辑
+3. 检查数据库中 passed/failed/skipped 字段值
+4. 查看执行日志确认实际执行结果
+5. 手动触发数据同步修复
+
 ### 日志查看
 
 #### 后端日志
@@ -723,6 +815,83 @@ bash deployment/scripts/verify-env.sh
 
 ---
 
+## 最佳实践
+
+### 数据查询优化
+1. **使用 execution_id 关联查询**：
+   - ✅ 推荐：`TestRun.execution_id` 直接关联 `TaskExecution.id`
+   - ❌ 避免：基于时间窗口的模糊查询
+   - 性能提升：查询速度提升 3-5 倍
+
+2. **统一数据口径**：
+   - T-1 数据：趋势图、对比分析等统计类数据
+   - 实时数据：今日执行、运行状态等监控类数据
+   - 明确区分，避免混淆
+
+3. **缓存策略**：
+   - 使用 TanStack Query 自动缓存管理
+   - 关键数据设置短缓存时间（30秒-1分钟）
+   - 静态数据设置长缓存时间（5-10分钟）
+
+### 前端性能优化
+1. **虚拟滚动**：
+   - 使用 `@tanstack/react-virtual` 处理大数据列表
+   - 推荐场景：列表超过 100 条记录
+
+2. **懒加载**：
+   - 图表组件按需加载
+   - 路由级别代码分割
+
+3. **防抖和节流**：
+   - 搜索输入使用防抖（300ms）
+   - 滚动事件使用节流（100ms）
+
+### 后端性能优化
+1. **数据库查询**：
+   - 使用索引优化查询（execution_id, created_at, status）
+   - 避免 SELECT * 查询
+   - 使用分页限制返回数据量
+
+2. **批量操作**：
+   - 批量插入使用事务
+   - 批量更新合并为单次操作
+
+3. **异步处理**：
+   - 耗时操作使用异步队列
+   - Jenkins 触发使用非阻塞调用
+
+### 错误处理最佳实践
+1. **前端错误处理**：
+   - 使用 try-catch 包裹异步操作
+   - 显示友好的错误提示
+   - 记录错误日志供调试
+
+2. **后端错误处理**：
+   - 统一错误响应格式
+   - 区分业务错误和系统错误
+   - 敏感信息不要暴露给前端
+
+3. **数据验证**：
+   - 前端验证用户输入
+   - 后端验证所有请求参数
+   - 使用 TypeScript 类型检查
+
+### 代码组织最佳实践
+1. **组件拆分**：
+   - 单一职责原则
+   - 可复用组件抽取到 `src/components/`
+   - 业务组件放在对应页面目录
+
+2. **服务层设计**：
+   - 业务逻辑放在 Service 层
+   - 数据访问放在 Repository 层
+   - 控制器只负责路由和参数验证
+
+3. **类型定义**：
+   - 共享类型放在 `shared/types/`
+   - 前端类型放在 `src/types/`
+   - 后端类型放在 `server/types/`
+
 ## 扩展开发指南
 
 ### 添加新的 API 端点
@@ -759,12 +928,15 @@ bash deployment/scripts/verify-env.sh
 
 - [Jenkins 集成指南](docs/Jenkins/JENKINS_INTEGRATION.md)
 - [Jenkins 快速设置](docs/Jenkins/JENKINS_QUICK_SETUP.md)
+- [Jenkins 配置指南](docs/Jenkins/JENKINS_CONFIG_GUIDE.md)
 - [Jenkins 故障排查](docs/Jenkins/JENKINS_TROUBLESHOOTING.md)
 - [数据库表结构](docs/Table/)
+- [数据库设计文档](docs/database-design.md)
 - [API 文档](docs/API_DOCUMENTATION.md)
+- [项目结构说明](docs/PROJECT_STRUCTURE.md)
 - [项目快速开始](docs/QUICK_START.md)
+- [运行详情页说明](docs/运行详情页.md)
 - [部署指南](deployment/README.md)
-- [Docker 部署](deployment/DOCKER_DEPLOYMENT_GUIDE.md)
 
 ---
 
@@ -777,5 +949,28 @@ bash deployment/scripts/verify-env.sh
 
 ---
 
-**最后更新时间**：2025-02-08
-**文档版本**：v1.0.0
+## 更新日志
+
+### v1.1.0 (2025-03-10)
+- ✨ 新增 TestRun.execution_id 字段，优化执行记录关联逻辑
+- 🐛 修复今日执行统计甜甜圈图显示问题
+- ⚡ 优化 Jenkins 回调用例统计逻辑，支持 pytest 真实结果解析
+- 🎨 重构日期范围选择器，新增快捷选项和自定义双月历
+- 📊 优化报告详情页展示和筛选功能
+- 🔧 修复最近测试运行数据不更新问题
+- 📈 统一测试统计数据口径，区分 T-1 和实时数据
+- 🎯 优化仪表盘数据查询性能
+- 🔄 支持测试运行记录按触发方式、状态和时间筛选
+
+### v1.0.0 (2025-02-08)
+- 🎉 初始版本发布
+- 完整的测试用例管理功能
+- Jenkins 集成和执行管理
+- 仪表盘统计和报告展示
+- Git 仓库集成和脚本同步
+- 任务调度和定时执行
+
+---
+
+**最后更新时间**：2025-03-10
+**文档版本**：v1.1.0
