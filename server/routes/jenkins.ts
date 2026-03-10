@@ -421,8 +421,59 @@ router.post('/callback', [
   const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
 
   try {
-    const { runId, status, passedCases = 0, failedCases = 0, skippedCases = 0, durationMs = 0, results = [] } = req.body;
+    const { runId, status, passedCases: reportedPassedCases = 0, failedCases: reportedFailedCases = 0, skippedCases: reportedSkippedCases = 0, durationMs = 0, results = [] } = req.body;
     callbackStatus = status;
+
+    const normalizedResults = Array.isArray(results) ? results : [];
+    let passedCases = typeof reportedPassedCases === 'number' ? reportedPassedCases : 0;
+    let failedCases = typeof reportedFailedCases === 'number' ? reportedFailedCases : 0;
+    let skippedCases = typeof reportedSkippedCases === 'number' ? reportedSkippedCases : 0;
+
+    if (normalizedResults.length > 0) {
+      let derivedPassedCases = 0;
+      let derivedFailedCases = 0;
+      let derivedSkippedCases = 0;
+
+      for (const result of normalizedResults as Array<Record<string, unknown>>) {
+        const caseStatus = String(result['status'] || '').toLowerCase();
+        if (caseStatus === 'passed') {
+          derivedPassedCases += 1;
+        } else if (caseStatus === 'failed' || caseStatus === 'error') {
+          derivedFailedCases += 1;
+        } else {
+          derivedSkippedCases += 1;
+        }
+      }
+
+      const totalReportedCases = passedCases + failedCases + skippedCases;
+      const totalDerivedCases = derivedPassedCases + derivedFailedCases + derivedSkippedCases;
+      const shouldUseDerivedCounts = totalReportedCases === 0
+        || totalReportedCases !== normalizedResults.length
+        || totalReportedCases !== totalDerivedCases;
+
+      if (shouldUseDerivedCounts) {
+        logger.warn('Callback summary mismatch, using derived counts from detailed results', {
+          runId,
+          reported: {
+            passedCases,
+            failedCases,
+            skippedCases,
+            total: totalReportedCases,
+          },
+          derived: {
+            passedCases: derivedPassedCases,
+            failedCases: derivedFailedCases,
+            skippedCases: derivedSkippedCases,
+            total: totalDerivedCases,
+          },
+          resultsCount: normalizedResults.length,
+        }, LOG_CONTEXTS.JENKINS);
+
+        passedCases = derivedPassedCases;
+        failedCases = derivedFailedCases;
+        skippedCases = derivedSkippedCases;
+      }
+    }
 
     // Enhanced logging with more context
     logger.info('Jenkins callback received', {
@@ -432,18 +483,18 @@ router.post('/callback', [
       failedCases,
       skippedCases,
       durationMs,
-      resultsCount: results.length,
+      resultsCount: normalizedResults.length,
       clientIP,
       userAgent: req.get('User-Agent'),
     }, LOG_CONTEXTS.JENKINS);
 
     // Validate data consistency
     const totalReportedCases = passedCases + failedCases + skippedCases;
-    if (results.length > 0 && totalReportedCases !== results.length) {
+    if (normalizedResults.length > 0 && totalReportedCases !== normalizedResults.length) {
       logger.warn('Data inconsistency detected', {
         runId,
         reportedTotal: totalReportedCases,
-        actualResults: results.length,
+        actualResults: normalizedResults.length,
       }, LOG_CONTEXTS.JENKINS);
     }
 
@@ -462,7 +513,7 @@ router.post('/callback', [
     logger.debug('Processing batch execution completion', {
       runId,
       status: validStatuses.includes(status) ? status : 'failed',
-      resultsCount: results.length,
+      resultsCount: normalizedResults.length,
     }, LOG_CONTEXTS.JENKINS);
 
     // 完成执行批次 - status 会自动被正规化处理
@@ -472,7 +523,7 @@ router.post('/callback', [
       failedCases,
       skippedCases,
       durationMs,
-      results,
+      results: normalizedResults,
     });
 
     const processingTime = timer();
@@ -485,7 +536,7 @@ router.post('/callback', [
     logger.info(`Execution status updated from Jenkins callback (runId=${runId})`, {
       runId,
       status: callbackStatus,
-      resultsCount: results.length,
+      resultsCount: normalizedResults.length,
       updateSource: 'jenkins_callback',
       clientIP,
     }, LOG_CONTEXTS.JENKINS);

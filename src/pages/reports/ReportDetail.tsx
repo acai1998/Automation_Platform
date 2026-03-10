@@ -16,19 +16,18 @@ import {
   MinusCircle,
   Search,
   TrendingUp,
-  XCircle,
   MoreHorizontal,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { useTestRunDetail, useTestRunResults } from "@/hooks/useExecutions";
+import { useTestRunDetail, useTestRunResults, TestRunResultStatus } from "@/hooks/useExecutions";
 
-type StatusFilter = "all" | "passed" | "failed" | "skipped";
 type SortBy = "failed_first" | "default" | "duration_desc";
 
 const PAGE_SIZE = 10;
 
-const runStatusStyle: Record<string, string> = {
+const RUN_STATUS_STYLE: Record<string, string> = {
   success: "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20",
   failed: "bg-rose-500/10 text-rose-500 border border-rose-500/20",
   running: "bg-blue-500/10 text-blue-500 border border-blue-500/20",
@@ -36,11 +35,33 @@ const runStatusStyle: Record<string, string> = {
   aborted: "bg-amber-500/10 text-amber-500 border border-amber-500/20",
 };
 
-const triggerMap: Record<string, string> = {
-  manual: "手动触发",
-  jenkins: "Jenkins 触发",
-  schedule: "定时触发",
+
+const RUN_STATUS_LABEL: Record<string, string> = {
+  success: "Completed",
+  failed:  "Completed",
+  running: "Running",
+  pending: "Pending",
+  aborted: "Aborted",
 };
+
+const TRIGGER_MAP: Record<string, string> = {
+  manual:       "手动触发",
+  jenkins:      "Jenkins 触发",
+  schedule:     "定时触发",
+  ci_triggered: "CI 触发",
+};
+
+function buildPageNumbers(current: number, total: number): (number | "...")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: (number | "...")[] = [1];
+  const start = Math.max(2, current - 1);
+  const end   = Math.min(total - 1, current + 1);
+  if (start > 2) pages.push("...");
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (end < total - 1) pages.push("...");
+  pages.push(total);
+  return pages;
+}
 
 function isFailedStatus(status: string) {
   return status === "failed" || status === "error";
@@ -71,7 +92,7 @@ export default function ReportDetail() {
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<TestRunResultStatus>("all");
   const [sortBy, setSortBy] = useState<SortBy>("failed_first");
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [page, setPage] = useState(1);
@@ -112,19 +133,20 @@ export default function ReportDetail() {
     return copy;
   }, [results, sortBy]);
 
-  const applyFilter = useCallback((next: () => void) => {
-    next();
-    setPage(1);
-  }, []);
-
-  const toggleRow = useCallback((id: number) => {
+  const toggleRow = (id: number) => {
     setExpandedRows((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+  };
+
+  const applyFilter = useCallback((next: () => void) => {
+    next();
+    setPage(1);
   }, []);
+
 
   const onlyFailures = statusFilter === "failed";
 
@@ -188,10 +210,10 @@ export default function ReportDetail() {
                 <span
                   className={cn(
                     "inline-flex items-center px-3 py-1 rounded-full text-xs font-bold",
-                    runStatusStyle[run.status] ?? runStatusStyle.pending,
+                    RUN_STATUS_STYLE[run.status] ?? RUN_STATUS_STYLE.pending,
                   )}
                 >
-                  执行状态: {run.status === "success" || run.status === "failed" ? "Completed" : run.status}
+                  执行状态: {RUN_STATUS_LABEL[run.status] ?? run.status}
                 </span>
 
                 <span
@@ -208,7 +230,7 @@ export default function ReportDetail() {
               </div>
 
               <p className="text-slate-500 dark:text-slate-400 text-sm pl-9">
-                触发方式: <span className="text-slate-700 dark:text-slate-200 font-medium">{triggerMap[run.trigger_type] ?? run.trigger_type}</span>
+                触发方式: <span className="text-slate-700 dark:text-slate-200 font-medium">{TRIGGER_MAP[run.trigger_type] ?? run.trigger_type}</span>
                 {" | "}
                 执行人: <span className="text-slate-700 dark:text-slate-200 font-medium">{run.trigger_by_name || "-"}</span>
                 {" | "}
@@ -217,7 +239,7 @@ export default function ReportDetail() {
             </div>
 
             <div className="flex gap-3">
-              <button className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-white text-sm font-bold border border-slate-300 dark:border-slate-700">
+              <button onClick={() => toast.info("导出功能开发中，敬请期待")} className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-white text-sm font-bold border border-slate-300 dark:border-slate-700 hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors">
                 <Download className="h-4 w-4" />
                 Export Report
               </button>
@@ -328,7 +350,7 @@ export default function ReportDetail() {
 
             <select
               value={statusFilter}
-              onChange={(e) => applyFilter(() => setStatusFilter(e.target.value as StatusFilter))}
+              onChange={(e) => applyFilter(() => setStatusFilter(e.target.value as TestRunResultStatus))}
               className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm h-10 px-3 min-w-[120px]"
             >
               <option value="all">All Status</option>
@@ -363,7 +385,12 @@ export default function ReportDetail() {
             <div className="ml-auto text-sm text-slate-500 font-medium">共 {total} 条</div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto relative">
+            {resultLoading && (
+              <div className="absolute inset-0 bg-white/60 dark:bg-slate-900/60 flex items-center justify-center z-10">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            )}
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider">
@@ -441,14 +468,8 @@ export default function ReportDetail() {
 
                         <td className="px-6 py-4 text-right">
                           <button
-                            onClick={() =>
-                              setExpandedRows((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(item.id)) next.delete(item.id);
-                                else next.add(item.id);
-                                return next;
-                              })
-                            }
+                            aria-label={expanded ? "折叠详情" : "展开详情"}
+                            onClick={() => toggleRow(item.id)}
                             className={cn(
                               "p-1.5 rounded transition-colors",
                               expanded ? "text-primary hover:bg-primary/10" : "text-slate-400 hover:text-primary",
@@ -463,29 +484,35 @@ export default function ReportDetail() {
                           <td className="p-6" colSpan={6}>
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                               <div className="lg:col-span-2 space-y-4">
-                                {item.error_message ? (
-                                  <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-4">
-                                    <p className="text-rose-600 dark:text-rose-400 text-sm font-bold mb-2">Error Message:</p>
-                                    <p className="text-sm font-mono text-rose-700 dark:text-rose-300 break-all">{item.error_message}</p>
-                                  </div>
-                                ) : (
-                                  <div className="bg-slate-100 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
-                                    <p className="text-sm text-slate-500 italic">暂无错误信息</p>
-                                  </div>
-                                )}
+                                                                {failed ? (
+                                  <>
+                                    {item.error_message ? (
+                                      <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-4">
+                                        <p className="text-rose-600 dark:text-rose-400 text-sm font-bold mb-2">Error Message:</p>
+                                        <p className="text-sm font-mono text-rose-700 dark:text-rose-300 break-all">{item.error_message}</p>
+                                      </div>
+                                    ) : (
+                                      <div className="bg-slate-100 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+                                        <p className="text-sm text-slate-500 italic">暂无错误信息</p>
+                                      </div>
+                                    )}
 
-                                {item.error_stack && (
-                                  <div className="bg-slate-900 rounded-lg p-4 border border-slate-800">
-                                    <div className="flex items-center justify-between mb-2">
-                                      <span className="text-xs text-slate-500 font-mono uppercase tracking-widest">Stack Trace</span>
-                                      <button
-                                        className="text-slate-400 hover:text-white transition-colors"
-                                        onClick={async () => { try { await navigator.clipboard.writeText(item.error_stack ?? ''); } catch { } }}
-                                      >
-                                        <Copy className="h-4 w-4" />
-                                      </button>
-                                    </div>
-                                    <pre className="font-mono text-[12px] text-slate-300 leading-relaxed overflow-x-auto">{item.error_stack}</pre>
+                                    {item.error_stack && (
+                                      <div className="bg-slate-900 rounded-lg p-4 border border-slate-800">
+                                        <div className="flex items-center justify-between mb-2">
+                                          <span className="text-xs text-slate-500 font-mono uppercase tracking-widest">Stack Trace</span>
+                                          <button aria-label="复制堆栈信息" className="text-slate-400 hover:text-white transition-colors" onClick={async () => { try { await navigator.clipboard.writeText(item.error_stack ?? ''); toast.success('堆栈信息已复制到剪贴板'); } catch { toast.error('复制失败，请手动选中并复制'); } }}>
+                                            <Copy className="h-4 w-4" />
+                                          </button>
+                                        </div>
+                                        <pre className="font-mono text-[12px] text-slate-300 leading-relaxed overflow-x-auto max-h-64">{item.error_stack}</pre>
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-4 flex items-center gap-3">
+                                    <CheckCircle2 className="h-5 w-5 text-emerald-500 flex-shrink-0" />
+                                    <p className="text-sm text-emerald-700 dark:text-emerald-400 font-medium">用例执行通过，无错误信息</p>
                                   </div>
                                 )}
                               </div>
@@ -513,14 +540,14 @@ export default function ReportDetail() {
 
                             <div className="mt-6 flex gap-3 border-t border-slate-200 dark:border-slate-800 pt-6">
                               {item.log_path && (
-                                <button className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-2">
+                                <a href={item.log_path} target="_blank" rel="noreferrer" className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-slate-700 transition-colors">
                                   <FileText className="h-3.5 w-3.5" /> View Logs
-                                </button>
+                                </a>
                               )}
                               {item.screenshot_path && (
-                                <button className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-2">
+                                <a href={item.screenshot_path} target="_blank" rel="noreferrer" className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-slate-700 transition-colors">
                                   <ImageIcon className="h-3.5 w-3.5" /> Screenshot
-                                </button>
+                                </a>
                               )}
                             </div>
                           </td>
@@ -548,27 +575,31 @@ export default function ReportDetail() {
                   <ChevronDown className="h-4 w-4 rotate-90" />
                 </button>
 
-                {Array.from({ length: totalPages }).slice(0, 8).map((_, i) => {
-                  const pageNo = i + 1;
-                  return (
+                {buildPageNumbers(currentPage, totalPages).map((p, idx) =>
+                  p === "..." ? (
+                    <span key={"ellipsis-"+idx} className="px-2 py-1.5 flex items-center text-slate-400">
+                      <MoreHorizontal className="h-4 w-4" />
+                    </span>
+                  ) : (
                     <button
-                      key={pageNo}
-                      onClick={() => setPage(pageNo)}
+                      key={p}
+                      onClick={() => setPage(p)}
                       className={cn(
-                        "px-3.5 py-1.5 text-sm font-bold rounded-lg transition-colors",
-                        pageNo === currentPage
+                        "min-w-[36px] px-2.5 py-1.5 text-sm font-bold rounded-lg transition-colors",
+                        p === currentPage
                           ? "bg-primary text-white"
                           : "hover:bg-slate-200 dark:hover:bg-slate-800",
                       )}
                     >
-                      {pageNo}
+                      {p}
                     </button>
-                  );
-                })}
+                  ),
+                )}
 
                 <button
                   disabled={currentPage === totalPages}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="下一页"
                   className="p-2 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors disabled:opacity-30"
                 >
                   <ChevronDown className="h-4 w-4 -rotate-90" />

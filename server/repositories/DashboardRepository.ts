@@ -939,9 +939,27 @@ export class DashboardRepository extends BaseRepository<TestCase> {
       const result = await this.taskExecutionRepository.query(`
         SELECT
           COALESCE(SUM(total_cases), 0) as total,
-          COALESCE(SUM(passed_cases), 0) as passed,
-          COALESCE(SUM(failed_cases), 0) as failed,
-          COALESCE(SUM(skipped_cases), 0) as skipped
+          COALESCE(SUM(
+            CASE
+              WHEN (passed_cases + failed_cases + skipped_cases) > 0 THEN passed_cases
+              WHEN status = 'success' THEN total_cases
+              ELSE 0
+            END
+          ), 0) as passed,
+          COALESCE(SUM(
+            CASE
+              WHEN (passed_cases + failed_cases + skipped_cases) > 0 THEN failed_cases
+              WHEN status = 'failed' THEN total_cases
+              ELSE 0
+            END
+          ), 0) as failed,
+          COALESCE(SUM(
+            CASE
+              WHEN (passed_cases + failed_cases + skipped_cases) > 0 THEN skipped_cases
+              WHEN status = 'aborted' THEN total_cases
+              ELSE 0
+            END
+          ), 0) as skipped
         FROM Auto_TestRun
         WHERE DATE(created_at) = CURDATE()
       `) as ExecutionStats[];
