@@ -227,15 +227,21 @@ pipeline {
                 script {
                     echo "清理环境..."
 
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    def reportArtifactPath = "${testDir}/test-report.json"
+                    def junitPattern = testDir == 'test-cases'
+                        ? '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
+                        : '**/junit.xml,**/.pytest_cache/**/junit.xml'
+
                     try {
-                        archiveArtifacts artifacts: 'test-cases/test-report.json', allowEmptyArchive: true, fingerprint: true
+                        archiveArtifacts artifacts: reportArtifactPath, allowEmptyArchive: true, fingerprint: true
                         echo "测试报告已归档"
                     } catch (Exception e) {
                         echo "归档测试报告失败: ${e.message}"
                     }
 
                     try {
-                        junit allowEmptyResults: true, testResults: '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
+                        junit allowEmptyResults: true, testResults: junitPattern
                     } catch (Exception e) {
                         echo "JUnit报告处理失败: ${e.message}"
                     }
@@ -258,12 +264,12 @@ pipeline {
                         def passedCount = 0
                         def failedCount = 0
                         def skippedCount = 0
-                        def testDir = params.REPO_URL ? 'test-cases' : '.'
 
                         try {
                             def reportFile = "${testDir}/test-report.json"
                             if (fileExists(reportFile)) {
-                                def report = readJSON file: reportFile
+                                def reportText = readFile(file: reportFile)
+                                def report = new groovy.json.JsonSlurperClassic().parseText(reportText)
                                 def summary = report?.summary
                                 if (summary) {
                                     passedCount = (summary.passed ?: 0) as int

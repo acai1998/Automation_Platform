@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { In } from 'typeorm';
 import { executionService } from '../services/ExecutionService';
 import { jenkinsService } from '../services/JenkinsService';
 import { ipWhitelistMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
@@ -6,8 +7,45 @@ import { requestValidator } from '../middleware/RequestValidator';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
+import { AppDataSource } from '../config/database';
+import { TestCase } from '../entities/TestCase';
 
 const router = Router();
+
+/**
+ * 解析并去重脚本路径
+ */
+async function resolveScriptPaths(caseIds: number[]): Promise<{ scriptPaths: string[]; missingCaseIds: number[] }> {
+  if (!Array.isArray(caseIds) || caseIds.length === 0) {
+    return { scriptPaths: [], missingCaseIds: [] };
+  }
+
+  const cases = await AppDataSource.getRepository(TestCase).find({
+    where: {
+      id: In(caseIds),
+      enabled: true,
+    },
+    select: ['id', 'scriptPath'],
+  });
+
+  const scriptPathCaseIds = new Set<number>();
+  const normalizedPaths = new Set<string>();
+
+  for (const item of cases) {
+    const path = item.scriptPath?.trim();
+    if (path) {
+      scriptPathCaseIds.add(item.id);
+      normalizedPaths.add(path);
+    }
+  }
+
+  const missingCaseIds = caseIds.filter(id => !scriptPathCaseIds.has(id));
+
+  return {
+    scriptPaths: Array.from(normalizedPaths),
+    missingCaseIds,
+  };
+}
 
 /**
  * 净化错误消息，移除敏感信息以防止信息泄露
@@ -162,18 +200,27 @@ router.post('/run-case', [
       caseIds: execution.caseIds,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 触发Jenkins Job - 使用 /api/jenkins/callback 接收回调
+    // 解析并透传脚本路径，避免 Jenkins 在无脚本参数时执行空测试
+    const { scriptPaths, missingCaseIds } = await resolveScriptPaths([caseId]);
     const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
     logger.debug('Triggering Jenkins job', {
       runId: execution.runId,
       caseId,
+      scriptPathCount: scriptPaths.length,
       callbackUrl,
     }, LOG_CONTEXTS.JENKINS);
+
+    if (missingCaseIds.length > 0) {
+      logger.warn('Some cases have no scriptPath configured', {
+        runId: execution.runId,
+        missingCaseIds,
+      }, LOG_CONTEXTS.JENKINS);
+    }
 
     const triggerResult = await jenkinsService.triggerBatchJob(
       execution.runId,
       [caseId],
-      [],
+      scriptPaths,
       callbackUrl
     );
     
@@ -270,18 +317,27 @@ router.post('/run-batch', [
       caseIds: execution.caseIds,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 触发Jenkins Job - 使用 /api/jenkins/callback 接收回调
+    // 解析并透传脚本路径，避免 Jenkins 在无脚本参数时执行空测试
+    const { scriptPaths, missingCaseIds } = await resolveScriptPaths(caseIds);
     const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
     logger.debug('Triggering Jenkins job for batch', {
       runId: execution.runId,
       caseCount: caseIds.length,
+      scriptPathCount: scriptPaths.length,
       callbackUrl,
     }, LOG_CONTEXTS.JENKINS);
+
+    if (missingCaseIds.length > 0) {
+      logger.warn('Some cases have no scriptPath configured', {
+        runId: execution.runId,
+        missingCaseIds,
+      }, LOG_CONTEXTS.JENKINS);
+    }
 
     const triggerResult = await jenkinsService.triggerBatchJob(
       execution.runId,
       caseIds,
-      [],
+      scriptPaths,
       callbackUrl
     );
     
