@@ -24,7 +24,6 @@ interface TestCase {
   source?: string;
   enabled: boolean;
   last_sync_commit?: string;
-  script_path?: string;
   config_json?: string;
   created_by?: number;
   created_by_name?: string;
@@ -94,7 +93,6 @@ router.get('/', async (req, res) => {
       source: item.source,
       priority: item.priority,
       type: item.type,
-      script_path: item.scriptPath,
       tags: item.tags,
       config_json: item.config ? JSON.stringify(item.config) : null,
       enabled: item.enabled,

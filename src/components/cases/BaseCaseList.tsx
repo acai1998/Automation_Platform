@@ -168,14 +168,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       );
     }
 
-    if (column.key === 'script_path') {
-      return (
-        <span className="text-slate-500 dark:text-slate-400 font-mono text-xs truncate block max-w-[200px] lg:max-w-[300px]" title={value as string}>
-          {(value as string) || '-'}
-        </span>
-      );
-    }
-
     return value ?? '-';
   };
 
@@ -437,11 +429,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                       )}
                       {record.description && (
                         <p className="line-clamp-2 leading-relaxed">{record.description}</p>
-                      )}
-                      {record.script_path && (
-                        <p className="font-mono text-[10px] text-slate-400 dark:text-slate-500 truncate">
-                          {record.script_path}
-                        </p>
                       )}
                     </div>
                   </div>

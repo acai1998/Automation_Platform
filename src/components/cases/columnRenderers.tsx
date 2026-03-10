@@ -23,18 +23,6 @@ const PRIORITY_STYLES: Record<string, string> = {
 };
 
 /**
- * 渲染脚本路径
- * 显示等宽字体的脚本路径，无值时显示 '-'
- */
-export function renderScriptPath(value: unknown): ReactNode {
-  return (
-    <span className={CELL_STYLES.mono}>
-      {typeof value === 'string' && value ? value : '-'}
-    </span>
-  );
-}
-
-/**
  * 渲染描述文本
  * 支持最多2行截断，无值时显示 '-'
  */

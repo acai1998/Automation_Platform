@@ -20,7 +20,6 @@ export interface TestCase {
   status: 'active' | 'inactive' | 'deprecated';
   tags: string | null;
   owner: string | null;
-  script_path: string | null;
   config_json: string | null;
   created_by: number | null;
   created_by_name: string | null;
