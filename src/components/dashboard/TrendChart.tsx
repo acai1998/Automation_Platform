@@ -16,14 +16,36 @@ import { Tooltip as UiTooltip, TooltipTrigger as UiTooltipTrigger, TooltipConten
 import type { DashboardResponse } from "@/types/dashboard";
 
 // ============================================
+// 暗色模式检测 Hook
+// ============================================
+function useIsDarkMode(): boolean {
+  const [isDark, setIsDark] = useState(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+  );
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  return isDark;
+}
+
+// ============================================
 // 配置常量
 // ============================================
 const CHART_CONFIG = {
   colors: {
     primary: '#39E079',   // 成功率 - 绿色
     danger: '#f87171',    // 失败用例 - 红色
-    grid: '#e2e8f0',
-    axis: '#94a3b8',
+    // grid/axis 通过 useIsDarkMode 动态获取
+    gridLight: '#e2e8f0',
+    gridDark: '#252d3d',
+    axisLight: '#94a3b8',
+    axisDark: '#4a5568',
   },
   dimensions: {
     height: 250,
@@ -293,6 +315,12 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
   const [chartType, setChartType] = useState<ChartType>('line');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isDark = useIsDarkMode();
+
+  const chartColors = useMemo(() => ({
+    grid: isDark ? CHART_CONFIG.colors.gridDark : CHART_CONFIG.colors.gridLight,
+    axis: isDark ? CHART_CONFIG.colors.axisDark : CHART_CONFIG.colors.axisLight,
+  }), [isDark]);
 
   const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
 
@@ -404,18 +432,18 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
 
   const commonAxisTick = useMemo(() => ({
     fontSize: CHART_CONFIG.xAxis.fontSize,
-    fill: CHART_CONFIG.colors.axis,
-  }), []);
+    fill: chartColors.axis,
+  }), [chartColors.axis]);
 
   const xAxisProps = useMemo(() => ({
     dataKey: "date",
     tickFormatter: formatDate,
     tick: { ...commonAxisTick, angle: xAxisConfig.angle, textAnchor: xAxisConfig.textAnchor },
     tickLine: false,
-    axisLine: { stroke: CHART_CONFIG.colors.grid },
+    axisLine: { stroke: chartColors.grid },
     interval: xAxisConfig.interval,
     height: CHART_CONFIG.xAxis.height[timeRange],
-  }), [formatDate, xAxisConfig, timeRange, commonAxisTick]);
+  }), [formatDate, xAxisConfig, timeRange, commonAxisTick, chartColors.grid]);
 
   // 左轴：成功率
   const yAxisLeftProps = useMemo(() => ({
@@ -480,8 +508,7 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
         <ComposedChart data={chartData} margin={CHART_CONFIG.dimensions.margin}>
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke={CHART_CONFIG.colors.grid}
-            className="dark:stroke-border-dark"
+            stroke={chartColors.grid}
             vertical={false}
           />
           <XAxis {...xAxisProps} />

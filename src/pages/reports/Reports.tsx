@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link } from 'wouter';
 import { 
   BarChart3, 
-  RefreshCw, 
   ChevronLeft, 
   ChevronRight, 
   ChevronDown,
@@ -24,8 +23,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Checkbox } from '@/components/ui/checkbox';
 import { useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
-
 /**
  * 报告中心页面
  * 采用与用例管理一致的现代化 SaaS Dashboard 风格
@@ -61,12 +58,6 @@ export default function Reports() {
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
   const startIndex = (page - 1) * pageSize + 1;
   const endIndex = Math.min(page * pageSize, data?.total || 0);
-
-  // 处理刷新
-  const handleRefresh = () => {
-    refetch();
-    toast.success('数据已更新');
-  };
 
   // 更新多选筛选项，同时重置到第一页
   const handleMultiFilterChange = (key: "triggerType" | "status", values: string[]) => {
@@ -120,15 +111,6 @@ export default function Reports() {
             </div>
           </div>
 
-          <Button
-            variant="outline"
-            onClick={handleRefresh}
-            disabled={isLoading}
-            className="gap-2 h-9 px-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 hover:shadow-md"
-          >
-            <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
-            刷新数据
-          </Button>
         </div>
       </div>
 

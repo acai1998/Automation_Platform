@@ -54,52 +54,52 @@
 
     /* Enhanced Color Variables for Components */
     --color-surface-light: #ffffff;
-    --color-surface-dark: #162e21;
+    --color-surface-dark: #161b27;
     --color-sidebar-light: #f8faf9;
-    --color-sidebar-dark: #122017;
+    --color-sidebar-dark: #0f1420;
     --color-border-light: #e2e8f0;
-    --color-border-dark: #234833;
+    --color-border-dark: #252d3d;
     --color-text-muted-light: #64748b;
     --color-text-muted-dark: #94a3b8;
   }
 
-  /* Dark Theme */
+  /* Dark Theme - Modern deep blue-black neutral palette */
   .dark {
-    --background: 144 40% 6%;
+    --background: 222 47% 7%;
     --foreground: 210 40% 98%;
-    --card: 144 35% 12%;
+    --card: 222 40% 11%;
     --card-foreground: 210 40% 98%;
-    --popover: 144 35% 12%;
+    --popover: 222 40% 11%;
     --popover-foreground: 210 40% 98%;
     --primary: 142 71% 55%;
     --primary-foreground: 144 50% 10%;
-    --secondary: 144 30% 15%;
+    --secondary: 217 32% 17%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 144 30% 15%;
-    --muted-foreground: 150 30% 60%;
-    --accent: 144 30% 18%;
+    --muted: 217 32% 17%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 217 32% 20%;
     --accent-foreground: 142 71% 55%;
     --destructive: 0 62.8% 50%;
     --destructive-foreground: 210 40% 98%;
-    --border: 144 30% 18%;
-    --input: 144 30% 18%;
+    --border: 217 32% 18%;
+    --input: 217 32% 18%;
     --ring: 142 71% 45%;
 
     /* Custom Theme Colors */
-    --sidebar-bg: 144 40% 6%;
-    --sidebar-border: 144 30% 18%;
-    --surface-bg: 144 35% 12%;
+    --sidebar-bg: 222 47% 7%;
+    --sidebar-border: 217 32% 15%;
+    --surface-bg: 222 40% 11%;
     --text-primary: 255 255 255;
-    --text-secondary: 150 30% 70%;
-    --text-muted: 150 30% 50%;
+    --text-secondary: 215 20% 65%;
+    --text-muted: 215 15% 50%;
 
     /* Enhanced Color Variables for Components */
     --color-surface-light: #ffffff;
-    --color-surface-dark: #162e21;
+    --color-surface-dark: #161b27;
     --color-sidebar-light: #f8faf9;
-    --color-sidebar-dark: #122017;
+    --color-sidebar-dark: #0f1420;
     --color-border-light: #e2e8f0;
-    --color-border-dark: #234833;
+    --color-border-dark: #252d3d;
     --color-text-muted-light: #64748b;
     --color-text-muted-dark: #94a3b8;
   }
@@ -129,7 +129,7 @@
   }
 
   .dark * {
-    scrollbar-color: rgb(35 72 51) transparent;
+    scrollbar-color: rgb(37 45 61) transparent;
   }
 
   /* Webkit 滚动条样式 */
@@ -143,11 +143,11 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-slate-300 dark:bg-[#234833] rounded;
+    @apply bg-slate-300 dark:bg-[#252d3d] rounded;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-slate-400 dark:bg-[#326748];
+    @apply bg-slate-400 dark:bg-[#323d54];
   }
 
   /* 移动端更窄的滚动条 */
