@@ -8,7 +8,8 @@ interface TodayExecutionProps {
   data?: DashboardResponse;
 }
 
-type SegmentStatus = Exclude<TestStatusFilter, "all">;
+type RateStatus = Exclude<TestStatusFilter, "all">;
+type SegmentStatus = RateStatus | "running";
 
 interface ChartSegment {
   [key: string]: string | number;
@@ -30,6 +31,12 @@ function toSafeNumber(value: unknown): number {
   return parsed;
 }
 
+const rateLabelMap: Record<RateStatus, string> = {
+  passed: "成功率",
+  failed: "失败率",
+  skipped: "跳过率",
+};
+
 export function TodayExecution({ data }: TodayExecutionProps) {
   const [animationKey, setAnimationKey] = useState(0);
   const [hoveredSegment, setHoveredSegment] = useState<HoveredSegment | null>(null);
@@ -49,7 +56,7 @@ export function TodayExecution({ data }: TodayExecutionProps) {
       return Math.round((value / total) * 10000) / 100;
     };
 
-    const stats: ChartSegment[] = [
+    const stats: Array<ChartSegment & { status: RateStatus }> = [
       {
         name: "成功",
         value: passed,
@@ -76,19 +83,26 @@ export function TodayExecution({ data }: TodayExecutionProps) {
       },
     ];
 
-    const segments = stats.filter((segment) => segment.value > 0);
-
-    // isCountingUp: true when some cases are still running (passed+failed+skipped < total)
     const finishedCases = passed + failed + skipped;
-    const isCountingUp = total > 0 && finishedCases < total;
+    const running = Math.max(total - finishedCases, 0);
+
+    const segments = [
+      ...stats,
+      {
+        name: "运行中",
+        value: running,
+        color: "#60a5fa",
+        percentage: calcPercentage(running),
+        icon: "●",
+        status: "running" as const,
+      },
+    ].filter((segment) => segment.value > 0);
 
     return {
       total,
       stats,
       segments,
       isEmpty: total === 0,
-      hasSegments: segments.length > 0,
-      isCountingUp,
     };
   }, [todayData?.total, todayData?.passed, todayData?.failed, todayData?.skipped]);
 
@@ -142,7 +156,7 @@ export function TodayExecution({ data }: TodayExecutionProps) {
             </TooltipTrigger>
             <TooltipContent side="top" sideOffset={12} className="max-w-xs">
 <div className="text-slate-600 dark:text-gray-400 text-sm">
-显示今天内执行用例的实时状态分布（成功/失败/跳过）。
+显示今天内执行用例的实时状态分布（成功/失败/跳过/运行中）。
 </div>
             </TooltipContent>
           </Tooltip>
@@ -158,7 +172,7 @@ export function TodayExecution({ data }: TodayExecutionProps) {
           <div className="relative flex items-center justify-center">
             {/* 圆形甜甜圈图，使用固定尺寸避免裁切 */}
             <div className="relative flex-shrink-0" style={{ width: 172, height: 172 }}>
-              {chartData.isEmpty || chartData.isCountingUp ? (
+              {chartData.isEmpty ? (
                 <>
                   <PieChart width={172} height={172}>
                     <Pie
@@ -180,7 +194,7 @@ export function TodayExecution({ data }: TodayExecutionProps) {
                     <div className="text-center">
                       <div className="text-3xl font-bold text-slate-600 dark:text-slate-300">{chartData.total}</div>
                       <div className="text-sm text-slate-400 dark:text-slate-500 font-medium">
-                        {chartData.total > 0 ? "统计中" : "总用例"}
+                        总用例
                       </div>
                     </div>
                   </div>
@@ -310,13 +324,13 @@ export function TodayExecution({ data }: TodayExecutionProps) {
               className="flex flex-col items-center gap-1 py-3 px-2"
             >
               <span className="text-sm font-medium text-slate-500 dark:text-gray-400">
-                {stat.name}
+                {rateLabelMap[stat.status]}
               </span>
               <span
                 className="text-xl font-bold"
                 style={{ color: stat.value > 0 ? stat.color : "#94a3b8" }}
               >
-                {stat.percentage.toFixed(2)}%
+                {stat.percentage.toFixed(2)}
               </span>
             </div>
           ))}
