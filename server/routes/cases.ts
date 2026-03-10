@@ -81,7 +81,32 @@ router.get('/', async (req, res) => {
       hasFilters: !!(projectId || module || enabled !== undefined || type || search),
     }, LOG_CONTEXTS.CASES);
 
-    res.json({ success: true, data, total });
+    // 将 TypeORM 实体的驼峰字段映射为前端期望的下划线格式
+    const mappedData = data.map(item => ({
+      id: item.id,
+      case_key: item.caseKey,
+      name: item.name,
+      description: item.description,
+      project_id: item.projectId,
+      repo_id: item.repoId,
+      module: item.module,
+      owner: item.owner,
+      source: item.source,
+      priority: item.priority,
+      type: item.type,
+      script_path: item.scriptPath,
+      tags: item.tags,
+      config_json: item.config ? JSON.stringify(item.config) : null,
+      enabled: item.enabled,
+      last_sync_commit: item.lastSyncCommit,
+      created_by: item.createdBy,
+      created_by_name: item.createdByName ?? null,
+      updated_by: item.updatedBy,
+      created_at: item.createdAt,
+      updated_at: item.updatedAt,
+    }));
+
+    res.json({ success: true, data: mappedData, total });
   } catch (error: unknown) {
     const duration = timer();
     logger.errorLog(error, 'Failed to fetch test cases list', {

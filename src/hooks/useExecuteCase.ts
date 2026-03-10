@@ -46,6 +46,7 @@ export interface ManualSyncResult {
  * 执行单个用例
  */
 export function useExecuteCase() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: { caseId: number; projectId: number }) => {
       const result = await request<ExecuteResult>('/jenkins/run-case', {
@@ -54,6 +55,10 @@ export function useExecuteCase() {
       });
       return result.data as ExecuteResult;
     },
+    onSuccess: () => {
+      // 执行触发后，使运行报告缓存失效，切换到报告页时自动展示新记录
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
+    },
   });
 }
 
@@ -61,6 +66,7 @@ export function useExecuteCase() {
  * 批量执行用例
  */
 export function useExecuteBatch() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: { caseIds: number[]; projectId: number }) => {
       const result = await request<ExecuteResult>('/jenkins/run-batch', {
@@ -68,6 +74,10 @@ export function useExecuteBatch() {
         body: JSON.stringify(data),
       });
       return result.data as ExecuteResult;
+    },
+    onSuccess: () => {
+      // 执行触发后，使运行报告缓存失效，切换到报告页时自动展示新记录
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
     },
   });
 }

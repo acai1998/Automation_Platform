@@ -13,6 +13,7 @@ import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import ComingSoon from "./pages/ComingSoon";
+import Tasks from "./pages/tasks/Tasks";
 import APICases from "./pages/cases/APICases";
 import UICases from "./pages/cases/UICases";
 import PerformanceCases from "./pages/cases/PerformanceCases";
@@ -31,13 +32,7 @@ const queryClient = new QueryClient({
 });
 
 function TasksPage() {
-  return (
-    <ComingSoon
-      title="任务管理"
-      description="测试任务的调度、执行和监控功能正在开发中"
-      icon={<Boxes className="h-10 w-10 text-blue-500" />}
-    />
-  );
+  return <Tasks />;
 }
 
 function ReportsPage() {

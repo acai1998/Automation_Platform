@@ -78,6 +78,8 @@ export function useTestRuns(page = 1, pageSize = 10, filters: TestRunFilters = {
         total: result.total ?? 0,
       };
     },
+    // staleTime: 0 确保每次挂载（切换到报告页）时都检查缓存是否失效并重新请求
+    staleTime: 0,
     keepPreviousData: true,
   });
 }
