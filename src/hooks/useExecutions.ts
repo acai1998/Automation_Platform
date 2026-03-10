@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
 import { request } from '../api';
 
 export interface TestRunRecord {
@@ -81,15 +82,20 @@ export function useTestRuns(page = 1, pageSize = 10, filters: TestRunFilters = {
   });
 }
 
+const TERMINAL_STATUSES = new Set(['success', 'failed', 'aborted']);
+
 export function useTestRunDetail(id: number) {
-  return useQuery<TestRunRecord | null>({
+  const queryClient = useQueryClient();
+  const prevStatusRef = useRef<string | null>(null);
+
+  const query = useQuery<TestRunRecord | null>({
     queryKey: ['test-run', id],
     queryFn: async (): Promise<TestRunRecord | null> => {
       const result = await request<TestRunRecord>(`/executions/${id}`);
       return result.data ?? null;
     },
     enabled: !!id,
-    staleTime: 30000,
+    // 不设置 staleTime（默认0），确保每次 refetch 都拿最新数据
     refetchOnWindowFocus: false,
     // 执行中状态每 3 秒轮询一次，已完成状态停止轮询
     refetchInterval: (data) => {
@@ -97,6 +103,31 @@ export function useTestRunDetail(id: number) {
       return false;
     },
   });
+
+  // 当状态从 running/pending 切换到终态时，延迟 1s 再刷新一次
+  // 确保后端回调写入完成后，前端能拿到最终的 passed_cases 等统计数据
+  useEffect(() => {
+    const currentStatus = query.data?.status ?? null;
+    const prevStatus = prevStatusRef.current;
+
+    if (
+      prevStatus !== null &&
+      (prevStatus === 'running' || prevStatus === 'pending') &&
+      currentStatus !== null &&
+      TERMINAL_STATUSES.has(currentStatus)
+    ) {
+      // 状态刚变为终态，等 1 秒后再刷新一次，确保后端写入最终统计数据
+      const timer = setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['test-run', id] });
+        queryClient.invalidateQueries({ queryKey: ['test-run-results', id] });
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+
+    prevStatusRef.current = currentStatus;
+  }, [query.data?.status, id, queryClient]);
+
+  return query;
 }
 
 export type TestRunResultStatus = 'all' | 'passed' | 'failed' | 'skipped' | 'error' | 'pending';

@@ -1082,20 +1082,18 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         }
       }
 
-      // 2. 如果有详细结果，更新每个测试结果
-      if (results.results && results.results.length > 0) {
-        // 如果未传入 executionId，则尝试从数据库查询
-        let actualExecutionId = executionId;
-        if (!actualExecutionId) {
-          actualExecutionId = await this.findExecutionIdByRunId(runId) || undefined;
-        }
-        
-        // 只有当找到 executionId 时才更新详细结果
-        if (actualExecutionId) {
-          // 批量处理结果（允许部分失败）
+      // 2. 解析 executionId（优先使用传入值，否则查数据库）
+      let actualExecutionId = executionId;
+      if (!actualExecutionId) {
+        actualExecutionId = await this.findExecutionIdByRunId(runId) || undefined;
+      }
+
+      // 3. 更新详细用例结果
+      if (actualExecutionId) {
+        if (results.results && results.results.length > 0) {
+          // 有详细结果列表：逐条更新
           for (const result of results.results) {
             try {
-              // 尝试更新
               const updated = await this.updateTestResult(actualExecutionId, result.caseId, {
                 status: result.status,
                 duration: result.duration,
@@ -1110,7 +1108,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
                 endTime: new Date(),
               });
 
-              // 如果更新失败，插入新记录
               if (!updated) {
                 await this.createTestResult({
                   executionId: actualExecutionId,
@@ -1130,7 +1127,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
                 });
               }
             } catch (error) {
-              // 记录失败的结果
               const errorMsg = error instanceof Error ? error.message : String(error);
               failedResults.push({ caseId: result.caseId, error: errorMsg });
               logger.error(
@@ -1141,7 +1137,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
             }
           }
 
-          // 如果有失败的结果，记录汇总警告
           if (failedResults.length > 0) {
             logger.warn(
               `Some results failed to process in batch`,
@@ -1155,13 +1150,67 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
             );
           }
         } else {
-          // 无法找到 executionId，仅更新批次统计
-          logger.warn(
-            `Could not determine executionId for runId, skipping detailed result updates`,
-            { runId, resultsCount: results.results.length },
-            LOG_CONTEXTS.REPOSITORY
-          );
+          // 没有详细结果列表，但有统计汇总数：根据汇总数批量更新预创建的 error 记录
+          // 场景：Jenkins 回调只传 passedCases/failedCases/skippedCases，不传详细 results
+          const totalSummary = results.passedCases + results.failedCases + results.skippedCases;
+          if (totalSummary > 0) {
+            logger.info(
+              `No detailed results provided, updating pre-created records using summary counts`,
+              { runId, executionId: actualExecutionId, passedCases: results.passedCases, failedCases: results.failedCases, skippedCases: results.skippedCases },
+              LOG_CONTEXTS.REPOSITORY
+            );
+
+            // 获取该 executionId 下所有预创建的 error 状态记录（按 id 排序保证顺序稳定）
+            const preCreatedResults = await this.testRunResultRepository.query(`
+              SELECT id FROM Auto_TestRunResults
+              WHERE execution_id = ?
+              ORDER BY id ASC
+            `, [actualExecutionId]) as Array<{ id: number }>;
+
+            if (preCreatedResults.length > 0) {
+              const passedEnd = results.passedCases;
+              const failedEnd = passedEnd + results.failedCases;
+
+              for (let i = 0; i < preCreatedResults.length; i++) {
+                const recordId = preCreatedResults[i].id;
+                let newStatus: 'passed' | 'failed' | 'skipped' | 'error';
+                if (i < passedEnd) {
+                  newStatus = 'passed';
+                } else if (i < failedEnd) {
+                  newStatus = 'failed';
+                } else {
+                  newStatus = 'skipped';
+                }
+
+                try {
+                  await this.testRunResultRepository.update(recordId, {
+                    status: newStatus,
+                    endTime: new Date(),
+                  });
+                } catch (updateErr) {
+                  logger.error(
+                    `Failed to update pre-created result record`,
+                    { recordId, newStatus, error: updateErr instanceof Error ? updateErr.message : String(updateErr) },
+                    LOG_CONTEXTS.REPOSITORY
+                  );
+                }
+              }
+
+              logger.info(
+                `Updated pre-created result records using summary counts`,
+                { runId, executionId: actualExecutionId, updatedCount: preCreatedResults.length },
+                LOG_CONTEXTS.REPOSITORY
+              );
+            }
+          }
         }
+      } else {
+        // 无法找到 executionId，仅更新批次统计
+        logger.warn(
+          `Could not determine executionId for runId, skipping detailed result updates`,
+          { runId, resultsCount: results.results?.length ?? 0 },
+          LOG_CONTEXTS.REPOSITORY
+        );
       }
     });
   }

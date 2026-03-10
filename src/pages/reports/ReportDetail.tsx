@@ -204,7 +204,7 @@ export default function ReportDetail() {
                 </button>
 
                 <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-                  运行详情 #{run.id}
+                  执行 <span className="font-mono">#{run.id}</span>
                 </h1>
 
                 <span

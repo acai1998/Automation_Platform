@@ -89,7 +89,7 @@ export default function Home() {
               <h2 className="text-slate-900 dark:text-white text-3xl md:text-4xl font-black tracking-tight">
                 仪表盘
               </h2>
-              <p className="text-slate-500 dark:text-[#92c9a9] text-base font-normal">
+              <p className="text-slate-500 dark:text-slate-400 text-base font-normal">
                 自动化测试数据概览
               </p>
             </div>
