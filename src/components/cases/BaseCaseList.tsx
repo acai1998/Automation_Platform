@@ -1,11 +1,10 @@
 import { useState, ReactNode, useMemo, useCallback } from 'react';
-import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User, Info } from 'lucide-react';
+import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useCases, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
 import { useTestExecution } from '@/hooks/useExecuteCase';
 import { toast } from 'sonner';
-import { useQueryClient } from '@tanstack/react-query';
 
 /**
  * 分页配置常量
@@ -71,22 +70,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
 
   // 分页信息
   const pagination = usePagination(data?.total || 0, page, pageSize);
-
-  // 刷新页面数据
-  const queryClient = useQueryClient();
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await queryClient.invalidateQueries({ queryKey: ['cases'] });
-      toast.success('页面数据已刷新');
-    } catch (error) {
-      toast.error('刷新失败，请重试');
-    } finally {
-      setTimeout(() => setIsRefreshing(false), 500);
-    }
-  };
 
   // 指数退避重试函数
   const retryWithBackoff = useCallback(async () => {
@@ -226,44 +209,19 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     <div className="h-full flex flex-col min-h-0">
       {/* 顶部标题区 - 带渐变背景 */}
       <div className={`relative h-20 px-4 sm:px-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl flex items-center`}>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between w-full">
-          <div className="flex items-center gap-3">
-            <div className={`p-2.5 rounded-xl ${theme.iconBg} shadow-sm`}>
-              {icon}
-            </div>
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-                {title}
-              </h1>
-              {description && (
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                  {description}
-                </p>
-              )}
-            </div>
+        <div className="flex items-center gap-3">
+          <div className={`p-2.5 rounded-xl ${theme.iconBg} shadow-sm`}>
+            {icon}
           </div>
-
-          {/* 操作按钮和提示 */}
-          <div className="flex flex-col items-end gap-2">
-            <Button
-              variant="outline"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              className="gap-2 h-9 px-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 hover:shadow-md"
-            >
-              {isRefreshing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              刷新页面
-            </Button>
-
-            {/* 数据同步提示 */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 bg-blue-50/80 dark:bg-blue-900/20 px-2 py-1 rounded-md border border-blue-200/50 dark:border-blue-800/50">
-              <Info className="h-3 w-3 text-blue-500" />
-              <span>脚本更新后约1分钟自动同步，如数据未更新可刷新页面</span>
-            </div>
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+              {title}
+            </h1>
+            {description && (
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                {description}
+              </p>
+            )}
           </div>
         </div>
       </div>
