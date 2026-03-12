@@ -136,9 +136,10 @@ npx tsc --noEmit -p tsconfig.server.json
 - POST `/api/dashboard/backfill-summaries` - 回填历史汇总
 
 #### 5. 测试任务管理（`/api/tasks`）
-- GET `/api/tasks` - 获取任务列表
-- POST `/api/tasks` - 创建任务
-- PUT `/api/tasks/:id` - 更新任务
+- GET `/api/tasks` - 获取任务列表（支持 keyword/status/triggerType 筛选与分页，内联 recentExecutions）
+- POST `/api/tasks` - 创建任务（含 triggerType、cronExpression、caseIds 参数校验）
+- PUT `/api/tasks/:id` - 更新任务（字段级校验）
+- PATCH `/api/tasks/:id/status` - 切换任务状态（active/paused/archived）
 - DELETE `/api/tasks/:id` - 删除任务
 - GET `/api/tasks/:id/executions` - 获取任务执行历史
 - POST `/api/tasks/:id/execute` - 立即执行任务

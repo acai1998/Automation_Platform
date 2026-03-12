@@ -61,8 +61,8 @@ export interface UseCasesParams {
   page?: number;
   pageSize?: number;
   status?: string;
-  priority?: string;
-  owner?: string;
+  priority?: string[];
+  owner?: string[];
 }
 
 /**
@@ -85,12 +85,14 @@ export function useCases(params: UseCasesParams) {
         queryParams.set('search', search);
       }
 
-      if (priority) {
-        queryParams.set('priority', priority);
+      // 优先级支持多选，传逗号分隔字符串
+      if (priority && priority.length > 0) {
+        queryParams.set('priority', priority.join(','));
       }
 
-      if (owner) {
-        queryParams.set('owner', owner);
+      // 负责人支持多选，传逗号分隔字符串
+      if (owner && owner.length > 0) {
+        queryParams.set('owner', owner.join(','));
       }
 
       const response = await fetch(`/api/cases?${queryParams.toString()}`);

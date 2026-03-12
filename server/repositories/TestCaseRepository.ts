@@ -207,7 +207,13 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
     }
 
     if (options?.priority) {
-      queryBuilder.andWhere('testCase.priority = :priority', { priority: options.priority });
+      // 支持逗号分隔的多值筛选
+      const priorityValues = options.priority.split(',').map(v => v.trim()).filter(v => v.length > 0);
+      if (priorityValues.length === 1) {
+        queryBuilder.andWhere('testCase.priority = :priority', { priority: priorityValues[0] });
+      } else if (priorityValues.length > 1) {
+        queryBuilder.andWhere('testCase.priority IN (:...priorities)', { priorities: priorityValues });
+      }
     }
 
     if (options?.projectId) {
@@ -230,7 +236,13 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
     }
 
     if (options?.owner) {
-      queryBuilder.andWhere('testCase.owner = :owner', { owner: options.owner });
+      // 支持逗号分隔的多值筛选
+      const ownerValues = options.owner.split(',').map(v => v.trim()).filter(v => v.length > 0);
+      if (ownerValues.length === 1) {
+        queryBuilder.andWhere('testCase.owner = :owner', { owner: ownerValues[0] });
+      } else if (ownerValues.length > 1) {
+        queryBuilder.andWhere('testCase.owner IN (:...owners)', { owners: ownerValues });
+      }
     }
 
     return queryBuilder.getCount();
@@ -282,11 +294,23 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
     }
 
     if (options?.priority) {
-      queryBuilder.andWhere('testCase.priority = :priority', { priority: options.priority });
+      // 支持逗号分隔的多值筛选
+      const priorityValues = options.priority.split(',').map(v => v.trim()).filter(v => v.length > 0);
+      if (priorityValues.length === 1) {
+        queryBuilder.andWhere('testCase.priority = :priority', { priority: priorityValues[0] });
+      } else if (priorityValues.length > 1) {
+        queryBuilder.andWhere('testCase.priority IN (:...priorities)', { priorities: priorityValues });
+      }
     }
 
     if (options?.owner) {
-      queryBuilder.andWhere('testCase.owner = :owner', { owner: options.owner });
+      // 支持逗号分隔的多值筛选
+      const ownerValues = options.owner.split(',').map(v => v.trim()).filter(v => v.length > 0);
+      if (ownerValues.length === 1) {
+        queryBuilder.andWhere('testCase.owner = :owner', { owner: ownerValues[0] });
+      } else if (ownerValues.length > 1) {
+        queryBuilder.andWhere('testCase.owner IN (:...owners)', { owners: ownerValues });
+      }
     }
 
     queryBuilder.orderBy('testCase.updatedAt', 'DESC');
