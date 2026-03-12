@@ -59,10 +59,10 @@ export interface CreateTaskInput {
   triggerType?: 'manual' | 'scheduled' | 'ci_triggered';
   cronExpression?: string;
   environmentId?: number;
-  createdBy?: number;
-  /** 失败重试次数，默认 1 */
+  // 注：createdBy 由后端从认证上下文获取，前端无需传入
+  /** 失败重试次数，默认 1（后端存储字段） */
   maxRetries?: number;
-  /** 重试延迟毫秒，默认 30000 */
+  /** 重试延迟毫秒，默认 30000（后端存储字段） */
   retryDelayMs?: number;
 }
 
@@ -170,17 +170,22 @@ export function useTaskDetail(id: number | null) {
 
 // ---------- 立即运行（通过调度引擎，受并发上限保护） ----------
 
+// 构建统一的认证请求头工具函数
+function buildAuthHeaders(): HeadersInit {
+  const token = getToken();
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+  };
+}
+
 export function useRunTask() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (taskId: number) => {
-      const token = getToken();
       const response = await fetch(`/api/tasks/${taskId}/run`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
+        headers: buildAuthHeaders(),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || '触发任务失败');
@@ -201,7 +206,7 @@ export function useCreateTask() {
     mutationFn: async (input: CreateTaskInput) => {
       const response = await fetch('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildAuthHeaders(),
         body: JSON.stringify(input),
       });
       const result = await response.json();
@@ -222,7 +227,7 @@ export function useUpdateTask() {
     mutationFn: async ({ id, ...input }: UpdateTaskInput) => {
       const response = await fetch(`/api/tasks/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildAuthHeaders(),
         body: JSON.stringify(input),
       });
       const result = await response.json();
@@ -244,7 +249,7 @@ export function useUpdateTaskStatus() {
     mutationFn: async ({ id, status }: { id: number; status: 'active' | 'paused' | 'archived' }) => {
       const response = await fetch(`/api/tasks/${id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildAuthHeaders(),
         body: JSON.stringify({ status }),
       });
       const result = await response.json();
@@ -264,13 +269,9 @@ export function useCancelExecution() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ taskId, execId }: { taskId: number; execId: number }) => {
-      const token = getToken();
       const response = await fetch(`/api/tasks/${taskId}/executions/${execId}/cancel`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
+        headers: buildAuthHeaders(),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || '取消执行失败');
@@ -332,7 +333,8 @@ export function useSchedulerStatus() {
       if (!response.ok) throw new Error(result.message || '获取调度器状态失败');
       return result.data as SchedulerStatus;
     },
-    refetchInterval: 10_000, // 每10秒刷新一次
+    refetchInterval: 10_000,          // 每10秒刷新一次
+    refetchIntervalInBackground: false, // 切换到后台标签页时停止轮询，节省请求
   });
 }
 
@@ -342,7 +344,10 @@ export function useDeleteTask() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (taskId: number) => {
-      const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'DELETE',
+        headers: buildAuthHeaders(),
+      });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || '删除任务失败');
       return result;
