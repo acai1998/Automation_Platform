@@ -1,7 +1,6 @@
 import { useState, ReactNode, useMemo, useCallback, useEffect } from 'react';
 import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User, X, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useCases, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
@@ -93,14 +92,23 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
 
   // 获取负责人列表
   useEffect(() => {
-    fetch('/api/cases/owners/list')
-      .then(res => res.json())
-      .then(data => {
+    const fetchOwners = async () => {
+      try {
+        const response = await fetch('/api/cases/owners/list');
+        const data = await response.json();
         if (data.success && Array.isArray(data.data)) {
+          console.log('Owners fetched successfully:', data.data);
           setOwnerList(data.data);
+        } else {
+          console.warn('Owners API returned unexpected format:', data);
         }
-      })
-      .catch(err => console.error('Failed to fetch owners:', err));
+      } catch (err) {
+        console.error('Failed to fetch owners:', err);
+        toast.error('加载负责人列表失败');
+      }
+    };
+    
+    fetchOwners();
   }, []);
 
   // 获取用例列表
@@ -336,18 +344,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
               <X className="h-3 w-3" />
               清空筛选
             </Button>
-          )}
-
-          {/* 统计信息 */}
-          {!hasActiveFilters && (
-            <div className="ml-auto text-sm text-slate-500 font-medium">
-              共 {data?.total || 0} 条
-            </div>
-          )}
-          {hasActiveFilters && (
-            <div className="text-sm text-slate-500 font-medium">
-              共 {data?.total || 0} 条
-            </div>
           )}
         </div>
       </div>

@@ -952,6 +952,14 @@ bash deployment/scripts/verify-env.sh
 
 ## 更新日志
 
+### v1.2.0 (2026-03-12)
+- ✨ 任务管理页面新增新建/编辑/删除完整交互流程（含表单校验）
+- 🔍 任务列表支持 keyword/status/triggerType 筛选与分页
+- ⚡ 优化 `/api/tasks` 列表接口，内联 recentExecutions，消除前端 N+1 查询
+- 🛡️ 完善任务 CRUD 参数校验（triggerType、cronExpression、caseIds）
+- 🔄 新增 `PATCH /api/tasks/:id/status` 接口，支持 active/paused/archived 状态切换
+- 🔗 任务卡片支持“查看报告”联动跳转（优先跳转最近运行详情）
+
 ### v1.1.0 (2025-03-10)
 - ✨ 新增 TestRun.execution_id 字段，优化执行记录关联逻辑
 - 🐛 修复今日执行统计甜甜圈图显示问题
@@ -973,5 +981,5 @@ bash deployment/scripts/verify-env.sh
 
 ---
 
-**最后更新时间**：2025-03-10
-**文档版本**：v1.1.0
+**最后更新时间**：2026-03-12
+**文档版本**：v1.2.0

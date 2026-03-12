@@ -164,7 +164,30 @@ router.get('/', async (req, res) => {
       recentExecutions: executionsByTaskId.get(task.id) ?? [],
     }));
 
-    res.json({ success: true, data, total });
+    // 获取全局统计数据（不受分页影响）
+    const statsResult = await query<{ active_count: number }[]>(
+      `SELECT COUNT(*) as active_count FROM Auto_TestCaseTasks WHERE status = 'active'`
+    );
+    const activeCount = statsResult[0]?.active_count ?? 0;
+
+    // 统计今日运行次数（从所有任务的执行记录中统计）
+    const today = new Date().toISOString().split('T')[0];
+    const todayRunsResult = await query<{ today_runs: number }[]>(
+      `SELECT COUNT(*) as today_runs FROM Auto_TestCaseTaskExecutions
+       WHERE DATE(COALESCE(start_time, created_at)) = ?`,
+      [today]
+    );
+    const todayRuns = todayRunsResult[0]?.today_runs ?? 0;
+
+    res.json({
+      success: true,
+      data,
+      total,
+      stats: {
+        activeCount,
+        todayRuns,
+      }
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });

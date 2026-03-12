@@ -44,6 +44,10 @@ export interface TaskListParams {
 export interface TaskListResult {
   data: Task[];
   total: number;
+  stats?: {
+    activeCount: number;
+    todayRuns: number;
+  };
 }
 
 export interface CreateTaskInput {
@@ -87,7 +91,11 @@ export function useTasks(params: TaskListParams = {}) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || '获取任务列表失败');
 
-      return { data: result.data as Task[], total: result.total ?? result.data.length };
+      return {
+        data: result.data as Task[],
+        total: result.total ?? result.data.length,
+        stats: result.stats,
+      };
     },
   });
 }

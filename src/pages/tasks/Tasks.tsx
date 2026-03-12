@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useLocation } from 'wouter';
 import {
   Boxes,
@@ -63,28 +63,15 @@ import {
 } from '@/hooks/useTasks';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-
-/* ─── 常量 ─────────────────────────────────────────── */
-
-const PAGE_SIZE = 12;
-
-const TRIGGER_TYPE_LABELS: Record<string, string> = {
-  manual: '手动',
-  scheduled: '定时',
-  ci_triggered: 'CI',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  active: '活跃',
-  paused: '暂停',
-  archived: '已归档',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  active: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  paused: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
-  archived: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
-};
+import {
+  TASKS_CONFIG,
+  TRIGGER_TYPE_LABELS,
+  STATUS_LABELS,
+  STATUS_COLORS,
+  EXECUTION_STATUS_CONFIG,
+  SUCCESS_RATE_THRESHOLDS,
+} from '@/constants/tasks';
+import { TASK_MESSAGES, TASK_PAGE } from '@/constants/messages';
 
 /* ─── 主页面 ─────────────────────────────────────────── */
 
@@ -110,8 +97,8 @@ export default function Tasks() {
       keyword: debouncedKeyword || undefined,
       status: statusFilter || undefined,
       triggerType: triggerFilter || undefined,
-      limit: PAGE_SIZE,
-      offset: (page - 1) * PAGE_SIZE,
+      limit: TASKS_CONFIG.PAGE_SIZE,
+      offset: (page - 1) * TASKS_CONFIG.PAGE_SIZE,
     }),
     [debouncedKeyword, statusFilter, triggerFilter, page]
   );
@@ -119,7 +106,8 @@ export default function Tasks() {
   const { data: result, isLoading, error, refetch } = useTasks(queryParams);
   const tasks = result?.data ?? [];
   const total = result?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / TASKS_CONFIG.PAGE_SIZE));
+  const globalStats = result?.stats;
 
   // ── 操作 mutation ──────────────────────────────────
   const runTaskMutation = useRunTask();
@@ -133,77 +121,87 @@ export default function Tasks() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Task | null>(null);
 
-  // ── 统计 ──────────────────────────────────────────
+  // ── 统计（使用全局统计数据，避免分页导致的数据不一致） ──────────────────────────────────────────
   const stats = useMemo(() => {
-    if (!tasks.length) return { total, active: 0, todayRuns: 0 };
-    const today = new Date().toISOString().split('T')[0];
     return {
       total,
-      active: tasks.filter((t) => t.status === 'active').length,
-      todayRuns: tasks.reduce(
-        (acc, t) =>
-          acc + (t.recentExecutions?.filter((e) => e.start_time?.startsWith(today)).length ?? 0),
-        0
-      ),
+      active: globalStats?.activeCount ?? 0,
+      todayRuns: globalStats?.todayRuns ?? 0,
     };
-  }, [tasks, total]);
+  }, [total, globalStats]);
 
-  // ── 处理函数 ──────────────────────────────────────
-  const handleRunTask = async (taskId: number, taskName: string) => {
+  // ── 处理函数（使用 useCallback 优化性能） ──────────────────────────────────────
+  const handleRunTask = useCallback(async (taskId: number, taskName: string) => {
     try {
       await runTaskMutation.mutateAsync(taskId);
-      toast.success(`任务 "${taskName}" 已开始执行`, {
-        description: '执行任务已创建，请稍后在报告中心查看结果',
+      toast.success(TASK_MESSAGES.RUN_SUCCESS(taskName), {
+        description: TASK_MESSAGES.RUN_SUCCESS_DESC,
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '触发失败');
+      console.error('[Tasks] Failed to run task:', { taskId, taskName, error: err });
+      const message = err instanceof Error ? err.message : '未知错误';
+      toast.error(TASK_MESSAGES.RUN_ERROR, {
+        description: message.length > 100 ? TASK_MESSAGES.GENERIC_ERROR : message,
+      });
     }
-  };
+  }, [runTaskMutation]);
 
-  const handleSaveTask = async (input: CreateTaskInput & { id?: number }) => {
+  const handleSaveTask = useCallback(async (input: CreateTaskInput & { id?: number }) => {
     try {
       if (input.id) {
         await updateTaskMutation.mutateAsync({ id: input.id, ...input });
-        toast.success('任务更新成功');
+        toast.success(TASK_MESSAGES.UPDATE_SUCCESS);
       } else {
         await createTaskMutation.mutateAsync(input);
-        toast.success('任务创建成功');
+        toast.success(TASK_MESSAGES.CREATE_SUCCESS);
       }
       setFormOpen(false);
       setEditingTask(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      console.error('[Tasks] Failed to save task:', { input, error: err });
+      const message = err instanceof Error ? err.message : '未知错误';
+      toast.error(input.id ? TASK_MESSAGES.UPDATE_ERROR : TASK_MESSAGES.CREATE_ERROR, {
+        description: message.length > 100 ? TASK_MESSAGES.INPUT_ERROR : message,
+      });
     }
-  };
+  }, [createTaskMutation, updateTaskMutation]);
 
-  const handleToggleStatus = async (task: Task) => {
+  const handleToggleStatus = useCallback(async (task: Task) => {
     const newStatus = task.status === 'active' ? 'paused' : 'active';
     try {
       await updateStatusMutation.mutateAsync({ id: task.id, status: newStatus });
-      toast.success(`任务已${newStatus === 'active' ? '启用' : '暂停'}`);
+      toast.success(TASK_MESSAGES.STATUS_TOGGLE_SUCCESS(newStatus === 'active'));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '状态切换失败');
+      console.error('[Tasks] Failed to toggle task status:', { taskId: task.id, newStatus, error: err });
+      const message = err instanceof Error ? err.message : '未知错误';
+      toast.error(TASK_MESSAGES.STATUS_TOGGLE_ERROR, {
+        description: message.length > 100 ? TASK_MESSAGES.RETRY_ERROR : message,
+      });
     }
-  };
+  }, [updateStatusMutation]);
 
-  const handleDelete = async () => {
+  const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
     try {
       await deleteTaskMutation.mutateAsync(deleteTarget.id);
-      toast.success(`任务 "${deleteTarget.name}" 已删除`);
+      toast.success(TASK_MESSAGES.DELETE_SUCCESS(deleteTarget.name));
       setDeleteTarget(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '删除失败');
+      console.error('[Tasks] Failed to delete task:', { taskId: deleteTarget.id, error: err });
+      const message = err instanceof Error ? err.message : '未知错误';
+      toast.error(TASK_MESSAGES.DELETE_ERROR, {
+        description: message.length > 100 ? TASK_MESSAGES.RETRY_ERROR : message,
+      });
     }
-  };
+  }, [deleteTarget, deleteTaskMutation]);
 
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     setKeyword('');
     setDebouncedKeyword('');
     setStatusFilter('');
     setTriggerFilter('');
     setPage(1);
-  };
+  }, []);
 
   const hasActiveFilters = keyword || statusFilter || triggerFilter;
 
@@ -215,10 +213,10 @@ export default function Tasks() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
             <Boxes className="h-8 w-8 text-blue-600" />
-            任务管理
+            {TASK_PAGE.TITLE}
           </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
-            调度、执行和监控自动化测试任务
+            {TASK_PAGE.SUBTITLE}
           </p>
         </div>
         <Button
@@ -229,7 +227,7 @@ export default function Tasks() {
           }}
         >
           <Plus className="h-4 w-4" />
-          新建任务
+          {TASK_MESSAGES.BTN_CREATE}
         </Button>
       </div>
 
@@ -238,7 +236,7 @@ export default function Tasks() {
         <Card className="bg-gradient-to-br from-blue-500/10 to-transparent border-blue-100 dark:border-blue-900/30">
           <CardHeader className="pb-2">
             <CardDescription className="text-blue-600 dark:text-blue-400 font-medium">
-              总任务数
+              {TASK_PAGE.STATS_TOTAL}
             </CardDescription>
             <CardTitle className="text-3xl font-bold">
               {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : stats.total}
@@ -248,7 +246,7 @@ export default function Tasks() {
         <Card className="bg-gradient-to-br from-green-500/10 to-transparent border-green-100 dark:border-green-900/30">
           <CardHeader className="pb-2">
             <CardDescription className="text-green-600 dark:text-green-400 font-medium">
-              活跃任务
+              {TASK_PAGE.STATS_ACTIVE}
             </CardDescription>
             <CardTitle className="text-3xl font-bold">
               {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : stats.active}
@@ -258,7 +256,7 @@ export default function Tasks() {
         <Card className="bg-gradient-to-br from-purple-500/10 to-transparent border-purple-100 dark:border-purple-900/30">
           <CardHeader className="pb-2">
             <CardDescription className="text-purple-600 dark:text-purple-400 font-medium">
-              今日运行
+              {TASK_PAGE.STATS_TODAY_RUNS}
             </CardDescription>
             <CardTitle className="text-3xl font-bold">
               {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : stats.todayRuns}
@@ -321,7 +319,7 @@ export default function Tasks() {
         {hasActiveFilters && (
           <Button variant="ghost" size="sm" onClick={clearFilters} className="h-8 gap-1 text-slate-500">
             <X className="h-3.5 w-3.5" />
-            清除
+            {TASK_MESSAGES.BTN_CLEAR_FILTER}
           </Button>
         )}
 
@@ -331,7 +329,8 @@ export default function Tasks() {
           size="icon"
           className="h-8 w-8 ml-auto"
           onClick={() => refetch()}
-          title="刷新"
+          title={TASK_MESSAGES.BTN_REFRESH}
+          aria-label={TASK_MESSAGES.BTN_REFRESH}
         >
           <RefreshCw className="h-4 w-4" />
         </Button>
@@ -341,27 +340,27 @@ export default function Tasks() {
       {isLoading ? (
         <div className="flex flex-col items-center justify-center h-[40vh] gap-4">
           <Loader2 className="h-12 w-12 animate-spin text-blue-500" />
-          <p className="text-slate-500 animate-pulse">正在加载任务列表...</p>
+          <p className="text-slate-500 animate-pulse">{TASK_MESSAGES.LOADING_TASKS}</p>
         </div>
       ) : error ? (
         <div className="flex flex-col items-center justify-center h-[40vh] gap-4">
           <div className="p-4 rounded-full bg-red-50 dark:bg-red-900/20">
             <AlertCircle className="h-10 w-10 text-red-500" />
           </div>
-          <p className="text-red-600 font-medium">加载失败: {(error as Error).message}</p>
+          <p className="text-red-600 font-medium">{TASK_MESSAGES.LOAD_ERROR}: {(error as Error).message}</p>
           <Button variant="outline" onClick={() => refetch()}>
-            重试
+            {TASK_MESSAGES.BTN_RETRY}
           </Button>
         </div>
       ) : tasks.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-[40vh] gap-4 text-slate-400">
           <Boxes className="h-16 w-16 opacity-30" />
           <p className="text-lg">
-            {hasActiveFilters ? '没有符合条件的任务' : '暂无任务，点击「新建任务」开始吧'}
+            {hasActiveFilters ? TASK_MESSAGES.NO_TASKS_WITH_FILTER : TASK_MESSAGES.NO_TASKS_CREATE_NEW}
           </p>
           {hasActiveFilters && (
             <Button variant="outline" onClick={clearFilters}>
-              清除筛选
+              {TASK_MESSAGES.BTN_CLEAR_FILTER}
             </Button>
           )}
         </div>
@@ -408,7 +407,11 @@ export default function Tasks() {
                     (p) => p === 1 || p === totalPages || Math.abs(p - page) <= 2
                   )
                   .reduce<(number | '...')[]>((acc, p, idx, arr) => {
-                    if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push('...');
+                    const prev = arr[idx - 1];
+                    // 类型安全：确保 prev 和 p 都是 number 类型
+                    if (idx > 0 && typeof prev === 'number' && typeof p === 'number' && p - prev > 1) {
+                      acc.push('...');
+                    }
                     acc.push(p);
                     return acc;
                   }, [])
@@ -460,17 +463,17 @@ export default function Tasks() {
       <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>确认删除任务</DialogTitle>
+            <DialogTitle>{TASK_MESSAGES.DELETE_CONFIRM_TITLE}</DialogTitle>
             <DialogDescription>
-              此操作不可撤销。删除后，该任务的执行记录仍会保留。
+              {TASK_MESSAGES.DELETE_CONFIRM_DESC}
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-lg bg-red-50 dark:bg-red-900/10 p-4 border border-red-100 dark:border-red-900/30 text-sm text-red-700 dark:text-red-400">
-            即将删除：<strong>{deleteTarget?.name}</strong>
+            {TASK_MESSAGES.DELETE_CONFIRM_TARGET(deleteTarget?.name || '')}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>
-              取消
+              {TASK_MESSAGES.BTN_CANCEL}
             </Button>
             <Button
               variant="destructive"
@@ -480,7 +483,7 @@ export default function Tasks() {
               {deleteTaskMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : null}
-              确认删除
+              {TASK_MESSAGES.BTN_DELETE}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -608,9 +611,9 @@ function TaskCard({
               <span
                 className={cn(
                   'font-bold',
-                  successRate >= 90
+                  successRate >= SUCCESS_RATE_THRESHOLDS.HIGH
                     ? 'text-green-600'
-                    : successRate >= 70
+                    : successRate >= SUCCESS_RATE_THRESHOLDS.MEDIUM
                     ? 'text-orange-600'
                     : 'text-red-600'
                 )}
@@ -624,16 +627,16 @@ function TaskCard({
         {/* 最近运行记录小圆点 */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold text-slate-400">
-            <span>最近运行</span>
-            <span>{task.recentExecutions?.length ?? 0} 次记录</span>
+            <span>{TASK_PAGE.RECENT_RUNS_LABEL}</span>
+            <span>{TASK_PAGE.RECENT_RUNS_COUNT(task.recentExecutions?.length ?? 0)}</span>
           </div>
           <div className="flex gap-1.5 h-6 items-center">
             {task.recentExecutions && task.recentExecutions.length > 0 ? (
-              task.recentExecutions.slice(0, 10).map((exec) => (
+              task.recentExecutions.slice(0, TASKS_CONFIG.RECENT_EXECUTIONS_DISPLAY).map((exec) => (
                 <ExecutionStatusDot key={exec.id} execution={exec} />
               ))
             ) : (
-              <span className="text-xs text-slate-400 italic">暂无运行记录</span>
+              <span className="text-xs text-slate-400 italic">{TASK_MESSAGES.NO_RECENT_EXECUTIONS}</span>
             )}
           </div>
         </div>
@@ -651,7 +654,7 @@ function TaskCard({
           ) : (
             <Play className="h-4 w-4 fill-current" />
           )}
-          {isRunning ? '执行中...' : '立即运行'}
+          {isRunning ? TASK_MESSAGES.BTN_RUNNING : TASK_MESSAGES.BTN_RUN_NOW}
         </Button>
       </CardFooter>
     </Card>
@@ -661,14 +664,7 @@ function TaskCard({
 /* ─── 执行状态小圆点 ─────────────────────────────────────── */
 
 function ExecutionStatusDot({ execution }: { execution: TaskExecution }) {
-  const statusConfig: Record<string, { color: string; label: string }> = {
-    success: { color: 'bg-green-500', label: '成功' },
-    failed: { color: 'bg-red-500', label: '失败' },
-    running: { color: 'bg-blue-500 animate-pulse', label: '运行中' },
-    pending: { color: 'bg-slate-300', label: '等待中' },
-    cancelled: { color: 'bg-slate-400', label: '已取消' },
-  };
-  const config = statusConfig[execution.status] ?? statusConfig.pending;
+  const config = EXECUTION_STATUS_CONFIG[execution.status] ?? EXECUTION_STATUS_CONFIG.pending;
 
   return (
     <div
@@ -711,15 +707,39 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
 
   const validate = () => {
     const errs: Record<string, string> = {};
-    if (!name.trim()) errs.name = '任务名称不能为空';
-    if (name.trim().length > 200) errs.name = '名称不能超过200个字符';
+
+    // 任务名称验证
+    if (!name.trim()) {
+      errs.name = TASK_MESSAGES.NAME_REQUIRED;
+    } else if (name.trim().length > TASKS_CONFIG.MAX_NAME_LENGTH) {
+      errs.name = TASK_MESSAGES.NAME_TOO_LONG;
+    } else if (!/^[\u4e00-\u9fa5a-zA-Z0-9_\-\s]+$/.test(name.trim())) {
+      errs.name = TASK_MESSAGES.NAME_INVALID_CHARS;
+    }
+
+    // 描述验证
+    if (description.trim().length > TASKS_CONFIG.MAX_DESCRIPTION_LENGTH) {
+      errs.description = TASK_MESSAGES.DESCRIPTION_TOO_LONG;
+    }
+
+    // Cron 表达式验证
     if (triggerType === 'scheduled') {
       if (!cronExpression.trim()) {
-        errs.cronExpression = '定时任务必须填写 Cron 表达式';
-      } else if (cronExpression.trim().split(/\s+/).length !== 5) {
-        errs.cronExpression = 'Cron 格式无效（需为标准5段，如 0 2 * * *）';
+        errs.cronExpression = TASK_MESSAGES.CRON_REQUIRED;
+      } else {
+        const parts = cronExpression.trim().split(/\s+/);
+        if (parts.length !== TASKS_CONFIG.CRON_SEGMENTS) {
+          errs.cronExpression = TASK_MESSAGES.CRON_INVALID_FORMAT;
+        } else {
+          // 验证每段的合法性（简单验证：数字、*、逗号、连字符、斜杠）
+          const isValid = parts.every((part) => /^[\d\*\-,\/]+$/.test(part));
+          if (!isValid) {
+            errs.cronExpression = TASK_MESSAGES.CRON_INVALID_CHARS;
+          }
+        }
       }
     }
+
     return errs;
   };
 
@@ -742,9 +762,9 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{task ? '编辑任务' : '新建任务'}</DialogTitle>
+          <DialogTitle>{task ? TASK_MESSAGES.FORM_EDIT_TITLE : TASK_MESSAGES.FORM_CREATE_TITLE}</DialogTitle>
           <DialogDescription>
-            {task ? '修改任务配置，保存后立即生效。' : '填写任务信息，完成后点击保存。'}
+            {task ? TASK_MESSAGES.FORM_EDIT_DESC : TASK_MESSAGES.FORM_CREATE_DESC}
           </DialogDescription>
         </DialogHeader>
 
@@ -752,39 +772,50 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
           {/* 任务名称 */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-              任务名称 <span className="text-red-500">*</span>
+              {TASK_MESSAGES.FORM_NAME_LABEL} <span className="text-red-500">*</span>
             </label>
             <Input
-              placeholder="请输入任务名称"
+              placeholder={TASK_MESSAGES.FORM_NAME_PLACEHOLDER}
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
                 if (errors.name) setErrors((p) => ({ ...p, name: '' }));
               }}
               className={cn(errors.name && 'border-red-400 focus-visible:ring-red-400')}
+              aria-label={TASK_MESSAGES.FORM_NAME_LABEL}
+              aria-invalid={!!errors.name}
+              aria-describedby={errors.name ? 'name-error' : undefined}
             />
-            {errors.name && <p className="text-xs text-red-500">{errors.name}</p>}
+            {errors.name && <p id="name-error" className="text-xs text-red-500">{errors.name}</p>}
           </div>
 
           {/* 任务描述 */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-              任务描述
+              {TASK_MESSAGES.FORM_DESCRIPTION_LABEL}
             </label>
             <Textarea
-              placeholder="简要描述此任务的用途（可选）"
+              placeholder={TASK_MESSAGES.FORM_DESCRIPTION_PLACEHOLDER}
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                if (errors.description) setErrors((p) => ({ ...p, description: '' }));
+              }}
               rows={3}
+              className={cn(errors.description && 'border-red-400 focus-visible:ring-red-400')}
+              aria-label={TASK_MESSAGES.FORM_DESCRIPTION_LABEL}
+              aria-invalid={!!errors.description}
+              aria-describedby={errors.description ? 'description-error' : undefined}
             />
+            {errors.description && <p id="description-error" className="text-xs text-red-500">{errors.description}</p>}
           </div>
 
           {/* 触发类型 */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-              触发方式
+              {TASK_MESSAGES.FORM_TRIGGER_LABEL}
             </label>
-            <div className="flex gap-2">
+            <div className="flex gap-2" role="group" aria-label={TASK_MESSAGES.FORM_TRIGGER_LABEL}>
               {(
                 [
                   { value: 'manual', label: '手动触发' },
@@ -802,6 +833,8 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                       ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-500'
                       : 'border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:text-slate-400'
                   )}
+                  role="radio"
+                  aria-checked={triggerType === value}
                 >
                   {label}
                 </button>
@@ -813,10 +846,10 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
           {triggerType === 'scheduled' && (
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                Cron 表达式 <span className="text-red-500">*</span>
+                {TASK_MESSAGES.FORM_CRON_LABEL} <span className="text-red-500">*</span>
               </label>
               <Input
-                placeholder="例：0 2 * * *（每天凌晨2点）"
+                placeholder={TASK_MESSAGES.FORM_CRON_PLACEHOLDER}
                 value={cronExpression}
                 onChange={(e) => {
                   setCronExpression(e.target.value);
@@ -826,11 +859,14 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                   'font-mono',
                   errors.cronExpression && 'border-red-400 focus-visible:ring-red-400'
                 )}
+                aria-label={TASK_MESSAGES.FORM_CRON_LABEL}
+                aria-invalid={!!errors.cronExpression}
+                aria-describedby={errors.cronExpression ? 'cron-error' : 'cron-hint'}
               />
               {errors.cronExpression ? (
-                <p className="text-xs text-red-500">{errors.cronExpression}</p>
+                <p id="cron-error" className="text-xs text-red-500">{errors.cronExpression}</p>
               ) : (
-                <p className="text-xs text-slate-400">格式：分 时 日 月 周（标准5段）</p>
+                <p id="cron-hint" className="text-xs text-slate-400">{TASK_MESSAGES.FORM_CRON_HINT}</p>
               )}
             </div>
           )}
@@ -838,11 +874,11 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={isSaving}>
-            取消
+            {TASK_MESSAGES.BTN_CANCEL}
           </Button>
           <Button onClick={handleSubmit} disabled={isSaving}>
             {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-            {isSaving ? '保存中...' : task ? '保存修改' : '创建任务'}
+            {isSaving ? TASK_MESSAGES.BTN_SAVING : task ? TASK_MESSAGES.BTN_SAVE : TASK_MESSAGES.BTN_CREATE_TASK}
           </Button>
         </DialogFooter>
       </DialogContent>

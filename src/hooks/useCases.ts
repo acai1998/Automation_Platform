@@ -73,10 +73,10 @@ export function useCases(params: UseCasesParams) {
 
   return useQuery<CasesResponse>({
     queryKey: ['cases', type, search, page, pageSize, status, priority, owner],
+    staleTime: 0, // 每次筛选条件变化都重新请求
     queryFn: async () => {
       const queryParams = new URLSearchParams({
         type,
-        status,
         limit: pageSize.toString(),
         offset: ((page - 1) * pageSize).toString(),
       });
@@ -101,7 +101,6 @@ export function useCases(params: UseCasesParams) {
       }
       return response.json();
     },
-    staleTime: 30000, // 30 秒内数据视为新鲜
   });
 }
 
