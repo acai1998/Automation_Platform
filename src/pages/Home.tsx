@@ -54,7 +54,7 @@ export default function Home() {
             stats: prev?.stats || {
               totalCases: 0,
               todayRuns: 0,
-              todaySuccessRate: null,
+              todaySuccessRate: 0,
               runningTasks: 0
             },
             todayExecution: prev?.todayExecution || {

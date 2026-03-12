@@ -227,11 +227,11 @@ const validateStats = (stats: unknown) => {
     return {
       totalCases: Number.isInteger(s['totalCases']) ? (s['totalCases'] as number) : 0,
       todayRuns: Number.isInteger(s['todayRuns']) ? (s['todayRuns'] as number) : 0,
-      todaySuccessRate: typeof s['todaySuccessRate'] === 'number' ? (s['todaySuccessRate'] as number) : null,
+      todaySuccessRate: typeof s['todaySuccessRate'] === 'number' ? (s['todaySuccessRate'] as number) : 0,
       runningTasks: Number.isInteger(s['runningTasks']) ? (s['runningTasks'] as number) : 0,
     };
   }
-  return { totalCases: 0, todayRuns: 0, todaySuccessRate: null, runningTasks: 0 };
+  return { totalCases: 0, todayRuns: 0, todaySuccessRate: 0, runningTasks: 0 };
 };
 
 const validateTodayExecution = (data: unknown) => {

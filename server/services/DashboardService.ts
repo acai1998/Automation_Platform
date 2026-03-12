@@ -4,7 +4,7 @@ import { AppDataSource } from '../config/database';
 export interface DashboardStats {
   totalCases: number;
   todayRuns: number;
-  todaySuccessRate: number | null;
+  todaySuccessRate: number;
   runningTasks: number;
 }
 

@@ -2,7 +2,7 @@ export interface DashboardResponse {
   stats: {
     totalCases: number;
     todayRuns: number;
-    todaySuccessRate: number | null;
+    todaySuccessRate: number;
     runningTasks: number;
   };
   todayExecution: {

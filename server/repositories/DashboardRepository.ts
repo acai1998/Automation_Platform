@@ -8,7 +8,7 @@ import { LOG_CONTEXTS } from '../config/logging';
 export interface DashboardStats {
   totalCases: number;
   todayRuns: number;
-  todaySuccessRate: number | null;
+  todaySuccessRate: number;
   runningTasks: number;
 }
 
@@ -305,8 +305,8 @@ export class DashboardRepository extends BaseRepository<TestCase> {
    * @param total 总数量
    * @returns 成功率百分比
    */
-  private calculateSuccessRate(passed: number, total: number): number | null {
-    if (total <= 0) return null;
+  private calculateSuccessRate(passed: number, total: number): number {
+    if (total <= 0) return 0;
     return Math.round((passed / total) * 10000) / 100;
   }
 

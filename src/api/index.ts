@@ -40,7 +40,7 @@ export async function request<T>(
 export interface DashboardStats {
   totalCases: number;
   todayRuns: number;
-  todaySuccessRate: number | null;
+  todaySuccessRate: number;
   runningTasks: number;
 }
 
