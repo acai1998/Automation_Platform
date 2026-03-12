@@ -105,6 +105,47 @@ export function useCases(params: UseCasesParams) {
 }
 
 /**
+ * 用于任务关联用例选择器的 Hook
+ * 支持搜索关键字和可选的类型过滤，拉取启用状态的用例（不强制要求 type 参数）
+ */
+export interface UseCasesForSelectParams {
+  search?: string;
+  type?: CaseType | '';
+  enabled?: boolean;
+}
+
+export function useAllCasesForSelect(params: UseCasesForSelectParams = {}) {
+  const { search = '', type = '', enabled = true } = params;
+
+  return useQuery<CasesResponse>({
+    queryKey: ['cases-for-select', search, type],
+    staleTime: 30_000, // 30秒内不重新请求，减少弹窗内频繁请求
+    enabled,
+    queryFn: async () => {
+      const queryParams = new URLSearchParams({
+        limit: '200',
+        offset: '0',
+        status: 'active',
+      });
+
+      if (type) {
+        queryParams.set('type', type);
+      }
+
+      if (search.trim()) {
+        queryParams.set('search', search.trim());
+      }
+
+      const response = await fetch(`/api/cases?${queryParams.toString()}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch cases');
+      }
+      return response.json();
+    },
+  });
+}
+
+/**
  * 运行用例 Hook
  */
 export function useRunCase() {

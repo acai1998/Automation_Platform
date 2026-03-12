@@ -7,7 +7,6 @@ import {
   Loader2,
   MoreVertical,
   Calendar,
-  Globe,
   BarChart3,
   Plus,
   Search,
@@ -33,6 +32,8 @@ import {
   Monitor,
   CheckSquare,
   Pause,
+  ListChecks,
+  ChevronDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -83,6 +84,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { BatchActionBar } from '@/components/tasks/BatchActionBar';
 import { BatchConfirmDialog } from '@/components/tasks/BatchConfirmDialog';
+import { useAllCasesForSelect, type TestCase as CaseItem, type CaseType } from '@/hooks/useCases';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -814,13 +816,6 @@ function TaskCard({
               >
                 {STATUS_LABELS[task.status] ?? task.status}
               </span>
-              <Badge variant="outline" className="font-normal">
-                {task.project_name || '未分类'}
-              </Badge>
-              <span className="flex items-center gap-1">
-                <Globe className="h-3 w-3" />
-                {task.environment_name || '默认环境'}
-              </span>
             </div>
           </div>
           <DropdownMenu>
@@ -905,6 +900,27 @@ function TaskCard({
             </div>
           )}
         </div>
+
+        {/* 关联用例数量 */}
+        {(() => {
+          let caseCount = 0;
+          try {
+            const ids = task.case_ids ? JSON.parse(task.case_ids) : [];
+            caseCount = Array.isArray(ids) ? ids.length : 0;
+          } catch { /* ignore */ }
+          return (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <ListChecks className="h-3.5 w-3.5" />
+              {caseCount > 0 ? (
+                <span>
+                  已关联 <span className="font-semibold text-slate-600 dark:text-slate-300">{caseCount}</span> 个用例
+                </span>
+              ) : (
+                <span className="italic text-amber-500">暂无关联用例</span>
+              )}
+            </div>
+          );
+        })()}
 
         {/* 最近运行记录小圆点 */}
         <div className="space-y-2">
@@ -1374,12 +1390,58 @@ interface TaskFormDialogProps {
   isSaving: boolean;
 }
 
+/** 用例类型标签映射 */
+const CASE_TYPE_LABELS: Record<string, string> = {
+  api: 'API',
+  ui: 'UI',
+  performance: '性能',
+};
+
+/** 用例类型颜色 */
+const CASE_TYPE_COLORS: Record<string, string> = {
+  api: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+  ui: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+  performance: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+};
+
 function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [triggerType, setTriggerType] = useState<'manual' | 'scheduled' | 'ci_triggered'>('manual');
   const [cronExpression, setCronExpression] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // ── 关联用例状态 ──────────────────────────────────────
+  const [selectedCaseIds, setSelectedCaseIds] = useState<number[]>([]);
+  const [caseSearch, setCaseSearch] = useState('');
+  const [caseTypeFilter, setCaseTypeFilter] = useState<CaseType | ''>('');
+  const [casePickerOpen, setCasePickerOpen] = useState(false);
+
+  // 搜索防抖
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(caseSearch), 300);
+    return () => clearTimeout(t);
+  }, [caseSearch]);
+
+  const { data: casesData, isLoading: casesLoading } = useAllCasesForSelect({
+    search: debouncedSearch,
+    type: caseTypeFilter,
+    enabled: open, // 弹窗打开时才请求
+  });
+  const allCases = casesData?.data ?? [];
+
+  // 候选列表（排除已选）
+  const candidateCases = useMemo(
+    () => allCases.filter((c) => !selectedCaseIds.includes(c.id)),
+    [allCases, selectedCaseIds]
+  );
+
+  // 已选用例对象（从全量缓存中查找）
+  const selectedCases = useMemo(
+    () => selectedCaseIds.map((id) => allCases.find((c) => c.id === id)).filter(Boolean) as CaseItem[],
+    [selectedCaseIds, allCases]
+  );
 
   // 回填编辑数据
   useEffect(() => {
@@ -1389,8 +1451,28 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
       setTriggerType((task?.trigger_type as 'manual' | 'scheduled' | 'ci_triggered') ?? 'manual');
       setCronExpression(task?.cron_expression ?? '');
       setErrors({});
+      setCaseSearch('');
+      setCaseTypeFilter('');
+      setCasePickerOpen(false);
+      // 回填已有 case_ids
+      if (task?.case_ids) {
+        try {
+          const ids = JSON.parse(task.case_ids);
+          setSelectedCaseIds(Array.isArray(ids) ? ids : []);
+        } catch {
+          setSelectedCaseIds([]);
+        }
+      } else {
+        setSelectedCaseIds([]);
+      }
     }
   }, [open, task]);
+
+  const toggleCaseSelect = (caseId: number) => {
+    setSelectedCaseIds((prev) =>
+      prev.includes(caseId) ? prev.filter((id) => id !== caseId) : [...prev, caseId]
+    );
+  };
 
   const validate = () => {
     const errs: Record<string, string> = {};
@@ -1442,12 +1524,13 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
       description: description.trim() || undefined,
       triggerType,
       cronExpression: triggerType === 'scheduled' ? cronExpression.trim() : undefined,
+      caseIds: selectedCaseIds,
     });
   };
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{task ? TASK_MESSAGES.FORM_EDIT_TITLE : TASK_MESSAGES.FORM_CREATE_TITLE}</DialogTitle>
           <DialogDescription>
@@ -1557,6 +1640,150 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
               )}
             </div>
           )}
+
+          {/* ── 关联用例 ─────────────────────────────────── */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <ListChecks className="h-4 w-4 text-slate-500" />
+                关联用例
+                {selectedCaseIds.length > 0 && (
+                  <span className="ml-1 inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                    {selectedCaseIds.length}
+                  </span>
+                )}
+              </label>
+              <button
+                type="button"
+                onClick={() => setCasePickerOpen((v) => !v)}
+                className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-0.5 transition-colors"
+              >
+                {casePickerOpen ? '收起' : '展开选择'}
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', casePickerOpen && 'rotate-180')} />
+              </button>
+            </div>
+
+            {/* 已选用例标签列表 */}
+            {selectedCases.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 min-h-[36px]">
+                {selectedCases.map((c) => (
+                  <span
+                    key={c.id}
+                    className="inline-flex items-center gap-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 text-xs text-slate-700 dark:text-slate-300 shadow-sm"
+                  >
+                    <span className={cn('rounded px-1 text-[10px] font-semibold', CASE_TYPE_COLORS[c.type] ?? '')}>
+                      {CASE_TYPE_LABELS[c.type] ?? c.type}
+                    </span>
+                    <span className="max-w-[120px] truncate">{c.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleCaseSelect(c.id)}
+                      className="ml-0.5 text-slate-400 hover:text-red-500 transition-colors"
+                      aria-label={`移除 ${c.name}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {selectedCases.length === 0 && !casePickerOpen && (
+              <p className="text-xs text-slate-400 italic">暂未关联用例，任务运行时将跳过执行</p>
+            )}
+
+            {/* 用例选择器面板 */}
+            {casePickerOpen && (
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
+                {/* 搜索 + 类型过滤 */}
+                <div className="flex gap-2 p-2 border-b border-slate-100 dark:border-slate-800">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="搜索用例名称..."
+                      value={caseSearch}
+                      onChange={(e) => setCaseSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 text-sm rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="flex gap-1">
+                    {([
+                      { value: '' as const, label: '全部' },
+                      { value: 'api' as const, label: 'API' },
+                      { value: 'ui' as const, label: 'UI' },
+                      { value: 'performance' as const, label: '性能' },
+                    ] as { value: CaseType | ''; label: string }[]).map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setCaseTypeFilter(value)}
+                        className={cn(
+                          'px-2 py-1 rounded-md text-xs font-medium border transition-all',
+                          caseTypeFilter === value
+                            ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                            : 'border-slate-200 text-slate-500 hover:border-slate-300 dark:border-slate-700 dark:text-slate-400'
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 候选用例列表 */}
+                <div className="overflow-y-auto" style={{ maxHeight: '200px' }}>
+                  {casesLoading ? (
+                    <div className="flex items-center justify-center py-6 text-slate-400">
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      <span className="text-sm">加载中...</span>
+                    </div>
+                  ) : candidateCases.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-6 text-slate-400">
+                      <Search className="h-5 w-5 mb-1 opacity-40" />
+                      <span className="text-sm">{caseSearch ? '未找到匹配用例' : '所有用例已选完'}</span>
+                    </div>
+                  ) : (
+                    candidateCases.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => toggleCaseSelect(c.id)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors border-b border-slate-50 dark:border-slate-800 last:border-0"
+                      >
+                        <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold', CASE_TYPE_COLORS[c.type] ?? '')}>
+                          {CASE_TYPE_LABELS[c.type] ?? c.type}
+                        </span>
+                        <span className="flex-1 text-sm text-slate-700 dark:text-slate-300 truncate">{c.name}</span>
+                        {c.module && (
+                          <span className="shrink-0 text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-700 rounded px-1.5 py-0.5 truncate max-w-[80px]">
+                            {c.module}
+                          </span>
+                        )}
+                        <Plus className="shrink-0 h-3.5 w-3.5 text-blue-500" />
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                {/* 底部统计 */}
+                <div className="flex items-center justify-between px-3 py-1.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60">
+                  <span className="text-[11px] text-slate-400">
+                    共 {casesData?.total ?? 0} 个用例，已选 {selectedCaseIds.length} 个
+                  </span>
+                  {selectedCaseIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCaseIds([])}
+                      className="text-[11px] text-red-400 hover:text-red-600 transition-colors"
+                    >
+                      清空已选
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         <DialogFooter>

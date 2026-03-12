@@ -14,6 +14,7 @@ import {
   Image as ImageIcon,
   Loader2,
   MinusCircle,
+  RefreshCw,
   Search,
   TrendingUp,
   MoreHorizontal,
@@ -22,12 +23,15 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useTestRunDetail, useTestRunResults, TestRunResultStatus } from "@/hooks/useExecutions";
+import type { TestRunResult, TestRunRecord } from "@/hooks/useExecutions";
 
 type SortBy = "failed_first" | "default" | "duration_desc";
 
+// ─── 常量定义 ─────────────────────────────────────────────────────────────────
 const PAGE_SIZE = 10;
+const SEARCH_DEBOUNCE_MS = 300;
 
-const RUN_STATUS_STYLE: Record<string, string> = {
+const RUN_STATUS_STYLE: Record<TestRunRecord['status'], string> = {
   success: "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20",
   failed: "bg-rose-500/10 text-rose-500 border border-rose-500/20",
   running: "bg-blue-500/10 text-blue-500 border border-blue-500/20",
@@ -35,8 +39,7 @@ const RUN_STATUS_STYLE: Record<string, string> = {
   aborted: "bg-amber-500/10 text-amber-500 border border-amber-500/20",
 };
 
-
-const RUN_STATUS_LABEL: Record<string, string> = {
+const RUN_STATUS_LABEL: Record<TestRunRecord['status'], string> = {
   success: "Completed",
   failed:  "Completed",
   running: "Running",
@@ -44,13 +47,29 @@ const RUN_STATUS_LABEL: Record<string, string> = {
   aborted: "Aborted",
 };
 
-const TRIGGER_MAP: Record<string, string> = {
+const TRIGGER_MAP: Record<TestRunRecord['trigger_type'], string> = {
   manual:       "手动触发",
   jenkins:      "Jenkins 触发",
   schedule:     "定时触发",
   ci_triggered: "CI 触发",
 };
 
+const STATUS_LABEL_MAP: Record<TestRunResult['status'], string> = {
+  passed: 'PASSED',
+  failed: 'FAILED',
+  skipped: 'SKIPPED',
+  error: 'ERROR',
+  pending: 'PENDING',
+};
+
+// ─── 工具函数 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 构建分页器的页码数组，超过 7 页时使用省略号
+ * @param current 当前页码（1-based）
+ * @param total 总页数
+ * @returns 页码数组，例如 [1, "...", 5, 6, 7, "...", 10]
+ */
 function buildPageNumbers(current: number, total: number): (number | "...")[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
   const pages: (number | "...")[] = [1];
@@ -63,8 +82,18 @@ function buildPageNumbers(current: number, total: number): (number | "...")[] {
   return pages;
 }
 
-function isFailedStatus(status: string) {
+/**
+ * 判断测试用例状态是否为失败
+ */
+function isFailedStatus(status: string): boolean {
   return status === "failed" || status === "error";
+}
+
+/**
+ * 获取测试用例状态的显示标签
+ */
+function getStatusLabel(status: TestRunResult['status']): string {
+  return STATUS_LABEL_MAP[status] ?? 'UNKNOWN';
 }
 
 function formatTime(value?: string | null, full = false): string {
@@ -82,14 +111,173 @@ function formatDuration(ms?: number | null) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+// ─── 按分组视图组件 ───────────────────────────────────────────────────────────
+
+function GroupView({ results, loading }: { results: TestRunResult[]; loading: boolean }) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // 按模块分组
+  const groups = useMemo(() => {
+    const map = new Map<string, TestRunResult[]>();
+    for (const item of results) {
+      const key = item.module && item.module !== "-" ? item.module : "未分组";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(item);
+    }
+    // 有失败的组排前面
+    return Array.from(map.entries()).sort(([, a], [, b]) => {
+      const aFail = a.some(r => isFailedStatus(r.status)) ? 0 : 1;
+      const bFail = b.some(r => isFailedStatus(r.status)) ? 0 : 1;
+      return aFail - bFail;
+    });
+  }, [results]);
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (groups.length === 0) {
+    return (
+      <div className="py-12 text-center text-slate-400 text-sm">
+        暂无匹配的用例结果
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-slate-200 dark:divide-slate-800">
+      {groups.map(([groupName, items]) => {
+        const hasFail = items.some(r => isFailedStatus(r.status));
+        const passCount = items.filter(r => r.status === "passed").length;
+        const failCount = items.filter(r => isFailedStatus(r.status)).length;
+        const skipCount = items.filter(r => r.status === "skipped").length;
+        const expanded = expandedGroups.has(groupName);
+
+        return (
+          <div key={groupName}>
+            <button
+              onClick={() => toggleGroup(groupName)}
+              className={cn(
+                "w-full flex items-center justify-between px-6 py-4 text-left transition-colors",
+                hasFail
+                  ? "bg-rose-500/[0.03] hover:bg-rose-500/[0.06]"
+                  : "hover:bg-slate-50 dark:hover:bg-slate-800/50",
+              )}
+            >
+              <div className="flex items-center gap-3">
+                {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                <span className={cn("text-sm font-bold", hasFail ? "text-rose-600 dark:text-rose-400" : "text-slate-800 dark:text-slate-200")}>
+                  {groupName}
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  共 {items.length} 个用例
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-xs font-bold">
+                {passCount > 0 && (
+                  <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> {passCount} 通过
+                  </span>
+                )}
+                {failCount > 0 && (
+                  <span className="flex items-center gap-1 text-rose-600 dark:text-rose-400">
+                    <XCircle className="h-3.5 w-3.5" /> {failCount} 失败
+                  </span>
+                )}
+                {skipCount > 0 && (
+                  <span className="flex items-center gap-1 text-slate-400">
+                    <MinusCircle className="h-3.5 w-3.5" /> {skipCount} 跳过
+                  </span>
+                )}
+              </div>
+            </button>
+
+            {expanded && (
+              <div className="bg-slate-50/50 dark:bg-slate-900/30 border-t border-slate-100 dark:border-slate-800/50">
+                <table className="w-full text-left text-sm">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                    {items.map(item => {
+                      const failed = isFailedStatus(item.status);
+                      const statusText = getStatusLabel(item.status);
+                      return (
+                        <tr key={item.id} className={cn("px-6", failed ? "bg-rose-500/[0.02]" : "")}>
+                          <td className="pl-14 pr-6 py-3">
+                            <span className={cn("font-medium", failed ? "font-semibold text-slate-900 dark:text-slate-100" : "text-slate-700 dark:text-slate-300")}>
+                              {item.case_id ? `TC-${item.case_id}: ` : ""}{item.case_name}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3 w-28">
+                            <div className={cn(
+                              "flex items-center gap-1.5 text-xs font-bold uppercase",
+                              item.status === "passed" ? "text-emerald-600 dark:text-emerald-400"
+                              : failed ? "text-rose-600 dark:text-rose-400"
+                              : "text-slate-400",
+                            )}>
+                              {item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5" /> : failed ? <XCircle className="h-3.5 w-3.5" /> : <MinusCircle className="h-3.5 w-3.5" />}
+                              {statusText}
+                            </div>
+                          </td>
+                          <td className="px-6 py-3 w-24 font-mono text-slate-500 text-xs">
+                            {formatDuration(item.duration)}
+                          </td>
+                          <td className="px-6 py-3 w-32 font-mono text-slate-500 text-xs">
+                            {formatTime(item.start_time)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── 主组件 ────────────────────────────────────────────────────────────────────
+
 export default function ReportDetail() {
   const [, params] = useRoute("/reports/:id");
   const [, navigate] = useLocation();
   const rawId = params?.id ? Number(params.id) : 0;
   const runId = isNaN(rawId) || rawId <= 0 ? 0 : rawId;
 
-  const { data: run, isLoading: runLoading } = useTestRunDetail(runId);
+  // ✅ P0 修复：无效 ID 提前返回
+  if (runId === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-4">
+        <AlertCircle className="h-10 w-10 text-rose-500" />
+        <p className="text-sm text-slate-500">无效的执行 ID</p>
+        <button
+          onClick={() => navigate("/reports")}
+          className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
+        >
+          返回报告中心
+        </button>
+      </div>
+    );
+  }
 
+  // ✅ P0 修复：添加错误处理和 refetch
+  const { data: run, isLoading: runLoading, error, refetch } = useTestRunDetail(runId);
+
+  const [activeTab, setActiveTab] = useState<"cases" | "groups">("cases");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<TestRunResultStatus>("all");
@@ -97,14 +285,18 @@ export default function ReportDetail() {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [page, setPage] = useState(1);
 
-  // 搜索防抖：300ms 后更新 debouncedSearch 并同步重置 page，避免双重请求
+  // ✅ P1 优化：搜索防抖逻辑优化
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(search);
-      setPage(1);
-    }, 300);
+    }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [search]);
+
+  // ✅ P1 优化：筛选条件变化时重置页码
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter]);
 
   const apiStatus = statusFilter !== "all" ? statusFilter : undefined;
 
@@ -119,6 +311,8 @@ export default function ReportDetail() {
   const total = resultData?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
+
+  // ✅ P2 优化：排序逻辑使用 useMemo 缓存
   const pagedResults = useMemo(() => {
     const copy = [...results];
     if (sortBy === "failed_first") {
@@ -133,22 +327,52 @@ export default function ReportDetail() {
     return copy;
   }, [results, sortBy]);
 
-  const toggleRow = (id: number) => {
+  // ✅ P0 修复：页码变化时清空展开状态，防止内存泄漏
+  useEffect(() => {
+    setExpandedRows(new Set());
+  }, [page]);
+
+  const toggleRow = useCallback((id: number) => {
     setExpandedRows((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  };
+  }, []);
 
   const applyFilter = useCallback((next: () => void) => {
     next();
     setPage(1);
   }, []);
 
+  // ✅ P2 优化：派生状态使用 useMemo
+  const onlyFailures = useMemo(() => statusFilter === "failed", [statusFilter]);
 
-  const onlyFailures = statusFilter === "failed";
+  // ✅ P0 修复：添加错误处理
+  if (error) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-4">
+        <AlertCircle className="h-10 w-10 text-rose-500" />
+        <p className="text-sm text-slate-500">加载失败：{error instanceof Error ? error.message : '未知错误'}</p>
+        <div className="flex gap-3">
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all flex items-center gap-2"
+          >
+            <RefreshCw className="h-4 w-4" />
+            重试
+          </button>
+          <button
+            onClick={() => navigate("/reports")}
+            className="px-4 py-2 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-white text-sm font-semibold hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors"
+          >
+            返回报告中心
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (runLoading) {
     return (
@@ -165,7 +389,7 @@ export default function ReportDetail() {
         <p className="text-sm text-slate-500">未找到运行记录</p>
         <button
           onClick={() => navigate("/reports")}
-          className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold"
+          className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
         >
           返回报告中心
         </button>
@@ -173,10 +397,13 @@ export default function ReportDetail() {
     );
   }
 
-  const successRate =
-    run.total_cases > 0
+  // ✅ P2 优化：成功率计算使用 useMemo
+  const successRate = useMemo(
+    () => run.total_cases > 0
       ? Math.round((run.passed_cases / run.total_cases) * 100)
-      : 0;
+      : 0,
+    [run.total_cases, run.passed_cases]
+  );
   const hasFailures = run.failed_cases > 0;
 
   return (
@@ -330,13 +557,35 @@ export default function ReportDetail() {
 
         <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
           <div className="flex border-b border-slate-200 dark:border-slate-800 px-6">
-            <button className="px-6 py-4 text-sm font-bold border-b-2 border-primary text-primary">按用例视图</button>
-            <button className="px-6 py-4 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+            <button
+              onClick={() => setActiveTab("cases")}
+              className={cn(
+                "px-6 py-4 text-sm font-bold transition-colors",
+                activeTab === "cases"
+                  ? "border-b-2 border-primary text-primary"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300",
+              )}
+            >
+              按用例视图
+            </button>
+            <button
+              onClick={() => setActiveTab("groups")}
+              className={cn(
+                "px-6 py-4 text-sm font-bold transition-colors",
+                activeTab === "groups"
+                  ? "border-b-2 border-primary text-primary"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300",
+              )}
+            >
               按分组视图
-              <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 rounded text-slate-400 uppercase">Coming Soon</span>
             </button>
           </div>
 
+          {activeTab === "groups" && (
+            <GroupView results={pagedResults} loading={resultLoading} />
+          )}
+
+          {activeTab === "cases" && <>
           <div className="p-4 bg-slate-50 dark:bg-slate-900/50 flex flex-wrap items-center gap-4 border-b border-slate-200 dark:border-slate-800">
             <div className="relative flex-1 min-w-[240px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 h-4 w-4" />
@@ -414,14 +663,7 @@ export default function ReportDetail() {
                 {pagedResults.map((item) => {
                   const failed = isFailedStatus(item.status);
                   const expanded = expandedRows.has(item.id);
-                  const statusText =
-                    item.status === "passed"
-                      ? "PASSED"
-                      : item.status === "skipped"
-                        ? "SKIPPED"
-                        : item.status === "error"
-                          ? "ERROR"
-                          : "FAILED";
+                  const statusText = getStatusLabel(item.status);
 
                   return (
                     <Fragment key={item.id}>
@@ -607,6 +849,7 @@ export default function ReportDetail() {
               </div>
             </div>
           )}
+          </>}
         </div>
       </main>
     </div>

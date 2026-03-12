@@ -980,6 +980,14 @@ bash deployment/scripts/verify-env.sh
 
 ## 更新日志
 
+### v1.3.1 (2026-03-12)
+- ✨ 任务管理页面新增**关联用例**功能：新建/编辑任务时可通过选择器多选测试用例，支持关键字搜索（300ms防抖）和 API/UI/性能类型过滤
+- 🎨 任务卡片新增关联用例数量显示（`ListChecks` 图标 + 数量，未关联时显示橙色提示）
+- 🧹 移除任务卡片中无实际填写项的「未分类」和「测试环境」标签
+- 🔧 前端 `useAllCasesForSelect` Hook（`src/hooks/useCases.ts`）：无需强制指定类型、支持 `enabled` 开关（弹窗关闭时不发请求）、30秒 stale 缓存
+- 🔗 `caseIds` 正确传递至后端 `POST /api/tasks` 和 `PUT /api/tasks/:id`，执行时 `TaskSchedulerService` 从 `case_ids` 字段读取并触发 Jenkins 任务
+- ⚠️ 若任务未关联任何用例，运行时调度引擎会记录 warn 日志并跳过执行（不触发 Jenkins），前端弹窗中有对应提示
+
 ### v1.3.0 (2026-03-12)
 - 🚀 新增 `TaskSchedulerService` 定时调度引擎：自研5段式 Cron 解析、服务重启任务恢复、24h 漏触发补偿、每分钟 DB 轮询同步
 - 🔒 新增任务执行控制：FIFO 等待队列、并发上限（默认3可配置）、指数退避重试策略、支持取消运行中执行
@@ -1019,4 +1027,4 @@ bash deployment/scripts/verify-env.sh
 ---
 
 **最后更新时间**：2026-03-12
-**文档版本**：v1.3.0
+**文档版本**：v1.3.1

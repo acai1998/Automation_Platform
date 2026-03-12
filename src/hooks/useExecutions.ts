@@ -13,14 +13,14 @@ export interface TestRunRecord {
   jenkins_build_id: string | null;
   jenkins_url: string | null;
   status: 'pending' | 'running' | 'success' | 'failed' | 'aborted';
-  start_time: string;
+  start_time: string | null;
   end_time: string | null;
   duration_ms: number | null;
   total_cases: number;
   passed_cases: number;
   failed_cases: number;
   skipped_cases: number;
-  created_at: string;
+  created_at: string | null;
 }
 
 export interface TestRunResult {

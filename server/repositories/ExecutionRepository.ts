@@ -111,6 +111,7 @@ export interface TestRunRow {
   duration_ms: number;
   start_time: Date | null;
   end_time: Date | null;
+  created_at: Date | null;
 }
 
 /**
@@ -458,7 +459,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         COALESCE(u.display_name, u.username, "系统") as trigger_by_name,
         tr.jenkins_job, tr.jenkins_build_id, tr.jenkins_url,
         tr.total_cases, tr.passed_cases, tr.failed_cases, tr.skipped_cases,
-        tr.duration_ms, tr.start_time, tr.end_time
+        tr.duration_ms, tr.start_time, tr.end_time, tr.created_at
       FROM Auto_TestRun tr
       LEFT JOIN Auto_Users u ON tr.trigger_by = u.id
       WHERE tr.id = ?
@@ -542,17 +543,70 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
   /**
    * 根据 runId 查询该批次的用例执行结果（支持分页与筛选）
-   * 查询策略：优先读 Auto_TestRun.execution_id，降级到时间窗口反查
+   * 查询策略：
+   *   1. 优先读 Auto_TestRun.execution_id（新数据）
+   *   2. 降级到时间窗口反查 executionId
+   *   3. 兜底：直接通过 Auto_TestRun 时间窗口在 Auto_TestRunResults 中搜索
    */
   async getResultsByRunId(
     runId: number,
     options: { page?: number; pageSize?: number; status?: string; keyword?: string; } = {}
   ): Promise<{ data: ExecutionResultRow[]; total: number }> {
-    const tr = await this.testRunRepository.findOne({ where: { id: runId }, select: ["executionId"] });
-    let executionId: number | null = tr?.executionId ?? null;
-    if (!executionId) { executionId = await this.findExecutionIdByRunId(runId); }
-    if (!executionId) { logger.warn("Cannot find executionId for runId, returning empty results", { runId }, LOG_CONTEXTS.REPOSITORY); return { data: [], total: 0 }; }
-    return this.getExecutionResults(executionId, options);
+    // 策略1：从 Auto_TestRun.execution_id 直接读（需要该字段存在）
+    let executionId: number | null = null;
+    try {
+      const tr = await this.testRunRepository.findOne({ where: { id: runId }, select: ["executionId"] });
+      executionId = tr?.executionId ?? null;
+    } catch {
+      // 若数据库中不存在 execution_id 列，忽略错误
+    }
+
+    // 策略2：降级到时间窗口 + 触发者 id 反查
+    if (!executionId) {
+      executionId = await this.findExecutionIdByRunId(runId);
+    }
+
+    // 找到 executionId，走正常路径
+    if (executionId) {
+      return this.getExecutionResults(executionId, options);
+    }
+
+    // 策略3：兜底 — 通过 Auto_TestRun 的创建时间窗口（±30秒），
+    // 直接在 Auto_TestRunResults 表中搜索匹配的 execution_id，
+    // 取与 runId 创建时间最接近的一个
+    logger.warn("Fallback: trying time-window search for runId results", { runId }, LOG_CONTEXTS.REPOSITORY);
+
+    const runRows = await this.testRunRepository.query(`
+      SELECT id, trigger_by, created_at FROM Auto_TestRun WHERE id = ? LIMIT 1
+    `, [runId]) as Array<{ id: number; trigger_by: number; created_at: Date }>;
+
+    if (!runRows || runRows.length === 0) {
+      logger.warn("Cannot find runId, returning empty results", { runId }, LOG_CONTEXTS.REPOSITORY);
+      return { data: [], total: 0 };
+    }
+
+    const runCreatedAt = runRows[0].created_at;
+    const triggerBy = runRows[0].trigger_by;
+
+    // 在 ±60 秒窗口内，找同一触发者创建的 TaskExecution，取最近的
+    const fallbackRows = await this.testRunResultRepository.query(`
+      SELECT DISTINCT r.execution_id
+      FROM Auto_TestRunResults r
+      INNER JOIN Auto_TestCaseTaskExecutions e ON r.execution_id = e.id
+      WHERE e.executed_by = ?
+        AND e.created_at BETWEEN DATE_SUB(?, INTERVAL 60 SECOND) AND DATE_ADD(?, INTERVAL 60 SECOND)
+      ORDER BY ABS(TIMESTAMPDIFF(SECOND, e.created_at, ?)) ASC
+      LIMIT 1
+    `, [triggerBy, runCreatedAt, runCreatedAt, runCreatedAt]) as Array<{ execution_id: number }>;
+
+    if (fallbackRows && fallbackRows.length > 0 && fallbackRows[0].execution_id) {
+      const fallbackExecutionId = fallbackRows[0].execution_id;
+      logger.info("Fallback time-window search found executionId", { runId, fallbackExecutionId }, LOG_CONTEXTS.REPOSITORY);
+      return this.getExecutionResults(fallbackExecutionId, options);
+    }
+
+    logger.warn("All strategies failed to find executionId for runId, returning empty results", { runId }, LOG_CONTEXTS.REPOSITORY);
+    return { data: [], total: 0 };
   }
 
   /**
