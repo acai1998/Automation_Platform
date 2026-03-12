@@ -78,10 +78,6 @@
           <mxGeometry x="960" y="130" width="120" height="40" as="geometry" />
         </mxCell>
 
-        <!-- User action: Git仓库 -->
-        <mxCell id="u-repo" value="配置Git仓库" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="1190" y="130" width="120" height="40" as="geometry" />
-        </mxCell>
 
         <!-- ========================================= -->
         <!-- LANE 2 ELEMENTS: 前端组件 -->
@@ -93,8 +89,8 @@
         </mxCell>
 
         <!-- Frontend: Cases Page -->
-        <mxCell id="fe-cases" value="用例管理页面&lt;br&gt;APICases/UICases" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="240" y="260" width="140" height="60" as="geometry" />
+        <mxCell id="fe-cases" value="用例管理页面&lt;br&gt;APICases / UICases / PerformanceCases" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="240" y="260" width="170" height="60" as="geometry" />
         </mxCell>
 
         <!-- Frontend: Tasks Page -->
@@ -108,14 +104,10 @@
         </mxCell>
 
         <!-- Frontend: Dashboard -->
-        <mxCell id="fe-dashboard" value="仪表盘&lt;br&gt;Dashboard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="900" y="260" width="130" height="60" as="geometry" />
+        <mxCell id="fe-dashboard" value="仪表盘&lt;br&gt;Home / Dashboard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="900" y="260" width="145" height="60" as="geometry" />
         </mxCell>
 
-        <!-- Frontend: Repo Config -->
-        <mxCell id="fe-repo" value="仓库配置&lt;br&gt;Repositories" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="1120" y="260" width="130" height="60" as="geometry" />
-        </mxCell>
 
         <!-- Frontend: TanStack Query -->
         <mxCell id="fe-query" value="TanStack Query&lt;br&gt;(状态管理/缓存)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fff0;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;dashed=1;" vertex="1" parent="1">
@@ -156,10 +148,6 @@
           <mxGeometry x="960" y="415" width="130" height="60" as="geometry" />
         </mxCell>
 
-        <!-- Route: Repositories -->
-        <mxCell id="be-repos" value="/api/repositories&lt;br&gt;仓库路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="1150" y="415" width="130" height="60" as="geometry" />
-        </mxCell>
 
         <!-- Middleware note -->
         <mxCell id="be-middleware" value="中间件层: Auth / RateLimit / Logger / JenkinsAuth" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=12;dashed=1;" vertex="1" parent="1">
@@ -195,10 +183,6 @@
           <mxGeometry x="830" y="575" width="130" height="60" as="geometry" />
         </mxCell>
 
-        <!-- Service: RepositoryService -->
-        <mxCell id="svc-repo" value="RepositoryService&lt;br&gt;仓库同步服务" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="1020" y="575" width="140" height="60" as="geometry" />
-        </mxCell>
 
         <!-- Service: EmailService -->
         <mxCell id="svc-email" value="EmailService&lt;br&gt;邮件通知" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
@@ -219,10 +203,6 @@
           <mxGeometry x="500" y="730" width="160" height="60" as="geometry" />
         </mxCell>
 
-        <!-- External: GitHub/GitLab -->
-        <mxCell id="ext-git" value="GitHub / GitLab&lt;br&gt;(测试脚本仓库)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="1000" y="730" width="160" height="60" as="geometry" />
-        </mxCell>
 
         <!-- External: Email Server -->
         <mxCell id="ext-email" value="邮件服务器&lt;br&gt;(SMTP/nodemailer)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
@@ -273,10 +253,6 @@
           <mxGeometry x="1070" y="850" width="130" height="60" as="geometry" />
         </mxCell>
 
-        <!-- DB: Repositories -->
-        <mxCell id="db-repos" value="Auto_Repository&lt;br&gt;Configs" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
-          <mxGeometry x="1240" y="850" width="120" height="60" as="geometry" />
-        </mxCell>
 
         <!-- DB: AuditLogs -->
         <mxCell id="db-audit" value="Auto_TaskAuditLogs" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
@@ -307,9 +283,6 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <mxCell id="a-u-repo" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#6c8ebf;" edge="1" source="u-repo" target="fe-repo" parent="1">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
 
         <!-- ========================================= -->
         <!-- ARROWS: Frontend to Backend Routes -->
@@ -327,6 +300,7 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
+        <!-- 报告页面 → /api/executions -->
         <mxCell id="a-fe-be-reports" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" source="fe-reports" target="be-executions" parent="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
@@ -335,9 +309,6 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <mxCell id="a-fe-be-repo" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" source="fe-repo" target="be-repos" parent="1">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
 
         <!-- ========================================= -->
         <!-- ARROWS: Backend Routes to Services -->
@@ -359,13 +330,15 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
+        <!-- /api/executions → ExecutionService -->
+        <mxCell id="a-be-svc-executions" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" source="be-executions" target="svc-exec" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- /api/dashboard → DashboardService -->
         <mxCell id="a-be-svc-dashboard" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" source="be-dashboard" target="svc-dashboard" parent="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <mxCell id="a-be-svc-repos" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" source="be-repos" target="svc-repo" parent="1">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
 
         <!-- ========================================= -->
         <!-- ARROWS: Services to External -->
@@ -376,10 +349,6 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <!-- RepositoryService -> Git -->
-        <mxCell id="a-svc-repo-ext" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#9673a6;" edge="1" source="svc-repo" target="ext-git" parent="1">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
 
         <!-- EmailService -> Email Server -->
         <mxCell id="a-svc-email-ext" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#9673a6;" edge="1" source="svc-email" target="ext-email" parent="1">
@@ -428,9 +397,6 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <mxCell id="a-svc-repo-db" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-repo" target="db-repos" parent="1">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
 
         <mxCell id="a-svc-scheduler-db-audit" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-scheduler" target="db-audit" parent="1">
           <mxGeometry relative="1" as="geometry" />
