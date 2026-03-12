@@ -5,6 +5,7 @@ import { jenkinsService } from '../services/JenkinsService';
 import { ipWhitelistMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
 import { requestValidator } from '../middleware/RequestValidator';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
+import { optionalAuth } from '../middleware/auth';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
 import { AppDataSource } from '../config/database';
@@ -95,12 +96,13 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
  * 1. 直接传入 caseIds 数组
  * 2. 传入 taskId，自动从数据库查找任务的 caseIds 和任务名称
  */
-router.post('/trigger', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
+router.post('/trigger', generalAuthRateLimiter, optionalAuth, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const triggerBody = (req.body ?? {}) as Record<string, unknown>;
     let caseIds = triggerBody['caseIds'];
     const projectId = typeof triggerBody['projectId'] === 'number' ? triggerBody['projectId'] : 1;
-    const triggeredBy = typeof triggerBody['triggeredBy'] === 'number' ? triggerBody['triggeredBy'] : 1;
+    // 优先使用认证用户 ID，回退到请求体中的 triggeredBy，最后才用默认值 1（系统管理员）
+    const triggeredBy = req.user?.id ?? (typeof triggerBody['triggeredBy'] === 'number' ? triggerBody['triggeredBy'] : 1);
     const jenkinsJobName = typeof triggerBody['jenkinsJobName'] === 'string' ? triggerBody['jenkinsJobName'] : undefined;
     const taskId = typeof triggerBody['taskId'] === 'number' ? triggerBody['taskId'] : undefined;
     let taskName: string | undefined;
@@ -172,12 +174,15 @@ router.post('/trigger', generalAuthRateLimiter, rateLimitMiddleware.limit, async
  */
 router.post('/run-case', [
   generalAuthRateLimiter,
+  optionalAuth,
   rateLimitMiddleware.limit,
   requestValidator.validateSingleExecution
 ], async (req: Request, res: Response) => {
   const timer = createTimer();
   try {
-    const { caseId, projectId, triggeredBy = 1 } = req.body;
+    const { caseId, projectId } = req.body;
+    // 优先使用认证用户 ID，回退到请求体中的 triggeredBy，最后才用默认值 1（系统管理员）
+    const triggeredBy: number = req.user?.id ?? (typeof req.body.triggeredBy === 'number' ? req.body.triggeredBy : 1);
     
     logger.info('Starting single case execution', {
       caseId,
@@ -288,12 +293,15 @@ router.post('/run-case', [
  */
 router.post('/run-batch', [
   generalAuthRateLimiter,
+  optionalAuth,
   rateLimitMiddleware.limit,
   requestValidator.validateBatchExecution
 ], async (req: Request, res: Response) => {
   const timer = createTimer();
   try {
-    const { caseIds, projectId, triggeredBy = 1 } = req.body;
+    const { caseIds, projectId } = req.body;
+    // 优先使用认证用户 ID，回退到请求体中的 triggeredBy，最后才用默认值 1（系统管理员）
+    const triggeredBy: number = req.user?.id ?? (typeof req.body.triggeredBy === 'number' ? req.body.triggeredBy : 1);
     
     logger.info('Starting batch case execution', {
       caseCount: caseIds.length,

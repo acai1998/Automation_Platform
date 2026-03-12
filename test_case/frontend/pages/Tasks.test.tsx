@@ -156,9 +156,10 @@ describe('Tasks Page', () => {
 
       renderWithProviders(<Tasks />);
 
-      // 使用 getAllByText 因为错误消息可能在多个地方出现
-      const errorElements = screen.getAllByText(errorMessage);
-      expect(errorElements.length).toBeGreaterThan(0);
+      // 检查错误消息是否存在于页面中
+      expect(screen.getByText(errorMessage, { exact: false })).toBeInTheDocument();
+      // 检查重试按钮是否存在
+      expect(screen.getByText(TASK_MESSAGES.BTN_RETRY)).toBeInTheDocument();
     });
 
     it('should allow retry on error', () => {
@@ -289,7 +290,7 @@ describe('Tasks Page', () => {
   });
 
   describe('Create Task', () => {
-    it('should open create dialog when clicking create button', () => {
+    it('should open create dialog when clicking create button', async () => {
       vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
         data: { data: [], total: 0, stats: { activeCount: 0, todayRuns: 0 } },
         isLoading: false,
@@ -308,8 +309,176 @@ describe('Tasks Page', () => {
       const createButton = screen.getByText(TASK_MESSAGES.BTN_CREATE);
       fireEvent.click(createButton);
 
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(screen.getByText(TASK_MESSAGES.FORM_CREATE_TITLE)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+
+      // 检查表单标题（使用 heading role）
+      expect(screen.getByRole('heading', { name: /新建任务/i })).toBeInTheDocument();
+    });
+  });
+
+  // ─── P1/P2 增强功能测试 ───
+
+  describe('Cancel Execution', () => {
+    it('should show cancel option when task has running execution', () => {
+      const taskWithRunning = {
+        ...mockTasks[0],
+        recentExecutions: [
+          {
+            id: 10,
+            status: 'running',
+            passed_cases: 0,
+            failed_cases: 0,
+            total_cases: 5,
+          },
+        ],
+      };
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: [taskWithRunning], total: 1, stats: { activeCount: 1, todayRuns: 1 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+      vi.spyOn(useTasksHooks, 'useRunTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useCreateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTaskStatus').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useDeleteTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useCancelExecution').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useTaskStats').mockReturnValue({ data: undefined, isLoading: false, error: null } as any);
+
+      renderWithProviders(<Tasks />);
+
+      expect(screen.getByText('取消运行')).toBeInTheDocument();
+    });
+
+    it('should NOT show cancel option when task has no active execution', () => {
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: mockTasks, total: 2, stats: { activeCount: 1, todayRuns: 0 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+      vi.spyOn(useTasksHooks, 'useRunTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useCreateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTaskStatus').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useDeleteTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useCancelExecution').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useTaskStats').mockReturnValue({ data: undefined, isLoading: false, error: null } as any);
+
+      renderWithProviders(<Tasks />);
+
+      expect(screen.queryByText('取消运行')).not.toBeInTheDocument();
+    });
+
+    it('should call cancelExecution mutation when clicking cancel', async () => {
+      const taskWithRunning = {
+        ...mockTasks[0],
+        recentExecutions: [
+          {
+            id: 10,
+            status: 'running',
+            passed_cases: 0,
+            failed_cases: 0,
+            total_cases: 5,
+          },
+        ],
+      };
+      const mockCancel = vi.fn().mockResolvedValue({});
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: [taskWithRunning], total: 1, stats: { activeCount: 1, todayRuns: 1 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+      vi.spyOn(useTasksHooks, 'useRunTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useCreateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTaskStatus').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useDeleteTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useCancelExecution').mockReturnValue({ mutateAsync: mockCancel, isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useTaskStats').mockReturnValue({ data: undefined, isLoading: false, error: null } as any);
+
+      renderWithProviders(<Tasks />);
+
+      const cancelBtn = screen.getByText('取消运行');
+      fireEvent.click(cancelBtn);
+
+      await waitFor(() => {
+        expect(mockCancel).toHaveBeenCalledWith({ taskId: 1, execId: 10 });
+      });
+    });
+  });
+
+  describe('Task Stats Dialog', () => {
+    it('should open stats dialog when clicking 查看统计', async () => {
+      const mockStats = {
+        summary: { total: 20, successCount: 18, failedCount: 2, successRate: 90, avgDurationSec: 30, lastRunAt: '2026-03-12', periodDays: 30 },
+        trend: [],
+        topErrors: [],
+      };
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: mockTasks, total: 2, stats: { activeCount: 1, todayRuns: 5 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+      vi.spyOn(useTasksHooks, 'useRunTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useCreateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTaskStatus').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useDeleteTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useCancelExecution').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useTaskStats').mockReturnValue({ data: mockStats, isLoading: false, error: null } as any);
+
+      renderWithProviders(<Tasks />);
+
+      const statsBtn = screen.getAllByText('查看统计')[0];
+      fireEvent.click(statsBtn);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByText('90%')).toBeInTheDocument(); // successRate
+        expect(screen.getByText('20')).toBeInTheDocument(); // total
+      });
+    });
+  });
+
+  describe('Run Task via New API', () => {
+    it('should call useRunTask mutation when clicking run now', async () => {
+      const mockRun = vi.fn().mockResolvedValue({ message: '任务已提交执行队列' });
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: mockTasks, total: 2, stats: { activeCount: 1, todayRuns: 0 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+      vi.spyOn(useTasksHooks, 'useRunTask').mockReturnValue({
+        mutateAsync: mockRun,
+        isPending: false,
+        variables: undefined,
+      } as any);
+      vi.spyOn(useTasksHooks, 'useCreateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useUpdateTaskStatus').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useDeleteTask').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useCancelExecution').mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as any);
+      vi.spyOn(useTasksHooks, 'useTaskStats').mockReturnValue({ data: undefined, isLoading: false, error: null } as any);
+
+      renderWithProviders(<Tasks />);
+
+      const runBtns = screen.getAllByText(TASK_MESSAGES.BTN_RUN_NOW);
+      fireEvent.click(runBtns[0]);
+
+      await waitFor(() => {
+        expect(mockRun).toHaveBeenCalledWith(1);
+      });
     });
   });
 

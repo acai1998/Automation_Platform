@@ -21,6 +21,11 @@ import {
   FileText,
   RefreshCw,
   X,
+  TrendingUp,
+  XCircle,
+  BarChart2,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -56,6 +61,8 @@ import {
   useUpdateTask,
   useUpdateTaskStatus,
   useDeleteTask,
+  useCancelExecution,
+  useTaskStats,
   type Task,
   type TaskExecution,
   type CreateTaskInput,
@@ -115,11 +122,13 @@ export default function Tasks() {
   const updateTaskMutation = useUpdateTask();
   const updateStatusMutation = useUpdateTaskStatus();
   const deleteTaskMutation = useDeleteTask();
+  const cancelExecutionMutation = useCancelExecution();
 
   // ── 弹窗控制 ──────────────────────────────────────
   const [formOpen, setFormOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Task | null>(null);
+  const [statsTarget, setStatsTarget] = useState<Task | null>(null);
 
   // ── 统计（使用全局统计数据，避免分页导致的数据不一致） ──────────────────────────────────────────
   const stats = useMemo(() => {
@@ -145,6 +154,23 @@ export default function Tasks() {
       });
     }
   }, [runTaskMutation]);
+
+  const handleCancelLatestExecution = useCallback(async (task: Task) => {
+    const runningExec = task.recentExecutions?.find(
+      (e) => e.status === 'pending' || e.status === 'running'
+    );
+    if (!runningExec) {
+      toast.info('没有可取消的运行中执行');
+      return;
+    }
+    try {
+      await cancelExecutionMutation.mutateAsync({ taskId: task.id, execId: runningExec.id });
+      toast.success('执行已取消');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '未知错误';
+      toast.error('取消失败', { description: message });
+    }
+  }, [cancelExecutionMutation]);
 
   const handleSaveTask = useCallback(async (input: CreateTaskInput & { id?: number }) => {
     try {
@@ -239,7 +265,7 @@ export default function Tasks() {
               {TASK_PAGE.STATS_TOTAL}
             </CardDescription>
             <CardTitle className="text-3xl font-bold">
-              {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : stats.total}
+              {isLoading ? <Loader2 className="h-6 w-6 animate-spin" aria-label={TASK_MESSAGES.LOADING_TASKS} /> : stats.total}
             </CardTitle>
           </CardHeader>
         </Card>
@@ -249,7 +275,7 @@ export default function Tasks() {
               {TASK_PAGE.STATS_ACTIVE}
             </CardDescription>
             <CardTitle className="text-3xl font-bold">
-              {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : stats.active}
+              {isLoading ? <Loader2 className="h-6 w-6 animate-spin" aria-label={TASK_MESSAGES.LOADING_TASKS} /> : stats.active}
             </CardTitle>
           </CardHeader>
         </Card>
@@ -259,7 +285,7 @@ export default function Tasks() {
               {TASK_PAGE.STATS_TODAY_RUNS}
             </CardDescription>
             <CardTitle className="text-3xl font-bold">
-              {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : stats.todayRuns}
+              {isLoading ? <Loader2 className="h-6 w-6 animate-spin" aria-label={TASK_MESSAGES.LOADING_TASKS} /> : stats.todayRuns}
             </CardTitle>
           </CardHeader>
         </Card>
@@ -378,6 +404,8 @@ export default function Tasks() {
                 }}
                 onToggleStatus={() => handleToggleStatus(task)}
                 onDelete={() => setDeleteTarget(task)}
+                onStats={() => setStatsTarget(task)}
+                onCancel={() => handleCancelLatestExecution(task)}
                 isRunning={
                   runTaskMutation.isPending &&
                   runTaskMutation.variables === task.id
@@ -488,6 +516,14 @@ export default function Tasks() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 任务统计弹窗 */}
+      {statsTarget && (
+        <TaskStatsDialog
+          task={statsTarget}
+          onClose={() => setStatsTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -500,6 +536,8 @@ function TaskCard({
   onEdit,
   onToggleStatus,
   onDelete,
+  onStats,
+  onCancel,
   isRunning,
 }: {
   task: Task;
@@ -507,6 +545,8 @@ function TaskCard({
   onEdit: () => void;
   onToggleStatus: () => void;
   onDelete: () => void;
+  onStats: () => void;
+  onCancel: () => void;
   isRunning?: boolean;
 }) {
   const [, navigate] = useLocation();
@@ -515,6 +555,11 @@ function TaskCard({
     lastExecution?.total_cases
       ? Math.round((lastExecution.passed_cases / lastExecution.total_cases) * 100)
       : null;
+
+  // 是否有正在运行的执行（用于显示「取消」按钮）
+  const hasActiveExecution = task.recentExecutions?.some(
+    (e) => e.status === 'pending' || e.status === 'running'
+  ) ?? false;
 
   const handleViewReport = () => {
     if (task.latestRunId) {
@@ -560,30 +605,40 @@ function TaskCard({
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={onEdit} className="gap-2">
                 <Pencil className="h-4 w-4" />
-                编辑任务
+                {TASK_MESSAGES.BTN_EDIT_TASK}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleViewReport} className="gap-2">
                 <FileText className="h-4 w-4" />
-                查看报告
+                {TASK_MESSAGES.BTN_VIEW_REPORT}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={onStats} className="gap-2">
+                <TrendingUp className="h-4 w-4" />
+                查看统计
+              </DropdownMenuItem>
+              {hasActiveExecution && (
+                <DropdownMenuItem onClick={onCancel} className="gap-2 text-orange-600">
+                  <XCircle className="h-4 w-4" />
+                  取消运行
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onToggleStatus} className="gap-2">
                 {task.status === 'active' ? (
                   <>
                     <ToggleLeft className="h-4 w-4" />
-                    暂停任务
+                    {TASK_MESSAGES.BTN_PAUSE_TASK}
                   </>
                 ) : (
                   <>
                     <ToggleRight className="h-4 w-4" />
-                    启用任务
+                    {TASK_MESSAGES.BTN_ENABLE_TASK}
                   </>
                 )}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onDelete} className="text-red-600 gap-2">
                 <Trash2 className="h-4 w-4" />
-                删除任务
+                {TASK_MESSAGES.BTN_DELETE_TASK}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -592,7 +647,7 @@ function TaskCard({
 
       <CardContent className="flex-1 space-y-4">
         <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-2 min-h-[2.5rem]">
-          {task.description || '暂无描述'}
+          {task.description || TASK_MESSAGES.NO_DESCRIPTION}
         </p>
 
         {/* 触发类型 & 成功率 */}
@@ -664,16 +719,149 @@ function TaskCard({
 /* ─── 执行状态小圆点 ─────────────────────────────────────── */
 
 function ExecutionStatusDot({ execution }: { execution: TaskExecution }) {
+  // 使用 EXECUTION_STATUS_CONFIG 集中管理状态样式，避免重复定义
   const config = EXECUTION_STATUS_CONFIG[execution.status] ?? EXECUTION_STATUS_CONFIG.pending;
 
   return (
     <div
+      role="img"
       className={cn(
         'w-3 h-3 rounded-full cursor-help transition-transform hover:scale-150',
         config.color
       )}
       title={`${config.label} - ${execution.start_time ?? '未知时间'}`}
+      aria-label={`${config.label} - ${execution.start_time ?? '未知时间'}`}
     />
+  );
+}
+
+/* ─── 任务统计弹窗 ─────────────────────────────────────────── */
+
+function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void }) {
+  const { data: stats, isLoading, error } = useTaskStats(task.id, 30);
+
+  const successRateColor = (rate: number) =>
+    rate >= 80 ? 'text-green-600' : rate >= 50 ? 'text-orange-500' : 'text-red-500';
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <BarChart2 className="h-5 w-5 text-blue-500" />
+            {task.name} — 执行统计（近 30 天）
+          </DialogTitle>
+          <DialogDescription>
+            成功率趋势 · 失败原因聚合
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+          </div>
+        ) : error ? (
+          <div className="flex items-center gap-2 text-red-600 py-4">
+            <AlertCircle className="h-5 w-5" />
+            <span>加载失败：{(error as Error).message}</span>
+          </div>
+        ) : stats ? (
+          <div className="space-y-6 py-2">
+            {/* 摘要 */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800 p-4 text-center">
+                <p className="text-2xl font-bold">{stats.summary.total}</p>
+                <p className="text-xs text-slate-500 mt-1">总执行次数</p>
+              </div>
+              <div className="rounded-xl bg-green-50 dark:bg-green-900/20 p-4 text-center">
+                <p className={`text-2xl font-bold ${successRateColor(stats.summary.successRate)}`}>
+                  {stats.summary.successRate}%
+                </p>
+                <p className="text-xs text-slate-500 mt-1">成功率</p>
+              </div>
+              <div className="rounded-xl bg-red-50 dark:bg-red-900/20 p-4 text-center">
+                <p className="text-2xl font-bold text-red-600">{stats.summary.failedCount}</p>
+                <p className="text-xs text-slate-500 mt-1">失败次数</p>
+              </div>
+              <div className="rounded-xl bg-blue-50 dark:bg-blue-900/20 p-4 text-center">
+                <p className="text-2xl font-bold text-blue-600">
+                  {stats.summary.avgDurationSec > 0 ? `${stats.summary.avgDurationSec}s` : '-'}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">平均耗时</p>
+              </div>
+            </div>
+
+            {/* 每日成功率趋势 */}
+            {stats.trend.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <TrendingUp className="h-4 w-4 text-blue-500" />
+                  每日成功率趋势
+                </h4>
+                <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
+                  {stats.trend.map((item) => (
+                    <div key={item.day} className="flex items-center gap-3 text-sm">
+                      <span className="w-24 shrink-0 text-slate-500 text-xs">{item.day}</span>
+                      <div className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
+                        <div
+                          className={cn(
+                            'h-full rounded-full transition-all',
+                            item.successRate >= 80
+                              ? 'bg-green-500'
+                              : item.successRate >= 50
+                              ? 'bg-orange-400'
+                              : 'bg-red-400'
+                          )}
+                          style={{ width: `${Math.max(2, item.successRate)}%` }}
+                        />
+                      </div>
+                      <span className={cn('w-10 text-right font-bold text-xs shrink-0', successRateColor(item.successRate))}>
+                        {item.successRate}%
+                      </span>
+                      <span className="text-xs text-slate-400 shrink-0">{item.total}次</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Top 10 失败原因 */}
+            {stats.topErrors.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <AlertTriangle className="h-4 w-4 text-orange-500" />
+                  高频失败原因 TOP 10
+                </h4>
+                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                  {stats.topErrors.map((err, idx) => (
+                    <div key={idx} className="flex items-start gap-3 text-xs rounded-lg p-2 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20">
+                      <span className="font-bold text-red-500 shrink-0 w-4">{idx + 1}</span>
+                      <span className="flex-1 text-slate-700 dark:text-slate-300 break-all line-clamp-2">
+                        {err.errorMessage}
+                      </span>
+                      <Badge variant="secondary" className="shrink-0 text-xs bg-red-100 dark:bg-red-900/30 text-red-600">
+                        {err.count}次
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {stats.trend.length === 0 && stats.topErrors.length === 0 && (
+              <div className="text-center py-6 text-slate-400">
+                <CheckCircle2 className="h-12 w-12 mx-auto mb-2 opacity-30" />
+                <p>近 30 天内暂无执行记录</p>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>关闭</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

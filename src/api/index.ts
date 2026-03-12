@@ -7,16 +7,25 @@ interface ApiResponse<T> {
   total?: number;
 }
 
+/**
+ * 从本地存储中读取认证 Token
+ */
+function getAuthToken(): string | null {
+  return localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+}
+
 export async function request<T>(
   endpoint: string,
   options?: RequestInit
 ): Promise<ApiResponse<T>> {
   const url = `${API_BASE}${endpoint}`;
+  const token = getAuthToken();
 
   try {
     const response = await fetch(url, {
       headers: {
         'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         ...options?.headers,
       },
       ...options,

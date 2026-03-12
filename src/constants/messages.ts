@@ -41,6 +41,7 @@ export const TASK_MESSAGES = {
   NO_TASKS_WITH_FILTER: '没有符合条件的任务',
   NO_TASKS_CREATE_NEW: '暂无任务，点击「新建任务」开始吧',
   NO_RECENT_EXECUTIONS: '暂无运行记录',
+  NO_DESCRIPTION: '暂无描述',
 
   // 加载状态
   LOADING_TASKS: '正在加载任务列表...',
@@ -57,6 +58,11 @@ export const TASK_MESSAGES = {
   BTN_RUN_NOW: '立即运行',
   BTN_RUNNING: '执行中...',
   BTN_REFRESH: '刷新',
+  BTN_DELETE_TASK: '删除任务',
+  BTN_EDIT_TASK: '编辑任务',
+  BTN_VIEW_REPORT: '查看报告',
+  BTN_PAUSE_TASK: '暂停任务',
+  BTN_ENABLE_TASK: '启用任务',
 
   // 表单标签
   FORM_CREATE_TITLE: '新建任务',

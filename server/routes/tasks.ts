@@ -1,8 +1,38 @@
 import { Router } from 'express';
 import { query, queryOne, getPool } from '../config/database';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
+import { authenticate, optionalAuth } from '../middleware/auth';
+import { taskSchedulerService } from '../services/TaskSchedulerService';
+import { executionService } from '../services/ExecutionService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 const router = Router();
+
+// ─────────────────────────────────────────────────
+// 审计日志工具（写入 Auto_TaskAuditLogs）
+// ─────────────────────────────────────────────────
+async function writeAuditLog(
+  taskId: number,
+  action: string,
+  operatorId: number,
+  metadata: Record<string, unknown>
+): Promise<void> {
+  try {
+    const pool = getPool();
+    await pool.execute(
+      `INSERT INTO Auto_TaskAuditLogs (task_id, action, operator_id, metadata, created_at)
+       VALUES (?, ?, ?, ?, NOW())`,
+      [taskId, action, operatorId, JSON.stringify(metadata)]
+    );
+  } catch (err) {
+    // 审计日志写入失败不影响主流程
+    logger.errorLog(err, 'Failed to write audit log', { taskId, action });
+  }
+}
+
+// 任务执行状态联合类型（与前端 useTasks.ts 保持一致）
+type TaskExecutionStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 
 interface Task {
   id: number;
@@ -11,11 +41,11 @@ interface Task {
   project_id?: number;
   project_name?: string;
   case_ids?: string;
-  trigger_type: string;
+  trigger_type: 'manual' | 'scheduled' | 'ci_triggered';
   cron_expression?: string;
   environment_id?: number;
   environment_name?: string;
-  status: string;
+  status: 'active' | 'paused' | 'archived';
   created_by?: number;
   created_by_name?: string;
   created_at: string;
@@ -32,7 +62,7 @@ interface TestCase {
 
 interface TaskExecution {
   id: number;
-  status: string;
+  status: TaskExecutionStatus;
   start_time?: string;
   end_time?: string;
   duration?: number;
@@ -47,13 +77,14 @@ const VALID_TRIGGER_TYPES = ['manual', 'scheduled', 'ci_triggered'] as const;
 const VALID_STATUSES = ['active', 'paused', 'archived'] as const;
 
 /**
- * 简单 Cron 表达式合法性校验（标准 5 段 cron）
+ * Cron 表达式合法性校验（标准 5 段 cron）
  * 格式：分 时 日 月 周
+ * 每段只允许：数字、*、, 、- 、/
  */
 function isValidCron(expr: string): boolean {
-  // 允许 "* / , - 数字" 组成的 5 段 cron
   const parts = expr.trim().split(/\s+/);
-  return parts.length === 5;
+  if (parts.length !== 5) return false;
+  return parts.every((part) => /^[\d*,\-/]+$/.test(part));
 }
 
 /**
@@ -65,7 +96,7 @@ function isValidCron(expr: string): boolean {
  *   status        - 按任务状态筛选（active/paused/archived）
  *   triggerType   - 按触发类型筛选（manual/scheduled/ci_triggered）
  *   keyword       - 按任务名称或描述模糊搜索
- *   limit         - 分页大小（默认 50）
+ *   limit         - 分页大小（默认 20）
  *   offset        - 分页偏移（默认 0）
  */
 router.get('/', async (req, res) => {
@@ -87,8 +118,8 @@ router.get('/', async (req, res) => {
       LEFT JOIN Auto_TestEnvironments e ON t.environment_id = e.id
       WHERE 1=1
     `;
-    const params: unknown[] = [];
-    const countParams: unknown[] = [];
+    const params: (string | number | null)[] = [];
+    const countParams: (string | number | null)[] = [];
 
     if (projectId) {
       const clause = ' AND t.project_id = ?';
@@ -101,15 +132,15 @@ router.get('/', async (req, res) => {
       const clause = ' AND t.status = ?';
       sql += clause;
       countSql += clause;
-      params.push(status);
-      countParams.push(status);
+      params.push(String(status));
+      countParams.push(String(status));
     }
     if (triggerType) {
       const clause = ' AND t.trigger_type = ?';
       sql += clause;
       countSql += clause;
-      params.push(triggerType);
-      countParams.push(triggerType);
+      params.push(String(triggerType));
+      countParams.push(String(triggerType));
     }
     if (keyword && typeof keyword === 'string' && keyword.trim()) {
       const clause = ' AND (t.name LIKE ? OR t.description LIKE ?)';
@@ -123,12 +154,31 @@ router.get('/', async (req, res) => {
     sql += ' ORDER BY t.updated_at DESC LIMIT ? OFFSET ?';
     params.push(Number(limit), Number(offset));
 
-    const [tasks, countResult] = await Promise.all([
+    // 统计今日范围（使用范围查询代替 DATE() 函数，可走 created_at/start_time 索引）
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    const todayStartStr = todayStart.toISOString().replace('T', ' ').substring(0, 19);
+    const todayEndStr = todayEnd.toISOString().replace('T', ' ').substring(0, 19);
+
+    // 所有独立查询并行执行，消除串行等待
+    const [tasks, countResult, statsResult, todayRunsResult] = await Promise.all([
       query<Task[]>(sql, params),
       query<{ total: number }[]>(countSql, countParams),
+      query<{ active_count: number }[]>(
+        `SELECT COUNT(*) as active_count FROM Auto_TestCaseTasks WHERE status = 'active'`
+      ),
+      query<{ today_runs: number }[]>(
+        `SELECT COUNT(*) as today_runs FROM Auto_TestCaseTaskExecutions
+         WHERE COALESCE(start_time, created_at) BETWEEN ? AND ?`,
+        [todayStartStr, todayEndStr]
+      ),
     ]);
 
     const total = countResult[0]?.total ?? 0;
+    const activeCount = statsResult[0]?.active_count ?? 0;
+    const todayRuns = todayRunsResult[0]?.today_runs ?? 0;
 
     // 批量获取所有任务的最近5条执行记录（避免 N+1）
     let executionsByTaskId: Map<number, TaskExecution[]> = new Map();
@@ -164,21 +214,6 @@ router.get('/', async (req, res) => {
       recentExecutions: executionsByTaskId.get(task.id) ?? [],
     }));
 
-    // 获取全局统计数据（不受分页影响）
-    const statsResult = await query<{ active_count: number }[]>(
-      `SELECT COUNT(*) as active_count FROM Auto_TestCaseTasks WHERE status = 'active'`
-    );
-    const activeCount = statsResult[0]?.active_count ?? 0;
-
-    // 统计今日运行次数（从所有任务的执行记录中统计）
-    const today = new Date().toISOString().split('T')[0];
-    const todayRunsResult = await query<{ today_runs: number }[]>(
-      `SELECT COUNT(*) as today_runs FROM Auto_TestCaseTaskExecutions
-       WHERE DATE(COALESCE(start_time, created_at)) = ?`,
-      [today]
-    );
-    const todayRuns = todayRunsResult[0]?.today_runs ?? 0;
-
     res.json({
       success: true,
       data,
@@ -189,7 +224,7 @@ router.get('/', async (req, res) => {
       }
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
 });
@@ -202,7 +237,7 @@ router.get('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: 'Invalid task id' });
+      return res.status(400).json({ success: false, message: '无效的任务 ID' });
     }
 
     const task = await queryOne<Task>(`
@@ -214,7 +249,7 @@ router.get('/:id', async (req, res) => {
     `, [id]);
 
     if (!task) {
-      return res.status(404).json({ success: false, message: 'Task not found' });
+      return res.status(404).json({ success: false, message: '任务不存在' });
     }
 
     // 获取关联的用例
@@ -234,28 +269,26 @@ router.get('/:id', async (req, res) => {
       }
     }
 
-    // 获取最近执行记录
-    const recentExecutions = await query<TaskExecution[]>(`
-      SELECT id, status, start_time, end_time, duration, passed_cases, failed_cases, total_cases
-      FROM Auto_TestCaseTaskExecutions
-      WHERE task_id = ?
-      ORDER BY COALESCE(start_time, created_at) DESC
-      LIMIT 5
-    `, [id]);
-
-    // 获取最近一次关联的 Auto_TestRun id，供前端跳转报告使用
-    const latestRunRow = await queryOne<{ run_id: number | null }>(`
-      SELECT tr.id as run_id
-      FROM Auto_TestRun tr
-      WHERE tr.id IN (
-        SELECT DISTINCT rr.execution_id
-        FROM Auto_TestRunResults rr
-        INNER JOIN Auto_TestCaseTaskExecutions te ON te.id = rr.execution_id
+    // 并行获取最近执行记录和最新关联 TestRun
+    const [recentExecutions, latestRunRow] = await Promise.all([
+      query<TaskExecution[]>(`
+        SELECT id, status, start_time, end_time, duration, passed_cases, failed_cases, total_cases
+        FROM Auto_TestCaseTaskExecutions
+        WHERE task_id = ?
+        ORDER BY COALESCE(start_time, created_at) DESC
+        LIMIT 5
+      `, [id]),
+      // Auto_TestRun.execution_id 直接存储了关联的 Auto_TestCaseTaskExecutions.id
+      // 通过 task_id 找到最近一次 TaskExecution，再经由 execution_id 字段定位对应的 TestRun
+      queryOne<{ run_id: number | null }>(`
+        SELECT tr.id as run_id
+        FROM Auto_TestRun tr
+        INNER JOIN Auto_TestCaseTaskExecutions te ON tr.execution_id = te.id
         WHERE te.task_id = ?
-      )
-      ORDER BY tr.start_time DESC
-      LIMIT 1
-    `, [id]);
+        ORDER BY tr.start_time DESC
+        LIMIT 1
+      `, [id]),
+    ]);
 
     res.json({
       success: true,
@@ -267,7 +300,7 @@ router.get('/:id', async (req, res) => {
       },
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
 });
@@ -276,9 +309,10 @@ router.get('/:id', async (req, res) => {
  * POST /api/tasks
  * 创建任务
  *
- * Body: { name, description?, projectId?, caseIds?, triggerType?, cronExpression?, environmentId?, createdBy? }
+ * Body: { name, description?, projectId?, caseIds?, triggerType?, cronExpression?, environmentId? }
+ * 注：createdBy 从认证用户上下文（req.user.id）获取，不接受客户端传入
  */
-router.post('/', generalAuthRateLimiter, async (req, res) => {
+router.post('/', generalAuthRateLimiter, optionalAuth, async (req, res) => {
   try {
     const {
       name,
@@ -288,8 +322,10 @@ router.post('/', generalAuthRateLimiter, async (req, res) => {
       triggerType = 'manual',
       cronExpression,
       environmentId,
-      createdBy = 1,
     } = req.body;
+
+    // createdBy 从认证中间件获取，防止客户端伪造；未认证时回退到系统默认用户（id=1）
+    const createdBy = req.user?.id ?? 1;
 
     // 参数校验
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -309,7 +345,7 @@ router.post('/', generalAuthRateLimiter, async (req, res) => {
         return res.status(400).json({ success: false, message: '定时任务必须提供 cronExpression' });
       }
       if (!isValidCron(cronExpression)) {
-        return res.status(400).json({ success: false, message: 'cronExpression 格式无效（需为标准5段 cron）' });
+        return res.status(400).json({ success: false, message: 'cronExpression 格式无效（需为标准5段 cron，如 0 2 * * *）' });
       }
     }
     if (caseIds !== undefined && !Array.isArray(caseIds)) {
@@ -333,14 +369,31 @@ router.post('/', generalAuthRateLimiter, async (req, res) => {
     );
 
     const insertResult = result as { insertId: number };
+    const newTaskId = insertResult.insertId;
+
+    // 写入审计日志
+    await writeAuditLog(newTaskId, 'created', createdBy, {
+      name: name.trim(),
+      triggerType,
+      cronExpression: cronExpression?.trim() || null,
+      caseCount: Array.isArray(caseIds) ? caseIds.length : 0,
+      projectId: projectId || null,
+    });
+
+    // 若为定时任务，注册到调度引擎
+    if (triggerType === 'scheduled') {
+      taskSchedulerService.registerTask(newTaskId).catch(err => {
+        logger.errorLog(err, `Failed to register task ${newTaskId} in scheduler`, {});
+      });
+    }
 
     res.json({
       success: true,
-      data: { id: insertResult.insertId },
+      data: { id: newTaskId },
       message: '任务创建成功',
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
 });
@@ -349,11 +402,11 @@ router.post('/', generalAuthRateLimiter, async (req, res) => {
  * PUT /api/tasks/:id
  * 更新任务
  */
-router.put('/:id', generalAuthRateLimiter, async (req, res) => {
+router.put('/:id', generalAuthRateLimiter, optionalAuth, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: 'Invalid task id' });
+      return res.status(400).json({ success: false, message: '无效的任务 ID' });
     }
 
     const {
@@ -382,8 +435,17 @@ router.put('/:id', generalAuthRateLimiter, async (req, res) => {
         message: `triggerType 必须是 ${VALID_TRIGGER_TYPES.join(' / ')} 之一`,
       });
     }
-    if (triggerType === 'scheduled' && cronExpression !== undefined && !isValidCron(cronExpression)) {
-      return res.status(400).json({ success: false, message: 'cronExpression 格式无效（需为标准5段 cron）' });
+    // 若将触发类型切换为 scheduled，必须同时提供有效的 cronExpression
+    if (triggerType === 'scheduled') {
+      if (cronExpression === undefined || cronExpression === null || String(cronExpression).trim() === '') {
+        return res.status(400).json({ success: false, message: '定时任务必须提供 cronExpression' });
+      }
+      if (!isValidCron(cronExpression)) {
+        return res.status(400).json({ success: false, message: 'cronExpression 格式无效（需为标准5段 cron，如 0 2 * * *）' });
+      }
+    } else if (triggerType !== undefined && cronExpression !== undefined && !isValidCron(cronExpression)) {
+      // 非 scheduled 类型但仍传了 cronExpression，仍做格式校验
+      return res.status(400).json({ success: false, message: 'cronExpression 格式无效（需为标准5段 cron，如 0 2 * * *）' });
     }
     if (status !== undefined && !VALID_STATUSES.includes(status as typeof VALID_STATUSES[number])) {
       return res.status(400).json({
@@ -398,11 +460,11 @@ router.put('/:id', generalAuthRateLimiter, async (req, res) => {
     // 确认任务存在
     const existing = await queryOne<{ id: number }>('SELECT id FROM Auto_TestCaseTasks WHERE id = ?', [id]);
     if (!existing) {
-      return res.status(404).json({ success: false, message: 'Task not found' });
+      return res.status(404).json({ success: false, message: '任务不存在' });
     }
 
     const updates: string[] = [];
-    const params: unknown[] = [];
+    const params: (string | number | null)[] = [];
 
     if (name !== undefined) {
       updates.push('name = ?');
@@ -445,9 +507,24 @@ router.put('/:id', generalAuthRateLimiter, async (req, res) => {
     const pool = getPool();
     await pool.execute(`UPDATE Auto_TestCaseTasks SET ${updates.join(', ')} WHERE id = ?`, params);
 
+    // 写入审计日志
+    const operatorId = req.user?.id ?? 1;
+    await writeAuditLog(id, 'updated', operatorId, {
+      changedFields: updates.map(u => u.split(' ')[0]),
+      triggerType,
+      status,
+    });
+
+    // 若涉及 cron/status/triggerType 变更，通知调度引擎更新
+    if (triggerType !== undefined || cronExpression !== undefined || status !== undefined) {
+      taskSchedulerService.registerTask(id).catch(err => {
+        logger.errorLog(err, `Failed to update task ${id} in scheduler`, {});
+      });
+    }
+
     res.json({ success: true, message: '任务更新成功' });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
 });
@@ -456,24 +533,29 @@ router.put('/:id', generalAuthRateLimiter, async (req, res) => {
  * DELETE /api/tasks/:id
  * 删除任务
  */
-router.delete('/:id', generalAuthRateLimiter, async (req, res) => {
+router.delete('/:id', generalAuthRateLimiter, optionalAuth, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: 'Invalid task id' });
+      return res.status(400).json({ success: false, message: '无效的任务 ID' });
     }
 
-    const existing = await queryOne<{ id: number }>('SELECT id FROM Auto_TestCaseTasks WHERE id = ?', [id]);
+    const existing = await queryOne<{ id: number; name: string }>('SELECT id, name FROM Auto_TestCaseTasks WHERE id = ?', [id]);
     if (!existing) {
-      return res.status(404).json({ success: false, message: 'Task not found' });
+      return res.status(404).json({ success: false, message: '任务不存在' });
     }
 
     const pool = getPool();
     await pool.execute('DELETE FROM Auto_TestCaseTasks WHERE id = ?', [id]);
 
+    // 审计日志 + 注销调度
+    const operatorId = req.user?.id ?? 1;
+    await writeAuditLog(id, 'deleted', operatorId, { name: existing.name });
+    taskSchedulerService.unregisterTask(id);
+
     res.json({ success: true, message: '任务已删除' });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
 });
@@ -482,13 +564,13 @@ router.delete('/:id', generalAuthRateLimiter, async (req, res) => {
  * PATCH /api/tasks/:id/status
  * 切换任务状态（active / paused / archived）
  */
-router.patch('/:id/status', generalAuthRateLimiter, async (req, res) => {
+router.patch('/:id/status', generalAuthRateLimiter, optionalAuth, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { status } = req.body;
 
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: 'Invalid task id' });
+      return res.status(400).json({ success: false, message: '无效的任务 ID' });
     }
     if (!VALID_STATUSES.includes(status as typeof VALID_STATUSES[number])) {
       return res.status(400).json({
@@ -497,17 +579,33 @@ router.patch('/:id/status', generalAuthRateLimiter, async (req, res) => {
       });
     }
 
-    const existing = await queryOne<{ id: number }>('SELECT id FROM Auto_TestCaseTasks WHERE id = ?', [id]);
+    const existing = await queryOne<{ id: number; status: string }>('SELECT id, status FROM Auto_TestCaseTasks WHERE id = ?', [id]);
     if (!existing) {
-      return res.status(404).json({ success: false, message: 'Task not found' });
+      return res.status(404).json({ success: false, message: '任务不存在' });
     }
 
     const pool = getPool();
     await pool.execute('UPDATE Auto_TestCaseTasks SET status = ? WHERE id = ?', [status, id]);
 
+    // 审计日志
+    const operatorId = req.user?.id ?? 1;
+    await writeAuditLog(id, 'status_changed', operatorId, {
+      from: existing.status,
+      to: status,
+    });
+
+    // 调度引擎响应（暂停/归档时注销，恢复 active 时重新注册）
+    if (status === 'active') {
+      taskSchedulerService.registerTask(id).catch(err => {
+        logger.errorLog(err, `Failed to re-register task ${id} after status change`, {});
+      });
+    } else {
+      taskSchedulerService.unregisterTask(id);
+    }
+
     res.json({ success: true, message: '状态更新成功' });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
 });
@@ -520,7 +618,7 @@ router.get('/:id/executions', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: 'Invalid task id' });
+      return res.status(400).json({ success: false, message: '无效的任务 ID' });
     }
     const limit = Math.min(100, parseInt(req.query.limit as string) || 20);
 
@@ -537,7 +635,306 @@ router.get('/:id/executions', async (req, res) => {
 
     res.json({ success: true, data });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : '服务器内部错误';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// P1: 执行控制 - 取消运行中的执行
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/tasks/:id/executions/:execId/cancel
+ * 取消某次正在运行的任务执行（仅限 pending / running 状态）
+ */
+router.post('/:id/executions/:execId/cancel', generalAuthRateLimiter, optionalAuth, async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id);
+    const execId = parseInt(req.params.execId);
+
+    if (isNaN(taskId) || isNaN(execId)) {
+      return res.status(400).json({ success: false, message: '无效的 ID' });
+    }
+
+    // 确认该执行属于该任务
+    const exec = await queryOne<{ id: number; status: string; task_id: number }>(
+      'SELECT id, status, task_id FROM Auto_TestCaseTaskExecutions WHERE id = ? AND task_id = ?',
+      [execId, taskId]
+    );
+
+    if (!exec) {
+      return res.status(404).json({ success: false, message: '执行记录不存在或不属于该任务' });
+    }
+    if (!['pending', 'running'].includes(exec.status)) {
+      return res.status(400).json({ success: false, message: `当前状态 ${exec.status} 不可取消` });
+    }
+
+    await executionService.cancelExecution(execId);
+
+    // 审计日志
+    const operatorId = req.user?.id ?? 1;
+    await writeAuditLog(taskId, 'execution_cancelled', operatorId, {
+      execId,
+      previousStatus: exec.status,
+    });
+
+    res.json({ success: true, message: '执行已取消' });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '服务器内部错误';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// P1: 手动立即触发任务
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/tasks/:id/run
+ * 手动立即触发任务执行
+ * - 受并发上限保护（调度引擎队列）
+ * - 写入审计日志
+ */
+router.post('/:id/run', generalAuthRateLimiter, optionalAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: '无效的任务 ID' });
+    }
+
+    const task = await queryOne<{ id: number; name: string; case_ids: string; status: string }>(
+      'SELECT id, name, case_ids, status FROM Auto_TestCaseTasks WHERE id = ?',
+      [id]
+    );
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    if (task.status === 'archived') {
+      return res.status(400).json({ success: false, message: '已归档任务不可触发' });
+    }
+
+    const operatorId = req.user?.id ?? 1;
+
+    // 写入审计日志（执行）
+    await writeAuditLog(id, 'manually_triggered', operatorId, {
+      triggeredBy: operatorId,
+    });
+
+    // 通过调度引擎分发（享受并发保护）
+    taskSchedulerService.dispatchTask(id, 'manual').catch(err => {
+      logger.errorLog(err, `Manual dispatch failed for task ${id}`, {});
+    });
+
+    res.json({ success: true, message: '任务已提交执行队列' });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '服务器内部错误';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// P2: 任务维度统计 - 成功率趋势 + 失败原因聚合
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/tasks/:id/stats
+ * 获取任务的执行统计数据
+ *
+ * 返回：
+ *   - summary:   整体成功率、平均耗时、总执行次数
+ *   - trend:     近 N 天每日成功率趋势（按 start_time 分组）
+ *   - topErrors: 失败次数最多的前 10 条错误原因（来自 Auto_TestRunResults）
+ */
+router.get('/:id/stats', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: '无效的任务 ID' });
+    }
+
+    const days = Math.min(90, parseInt(req.query.days as string) || 30);
+
+    // 并行查询：整体摘要 + 每日趋势 + 失败原因
+    const [summaryRows, trendRows, topErrorRows] = await Promise.all([
+      // 1. 整体摘要
+      query<{
+        total: number;
+        success_count: number;
+        failed_count: number;
+        avg_duration: number;
+        last_run_at: string | null;
+      }[]>(`
+        SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+          SUM(CASE WHEN status IN ('failed', 'cancelled') THEN 1 ELSE 0 END) as failed_count,
+          ROUND(AVG(NULLIF(duration, 0))) as avg_duration,
+          MAX(COALESCE(start_time, created_at)) as last_run_at
+        FROM Auto_TestCaseTaskExecutions
+        WHERE task_id = ?
+          AND COALESCE(start_time, created_at) >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      `, [id, days]),
+
+      // 2. 每日成功率趋势
+      query<{
+        day: string;
+        total: number;
+        success_count: number;
+        failed_count: number;
+        avg_duration: number;
+      }[]>(`
+        SELECT
+          DATE(COALESCE(start_time, created_at)) as day,
+          COUNT(*) as total,
+          SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+          SUM(CASE WHEN status IN ('failed', 'cancelled') THEN 1 ELSE 0 END) as failed_count,
+          ROUND(AVG(NULLIF(duration, 0))) as avg_duration
+        FROM Auto_TestCaseTaskExecutions
+        WHERE task_id = ?
+          AND COALESCE(start_time, created_at) >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        GROUP BY DATE(COALESCE(start_time, created_at))
+        ORDER BY day ASC
+      `, [id, days]),
+
+      // 3. 失败原因聚合（从 Auto_TestRunResults 反查 executionId）
+      query<{ error_message: string; count: number }[]>(`
+        SELECT
+          LEFT(COALESCE(trr.error_message, 'Unknown error'), 200) as error_message,
+          COUNT(*) as count
+        FROM Auto_TestRunResults trr
+        INNER JOIN Auto_TestRun tr ON tr.execution_id IN (
+          SELECT id FROM Auto_TestCaseTaskExecutions WHERE task_id = ?
+        )
+        WHERE trr.execution_id = tr.id
+          AND trr.status IN ('failed', 'error')
+          AND tr.start_time >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        GROUP BY LEFT(COALESCE(trr.error_message, 'Unknown error'), 200)
+        ORDER BY count DESC
+        LIMIT 10
+      `, [id, days]),
+    ]);
+
+    const summary = summaryRows[0] ?? { total: 0, success_count: 0, failed_count: 0, avg_duration: 0, last_run_at: null };
+    const successRate = summary.total > 0
+      ? Math.round((Number(summary.success_count) / Number(summary.total)) * 100)
+      : 0;
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          total: Number(summary.total),
+          successCount: Number(summary.success_count),
+          failedCount: Number(summary.failed_count),
+          successRate,
+          avgDurationSec: Number(summary.avg_duration) || 0,
+          lastRunAt: summary.last_run_at,
+          periodDays: days,
+        },
+        trend: trendRows.map(r => ({
+          day: r.day,
+          total: Number(r.total),
+          successCount: Number(r.success_count),
+          failedCount: Number(r.failed_count),
+          successRate: Number(r.total) > 0
+            ? Math.round((Number(r.success_count) / Number(r.total)) * 100)
+            : 0,
+          avgDurationSec: Number(r.avg_duration) || 0,
+        })),
+        topErrors: topErrorRows.map(e => ({
+          errorMessage: e.error_message,
+          count: Number(e.count),
+        })),
+      },
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '服务器内部错误';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// P2: 审计日志查询
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/tasks/:id/audit-logs
+ * 获取任务的审计操作日志
+ *
+ * Query params:
+ *   limit  - 分页大小（默认 50，最大 200）
+ *   offset - 分页偏移（默认 0）
+ */
+router.get('/:id/audit-logs', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: '无效的任务 ID' });
+    }
+
+    const limit = Math.min(200, parseInt(req.query.limit as string) || 50);
+    const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
+
+    const [logs, countResult] = await Promise.all([
+      query<{
+        id: number;
+        task_id: number;
+        action: string;
+        operator_id: number;
+        operator_name: string | null;
+        metadata: string;
+        created_at: string;
+      }[]>(`
+        SELECT a.id, a.task_id, a.action, a.operator_id,
+               u.display_name as operator_name,
+               a.metadata, a.created_at
+        FROM Auto_TaskAuditLogs a
+        LEFT JOIN Auto_Users u ON a.operator_id = u.id
+        WHERE a.task_id = ?
+        ORDER BY a.created_at DESC
+        LIMIT ? OFFSET ?
+      `, [id, limit, offset]),
+
+      query<{ total: number }[]>(
+        'SELECT COUNT(*) as total FROM Auto_TaskAuditLogs WHERE task_id = ?',
+        [id]
+      ),
+    ]);
+
+    res.json({
+      success: true,
+      data: logs.map(l => ({
+        id: l.id,
+        action: l.action,
+        operatorId: l.operator_id,
+        operatorName: l.operator_name,
+        metadata: (() => { try { return JSON.parse(l.metadata); } catch { return {}; } })(),
+        createdAt: l.created_at,
+      })),
+      total: countResult[0]?.total ?? 0,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '服务器内部错误';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// P1: 调度器状态监控
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/tasks/scheduler/status
+ * 获取调度引擎当前运行状态（运行中、排队、已调度任务列表）
+ */
+router.get('/scheduler/status', async (_req, res) => {
+  try {
+    const status = taskSchedulerService.getStatus();
+    res.json({ success: true, data: status });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
 });

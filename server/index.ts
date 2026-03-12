@@ -18,6 +18,7 @@ import authRoutes from './routes/auth';
 import { dailySummaryScheduler } from './services/DailySummaryScheduler';
 import { executionMonitorService } from './services/ExecutionMonitorService';
 import { initializeWebSocketService, webSocketService } from './services/WebSocketService';
+import { taskSchedulerService } from './services/TaskSchedulerService';
 
 const app = express();
 const BASE_PORT = parseInt(process.env.PORT || '3000', 10);
@@ -219,6 +220,11 @@ function startServer(port: number, attempt: number = 1): void {
 
     // 启动执行监控服务
     executionMonitorService.start();
+
+    // 启动任务定时调度引擎（Cron 引擎，支持漏触发补偿）
+    taskSchedulerService.start().catch(err => {
+      logger.errorLog(err, 'TaskSchedulerService failed to start', {});
+    });
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {
@@ -261,6 +267,7 @@ process.on('SIGTERM', () => {
   }, LOG_CONTEXTS.HTTP);
   dailySummaryScheduler.stop();
   executionMonitorService.stop();
+  taskSchedulerService.stop();
   webSocketService?.close();
   process.exit(0);
 });
@@ -272,6 +279,7 @@ process.on('SIGINT', () => {
   }, LOG_CONTEXTS.HTTP);
   dailySummaryScheduler.stop();
   executionMonitorService.stop();
+  taskSchedulerService.stop();
   webSocketService?.close();
   process.exit(0);
 });

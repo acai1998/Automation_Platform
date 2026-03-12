@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getToken } from '../services/authApi';
 
 export interface Task {
   id: number;
@@ -59,6 +60,58 @@ export interface CreateTaskInput {
   cronExpression?: string;
   environmentId?: number;
   createdBy?: number;
+  /** 失败重试次数，默认 1 */
+  maxRetries?: number;
+  /** 重试延迟毫秒，默认 30000 */
+  retryDelayMs?: number;
+}
+
+// ---- 任务统计 ----
+
+export interface TaskStatsSummary {
+  total: number;
+  successCount: number;
+  failedCount: number;
+  successRate: number;
+  avgDurationSec: number;
+  lastRunAt: string | null;
+  periodDays: number;
+}
+
+export interface TaskStatsTrendItem {
+  day: string;
+  total: number;
+  successCount: number;
+  failedCount: number;
+  successRate: number;
+  avgDurationSec: number;
+}
+
+export interface TaskStatsTopError {
+  errorMessage: string;
+  count: number;
+}
+
+export interface TaskStatsResult {
+  summary: TaskStatsSummary;
+  trend: TaskStatsTrendItem[];
+  topErrors: TaskStatsTopError[];
+}
+
+// ---- 审计日志 ----
+
+export interface AuditLogEntry {
+  id: number;
+  action: string;
+  operatorId: number;
+  operatorName: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AuditLogsResult {
+  data: AuditLogEntry[];
+  total: number;
 }
 
 export interface UpdateTaskInput {
@@ -115,20 +168,23 @@ export function useTaskDetail(id: number | null) {
   });
 }
 
-// ---------- 立即运行 ----------
+// ---------- 立即运行（通过调度引擎，受并发上限保护） ----------
 
 export function useRunTask() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (taskId: number) => {
-      const response = await fetch('/api/jenkins/trigger', {
+      const token = getToken();
+      const response = await fetch(`/api/tasks/${taskId}/run`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId, triggerType: 'manual' }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || '触发任务失败');
-      return result.data;
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
@@ -199,6 +255,84 @@ export function useUpdateTaskStatus() {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['task-detail', variables.id] });
     },
+  });
+}
+
+// ---------- 取消执行 ----------
+
+export function useCancelExecution() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ taskId, execId }: { taskId: number; execId: number }) => {
+      const token = getToken();
+      const response = await fetch(`/api/tasks/${taskId}/executions/${execId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || '取消执行失败');
+      return result;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['task-detail', variables.taskId] });
+    },
+  });
+}
+
+// ---------- 任务统计 ----------
+
+export function useTaskStats(taskId: number | null, days = 30) {
+  return useQuery<TaskStatsResult>({
+    queryKey: ['task-stats', taskId, days],
+    queryFn: async () => {
+      const response = await fetch(`/api/tasks/${taskId}/stats?days=${days}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || '获取任务统计失败');
+      return result.data as TaskStatsResult;
+    },
+    enabled: taskId != null,
+    staleTime: 5 * 60 * 1000, // 5分钟内不重新请求
+  });
+}
+
+// ---------- 审计日志 ----------
+
+export function useTaskAuditLogs(taskId: number | null, limit = 50, offset = 0) {
+  return useQuery<AuditLogsResult>({
+    queryKey: ['task-audit-logs', taskId, limit, offset],
+    queryFn: async () => {
+      const response = await fetch(`/api/tasks/${taskId}/audit-logs?limit=${limit}&offset=${offset}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || '获取审计日志失败');
+      return { data: result.data as AuditLogEntry[], total: result.total };
+    },
+    enabled: taskId != null,
+  });
+}
+
+// ---------- 调度器状态 ----------
+
+export interface SchedulerStatus {
+  running: number[];
+  queued: number[];
+  scheduled: number[];
+  concurrencyLimit: number;
+}
+
+export function useSchedulerStatus() {
+  return useQuery<SchedulerStatus>({
+    queryKey: ['scheduler-status'],
+    queryFn: async () => {
+      const response = await fetch('/api/tasks/scheduler/status');
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || '获取调度器状态失败');
+      return result.data as SchedulerStatus;
+    },
+    refetchInterval: 10_000, // 每10秒刷新一次
   });
 }
 
