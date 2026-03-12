@@ -52,8 +52,8 @@ interface RetryState {
 /** 全局最大并发执行任务数 */
 const CONCURRENCY_LIMIT = parseInt(process.env.TASK_CONCURRENCY_LIMIT || '3', 10);
 
-/** 系统自动操作时 operator_id 使用 null（调度引擎、补偿触发等） */
-const SCHEDULER_USER_ID: null = null;
+/** 系统自动操作时 operator_id 使用 0（调度引擎、补偿触发等） */
+const SCHEDULER_USER_ID = 0;
 
 /** 最大漏触发补偿窗口（毫秒），默认 24 小时 */
 const MAX_MISSED_WINDOW_MS = 24 * 60 * 60 * 1000;
