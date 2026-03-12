@@ -52,8 +52,8 @@ interface RetryState {
 /** 全局最大并发执行任务数 */
 const CONCURRENCY_LIMIT = parseInt(process.env.TASK_CONCURRENCY_LIMIT || '3', 10);
 
-/** 系统用户 ID（调度触发时使用） */
-const SCHEDULER_USER_ID = 1;
+/** 系统自动操作时 operator_id 使用 null（调度引擎、补偿触发等） */
+const SCHEDULER_USER_ID: null = null;
 
 /** 最大漏触发补偿窗口（毫秒），默认 24 小时 */
 const MAX_MISSED_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -769,7 +769,7 @@ export class TaskSchedulerService {
   private async recordAuditLog(
     taskId: number,
     action: string,
-    operatorId: number,
+    operatorId: number | null,
     metadata: Record<string, unknown>
   ): Promise<void> {
     try {

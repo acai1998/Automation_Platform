@@ -143,6 +143,9 @@ npx tsc --noEmit -p tsconfig.server.json
 - DELETE `/api/tasks/:id` - 删除任务
 - GET `/api/tasks/:id/executions` - 获取任务执行历史
 - POST `/api/tasks/:id/execute` - 立即执行任务
+- POST `/api/tasks/:id/executions/:execId/cancel` - 取消运行中的执行
+- GET `/api/tasks/:id/stats` - 获取任务维度统计（成功率趋势、失败原因聚合 Top 10）
+- GET `/api/tasks/:id/audit` - 获取任务审计日志（谁创建/修改/执行）
 
 #### 6. Git 仓库管理（`/api/repositories`）
 - GET `/api/repositories` - 获取仓库配置列表
@@ -175,6 +178,7 @@ npx tsc --noEmit -p tsconfig.server.json
 - `ExecutionMonitorService` - 执行监控
 - `ExecutionScheduler` - 执行调度器
 - `SchedulerService` - 任务调度服务
+- `TaskSchedulerService` - **定时调度引擎**（自研5段式Cron、24h补偿窗口、1分钟DB轮询、FIFO等待队列、指数退避重试、并发上限控制）
 - `DailySummaryScheduler` - 每日汇总调度
 - `ScriptParserService` - 脚本解析服务
 - `JenkinsStatusService` - Jenkins 状态监控
@@ -185,12 +189,13 @@ npx tsc --noEmit -p tsconfig.server.json
 - `Auto_Users` — 用户表
 - `Auto_TestCaseProjects` — 测试用例项目表
 - `Auto_TestCase` — 测试用例资产表
-- `Auto_TestCaseTasks` — 测试任务表
+- `Auto_TestCaseTasks` — 测试任务表（v1.3.0 新增 `max_retries`、`retry_delay_ms` 字段）
 - `Auto_TestEnvironments` — 测试环境配置表
 - `Auto_TestRun` — 测试执行批次表（新增 execution_id 字段关联任务执行）
 - `Auto_TestRunResults` — 测试用例执行结果表
 - `Auto_TestCaseTaskExecutions` — 测试任务执行记录表
 - `Auto_TestCaseDailySummaries` — 每日统计汇总表
+- `Auto_TaskAuditLogs` — **任务操作审计日志表**（v1.3.0 新增，记录10种操作行为）
 - `Auto_RepositoryConfigs` — Git 仓库配置表
 - `Auto_RepositoryScriptMappings` — 仓库脚本映射表
 - `Auto_SyncLogs` — 仓库同步日志表
@@ -202,6 +207,16 @@ npx tsc --noEmit -p tsconfig.server.json
   - 关联 `Auto_TestCaseTaskExecutions.id`，消除对时间窗口反查的依赖
   - 在 triggerExecution 事务中与 TestRun 同步创建后立即写入
   - 提升查询性能和数据一致性
+
+### 重要表结构更新（2026-03，v1.3.0）
+- `Auto_TestCaseTasks` 新增字段：
+  - `max_retries TINYINT(3) NOT NULL DEFAULT 1` — 失败最大重试次数
+  - `retry_delay_ms INT(11) NOT NULL DEFAULT 30000` — 重试延迟毫秒
+- 新增 `Auto_TaskAuditLogs` 表：
+  - `operator_id INT(11) DEFAULT NULL`（NULL = 系统自动操作，配合 `ON DELETE SET NULL` 外键）
+  - 记录10种操作：`created / updated / deleted / status_changed / manually_triggered / execution_cancelled / compensated / triggered / retry_scheduled / permanently_failed`
+- 新增性能索引：`Auto_TestCaseTaskExecutions`（task+start/status/created）、`Auto_TestCaseTasks`（trigger+status/updated）、`Auto_TestRunResults`（status+execution_id）
+- 迁移脚本：`scripts/migrate-v1.3.0.sql`（可通过 `node scripts/run-migration.js` 或 mysql 客户端直接执行）
 
 ## 路径别名配置
 
@@ -469,17 +484,29 @@ Jenkins 回调支持三种认证方式（任选其一）：
 2. **一次性任务**：手动触发立即执行
 3. **周期性任务**：按固定间隔重复执行
 
-### 调度规则
-- 支持多个测试环境
-- 支持测试用例分组
-- 支持失败重试机制
-- 支持任务依赖关系
+### TaskSchedulerService 核心能力（v1.3.0）
 
-### 任务执行
-- 任务执行会创建独立的执行批次
-- 支持并发执行限制
-- 支持任务优先级
-- 记录详细的执行日志
+#### 调度引擎
+- **自研5段式 Cron 解析**：无第三方依赖，支持 `* / , -` 语法
+- **服务重启恢复**：启动时遍历 DB 中所有 `trigger_type='scheduled'` 的 active 任务并自动注册
+- **漏触发补偿**：基于 `lastRunAt` 检测 24h 窗口内的漏触发，自动补偿执行
+- **每分钟 DB 轮询**：自动同步任务增删改（cron 变更、状态变更、新任务注册）
+
+#### 执行控制
+- **并发上限**：默认 3，可通过环境变量 `TASK_CONCURRENCY_LIMIT` 配置
+- **FIFO 内存等待队列**：超出并发上限的任务进入队列，有空闲时自动 drain
+- **失败重试**：指数退避策略，由 `max_retries`（默认 1）和 `retry_delay_ms`（默认 30s）字段控制
+- **取消执行**：支持取消 `pending/running` 状态的任务执行
+
+#### 审计日志
+- 10 种操作行为全链路追踪，写入 `Auto_TaskAuditLogs`
+- `operator_id = NULL` 表示系统自动操作，非 NULL 表示真实用户操作
+- 审计写入失败不影响主流程（静默处理）
+
+### 环境变量
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `TASK_CONCURRENCY_LIMIT` | `3` | 最大并发任务数 |
 
 ---
 
@@ -489,7 +516,7 @@ Jenkins 回调支持三种认证方式（任选其一）：
 | `Auto_Users` | 用户表 | 存储用户信息和权限 |
 | `Auto_TestCaseProjects` | 测试用例项目表 | 组织和分类测试用例项目 |
 | `Auto_TestCase` | 测试用例资产表 | 存储用例定义、脚本路径和元数据 |
-| `Auto_TestCaseTasks` | 测试任务表 | 定义和管理测试任务及其调度规则 |
+| `Auto_TestCaseTasks` | 测试任务表 | 定义和管理测试任务及其调度规则（含 max_retries/retry_delay_ms） |
 | `Auto_TestEnvironments` | 测试环境配置表 | 管理测试执行环境配置 |
 | `Auto_TestRun` | 测试执行批次表 | 记录执行批次的整体信息和统计 |
 | `Auto_TestCaseTaskExecutions` | 测试任务执行记录表 | 记录任务维度的执行历史 |
@@ -498,6 +525,7 @@ Jenkins 回调支持三种认证方式（任选其一）：
 | `Auto_RepositoryConfigs` | 仓库配置表 | Git 仓库连接配置及认证管理 |
 | `Auto_RepositoryScriptMappings` | 仓库脚本映射表 | 脚本文件与测试用例的映射关系 |
 | `Auto_SyncLogs` | 仓库同步日志表 | 记录 Git 仓库同步的历史和状态 |
+| `Auto_TaskAuditLogs` | 任务审计日志表 | 记录任务全生命周期10种操作行为，v1.3.0 新增 |
 
 ### 禁止硬编码 SQL
 **所有数据库操作必须通过 `server/config/database.ts` 中的连接池进行，禁止在代码中硬编码 SQL**
@@ -952,6 +980,15 @@ bash deployment/scripts/verify-env.sh
 
 ## 更新日志
 
+### v1.3.0 (2026-03-12)
+- 🚀 新增 `TaskSchedulerService` 定时调度引擎：自研5段式 Cron 解析、服务重启任务恢复、24h 漏触发补偿、每分钟 DB 轮询同步
+- 🔒 新增任务执行控制：FIFO 等待队列、并发上限（默认3可配置）、指数退避重试策略、支持取消运行中执行
+- 📊 新增任务维度统计：`GET /api/tasks/:id/stats`（成功率趋势、Top 10 失败原因聚合）
+- 🔍 新增权限与审计：`Auto_TaskAuditLogs` + `GET /api/tasks/:id/audit`（10种操作行为追踪）
+- 🗄️ 数据库迁移 `scripts/migrate-v1.3.0.sql`：新建审计表、重试配置字段、多组性能索引
+- 🐛 修复外键约束：`operator_id` 改为 `DEFAULT NULL`，解决 `ON DELETE SET NULL` 与 `NOT NULL` 不兼容导致的 errno 150
+- 🎨 任务 UI 增强：集成统计图表（成功率折线图、失败原因柱状图）、审计日志时间线、调度器状态监控面板
+
 ### v1.2.0 (2026-03-12)
 - ✨ 任务管理页面新增新建/编辑/删除完整交互流程（含表单校验）
 - 🔍 任务列表支持 keyword/status/triggerType 筛选与分页
@@ -982,4 +1019,4 @@ bash deployment/scripts/verify-env.sh
 ---
 
 **最后更新时间**：2026-03-12
-**文档版本**：v1.2.0
+**文档版本**：v1.3.0

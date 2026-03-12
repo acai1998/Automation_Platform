@@ -103,7 +103,7 @@ export interface TaskStatsResult {
 export interface AuditLogEntry {
   id: number;
   action: string;
-  operatorId: number;
+  operatorId: number | null;   // null = 系统自动操作
   operatorName: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
@@ -241,7 +241,7 @@ export function useUpdateTask() {
   });
 }
 
-// ---------- 切换状态 ----------
+// ---------- 切换状态（带乐观更新） ----------
 
 export function useUpdateTaskStatus() {
   const queryClient = useQueryClient();
@@ -256,6 +256,42 @@ export function useUpdateTaskStatus() {
       if (!response.ok) throw new Error(result.message || '更新任务状态失败');
       return result;
     },
+
+    // 乐观更新：在 API 调用前立即更新缓存
+    onMutate: async ({ id, status }) => {
+      // 1. 取消所有正在进行的 tasks 查询，防止覆盖乐观更新
+      await queryClient.cancelQueries({ queryKey: ['tasks'] });
+
+      // 2. 快照当前缓存状态用于回滚
+      const previousTasksData = queryClient.getQueriesData<TaskListResult>({ queryKey: ['tasks'] });
+
+      // 3. 乐观更新所有匹配的 tasks 查询缓存
+      queryClient.setQueriesData<TaskListResult>({ queryKey: ['tasks'] }, (old) => {
+        if (!old) return old;
+
+        return {
+          ...old,
+          data: old.data.map(task =>
+            task.id === id ? { ...task, status } : task
+          ),
+        };
+      });
+
+      // 4. 返回快照用于错误回滚
+      return { previousTasksData };
+    },
+
+    // 错误回滚：API 失败时恢复之前的缓存状态
+    onError: (_error, _variables, context) => {
+      // 恢复所有快照的查询数据
+      if (context?.previousTasksData) {
+        context.previousTasksData.forEach(([queryKey, data]) => {
+          queryClient.setQueryData(queryKey, data);
+        });
+      }
+    },
+
+    // 成功后同步：确保与服务器状态一致
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['task-detail', variables.id] });
@@ -338,7 +374,7 @@ export function useSchedulerStatus() {
   });
 }
 
-// ---------- 删除 ----------
+// ---------- 删除（带乐观更新） ----------
 
 export function useDeleteTask() {
   const queryClient = useQueryClient();
@@ -352,8 +388,212 @@ export function useDeleteTask() {
       if (!response.ok) throw new Error(result.message || '删除任务失败');
       return result;
     },
+
+    // 乐观更新：在 API 调用前立即从缓存中移除任务
+    onMutate: async (taskId) => {
+      // 1. 取消所有正在进行的 tasks 查询
+      await queryClient.cancelQueries({ queryKey: ['tasks'] });
+
+      // 2. 快照当前缓存状态用于回滚
+      const previousTasksData = queryClient.getQueriesData<TaskListResult>({ queryKey: ['tasks'] });
+
+      // 3. 乐观移除任务并更新总数
+      queryClient.setQueriesData<TaskListResult>({ queryKey: ['tasks'] }, (old) => {
+        if (!old) return old;
+
+        return {
+          ...old,
+          data: old.data.filter(task => task.id !== taskId),
+          total: Math.max(0, old.total - 1), // 确保总数不为负
+        };
+      });
+
+      // 4. 返回快照用于错误回滚
+      return { previousTasksData };
+    },
+
+    // 错误回滚：API 失败时恢复之前的缓存状态
+    onError: (_error, _taskId, context) => {
+      // 恢复所有快照的查询数据
+      if (context?.previousTasksData) {
+        context.previousTasksData.forEach(([queryKey, data]) => {
+          queryClient.setQueryData(queryKey, data);
+        });
+      }
+    },
+
+    // 成功后同步：刷新分页和统计数据
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+}
+
+// ---------- 批量更新状态 ----------
+
+export function useBatchUpdateTaskStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      taskIds,
+      status
+    }: {
+      taskIds: number[];
+      status: 'active' | 'paused' | 'archived'
+    }) => {
+      // 并行 API 调用以提高性能
+      const results = await Promise.allSettled(
+        taskIds.map(id =>
+          fetch(`/api/tasks/${id}/status`, {
+            method: 'PATCH',
+            headers: buildAuthHeaders(),
+            body: JSON.stringify({ status }),
+          }).then(res => {
+            if (!res.ok) throw new Error(`Task ${id} failed`);
+            return res.json();
+          })
+        )
+      );
+
+      const successes = results.filter(r => r.status === 'fulfilled').length;
+      const failures = results.filter(r => r.status === 'rejected').length;
+
+      return { successes, failures, total: taskIds.length };
+    },
+
+    // 乐观更新所有选中的任务
+    onMutate: async ({ taskIds, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['tasks'] });
+
+      const previousTasksData = queryClient.getQueriesData<TaskListResult>({
+        queryKey: ['tasks']
+      });
+
+      // 批量更新所有选中任务的状态
+      queryClient.setQueriesData<TaskListResult>({ queryKey: ['tasks'] }, (old) => {
+        if (!old) return old;
+
+        return {
+          ...old,
+          data: old.data.map(task =>
+            taskIds.includes(task.id) ? { ...task, status } : task
+          ),
+        };
+      });
+
+      return { previousTasksData };
+    },
+
+    // 错误回滚
+    onError: (_error, _variables, context) => {
+      if (context?.previousTasksData) {
+        context.previousTasksData.forEach(([queryKey, data]) => {
+          queryClient.setQueryData(queryKey, data);
+        });
+      }
+    },
+
+    // 成功后同步
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+}
+
+// ---------- 批量删除 ----------
+
+export function useBatchDeleteTask() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (taskIds: number[]) => {
+      const results = await Promise.allSettled(
+        taskIds.map(id =>
+          fetch(`/api/tasks/${id}`, {
+            method: 'DELETE',
+            headers: buildAuthHeaders(),
+          }).then(res => {
+            if (!res.ok) throw new Error(`Task ${id} failed`);
+            return res.json();
+          })
+        )
+      );
+
+      const successes = results.filter(r => r.status === 'fulfilled').length;
+      const failures = results.filter(r => r.status === 'rejected').length;
+
+      return { successes, failures, total: taskIds.length };
+    },
+
+    // 乐观移除所有选中的任务
+    onMutate: async (taskIds) => {
+      await queryClient.cancelQueries({ queryKey: ['tasks'] });
+
+      const previousTasksData = queryClient.getQueriesData<TaskListResult>({
+        queryKey: ['tasks']
+      });
+
+      queryClient.setQueriesData<TaskListResult>({ queryKey: ['tasks'] }, (old) => {
+        if (!old) return old;
+
+        return {
+          ...old,
+          data: old.data.filter(task => !taskIds.includes(task.id)),
+          total: Math.max(0, old.total - taskIds.length),
+        };
+      });
+
+      return { previousTasksData };
+    },
+
+    // 错误回滚
+    onError: (_error, _taskIds, context) => {
+      if (context?.previousTasksData) {
+        context.previousTasksData.forEach(([queryKey, data]) => {
+          queryClient.setQueryData(queryKey, data);
+        });
+      }
+    },
+
+    // 成功后同步
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+}
+
+// ---------- 批量运行 ----------
+
+export function useBatchRunTask() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (taskIds: number[]) => {
+      const results = await Promise.allSettled(
+        taskIds.map(id =>
+          fetch(`/api/tasks/${id}/run`, {
+            method: 'POST',
+            headers: buildAuthHeaders(),
+          }).then(res => {
+            if (!res.ok) throw new Error(`Task ${id} failed`);
+            return res.json();
+          })
+        )
+      );
+
+      const successes = results.filter(r => r.status === 'fulfilled').length;
+      const failures = results.filter(r => r.status === 'rejected').length;
+
+      return { successes, failures, total: taskIds.length };
+    },
+
+    // 批量运行不需要乐观更新，因为运行状态由服务器控制
+
+    // 成功后刷新任务列表和测试运行记录
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
     },
   });
 }

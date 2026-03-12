@@ -11,11 +11,16 @@
 -- ============================================================
 
 -- ── 1. 任务审计日志表 ────────────────────────────────────────
+-- 说明：
+--   operator_id 设计为 NULL-able：
+--     NULL  = 系统自动操作（调度引擎、补偿触发等）
+--     非空  = 真实用户操作
+--   ON DELETE SET NULL：用户被删除后审计记录保留，operator_id 置 NULL
 CREATE TABLE IF NOT EXISTS `Auto_TaskAuditLogs` (
   `id`          INT(11) NOT NULL AUTO_INCREMENT COMMENT '日志ID',
   `task_id`     INT(11) NOT NULL                COMMENT '关联任务ID',
   `action`      VARCHAR(100) NOT NULL           COMMENT '操作类型（created/updated/deleted/status_changed/manually_triggered/execution_cancelled/compensated/triggered/retry_scheduled/permanently_failed）',
-  `operator_id` INT(11) NOT NULL DEFAULT 1      COMMENT '操作人ID（1=系统）',
+  `operator_id` INT(11) DEFAULT NULL            COMMENT '操作人ID（NULL=系统自动）',
   `metadata`    TEXT DEFAULT NULL               COMMENT '操作元数据（JSON）',
   `created_at`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
   PRIMARY KEY (`id`),

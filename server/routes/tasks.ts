@@ -15,7 +15,7 @@ const router = Router();
 async function writeAuditLog(
   taskId: number,
   action: string,
-  operatorId: number,
+  operatorId: number | null,
   metadata: Record<string, unknown>
 ): Promise<void> {
   try {
@@ -990,7 +990,7 @@ router.get('/:id/audit-logs', async (req, res) => {
         id: number;
         task_id: number;
         action: string;
-        operator_id: number;
+        operator_id: number | null;
         operator_name: string | null;
         metadata: string;
         created_at: string;

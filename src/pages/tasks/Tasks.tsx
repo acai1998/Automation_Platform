@@ -31,6 +31,8 @@ import {
   ListOrdered,
   User,
   Monitor,
+  CheckSquare,
+  Pause,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -70,11 +72,17 @@ import {
   useTaskStats,
   useTaskAuditLogs,
   useSchedulerStatus,
+  useBatchUpdateTaskStatus,
+  useBatchDeleteTask,
+  useBatchRunTask,
   type Task,
   type TaskExecution,
   type CreateTaskInput,
   type TaskListParams,
 } from '@/hooks/useTasks';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BatchActionBar } from '@/components/tasks/BatchActionBar';
+import { BatchConfirmDialog } from '@/components/tasks/BatchConfirmDialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -131,12 +139,25 @@ export default function Tasks() {
   const deleteTaskMutation = useDeleteTask();
   const cancelExecutionMutation = useCancelExecution();
 
+  // ── 批量操作 mutation ──────────────────────────────────
+  const batchUpdateStatusMutation = useBatchUpdateTaskStatus();
+  const batchDeleteMutation = useBatchDeleteTask();
+  const batchRunMutation = useBatchRunTask();
+
   // ── 弹窗控制 ──────────────────────────────────────
   const [formOpen, setFormOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Task | null>(null);
   const [statsTarget, setStatsTarget] = useState<Task | null>(null);
   const [schedulerOpen, setSchedulerOpen] = useState(false);
+
+  // ── 批量操作状态 ──────────────────────────────────────
+  const [selectedTasks, setSelectedTasks] = useState<Set<number>>(new Set());
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [batchDialog, setBatchDialog] = useState<{
+    open: boolean;
+    action: 'activate' | 'pause' | 'delete' | 'run';
+  } | null>(null);
 
   // ── 统计（使用全局统计数据，避免分页导致的数据不一致） ──────────────────────────────────────────
   const stats = useMemo(() => {
@@ -203,9 +224,12 @@ export default function Tasks() {
   const handleToggleStatus = useCallback(async (task: Task) => {
     const newStatus = task.status === 'active' ? 'paused' : 'active';
     try {
+      // 乐观更新会在 onMutate 中自动发生，UI 立即响应
       await updateStatusMutation.mutateAsync({ id: task.id, status: newStatus });
+      // 只在服务器确认后显示成功提示
       toast.success(TASK_MESSAGES.STATUS_TOGGLE_SUCCESS(newStatus === 'active'));
     } catch (err) {
+      // 自动回滚会在 onError 中发生，这里只需显示错误信息
       console.error('[Tasks] Failed to toggle task status:', { taskId: task.id, newStatus, error: err });
       const message = err instanceof Error ? err.message : '未知错误';
       toast.error(TASK_MESSAGES.STATUS_TOGGLE_ERROR, {
@@ -216,16 +240,21 @@ export default function Tasks() {
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
+    const taskName = deleteTarget.name;
     try {
+      // 乐观更新会在 onMutate 中自动发生，任务立即从列表中消失
       await deleteTaskMutation.mutateAsync(deleteTarget.id);
-      toast.success(TASK_MESSAGES.DELETE_SUCCESS(deleteTarget.name));
+      // 只在服务器确认后显示成功提示并关闭对话框
+      toast.success(TASK_MESSAGES.DELETE_SUCCESS(taskName));
       setDeleteTarget(null);
     } catch (err) {
+      // 自动回滚会在 onError 中发生，任务会重新出现在列表中
       console.error('[Tasks] Failed to delete task:', { taskId: deleteTarget.id, error: err });
       const message = err instanceof Error ? err.message : '未知错误';
       toast.error(TASK_MESSAGES.DELETE_ERROR, {
         description: message.length > 100 ? TASK_MESSAGES.RETRY_ERROR : message,
       });
+      // 保持对话框打开，让用户可以重试
     }
   }, [deleteTarget, deleteTaskMutation]);
 
@@ -238,6 +267,109 @@ export default function Tasks() {
   }, []);
 
   const hasActiveFilters = keyword || statusFilter || triggerFilter;
+
+  // ── 批量操作辅助函数 ──────────────────────────────────────
+  const handleSelectTask = useCallback((taskId: number, checked: boolean) => {
+    setSelectedTasks(prev => {
+      const newSet = new Set(prev);
+      if (checked) {
+        newSet.add(taskId);
+      } else {
+        newSet.delete(taskId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback((checked: boolean) => {
+    if (checked) {
+      setSelectedTasks(new Set(tasks.map(t => t.id)));
+    } else {
+      setSelectedTasks(new Set());
+    }
+  }, [tasks]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedTasks(new Set());
+    setIsBatchMode(false);
+  }, []);
+
+  // 计算选择状态
+  const selectedCount = selectedTasks.size;
+  const isAllSelected = tasks.length > 0 && selectedCount === tasks.length;
+  const selectedTasksList = tasks.filter(t => selectedTasks.has(t.id));
+
+  // 批量操作处理函数
+  const handleBatchActivate = useCallback(() => {
+    if (selectedCount === 0) return;
+    setBatchDialog({ open: true, action: 'activate' });
+  }, [selectedCount]);
+
+  const handleBatchPause = useCallback(() => {
+    if (selectedCount === 0) return;
+    setBatchDialog({ open: true, action: 'pause' });
+  }, [selectedCount]);
+
+  const handleBatchDelete = useCallback(() => {
+    if (selectedCount === 0) return;
+    setBatchDialog({ open: true, action: 'delete' });
+  }, [selectedCount]);
+
+  const handleBatchRun = useCallback(() => {
+    if (selectedCount === 0) return;
+    setBatchDialog({ open: true, action: 'run' });
+  }, [selectedCount]);
+
+  const handleBatchConfirm = useCallback(async () => {
+    if (!batchDialog) return { successes: 0, failures: 0 };
+
+    const taskIds = Array.from(selectedTasks);
+
+    try {
+      let result;
+      switch (batchDialog.action) {
+        case 'activate':
+          result = await batchUpdateStatusMutation.mutateAsync({
+            taskIds,
+            status: 'active'
+          });
+          toast.success(`成功启用 ${result.successes} 个任务`);
+          break;
+
+        case 'pause':
+          result = await batchUpdateStatusMutation.mutateAsync({
+            taskIds,
+            status: 'paused'
+          });
+          toast.success(`成功暂停 ${result.successes} 个任务`);
+          break;
+
+        case 'delete':
+          result = await batchDeleteMutation.mutateAsync(taskIds);
+          toast.success(`成功删除 ${result.successes} 个任务`);
+          break;
+
+        case 'run':
+          result = await batchRunMutation.mutateAsync(taskIds);
+          toast.success(`成功运行 ${result.successes} 个任务`);
+          break;
+
+        default:
+          result = { successes: 0, failures: 0 };
+      }
+
+      if (result.failures > 0) {
+        toast.error(`${result.failures} 个任务操作失败`);
+      }
+
+      clearSelection();
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '批量操作失败';
+      toast.error(message);
+      return { successes: 0, failures: selectedCount };
+    }
+  }, [batchDialog, selectedTasks, selectedCount, batchUpdateStatusMutation, batchDeleteMutation, batchRunMutation, clearSelection]);
 
   // ── 渲染 ──────────────────────────────────────────
   return (
@@ -254,6 +386,29 @@ export default function Tasks() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant={isBatchMode ? "default" : "outline"}
+            size="sm"
+            className="gap-2"
+            onClick={() => {
+              setIsBatchMode(!isBatchMode);
+              if (isBatchMode) clearSelection();
+            }}
+          >
+            <CheckSquare className="h-4 w-4" />
+            {isBatchMode ? '退出批量' : '批量操作'}
+          </Button>
+
+          {isBatchMode && (
+            <div className="flex items-center gap-2 px-2">
+              <Checkbox
+                checked={isAllSelected}
+                onCheckedChange={handleSelectAll}
+              />
+              <span className="text-sm text-slate-600 dark:text-slate-400">全选</span>
+            </div>
+          )}
+
           <Button
             variant="outline"
             className="gap-2"
@@ -429,6 +584,9 @@ export default function Tasks() {
                   runTaskMutation.isPending &&
                   runTaskMutation.variables === task.id
                 }
+                isBatchMode={isBatchMode}
+                isSelected={selectedTasks.has(task.id)}
+                onSelect={(checked) => handleSelectTask(task.id, checked)}
               />
             ))}
           </div>
@@ -548,6 +706,34 @@ export default function Tasks() {
       {schedulerOpen && (
         <SchedulerMonitorDialog onClose={() => setSchedulerOpen(false)} />
       )}
+
+      {/* 批量操作浮动工具栏 */}
+      {isBatchMode && (
+        <BatchActionBar
+          selectedCount={selectedCount}
+          onActivate={handleBatchActivate}
+          onPause={handleBatchPause}
+          onDelete={handleBatchDelete}
+          onRun={handleBatchRun}
+          onClear={clearSelection}
+          isLoading={
+            batchUpdateStatusMutation.isPending ||
+            batchDeleteMutation.isPending ||
+            batchRunMutation.isPending
+          }
+        />
+      )}
+
+      {/* 批量操作确认对话框 */}
+      {batchDialog && (
+        <BatchConfirmDialog
+          open={batchDialog.open}
+          onOpenChange={(open) => !open && setBatchDialog(null)}
+          action={batchDialog.action}
+          tasks={selectedTasksList}
+          onConfirm={handleBatchConfirm}
+        />
+      )}
     </div>
   );
 }
@@ -563,6 +749,9 @@ function TaskCard({
   onStats,
   onCancel,
   isRunning,
+  isBatchMode,
+  isSelected,
+  onSelect,
 }: {
   task: Task;
   onRun: () => void;
@@ -572,6 +761,9 @@ function TaskCard({
   onStats: () => void;
   onCancel: () => void;
   isRunning?: boolean;
+  isBatchMode?: boolean;
+  isSelected?: boolean;
+  onSelect?: (checked: boolean) => void;
 }) {
   const [, navigate] = useLocation();
   const lastExecution = task.recentExecutions?.[0];
@@ -594,10 +786,21 @@ function TaskCard({
   };
 
   return (
-    <Card className="group hover:shadow-xl transition-all duration-300 border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
+    <Card className={cn(
+      "group hover:shadow-xl transition-all duration-300 border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col",
+      isSelected && "ring-2 ring-blue-500 border-blue-500"
+    )}>
       <CardHeader className="pb-4">
         <div className="flex items-start justify-between gap-2">
-          <div className="space-y-1 min-w-0">
+          {/* 批量模式下显示复选框 */}
+          {isBatchMode && (
+            <Checkbox
+              checked={isSelected}
+              onCheckedChange={onSelect}
+              className="mt-1 shrink-0"
+            />
+          )}
+          <div className="space-y-1 min-w-0 flex-1">
             <CardTitle className="text-xl font-bold group-hover:text-blue-600 transition-colors truncate">
               {task.name}
             </CardTitle>
@@ -989,7 +1192,7 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
                           <div className="text-right shrink-0 space-y-0.5">
                             <p className="text-xs text-slate-500 flex items-center gap-1 justify-end">
                               <User className="h-3 w-3" />
-                              {entry.operatorName ?? `#${entry.operatorId}`}
+                              {entry.operatorName ?? (entry.operatorId != null ? `#${entry.operatorId}` : '系统')}
                             </p>
                             <p className="text-xs text-slate-400 flex items-center gap-1 justify-end">
                               <Clock className="h-3 w-3" />
