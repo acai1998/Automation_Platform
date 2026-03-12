@@ -28,8 +28,7 @@
   },
   "include": [
     "server",
-    "shared",
-    "test_case/backend"
+    "shared"
   ],
   "exclude": [
     "node_modules",
