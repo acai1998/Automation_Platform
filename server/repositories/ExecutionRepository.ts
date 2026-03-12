@@ -111,7 +111,6 @@ export interface TestRunRow {
   duration_ms: number;
   start_time: Date | null;
   end_time: Date | null;
-  created_at: Date;
 }
 
 /**
@@ -322,8 +321,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         'execution.executedBy',
         'execution.startTime',
         'execution.endTime',
-        'execution.createdAt',
-        'execution.updatedAt',
         'user.displayName',
         'user.username',
       ])
@@ -461,7 +458,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         COALESCE(u.display_name, u.username, "系统") as trigger_by_name,
         tr.jenkins_job, tr.jenkins_build_id, tr.jenkins_url,
         tr.total_cases, tr.passed_cases, tr.failed_cases, tr.skipped_cases,
-        tr.duration_ms, tr.start_time, tr.end_time, tr.created_at
+        tr.duration_ms, tr.start_time, tr.end_time
       FROM Auto_TestRun tr
       LEFT JOIN Auto_Users u ON tr.trigger_by = u.id
       WHERE tr.id = ?
@@ -624,12 +621,11 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         tr.skipped_cases,
         tr.duration_ms,
         tr.start_time,
-        tr.end_time,
-        tr.created_at
+        tr.end_time
       FROM Auto_TestRun tr
       LEFT JOIN Auto_Users u ON tr.trigger_by = u.id
       ${whereClause}
-      ORDER BY tr.created_at DESC
+      ORDER BY tr.id DESC
       LIMIT ? OFFSET ?
     `, [...params, limit, offset]);
 
@@ -709,7 +705,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     // 1. 获取 TestRun 的详细信息
     const testRun = await this.testRunRepository.findOne({
       where: { id: runId },
-      select: ['id', 'createdAt', 'triggerBy', 'triggerType'],
+      select: ['id', 'triggerBy', 'triggerType'],
     });
 
     if (!testRun) {
@@ -723,17 +719,17 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
     // 2. 通过时间窗口和触发者信息查找关联的 executionId
     // 使用更精确的查询条件，避免在并发场景下获取错误的 executionId
-    const timeWindowSeconds = 10; // 时间窗口：10秒
+    // 用 id 差值代替 created_at 时间窗口（id 自增，差值 50 内认为是同一批次触发）
+    const idWindowSize = 50;
     const result = await this.testRunResultRepository.query(`
       SELECT DISTINCT r.execution_id
       FROM Auto_TestRunResults r
       INNER JOIN Auto_TestCaseTaskExecutions e ON r.execution_id = e.id
       WHERE e.executed_by = ?
-        AND ABS(TIMESTAMPDIFF(SECOND, e.created_at, ?)) < ?
-        AND e.created_at <= ?
+        AND ABS(e.id - ?) <= ?
       ORDER BY r.id ASC
       LIMIT 1
-    `, [testRun.triggerBy, testRun.createdAt, timeWindowSeconds, testRun.createdAt]);
+    `, [testRun.triggerBy, testRun.id, idWindowSize]);
 
     if (result && result.length > 0 && result[0].execution_id) {
       logger.debug(
@@ -749,8 +745,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       `Could not find executionId for runId`,
       { 
         runId, 
-        triggerBy: testRun.triggerBy, 
-        createdAt: testRun.createdAt,
+        triggerBy: testRun.triggerBy,
         suggestion: 'Consider adding execution_id column to Auto_TestRun table'
       },
       LOG_CONTEXTS.REPOSITORY
@@ -878,7 +873,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       ])
       .where('testRun.jenkinsJob IS NOT NULL')
       .andWhere('testRun.jenkinsBuildId IS NOT NULL')
-      .orderBy('testRun.createdAt', 'DESC')
+      .orderBy('testRun.id', 'DESC')
       .limit(limit)
       .getRawMany();
   }
@@ -903,8 +898,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       .where('testRun.status IN (:...statuses)', { statuses: ['pending', 'running'] })
       .andWhere('testRun.startTime IS NOT NULL')
       .andWhere('TIMESTAMPDIFF(SECOND, testRun.startTime, NOW()) > :thresholdSeconds', { thresholdSeconds })
-      // 只检查最近 N 小时内创建的执行（避免查询过期执行）
-      .andWhere('testRun.createdAt > DATE_SUB(NOW(), INTERVAL :maxAgeHours HOUR)', { maxAgeHours })
+      // 只检查最近 N 小时内启动的执行（避免查询过期执行，用 start_time 代替 created_at）
+      .andWhere('testRun.startTime > DATE_SUB(NOW(), INTERVAL :maxAgeHours HOUR)', { maxAgeHours })
       .orderBy('testRun.startTime', 'ASC')
       .limit(limit)
       .getRawMany();
@@ -933,7 +928,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         endTime: () => 'NOW()',
       })
       .where('status IN (:...statuses)', { statuses: ['pending', 'running'] })
-      .andWhere('createdAt < DATE_SUB(NOW(), INTERVAL :maxAgeHours HOUR)', { maxAgeHours })
+      .andWhere('startTime < DATE_SUB(NOW(), INTERVAL :maxAgeHours HOUR)', { maxAgeHours })
       .execute();
 
     return result.affected || 0;

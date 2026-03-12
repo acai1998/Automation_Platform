@@ -114,3 +114,35 @@ npx tsc --noEmit -p tsconfig.server.json  # Backend type check
 - **No static charts** - Use Recharts library with real data
 - **T-1 data rule** - Statistical data excludes current day
 - **Path alias usage** - Required for all internal imports
+
+<skills_system priority="1">
+
+## Available Skills
+
+<!-- SKILLS_TABLE_START -->
+<usage>
+When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
+
+How to use skills:
+- Invoke: Bash("mtskills read <skill-name>")
+- The skill content will load with detailed instructions on how to complete the task
+- Base directory provided in output for resolving bundled resources (references/, scripts/, assets/)
+
+Usage notes:
+- Only use skills listed in <available_skills> below
+- Do not invoke a skill that is already loaded in your context
+- Each skill invocation is stateless
+</usage>
+
+<available_skills>
+
+<skill>
+<name>catpaw-skill-installer-test</name>
+<description>Discover and install skills for CatPaw. Use when a user wants to find skills, search for capabilities, install a skill, or asks "is there a skill for X". Supports project-level and global installation.</description>
+<location>project</location>
+</skill>
+
+</available_skills>
+<!-- SKILLS_TABLE_END -->
+
+</skills_system>
