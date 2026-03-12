@@ -61,16 +61,18 @@ export interface UseCasesParams {
   page?: number;
   pageSize?: number;
   status?: string;
+  priority?: string;
+  owner?: string;
 }
 
 /**
  * 获取用例列表 Hook
  */
 export function useCases(params: UseCasesParams) {
-  const { type, search = '', page = 1, pageSize = 10, status = 'active' } = params;
+  const { type, search = '', page = 1, pageSize = 10, status = 'active', priority, owner } = params;
 
   return useQuery<CasesResponse>({
-    queryKey: ['cases', type, search, page, pageSize, status],
+    queryKey: ['cases', type, search, page, pageSize, status, priority, owner],
     queryFn: async () => {
       const queryParams = new URLSearchParams({
         type,
@@ -81,6 +83,14 @@ export function useCases(params: UseCasesParams) {
 
       if (search) {
         queryParams.set('search', search);
+      }
+
+      if (priority) {
+        queryParams.set('priority', priority);
+      }
+
+      if (owner) {
+        queryParams.set('owner', owner);
       }
 
       const response = await fetch(`/api/cases?${queryParams.toString()}`);

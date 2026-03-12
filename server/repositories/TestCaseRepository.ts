@@ -194,6 +194,7 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
   async count(options?: {
     type?: string;
     priority?: string;
+    owner?: string;
     projectId?: number;
     module?: string;
     enabled?: boolean;
@@ -228,6 +229,10 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
       );
     }
 
+    if (options?.owner) {
+      queryBuilder.andWhere('testCase.owner = :owner', { owner: options.owner });
+    }
+
     return queryBuilder.getCount();
   }
 
@@ -240,6 +245,8 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
     enabled?: boolean;
     type?: string;
     search?: string;
+    priority?: string;
+    owner?: string;
     limit?: number;
     offset?: number;
   }): Promise<Array<TestCase & { createdByName?: string }>> {
@@ -274,6 +281,14 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
       );
     }
 
+    if (options?.priority) {
+      queryBuilder.andWhere('testCase.priority = :priority', { priority: options.priority });
+    }
+
+    if (options?.owner) {
+      queryBuilder.andWhere('testCase.owner = :owner', { owner: options.owner });
+    }
+
     queryBuilder.orderBy('testCase.updatedAt', 'DESC');
 
     if (options?.limit) {
@@ -290,6 +305,20 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
       ...testCase,
       createdByName: testCase.creator?.displayName,
     })) as Array<TestCase & { createdByName?: string }>;
+  }
+
+  /**
+   * 获取不同的负责人列表
+   */
+  async getDistinctOwners(): Promise<string[]> {
+    const results = await this.testCaseRepo
+      .createQueryBuilder('testCase')
+      .select('DISTINCT testCase.owner', 'owner')
+      .where('testCase.owner IS NOT NULL')
+      .orderBy('testCase.owner', 'ASC')
+      .getRawMany<{ owner: string }>();
+
+    return results.map(r => r.owner);
   }
 
   /**

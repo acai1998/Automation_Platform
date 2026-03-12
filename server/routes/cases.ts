@@ -40,10 +40,10 @@ router.get('/', async (req, res) => {
   const timer = createTimer();
 
   try {
-    const { projectId, module, enabled, type, search, limit = 50, offset = 0 } = req.query;
+    const { projectId, module, enabled, type, search, priority, owner, limit = 50, offset = 0 } = req.query;
 
     logger.info('Fetching test cases list', {
-      filters: { projectId, module, enabled, type, search },
+      filters: { projectId, module, enabled, type, search, priority, owner },
       pagination: { limit, offset },
     }, LOG_CONTEXTS.CASES);
 
@@ -53,6 +53,8 @@ router.get('/', async (req, res) => {
       enabled: enabled !== undefined ? (enabled === 'true' || enabled === '1') : undefined,
       type: type as string | undefined,
       search: search as string | undefined,
+      priority: priority as string | undefined,
+      owner: owner as string | undefined,
       limit: Number(limit),
       offset: Number(offset),
     };
@@ -77,7 +79,7 @@ router.get('/', async (req, res) => {
       resultCount: data.length,
       total,
       duration: `${duration}ms`,
-      hasFilters: !!(projectId || module || enabled !== undefined || type || search),
+      hasFilters: !!(projectId || module || enabled !== undefined || type || search || priority || owner),
     }, LOG_CONTEXTS.CASES);
 
     // 将 TypeORM 实体的驼峰字段映射为前端期望的下划线格式
@@ -112,6 +114,29 @@ router.get('/', async (req, res) => {
       method: req.method,
       duration: `${duration}ms`,
       query: req.query,
+    });
+
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/cases/owners/list
+ * 获取所有负责人列表
+ */
+router.get('/owners/list', async (_req, res) => {
+  try {
+    const data = await testCaseRepository.getDistinctOwners();
+
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    // 增强错误日志记录
+    console.error('Database operation failed:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: '/api/cases/owners/list',
+      method: 'GET'
     });
 
     const message = error instanceof Error ? error.message : 'Unknown error';

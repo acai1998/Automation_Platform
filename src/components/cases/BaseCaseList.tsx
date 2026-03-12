@@ -1,5 +1,5 @@
-import { useState, ReactNode, useMemo, useCallback } from 'react';
-import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User } from 'lucide-react';
+import { useState, ReactNode, useMemo, useCallback, useEffect } from 'react';
+import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User, Filter, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useCases, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
@@ -16,6 +16,17 @@ const PAGINATION_CONFIG = {
   MAX_VISIBLE_PAGES: 5,
   SEARCH_DEBOUNCE_MS: 300,
 } as const;
+
+/**
+ * 优先级配置
+ */
+const PRIORITY_OPTIONS = [
+  { value: 'all', label: 'All Priority' },
+  { value: 'P0', label: 'P0' },
+  { value: 'P1', label: 'P1' },
+  { value: 'P2', label: 'P2' },
+  { value: 'P3', label: 'P3' },
+] as const;
 
 /**
  * 列配置
@@ -41,6 +52,14 @@ interface BaseCaseListProps {
 }
 
 /**
+ * 筛选状态
+ */
+interface FilterState {
+  priority: string;
+  owner: string;
+}
+
+/**
  * 通用用例列表组件
  * 三个页面（API/UI/性能）通过配置复用此组件
  * 采用现代化 SaaS Dashboard 风格设计
@@ -54,6 +73,26 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const [retryCount, setRetryCount] = useState(0);
   const [isRetrying, setIsRetrying] = useState(false);
 
+  // 筛选状态
+  const [filters, setFilters] = useState<FilterState>({
+    priority: 'all',
+    owner: 'all',
+  });
+
+  // 负责人列表
+  const [ownerList, setOwnerList] = useState<string[]>([]);
+
+  // 获取负责人列表
+  useEffect(() => {
+    fetch('/api/cases/owners/list')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && Array.isArray(data.data)) {
+          setOwnerList(data.data);
+        }
+      })
+      .catch(err => console.error('Failed to fetch owners:', err));
+  }, []);
 
   // 获取用例列表
   const { data, isLoading, error, refetch } = useCases({
@@ -61,6 +100,8 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     search,
     page,
     pageSize,
+    priority: filters.priority !== 'all' ? filters.priority : undefined,
+    owner: filters.owner !== 'all' ? filters.owner : undefined,
   });
 
   // 执行管理
@@ -93,6 +134,23 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     setSearch(searchInput);
     setPage(1);
   };
+
+  // 处理筛选变化
+  const handleFilterChange = (key: keyof FilterState, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+    setPage(1);
+  };
+
+  // 清除所有筛选
+  const clearFilters = () => {
+    setFilters({ priority: 'all', owner: 'all' });
+    setSearch('');
+    setSearchInput('');
+    setPage(1);
+  };
+
+  // 是否有活动筛选
+  const hasActiveFilters = filters.priority !== 'all' || filters.owner !== 'all' || search !== '';
 
   // 处理运行用例
   const handleRunCase = async (caseId: number, caseName: string, projectId: number | null) => {
@@ -219,26 +277,61 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       </div>
 
       {/* 搜索栏 */}
-      <div className="px-4 sm:px-6 py-4 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <Input
-              placeholder="搜索用例名称或描述..."
+      <div className="px-4 sm:px-6 py-4 bg-slate-50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
+        <div className="flex flex-wrap items-center gap-4">
+          {/* 搜索输入框 */}
+          <div className="relative flex-1 min-w-[240px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 h-4 w-4" />
+            <input
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              className="pl-10 h-9 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500/20"
+              placeholder="搜索用例名称或描述..."
+              className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary h-10"
             />
           </div>
-          <Button
-            onClick={handleSearch}
-            size="sm"
-            className="h-9 px-4 gap-2"
+
+          {/* 优先级筛选 */}
+          <select
+            value={filters.priority}
+            onChange={(e) => handleFilterChange('priority', e.target.value)}
+            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm h-10 px-3 min-w-[120px] focus:outline-none focus:ring-2 focus:ring-primary"
           >
-            <Search className="w-4 h-4" />
-            <span className="hidden sm:inline">搜索</span>
-          </Button>
+            {PRIORITY_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+
+          {/* 负责人筛选 */}
+          <select
+            value={filters.owner}
+            onChange={(e) => handleFilterChange('owner', e.target.value)}
+            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm h-10 px-3 min-w-[120px] focus:outline-none focus:ring-2 focus:ring-primary"
+          >
+            <option value="all">All Owner</option>
+            {ownerList.map(owner => (
+              <option key={owner} value={owner}>{owner}</option>
+            ))}
+          </select>
+
+          {/* 清除筛选按钮 */}
+          {hasActiveFilters && (
+            <button
+              onClick={clearFilters}
+              className="flex items-center gap-1.5 px-3 py-2 bg-rose-500/10 rounded-lg border border-rose-500/20 text-xs font-bold text-rose-600 dark:text-rose-400 uppercase hover:bg-rose-500/20 transition-colors"
+            >
+              <X className="h-3 w-3" />
+              清除筛选
+            </button>
+          )}
+
+          {/* 分隔线 */}
+          <div className="h-6 w-[1px] bg-slate-200 dark:bg-slate-700 hidden sm:block" />
+
+          {/* 统计信息 */}
+          <div className="ml-auto text-sm text-slate-500 font-medium">
+            共 {data?.total || 0} 条
+          </div>
         </div>
       </div>
 
