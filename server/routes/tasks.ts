@@ -250,7 +250,7 @@ router.get('/', async (req, res) => {
       ),
       query<{ today_runs: number }[]>(
         `SELECT COUNT(*) as today_runs FROM Auto_TestCaseTaskExecutions
-         WHERE COALESCE(start_time, created_at) BETWEEN ? AND ?`,
+         WHERE COALESCE(start_time, NOW()) BETWEEN ? AND ?`,
         [todayStartStr, todayEndStr]
       ),
     ]);
@@ -270,12 +270,12 @@ router.get('/', async (req, res) => {
         `SELECT id, task_id, status, start_time, end_time, duration, passed_cases, failed_cases, total_cases
          FROM (
            SELECT id, task_id, status, start_time, end_time, duration, passed_cases, failed_cases, total_cases,
-                  RANK() OVER (PARTITION BY task_id ORDER BY COALESCE(start_time, created_at) DESC) AS rn
+                  RANK() OVER (PARTITION BY task_id ORDER BY COALESCE(start_time, id) DESC) AS rn
            FROM Auto_TestCaseTaskExecutions
            WHERE task_id IN (${placeholders})
          ) ranked
          WHERE rn <= 5
-         ORDER BY task_id, COALESCE(start_time, created_at) DESC`,
+         ORDER BY task_id, COALESCE(start_time, id) DESC`,
         taskIds
       );
 
@@ -355,11 +355,11 @@ router.get('/:id', async (req, res) => {
     // 并行获取最近执行记录和最新关联 TestRun
     const [recentExecutions, latestRunRow] = await Promise.all([
       query<TaskExecution[]>(`
-        SELECT id, status, start_time, end_time, duration, passed_cases, failed_cases, total_cases
-        FROM Auto_TestCaseTaskExecutions
-        WHERE task_id = ?
-        ORDER BY COALESCE(start_time, created_at) DESC
-        LIMIT 5
+SELECT id, status, start_time, end_time, duration, passed_cases, failed_cases, total_cases
+FROM Auto_TestCaseTaskExecutions
+WHERE task_id = ?
+ORDER BY COALESCE(start_time, id) DESC
+LIMIT 5
       `, [id]),
       // Auto_TestRun.execution_id 直接存储了关联的 Auto_TestCaseTaskExecutions.id
       // 通过 task_id 找到最近一次 TaskExecution，再经由 execution_id 字段定位对应的 TestRun
@@ -738,7 +738,7 @@ router.get('/:id/executions', async (req, res) => {
       FROM Auto_TestCaseTaskExecutions te
       LEFT JOIN Auto_Users u ON te.executed_by = u.id
       WHERE te.task_id = ?
-      ORDER BY COALESCE(te.start_time, te.created_at) DESC
+      ORDER BY COALESCE(te.start_time, te.id) DESC
       LIMIT ?
     `, [id, limit]);
 
@@ -880,10 +880,10 @@ router.get('/:id/stats', async (req, res) => {
           SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
           SUM(CASE WHEN status IN ('failed', 'cancelled') THEN 1 ELSE 0 END) as failed_count,
           ROUND(AVG(NULLIF(duration, 0))) as avg_duration,
-          MAX(COALESCE(start_time, created_at)) as last_run_at
+          MAX(start_time) as last_run_at
         FROM Auto_TestCaseTaskExecutions
         WHERE task_id = ?
-          AND COALESCE(start_time, created_at) >= DATE_SUB(NOW(), INTERVAL ? DAY)
+          AND COALESCE(start_time, NOW()) >= DATE_SUB(NOW(), INTERVAL ? DAY)
       `, [id, days]),
 
       // 2. 每日成功率趋势
@@ -895,15 +895,15 @@ router.get('/:id/stats', async (req, res) => {
         avg_duration: number;
       }[]>(`
         SELECT
-          DATE(COALESCE(start_time, created_at)) as day,
+          DATE(COALESCE(start_time, NOW())) as day,
           COUNT(*) as total,
           SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
           SUM(CASE WHEN status IN ('failed', 'cancelled') THEN 1 ELSE 0 END) as failed_count,
           ROUND(AVG(NULLIF(duration, 0))) as avg_duration
         FROM Auto_TestCaseTaskExecutions
         WHERE task_id = ?
-          AND COALESCE(start_time, created_at) >= DATE_SUB(NOW(), INTERVAL ? DAY)
-        GROUP BY DATE(COALESCE(start_time, created_at))
+          AND COALESCE(start_time, NOW()) >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        GROUP BY DATE(COALESCE(start_time, NOW()))
         ORDER BY day ASC
       `, [id, days]),
 

@@ -318,7 +318,7 @@ export class TaskSchedulerService {
       SELECT t.id, t.name, t.cron_expression, t.case_ids, t.project_id,
              t.environment_id, t.status,
              t.max_retries, t.retry_delay_ms,
-             (SELECT MAX(COALESCE(start_time, created_at)) FROM Auto_TestCaseTaskExecutions WHERE task_id = t.id) as last_run_at
+             (SELECT MAX(start_time) FROM Auto_TestCaseTaskExecutions WHERE task_id = t.id) as last_run_at
       FROM Auto_TestCaseTasks t
       WHERE t.trigger_type = 'scheduled'
         AND t.status IN ('active', 'paused')
