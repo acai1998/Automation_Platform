@@ -258,23 +258,7 @@ export default function ReportDetail() {
   const rawId = params?.id ? Number(params.id) : 0;
   const runId = isNaN(rawId) || rawId <= 0 ? 0 : rawId;
 
-  // ✅ P0 修复：无效 ID 提前返回
-  if (runId === 0) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center gap-4">
-        <AlertCircle className="h-10 w-10 text-rose-500" />
-        <p className="text-sm text-slate-500">无效的执行 ID</p>
-        <button
-          onClick={() => navigate("/reports")}
-          className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
-        >
-          返回报告中心
-        </button>
-      </div>
-    );
-  }
-
-  // ✅ P0 修复：添加错误处理和 refetch
+  // ✅ 所有 Hook 必须在任何条件 return 之前调用，保证 Hook 调用顺序稳定
   const { data: run, isLoading: runLoading, error, refetch } = useTestRunDetail(runId);
 
   const [activeTab, setActiveTab] = useState<"cases" | "groups">("cases");
@@ -349,7 +333,33 @@ export default function ReportDetail() {
   // ✅ P2 优化：派生状态使用 useMemo
   const onlyFailures = useMemo(() => statusFilter === "failed", [statusFilter]);
 
-  // ✅ P0 修复：添加错误处理
+  // ✅ P2 优化：成功率计算使用 useMemo（run 为 null 时返回 0）
+  const successRate = useMemo(
+    () => run && run.total_cases > 0
+      ? Math.round((run.passed_cases / run.total_cases) * 100)
+      : 0,
+    [run],
+  );
+
+  // ─── 所有 Hook 调用结束，以下开始条件渲染 ────────────────────────────────────
+
+  // 无效 ID 提前返回
+  if (runId === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-4">
+        <AlertCircle className="h-10 w-10 text-rose-500" />
+        <p className="text-sm text-slate-500">无效的执行 ID</p>
+        <button
+          onClick={() => navigate("/reports")}
+          className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
+        >
+          返回报告中心
+        </button>
+      </div>
+    );
+  }
+
+  // 错误处理
   if (error) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-4">
@@ -397,13 +407,6 @@ export default function ReportDetail() {
     );
   }
 
-  // ✅ P2 优化：成功率计算使用 useMemo
-  const successRate = useMemo(
-    () => run.total_cases > 0
-      ? Math.round((run.passed_cases / run.total_cases) * 100)
-      : 0,
-    [run.total_cases, run.passed_cases]
-  );
   const hasFailures = run.failed_cases > 0;
 
   return (
