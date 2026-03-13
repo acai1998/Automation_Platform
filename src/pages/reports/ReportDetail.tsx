@@ -216,7 +216,7 @@ function GroupView({ results, loading }: { results: TestRunResult[]; loading: bo
                         <tr key={item.id} className={cn("px-6", failed ? "bg-rose-500/[0.02]" : "")}>
                           <td className="pl-14 pr-6 py-3">
                             <span className={cn("font-medium", failed ? "font-semibold text-slate-900 dark:text-slate-100" : "text-slate-700 dark:text-slate-300")}>
-                              {item.case_id ? `TC-${item.case_id}: ` : ""}{item.case_name}
+                              {item.case_name}
                             </span>
                           </td>
                           <td className="px-6 py-3 w-28">
@@ -673,9 +673,8 @@ export default function ReportDetail() {
                       <tr className={failed ? "bg-rose-500/[0.02] dark:bg-rose-500/[0.05]" : "hover:bg-slate-50 dark:hover:bg-slate-800/50"}>
                         <td className="px-6 py-4">
                           <div className="flex flex-col">
-                            <span className={cn("text-sm text-slate-900 dark:text-slate-100", failed ? "font-semibold" : "font-medium")}>
-                              {item.case_id ? `TC-${item.case_id}: ` : ""}
-                              {item.case_name}
+                <span className={cn("text-sm text-slate-900 dark:text-slate-100", failed ? "font-semibold" : "font-medium")}>
+                {item.case_name}
                             </span>
                             {item.module && item.module !== "-" && (
                               <span

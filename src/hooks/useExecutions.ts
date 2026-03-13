@@ -157,8 +157,20 @@ export function useTestRunResults(id: number, options: TestRunResultsOptions = {
       const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
       if (status && status !== 'all') params.set('status', status);
       if (keyword && keyword.trim()) params.set('keyword', keyword.trim());
-      const result = await request<TestRunResultsResponse>(`/executions/${id}/results?${params.toString()}`);
-      return result.data ?? { success: false, data: [], total: 0, page, pageSize };
+      // 注意：/executions/:id/results 直接返回扁平结构
+      // { success, data: TestRunResult[], total, page, pageSize }
+      // request() 的泛型 T 对应 data 字段，但此接口 data 本身就是完整响应
+      // 所以直接用 fetch 解析，绕过 request() 的 .data 封装
+      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+      const resp = await fetch(`/api/executions/${id}/results?${params.toString()}`, {
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      if (!resp.ok) throw new Error('Failed to fetch results');
+      const json: TestRunResultsResponse = await resp.json();
+      if (!Array.isArray(json.data)) {
+        return { success: false, data: [], total: 0, page, pageSize };
+      }
+      return json;
     },
     enabled: !!id,
     keepPreviousData: true,
