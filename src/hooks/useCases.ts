@@ -17,7 +17,8 @@ export interface TestCase {
   module: string | null;
   priority: 'P0' | 'P1' | 'P2' | 'P3';
   type: CaseType;
-  status: 'active' | 'inactive' | 'deprecated';
+  /** 后端字段为 enabled（boolean），与数据库 enabled 列对应 */
+  enabled: boolean;
   tags: string | null;
   owner: string | null;
   config_json: string | null;
@@ -125,10 +126,11 @@ export function useAllCasesForSelect(params: UseCasesForSelectParams = {}) {
     staleTime: 30_000, // 30秒内不重新请求，减少弹窗内频繁请求
     enabled,
     queryFn: async () => {
+      // 注意：后端 /api/cases 使用 enabled（boolean）字段，没有 status 字段
       const queryParams = new URLSearchParams({
         limit: String(CASES_FOR_SELECT_LIMIT),
         offset: '0',
-        status: 'active',
+        enabled: 'true',
       });
 
       if (type) {

@@ -490,8 +490,13 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     const params: (string | number)[] = [executionId];
 
     if (options.status && options.status !== "all") {
-      conditions.push("r.status = ?");
-      params.push(options.status);
+      // "failed" 筛选同时包含 error 状态（Jenkins 执行异常写入 error，前端统一视为失败）
+      if (options.status === "failed") {
+        conditions.push("r.status IN ('failed', 'error')");
+      } else {
+        conditions.push("r.status = ?");
+        params.push(options.status);
+      }
     }
 
     if (options.keyword && options.keyword.trim()) {

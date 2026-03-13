@@ -150,7 +150,17 @@ app.get('/api/health', (req, res) => {
 // 编译后路径为 dist/server/server/index.js，需上溯3层到达 dist/
 const distPath = path.join(__dirname, '../../');
 logger.info('Setting up static file serving', { distPath }, LOG_CONTEXTS.HTTP);
-app.use(express.static(distPath));
+// 带哈希的静态资源（JS/CSS）可以长期缓存；index.html 本身必须禁止缓存
+app.use(express.static(distPath, {
+  setHeaders(res, filePath) {
+    // index.html 不缓存，确保每次部署后用户加载最新版本
+    if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  },
+}));
 
 // 静态文件访问速率限制 - 防止 DoS 攻击
 const staticFileRateLimit = rateLimit({
@@ -193,6 +203,10 @@ app.get('*', staticFileRateLimit, (req, res) => {
 
   const indexPath = path.join(distPath, 'index.html');
   logger.debug('Serving SPA index.html', { path: req.path, indexPath }, LOG_CONTEXTS.HTTP);
+  // index.html 不缓存，防止部署后浏览器仍使用旧版本导致 JS 哈希不匹配
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(indexPath);
 });
 

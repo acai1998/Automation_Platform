@@ -276,7 +276,9 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const ownerOptions: MultiSelectOption[] = ownerList.map(o => ({ value: o, label: o }));
 
   return (
-    <div className="h-full flex flex-col min-h-0">
+    <div className="p-4 sm:p-6">
+      {/* 整体卡片容器 - 统一边框和圆角 */}
+      <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/50 shadow-sm">
       {/* 顶部标题区 - 带渐变背景 */}
       <div className={`relative h-20 px-4 sm:px-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl flex items-center`}>
         <div className="flex items-center gap-3">
@@ -297,7 +299,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       </div>
 
       {/* 筛选栏 */}
-      <div className="relative z-30 overflow-visible px-4 sm:px-6 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
+      <div className="relative z-30 overflow-visible px-4 sm:px-6 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-t border-b border-slate-200/80 dark:border-slate-700/50">
         <div className="flex flex-wrap items-center gap-3">
           {/* 搜索输入框 */}
           <div className="relative flex-1 min-w-[200px] max-w-[320px]">
@@ -348,8 +350,8 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
         </div>
       </div>
 
-      {/* 列表内容区 - 自适应剩余高度 */}
-      <div className="flex-1 min-h-0 overflow-hidden bg-white dark:bg-slate-900 rounded-b-xl shadow-sm border border-t-0 border-slate-200/80 dark:border-slate-700/50">
+      {/* 列表内容区 - 内容自适应高度 */}
+      <div className="bg-white dark:bg-slate-900">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
             <div className="relative">
@@ -394,9 +396,9 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             )}
           </div>
         ) : (
-          <div className="h-full flex flex-col">
+          <div className="flex flex-col">
             {/* 桌面端表格 */}
-            <div className="hidden lg:block flex-1 overflow-auto">
+            <div className="hidden lg:block overflow-x-auto">
               <table className="w-full min-w-[800px]">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
@@ -435,7 +437,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             </div>
 
             {/* 平板端表格（简化列） */}
-            <div className="hidden md:block lg:hidden flex-1 overflow-auto">
+            <div className="hidden md:block lg:hidden overflow-x-auto">
               <table className="w-full">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
@@ -494,7 +496,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             </div>
 
             {/* 移动端卡片列表 */}
-            <div className="md:hidden flex-1 overflow-auto">
+            <div className="md:hidden">
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
                 {data?.data.map((record, index) => (
                   <div
@@ -548,7 +550,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
 
             {/* 分页 */}
             {data && data.total > 0 && (
-              <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
+              <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 rounded-b-xl">
                 {/* 左侧：每页数量选择 + 统计信息 */}
                 <div className="flex items-center gap-4 order-2 sm:order-1">
                   <div className="flex items-center gap-2">
@@ -632,6 +634,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
           </div>
         )}
       </div>
+      </div>{/* end 整体卡片容器 */}
     </div>
   );
 }

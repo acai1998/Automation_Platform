@@ -607,7 +607,7 @@ export default function ReportDetail() {
             >
               <option value="all">All Status</option>
               <option value="passed">Passed</option>
-              <option value="failed">Failed</option>
+              <option value="failed">Failed / Error</option>
               <option value="skipped">Skipped</option>
             </select>
 

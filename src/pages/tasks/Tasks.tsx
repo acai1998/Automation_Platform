@@ -31,7 +31,6 @@ import {
   User,
   Monitor,
   CheckSquare,
-  Pause,
   ListChecks,
   ChevronDown,
 } from 'lucide-react';

@@ -13,12 +13,12 @@
 @layer base {
   :root {
     /* Base Colors */
-    --background: 246 248 247;
-    --foreground: 15 23 42;
-    --card: 255 255 255;
-    --card-foreground: 15 23 42;
-    --popover: 255 255 255;
-    --popover-foreground: 15 23 42;
+    --background: 150 12% 97%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
 
     /* Brand Colors */
     --primary: 142 71% 55%;
