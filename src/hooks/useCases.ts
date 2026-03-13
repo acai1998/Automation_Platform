@@ -114,6 +114,9 @@ export interface UseCasesForSelectParams {
   enabled?: boolean;
 }
 
+/** 用例选择器单次最大加载数量（超出后用户可通过搜索筛选） */
+const CASES_FOR_SELECT_LIMIT = 500;
+
 export function useAllCasesForSelect(params: UseCasesForSelectParams = {}) {
   const { search = '', type = '', enabled = true } = params;
 
@@ -123,7 +126,7 @@ export function useAllCasesForSelect(params: UseCasesForSelectParams = {}) {
     enabled,
     queryFn: async () => {
       const queryParams = new URLSearchParams({
-        limit: '200',
+        limit: String(CASES_FOR_SELECT_LIMIT),
         offset: '0',
         status: 'active',
       });
@@ -138,7 +141,7 @@ export function useAllCasesForSelect(params: UseCasesForSelectParams = {}) {
 
       const response = await fetch(`/api/cases?${queryParams.toString()}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch cases');
+        throw new Error('获取用例列表失败');
       }
       return response.json();
     },

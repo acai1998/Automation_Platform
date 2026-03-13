@@ -575,15 +575,18 @@ export interface CronPreviewResult {
  * @param count 预览次数，默认 5
  */
 export function useCronPreview(cronExpression: string, count = 5) {
+  const trimmed = cronExpression.trim();
+
   // 简单前端格式预检：5段 + 合法字符，避免无效表达式发请求
   const isLikelyValid =
-    cronExpression.trim().split(/\s+/).length === 5 &&
-    /^[\d\*\-,\/\s]+$/.test(cronExpression.trim());
+    trimmed.split(/\s+/).length === 5 &&
+    /^[\d\*\-,\/\s]+$/.test(trimmed);
 
   return useQuery<CronPreviewResult>({
-    queryKey: ['cron-preview', cronExpression, count],
+    // queryKey 使用 trimmed，与 queryFn 一致，避免多余空白导致缓存 miss
+    queryKey: ['cron-preview', trimmed, count],
     queryFn: async () => {
-      const qs = new URLSearchParams({ expr: cronExpression.trim(), count: String(count) });
+      const qs = new URLSearchParams({ expr: trimmed, count: String(count) });
       const response = await fetch(`/api/tasks/cron/preview?${qs}`);
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || 'Cron 预览失败');

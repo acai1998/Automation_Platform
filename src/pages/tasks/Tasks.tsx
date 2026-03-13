@@ -780,6 +780,17 @@ function TaskCard({
     (e) => e.status === 'pending' || e.status === 'running'
   ) ?? false;
 
+  // 解析关联用例数量（useMemo 避免每次渲染重复 JSON.parse）
+  const caseCount = useMemo(() => {
+    if (!task.case_ids) return 0;
+    try {
+      const ids = JSON.parse(task.case_ids);
+      return Array.isArray(ids) ? ids.length : 0;
+    } catch {
+      return 0;
+    }
+  }, [task.case_ids]);
+
   const handleViewReport = () => {
     if (task.latestRunId) {
       navigate(`/reports/${task.latestRunId}`);
@@ -903,25 +914,16 @@ function TaskCard({
         </div>
 
         {/* 关联用例数量 */}
-        {(() => {
-          let caseCount = 0;
-          try {
-            const ids = task.case_ids ? JSON.parse(task.case_ids) : [];
-            caseCount = Array.isArray(ids) ? ids.length : 0;
-          } catch { /* ignore */ }
-          return (
-            <div className="flex items-center gap-1.5 text-xs text-slate-400">
-              <ListChecks className="h-3.5 w-3.5" />
-              {caseCount > 0 ? (
-                <span>
-                  已关联 <span className="font-semibold text-slate-600 dark:text-slate-300">{caseCount}</span> 个用例
-                </span>
-              ) : (
-                <span className="italic text-amber-500">暂无关联用例</span>
-              )}
-            </div>
-          );
-        })()}
+        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          <ListChecks className="h-3.5 w-3.5" />
+          {caseCount > 0 ? (
+            <span>
+              已关联 <span className="font-semibold text-slate-600 dark:text-slate-300">{caseCount}</span> 个用例
+            </span>
+          ) : (
+            <span className="italic text-amber-500">暂无关联用例</span>
+          )}
+        </div>
 
         {/* 最近运行记录小圆点 */}
         <div className="space-y-2">
@@ -1440,6 +1442,9 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
   const [caseTypeFilter, setCaseTypeFilter] = useState<CaseType | ''>('');
   const [casePickerOpen, setCasePickerOpen] = useState(false);
 
+  // 已选用例对象缓存（独立维护，避免 API 加载中时标签短暂消失）
+  const [selectedCaseObjects, setSelectedCaseObjects] = useState<CaseItem[]>([]);
+
   // 搜索防抖
   const [debouncedSearch, setDebouncedSearch] = useState('');
   useEffect(() => {
@@ -1454,16 +1459,31 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
   });
   const allCases = casesData?.data ?? [];
 
+  // API 加载完毕后，补全已选用例对象中缺失的条目（如编辑场景首次加载）
+  useEffect(() => {
+    if (allCases.length === 0) return;
+    setSelectedCaseObjects((prev) => {
+      const existingIds = new Set(prev.map((c) => c.id));
+      const toAdd = allCases.filter(
+        (c) => selectedCaseIds.includes(c.id) && !existingIds.has(c.id)
+      );
+      return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+    });
+  }, [allCases, selectedCaseIds]);
+
   // 候选列表（排除已选）
   const candidateCases = useMemo(
     () => allCases.filter((c) => !selectedCaseIds.includes(c.id)),
     [allCases, selectedCaseIds]
   );
 
-  // 已选用例对象（从全量缓存中查找）
+  // 已选用例对象：按 selectedCaseIds 顺序展示，保证顺序稳定
   const selectedCases = useMemo(
-    () => selectedCaseIds.map((id) => allCases.find((c) => c.id === id)).filter(Boolean) as CaseItem[],
-    [selectedCaseIds, allCases]
+    () =>
+      selectedCaseIds
+        .map((id) => selectedCaseObjects.find((c) => c.id === id))
+        .filter(Boolean) as CaseItem[],
+    [selectedCaseIds, selectedCaseObjects]
   );
 
   // 回填编辑数据
@@ -1477,6 +1497,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
       setCaseSearch('');
       setCaseTypeFilter('');
       setCasePickerOpen(false);
+      setSelectedCaseObjects([]);
       // 回填已有 case_ids
       if (task?.case_ids) {
         try {
@@ -1491,11 +1512,25 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
     }
   }, [open, task]);
 
-  const toggleCaseSelect = (caseId: number) => {
-    setSelectedCaseIds((prev) =>
-      prev.includes(caseId) ? prev.filter((id) => id !== caseId) : [...prev, caseId]
-    );
-  };
+  const toggleCaseSelect = useCallback((caseId: number) => {
+    setSelectedCaseIds((prev) => {
+      const isSelected = prev.includes(caseId);
+      if (isSelected) {
+        // 移除时同步清理对象缓存
+        setSelectedCaseObjects((objs) => objs.filter((c) => c.id !== caseId));
+        return prev.filter((id) => id !== caseId);
+      } else {
+        // 新增时立即从 allCases 中补入对象缓存（若 API 已返回）
+        const caseObj = allCases.find((c) => c.id === caseId);
+        if (caseObj) {
+          setSelectedCaseObjects((objs) =>
+            objs.some((c) => c.id === caseId) ? objs : [...objs, caseObj]
+          );
+        }
+        return [...prev, caseId];
+      }
+    });
+  }, [allCases]);
 
   const validate = () => {
     const errs: Record<string, string> = {};
@@ -1704,7 +1739,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                     });
                     return (
                       <div
-                        key={idx}
+                        key={isoTime}
                         className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400"
                       >
                         <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300 text-[10px] font-bold shrink-0">

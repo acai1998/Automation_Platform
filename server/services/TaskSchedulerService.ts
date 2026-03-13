@@ -98,10 +98,11 @@ function parseCronToIntervalMs(expr: string): number | null {
 }
 
 /**
- * 根据 cron 表达式计算下次触发时间（毫秒时间戳）
- * 精简实现，支持常见的 5 段 cron
+ * 根据 cron 表达式计算下次触发时间
+ * 精简实现，支持常见的 5 段 cron（分 时 日 月 周）
+ * 已导出，供路由层（cron/preview 接口）直接复用，避免重复实现
  */
-function getNextCronTime(expr: string, from: Date = new Date()): Date | null {
+export function getNextCronTime(expr: string, from: Date = new Date()): Date | null {
   try {
     const parts = expr.trim().split(/\s+/);
     if (parts.length !== 5) return null;
@@ -581,8 +582,11 @@ export class TaskSchedulerService {
       executionId: execution.executionId,
     }, LOG_CONTEXTS.EXECUTION);
 
-    // 记录审计日志
-    await this.recordAuditLog(taskId, 'triggered', SCHEDULER_USER_ID, {
+    // 记录审计日志：手动触发时使用实际操作者 ID，调度/重试时使用系统用户
+    const auditOperatorId = (triggerReason === 'manual' && operatorId != null)
+      ? operatorId
+      : SCHEDULER_USER_ID;
+    await this.recordAuditLog(taskId, 'triggered', auditOperatorId, {
       triggerReason,
       runId: execution.runId,
       executionId: execution.executionId,

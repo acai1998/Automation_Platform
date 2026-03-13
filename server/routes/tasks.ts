@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query, queryOne, getPool } from '../config/database';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import { authenticate, optionalAuth } from '../middleware/auth';
-import { taskSchedulerService } from '../services/TaskSchedulerService';
+import { taskSchedulerService, getNextCronTime } from '../services/TaskSchedulerService';
 import { executionService } from '../services/ExecutionService';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS } from '../config/logging';
@@ -167,84 +167,15 @@ router.get('/cron/preview', (req, res) => {
     return res.status(400).json({ success: false, message: 'Cron 表达式格式无效' });
   }
 
-  const n = Math.min(parseInt(String(count ?? '5'), 10) || 5, 10);
+  // count 解析：parseInt 可能返回 NaN，用 || 兜底为 5，再 clamp 到 [1, 10]
+  const parsedCount = parseInt(String(count ?? '5'), 10);
+  const n = Math.min(Math.max(1, isNaN(parsedCount) ? 5 : parsedCount), 10);
 
-  // 复用调度引擎内部的时间解析逻辑
+  // 直接复用 TaskSchedulerService 导出的 getNextCronTime，消除重复实现
   const times: string[] = [];
-  const getNextCronTime = (taskSchedulerService as unknown as { getNextCronTimePublic?: (expr: string, from: Date) => Date | null }).getNextCronTimePublic;
-
-  // 若 service 未暴露该方法，则使用本地实现（与 TaskSchedulerService 保持同步）
-  function computeNext(expression: string, from: Date): Date | null {
-    try {
-      const parts = expression.trim().split(/\s+/);
-      if (parts.length !== 5) return null;
-      const [minPart, hourPart, domPart, monthPart, dowPart] = parts;
-
-      const parseField = (field: string, max: number): number[] | null => {
-        if (field === '*') return null;
-        if (/^\*\/(\d+)$/.test(field)) {
-          const step = parseInt(field.replace('*/', ''));
-          const result: number[] = [];
-          for (let i = 0; i <= max; i += step) result.push(i);
-          return result;
-        }
-        if (/^\d+(,\d+)*$/.test(field)) return field.split(',').map(Number);
-        if (/^(\d+)-(\d+)$/.test(field)) {
-          const [, a, b] = /^(\d+)-(\d+)$/.exec(field)!;
-          const result: number[] = [];
-          for (let i = parseInt(a); i <= parseInt(b); i++) result.push(i);
-          return result;
-        }
-        if (/^\d+$/.test(field)) return [parseInt(field)];
-        return null;
-      };
-
-      const allowedMins   = parseField(minPart,   59);
-      const allowedHours  = parseField(hourPart,  23);
-      const allowedDoms   = parseField(domPart,   31);
-      const allowedMonths = parseField(monthPart, 12);
-      const allowedDows   = parseField(dowPart,    6);
-
-      const candidate = new Date(from.getTime() + 60 * 1000);
-      candidate.setSeconds(0, 0);
-      const maxSearch = new Date(from.getTime() + 400 * 24 * 60 * 60 * 1000);
-
-      while (candidate < maxSearch) {
-        if (allowedMonths && !allowedMonths.includes(candidate.getMonth() + 1)) {
-          candidate.setMonth(candidate.getMonth() + 1, 1);
-          candidate.setHours(0, 0, 0, 0);
-          continue;
-        }
-        if (allowedDoms && !allowedDoms.includes(candidate.getDate())) {
-          candidate.setDate(candidate.getDate() + 1);
-          candidate.setHours(0, 0, 0, 0);
-          continue;
-        }
-        if (allowedDows && !allowedDows.includes(candidate.getDay())) {
-          candidate.setDate(candidate.getDate() + 1);
-          candidate.setHours(0, 0, 0, 0);
-          continue;
-        }
-        if (allowedHours && !allowedHours.includes(candidate.getHours())) {
-          candidate.setHours(candidate.getHours() + 1, 0, 0, 0);
-          continue;
-        }
-        if (allowedMins && !allowedMins.includes(candidate.getMinutes())) {
-          candidate.setMinutes(candidate.getMinutes() + 1, 0, 0);
-          continue;
-        }
-        return new Date(candidate);
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
   let cursor = new Date();
   for (let i = 0; i < n; i++) {
-    const fn = getNextCronTime ? (e: string, d: Date) => getNextCronTime.call(taskSchedulerService, e, d) : computeNext;
-    const next = fn(expr, cursor);
+    const next = getNextCronTime(expr, cursor);
     if (!next) break;
     times.push(next.toISOString());
     cursor = next;
