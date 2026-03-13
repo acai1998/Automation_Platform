@@ -76,6 +76,7 @@ import {
   useBatchUpdateTaskStatus,
   useBatchDeleteTask,
   useBatchRunTask,
+  useCronPreview,
   type Task,
   type TaskExecution,
   type CreateTaskInput,
@@ -1404,12 +1405,34 @@ const CASE_TYPE_COLORS: Record<string, string> = {
   performance: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
 };
 
+/** Cron 常用预设 */
+const CRON_PRESETS = [
+  { label: '每分钟', value: '* * * * *' },
+  { label: '每小时', value: '0 * * * *' },
+  { label: '每天凌晨', value: '0 2 * * *' },
+  { label: '工作日9点', value: '0 9 * * 1-5' },
+  { label: '每周一', value: '0 9 * * 1' },
+  { label: '每月1号', value: '0 9 1 * *' },
+] as const;
+
 function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [triggerType, setTriggerType] = useState<'manual' | 'scheduled' | 'ci_triggered'>('manual');
   const [cronExpression, setCronExpression] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // ── Cron 预览（防抖后才触发查询）──────────────────────────────────
+  const [debouncedCron, setDebouncedCron] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedCron(cronExpression), 600);
+    return () => clearTimeout(t);
+  }, [cronExpression]);
+
+  const {
+    data: cronPreviewData,
+    isFetching: cronPreviewLoading,
+  } = useCronPreview(debouncedCron, 5);
 
   // ── 关联用例状态 ──────────────────────────────────────
   const [selectedCaseIds, setSelectedCaseIds] = useState<number[]>([]);
@@ -1614,10 +1637,34 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
 
           {/* Cron 表达式（仅定时触发时显示） */}
           {triggerType === 'scheduled' && (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
                 {TASK_MESSAGES.FORM_CRON_LABEL} <span className="text-red-500">*</span>
               </label>
+
+              {/* 常用预设快捷按钮 */}
+              <div className="flex flex-wrap gap-1.5">
+                {CRON_PRESETS.map((preset) => (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    onClick={() => {
+                      setCronExpression(preset.value);
+                      if (errors.cronExpression) setErrors((p) => ({ ...p, cronExpression: '' }));
+                    }}
+                    className={cn(
+                      'px-2.5 py-1 rounded-full text-xs font-medium border transition-all',
+                      cronExpression === preset.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-500'
+                        : 'border-slate-200 text-slate-500 hover:border-blue-300 hover:text-blue-600 dark:border-slate-700 dark:text-slate-400'
+                    )}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Cron 输入框 */}
               <Input
                 placeholder={TASK_MESSAGES.FORM_CRON_PLACEHOLDER}
                 value={cronExpression}
@@ -1637,6 +1684,37 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                 <p id="cron-error" className="text-xs text-red-500">{errors.cronExpression}</p>
               ) : (
                 <p id="cron-hint" className="text-xs text-slate-400">{TASK_MESSAGES.FORM_CRON_HINT}</p>
+              )}
+
+              {/* 下次运行时间预览卡片 */}
+              {(cronPreviewLoading || (cronPreviewData?.times && cronPreviewData.times.length > 0)) && (
+                <div className="rounded-lg border border-blue-100 dark:border-blue-900/40 bg-blue-50/60 dark:bg-blue-900/10 p-3 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300">
+                    <Calendar className="h-3.5 w-3.5" />
+                    <span>未来运行时间预览</span>
+                    {cronPreviewLoading && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
+                  </div>
+                  {!cronPreviewLoading && cronPreviewData?.times.map((isoTime, idx) => {
+                    const d = new Date(isoTime);
+                    const dateStr = d.toLocaleDateString('zh-CN', {
+                      month: '2-digit', day: '2-digit', weekday: 'short',
+                    });
+                    const timeStr = d.toLocaleTimeString('zh-CN', {
+                      hour: '2-digit', minute: '2-digit',
+                    });
+                    return (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400"
+                      >
+                        <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300 text-[10px] font-bold shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="font-mono tabular-nums">{dateStr} {timeStr}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           )}

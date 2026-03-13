@@ -544,15 +544,15 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   /**
    * 根据 runId 查询该批次的用例执行结果（支持分页与筛选）
    * 查询策略：
-   *   1. 优先读 Auto_TestRun.execution_id（新数据）
-   *   2. 降级到时间窗口反查 executionId
-   *   3. 兜底：直接通过 Auto_TestRun 时间窗口在 Auto_TestRunResults 中搜索
+   *   1. 优先读 Auto_TestRun.execution_id（新数据，直接关联）
+   *   2. 降级到时间窗口（±120秒）+ 触发者反查 TaskExecution.id
+   *   3. 兜底：在 ±300秒 窗口内，取同一触发者最近的 TaskExecution，不经过中间表
    */
   async getResultsByRunId(
     runId: number,
     options: { page?: number; pageSize?: number; status?: string; keyword?: string; } = {}
   ): Promise<{ data: ExecutionResultRow[]; total: number }> {
-    // 策略1：从 Auto_TestRun.execution_id 直接读（需要该字段存在）
+    // 策略1：从 Auto_TestRun.execution_id 直接读（需要该字段存在且非 NULL）
     let executionId: number | null = null;
     try {
       const tr = await this.testRunRepository.findOne({ where: { id: runId }, select: ["executionId"] });
@@ -561,7 +561,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       // 若数据库中不存在 execution_id 列，忽略错误
     }
 
-    // 策略2：降级到时间窗口 + 触发者 id 反查
+    // 策略2：降级到时间窗口（±120秒）+ 触发者反查
     if (!executionId) {
       executionId = await this.findExecutionIdByRunId(runId);
     }
@@ -571,10 +571,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       return this.getExecutionResults(executionId, options);
     }
 
-    // 策略3：兜底 — 通过 Auto_TestRun 的创建时间窗口（±30秒），
-    // 直接在 Auto_TestRunResults 表中搜索匹配的 execution_id，
-    // 取与 runId 创建时间最接近的一个
-    logger.warn("Fallback: trying time-window search for runId results", { runId }, LOG_CONTEXTS.REPOSITORY);
+    // 策略3：扩大时间窗口兜底（±300秒），不要求精确匹配，取最近的 TaskExecution
+    logger.warn("Fallback: trying extended time-window search for runId results", { runId }, LOG_CONTEXTS.REPOSITORY);
 
     const runRows = await this.testRunRepository.query(`
       SELECT id, trigger_by, created_at FROM Auto_TestRun WHERE id = ? LIMIT 1
@@ -588,20 +586,19 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     const runCreatedAt = runRows[0].created_at;
     const triggerBy = runRows[0].trigger_by;
 
-    // 在 ±60 秒窗口内，找同一触发者创建的 TaskExecution，取最近的
+    // 在 ±300 秒窗口内，找同一触发者最近的 TaskExecution（即使 Auto_TestRunResults 为空也能找到）
     const fallbackRows = await this.testRunResultRepository.query(`
-      SELECT DISTINCT r.execution_id
-      FROM Auto_TestRunResults r
-      INNER JOIN Auto_TestCaseTaskExecutions e ON r.execution_id = e.id
+      SELECT e.id as execution_id
+      FROM Auto_TestCaseTaskExecutions e
       WHERE e.executed_by = ?
-        AND e.created_at BETWEEN DATE_SUB(?, INTERVAL 60 SECOND) AND DATE_ADD(?, INTERVAL 60 SECOND)
+        AND e.created_at BETWEEN DATE_SUB(?, INTERVAL 300 SECOND) AND DATE_ADD(?, INTERVAL 300 SECOND)
       ORDER BY ABS(TIMESTAMPDIFF(SECOND, e.created_at, ?)) ASC
       LIMIT 1
     `, [triggerBy, runCreatedAt, runCreatedAt, runCreatedAt]) as Array<{ execution_id: number }>;
 
     if (fallbackRows && fallbackRows.length > 0 && fallbackRows[0].execution_id) {
       const fallbackExecutionId = fallbackRows[0].execution_id;
-      logger.info("Fallback time-window search found executionId", { runId, fallbackExecutionId }, LOG_CONTEXTS.REPOSITORY);
+      logger.info("Extended fallback found executionId", { runId, fallbackExecutionId }, LOG_CONTEXTS.REPOSITORY);
       return this.getExecutionResults(fallbackExecutionId, options);
     }
 
@@ -745,24 +742,23 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
    * 设计说明：
    * - Auto_TestRun 和 Auto_TestCaseTaskExecutions 同时创建（时间相近）
    * - Auto_TestRunResults 的 execution_id 指向 Auto_TestCaseTaskExecutions.id
-   * - 通过 Auto_TestRunResults 表，用该批次的结果记录反查 executionId
+   * - 通过 Auto_TestCaseTaskExecutions 表，用触发者 + 时间窗口反查 executionId
    * 
-   * 改进的查询策略：
+   * 查询策略：
    * 1. 获取 TestRun 的创建时间和触发者信息
-   * 2. 通过时间窗口（±10秒）+ 触发者匹配查找关联的 executionId
-   * 3. 如果没有找到结果，记录警告并返回 null（不再使用不可靠的降级方案）
+   * 2. 通过时间窗口（±120秒）+ 触发者匹配查找最近的 TaskExecution
+   * 3. 如果没有找到结果，记录警告并返回 null
    * 
    * @param runId 执行批次ID
    * @returns 关联的执行记录ID，如果找不到则返回 null
    */
   async findExecutionIdByRunId(runId: number): Promise<number | null> {
-    // 1. 获取 TestRun 的详细信息
-    const testRun = await this.testRunRepository.findOne({
-      where: { id: runId },
-      select: ['id', 'triggerBy', 'triggerType'],
-    });
+    // 1. 获取 TestRun 的详细信息（含创建时间）
+    const testRunRows = await this.testRunRepository.query(`
+      SELECT id, trigger_by, created_at FROM Auto_TestRun WHERE id = ? LIMIT 1
+    `, [runId]) as Array<{ id: number; trigger_by: number; created_at: Date }>;
 
-    if (!testRun) {
+    if (!testRunRows || testRunRows.length === 0) {
       logger.warn(
         `TestRun not found`,
         { runId },
@@ -771,23 +767,22 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       return null;
     }
 
-    // 2. 通过时间窗口和触发者信息查找关联的 executionId
-    // 使用更精确的查询条件，避免在并发场景下获取错误的 executionId
-    // 用 id 差值代替 created_at 时间窗口（id 自增，差值 50 内认为是同一批次触发）
-    const idWindowSize = 50;
+    const testRun = testRunRows[0];
+
+    // 2. 通过时间窗口（±120秒）和触发者信息，在 Auto_TestCaseTaskExecutions 中查找最近的关联记录
+    // 使用时间窗口而非 id 差值，避免因两表 id 自增不同步导致查找失败
     const result = await this.testRunResultRepository.query(`
-      SELECT DISTINCT r.execution_id
-      FROM Auto_TestRunResults r
-      INNER JOIN Auto_TestCaseTaskExecutions e ON r.execution_id = e.id
+      SELECT e.id as execution_id
+      FROM Auto_TestCaseTaskExecutions e
       WHERE e.executed_by = ?
-        AND ABS(e.id - ?) <= ?
-      ORDER BY r.id ASC
+        AND e.created_at BETWEEN DATE_SUB(?, INTERVAL 120 SECOND) AND DATE_ADD(?, INTERVAL 120 SECOND)
+      ORDER BY ABS(TIMESTAMPDIFF(SECOND, e.created_at, ?)) ASC
       LIMIT 1
-    `, [testRun.triggerBy, testRun.id, idWindowSize]);
+    `, [testRun.trigger_by, testRun.created_at, testRun.created_at, testRun.created_at]);
 
     if (result && result.length > 0 && result[0].execution_id) {
       logger.debug(
-        `Found executionId for runId`,
+        `Found executionId for runId via time-window`,
         { runId, executionId: result[0].execution_id },
         LOG_CONTEXTS.REPOSITORY
       );
@@ -799,7 +794,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       `Could not find executionId for runId`,
       { 
         runId, 
-        triggerBy: testRun.triggerBy,
+        triggerBy: testRun.trigger_by,
         suggestion: 'Consider adding execution_id column to Auto_TestRun table'
       },
       LOG_CONTEXTS.REPOSITORY
@@ -1106,36 +1101,48 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         endTime: new Date(),
       });
 
+      // 1a. 优先从 Auto_TestRun.execution_id 字段直接读取（最可靠，避免时间窗口反查错误）
+      // 若缓存传入值不存在，则直接查数据库 execution_id 列
+      let resolvedExecutionId: number | undefined = executionId;
+      if (!resolvedExecutionId) {
+        try {
+          const trRows = await this.testRunRepository.query(
+            `SELECT execution_id FROM Auto_TestRun WHERE id = ? LIMIT 1`,
+            [runId]
+          ) as Array<{ execution_id: number | null }>;
+          if (trRows.length > 0 && trRows[0].execution_id) {
+            resolvedExecutionId = trRows[0].execution_id;
+            logger.debug('Resolved executionId from Auto_TestRun.execution_id', { runId, resolvedExecutionId }, LOG_CONTEXTS.REPOSITORY);
+          }
+        } catch {
+          // 忽略，降级到时间窗口反查
+        }
+      }
+      // 若直接读仍未找到，降级到时间窗口反查
+      if (!resolvedExecutionId) {
+        resolvedExecutionId = await this.findExecutionIdByRunId(runId) || undefined;
+      }
+
       // 1b. 同步更新对应的 Auto_TestCaseTaskExecutions 记录状态
       // completeBatch 回调只更新了 Auto_TestRun，需要同步到 Auto_TestCaseTaskExecutions
       // 这样 getRecentRuns 查 Auto_TestCaseTaskExecutions 时才能拿到最新状态
-      {
-        let taskExecId = executionId;
-        if (!taskExecId) {
-          taskExecId = await this.findExecutionIdByRunId(runId) || undefined;
-        }
-        if (taskExecId) {
-          // 将 Auto_TestRun 的状态枚举('aborted') 转回 TaskExecution 的枚举
-          const taskExecStatus: 'success' | 'failed' | 'cancelled' =
-            results.status === 'aborted' || results.status === 'cancelled' ? 'cancelled'
-            : results.status === 'success' ? 'success'
-            : 'failed';
-          await this.repository.update(taskExecId, {
-            status: taskExecStatus,
-            passedCases: results.passedCases,
-            failedCases: results.failedCases,
-            skippedCases: results.skippedCases,
-            duration: Math.round(results.durationMs / 1000),
-            endTime: new Date(),
-          });
-        }
+      if (resolvedExecutionId) {
+        const taskExecStatus: 'success' | 'failed' | 'cancelled' =
+          results.status === 'aborted' || results.status === 'cancelled' ? 'cancelled'
+          : results.status === 'success' ? 'success'
+          : 'failed';
+        await this.repository.update(resolvedExecutionId, {
+          status: taskExecStatus,
+          passedCases: results.passedCases,
+          failedCases: results.failedCases,
+          skippedCases: results.skippedCases,
+          duration: Math.round(results.durationMs / 1000),
+          endTime: new Date(),
+        });
       }
 
-      // 2. 解析 executionId（优先使用传入值，否则查数据库）
-      let actualExecutionId = executionId;
-      if (!actualExecutionId) {
-        actualExecutionId = await this.findExecutionIdByRunId(runId) || undefined;
-      }
+      // 2. 使用已解析的 executionId
+      const actualExecutionId = resolvedExecutionId;
 
       // 3. 更新详细用例结果
       if (actualExecutionId) {

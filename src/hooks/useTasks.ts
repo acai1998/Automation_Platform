@@ -563,6 +563,38 @@ export function useBatchDeleteTask() {
   });
 }
 
+// ---------- Cron 表达式预览 ----------
+
+export interface CronPreviewResult {
+  times: string[]; // ISO 8601 字符串数组
+}
+
+/**
+ * 根据 Cron 表达式预览未来 N 次触发时间
+ * @param cronExpression 标准 5 段 cron 表达式
+ * @param count 预览次数，默认 5
+ */
+export function useCronPreview(cronExpression: string, count = 5) {
+  // 简单前端格式预检：5段 + 合法字符，避免无效表达式发请求
+  const isLikelyValid =
+    cronExpression.trim().split(/\s+/).length === 5 &&
+    /^[\d\*\-,\/\s]+$/.test(cronExpression.trim());
+
+  return useQuery<CronPreviewResult>({
+    queryKey: ['cron-preview', cronExpression, count],
+    queryFn: async () => {
+      const qs = new URLSearchParams({ expr: cronExpression.trim(), count: String(count) });
+      const response = await fetch(`/api/tasks/cron/preview?${qs}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Cron 预览失败');
+      return result.data as CronPreviewResult;
+    },
+    enabled: isLikelyValid,
+    staleTime: 60_000, // 同一表达式 1 分钟内不重复请求
+    retry: false,      // 格式错误不重试
+  });
+}
+
 // ---------- 批量运行 ----------
 
 export function useBatchRunTask() {

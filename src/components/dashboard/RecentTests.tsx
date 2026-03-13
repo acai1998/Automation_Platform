@@ -312,7 +312,7 @@ export function RecentTests({ data, initialData, statusFilter = 'all', lastRefre
             onClick={() => setLocation('/reports')}
             className="text-primary text-sm font-semibold hover:text-primary/80 transition-colors"
           >
-            查看所有报告
+            查看所有记录
           </button>
         </div>
       </div>

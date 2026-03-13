@@ -353,7 +353,7 @@ export default function ReportDetail() {
           onClick={() => navigate("/reports")}
           className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
         >
-          返回报告中心
+          返回执行记录
         </button>
       </div>
     );
@@ -377,7 +377,7 @@ export default function ReportDetail() {
             onClick={() => navigate("/reports")}
             className="px-4 py-2 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-white text-sm font-semibold hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors"
           >
-            返回报告中心
+            返回执行记录
           </button>
         </div>
       </div>
@@ -401,7 +401,7 @@ export default function ReportDetail() {
           onClick={() => navigate("/reports")}
           className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
         >
-          返回报告中心
+          返回执行记录
         </button>
       </div>
     );
@@ -414,9 +414,9 @@ export default function ReportDetail() {
       <main className="max-w-[1440px] mx-auto px-6 py-8">
         <div className="mb-8">
           <nav className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-4">
-            <button className="hover:text-primary" onClick={() => navigate("/reports")}>
-              报告中心
-            </button>
+<button className="hover:text-primary" onClick={() => navigate("/reports")}>
+执行记录
+</button>
             <ChevronDown className="h-3 w-3 -rotate-90" />
             <span className="text-slate-900 dark:text-slate-200 font-medium">
               执行 #{run.id}
@@ -464,7 +464,7 @@ export default function ReportDetail() {
                 {" | "}
                 执行人: <span className="text-slate-700 dark:text-slate-200 font-medium">{run.trigger_by_name || "-"}</span>
                 {" | "}
-                触发时间: <span className="text-slate-700 dark:text-slate-200 font-medium font-mono">{formatTime(run.created_at, true)}</span>
+                触发时间: <span className="text-slate-700 dark:text-slate-200 font-medium font-mono">{formatTime(run.start_time ?? run.created_at, true)}</span>
               </p>
             </div>
 

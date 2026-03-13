@@ -477,7 +477,7 @@ export class TaskSchedulerService {
    * - 超过并发上限时放入等待队列
    * - 支持 Jenkins 触发或仅创建执行记录（视配置）
    */
-  async dispatchTask(taskId: number, triggerReason: 'scheduled' | 'manual' | 'retry' = 'scheduled'): Promise<void> {
+  async dispatchTask(taskId: number, triggerReason: 'scheduled' | 'manual' | 'retry' = 'scheduled', operatorId?: number): Promise<void> {
     if (this.runningTasks.size >= CONCURRENCY_LIMIT) {
       if (!this.waitQueue.includes(taskId)) {
         this.waitQueue.push(taskId);
@@ -495,7 +495,7 @@ export class TaskSchedulerService {
     }, LOG_CONTEXTS.EXECUTION);
 
     try {
-      await this.executeTask(taskId, triggerReason);
+      await this.executeTask(taskId, triggerReason, operatorId);
     } catch (err) {
       logger.errorLog(err, `Task ${taskId} execution error`, { taskId });
       await this.handleTaskFailure(taskId, err);
@@ -508,7 +508,7 @@ export class TaskSchedulerService {
   /**
    * 实际执行任务：创建执行记录 + 触发 Jenkins
    */
-  private async executeTask(taskId: number, triggerReason: string): Promise<void> {
+  private async executeTask(taskId: number, triggerReason: string, operatorId?: number): Promise<void> {
     // 从 DB 重新读取任务配置（确保最新）
     const row = await queryOne<{
       id: number; name: string; case_ids: string; project_id: number;
@@ -558,11 +558,19 @@ export class TaskSchedulerService {
     const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
 
     // 1. 创建执行记录
+    // triggerReason 为 'manual' 时使用 'manual'，其余（'scheduled'/'retry'）使用 'schedule'
+    const resolvedTriggerType: 'manual' | 'jenkins' | 'schedule' =
+      triggerReason === 'manual' ? 'manual' : 'schedule';
+    // 手动触发时使用实际操作者ID；调度/重试时使用系统用户
+    const resolvedTriggeredBy = (triggerReason === 'manual' && operatorId != null)
+      ? operatorId
+      : SCHEDULER_USER_ID;
+
     const execution = await executionService.triggerTestExecution({
       caseIds,
       projectId: row.project_id || 1,
-      triggeredBy: SCHEDULER_USER_ID,
-      triggerType: 'schedule',
+      triggeredBy: resolvedTriggeredBy,
+      triggerType: resolvedTriggerType,
       taskId,
       taskName: row.name,
     });

@@ -6,7 +6,7 @@
 export const TASK_MESSAGES = {
   // 成功消息
   RUN_SUCCESS: (name: string) => `任务 "${name}" 已开始执行`,
-  RUN_SUCCESS_DESC: '执行任务已创建，请稍后在报告中心查看结果',
+  RUN_SUCCESS_DESC: '执行任务已创建，请稍后在执行记录查看结果',
   CREATE_SUCCESS: '任务创建成功',
   UPDATE_SUCCESS: '任务更新成功',
   DELETE_SUCCESS: (name: string) => `任务 "${name}" 已删除`,

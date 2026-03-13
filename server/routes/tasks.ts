@@ -149,6 +149,111 @@ router.get('/scheduler/status', async (_req, res) => {
 });
 
 /**
+ * GET /api/tasks/cron/preview
+ * 解析 Cron 表达式，返回未来 N 次触发时间
+ *
+ * Query params:
+ *   expr  - 标准 5 段 cron 表达式（必填）
+ *   count - 返回次数（默认 5，最大 10）
+ */
+router.get('/cron/preview', (req, res) => {
+  const { expr, count } = req.query;
+
+  if (!expr || typeof expr !== 'string') {
+    return res.status(400).json({ success: false, message: 'expr 参数不能为空' });
+  }
+
+  if (!isValidCron(expr)) {
+    return res.status(400).json({ success: false, message: 'Cron 表达式格式无效' });
+  }
+
+  const n = Math.min(parseInt(String(count ?? '5'), 10) || 5, 10);
+
+  // 复用调度引擎内部的时间解析逻辑
+  const times: string[] = [];
+  const getNextCronTime = (taskSchedulerService as unknown as { getNextCronTimePublic?: (expr: string, from: Date) => Date | null }).getNextCronTimePublic;
+
+  // 若 service 未暴露该方法，则使用本地实现（与 TaskSchedulerService 保持同步）
+  function computeNext(expression: string, from: Date): Date | null {
+    try {
+      const parts = expression.trim().split(/\s+/);
+      if (parts.length !== 5) return null;
+      const [minPart, hourPart, domPart, monthPart, dowPart] = parts;
+
+      const parseField = (field: string, max: number): number[] | null => {
+        if (field === '*') return null;
+        if (/^\*\/(\d+)$/.test(field)) {
+          const step = parseInt(field.replace('*/', ''));
+          const result: number[] = [];
+          for (let i = 0; i <= max; i += step) result.push(i);
+          return result;
+        }
+        if (/^\d+(,\d+)*$/.test(field)) return field.split(',').map(Number);
+        if (/^(\d+)-(\d+)$/.test(field)) {
+          const [, a, b] = /^(\d+)-(\d+)$/.exec(field)!;
+          const result: number[] = [];
+          for (let i = parseInt(a); i <= parseInt(b); i++) result.push(i);
+          return result;
+        }
+        if (/^\d+$/.test(field)) return [parseInt(field)];
+        return null;
+      };
+
+      const allowedMins   = parseField(minPart,   59);
+      const allowedHours  = parseField(hourPart,  23);
+      const allowedDoms   = parseField(domPart,   31);
+      const allowedMonths = parseField(monthPart, 12);
+      const allowedDows   = parseField(dowPart,    6);
+
+      const candidate = new Date(from.getTime() + 60 * 1000);
+      candidate.setSeconds(0, 0);
+      const maxSearch = new Date(from.getTime() + 400 * 24 * 60 * 60 * 1000);
+
+      while (candidate < maxSearch) {
+        if (allowedMonths && !allowedMonths.includes(candidate.getMonth() + 1)) {
+          candidate.setMonth(candidate.getMonth() + 1, 1);
+          candidate.setHours(0, 0, 0, 0);
+          continue;
+        }
+        if (allowedDoms && !allowedDoms.includes(candidate.getDate())) {
+          candidate.setDate(candidate.getDate() + 1);
+          candidate.setHours(0, 0, 0, 0);
+          continue;
+        }
+        if (allowedDows && !allowedDows.includes(candidate.getDay())) {
+          candidate.setDate(candidate.getDate() + 1);
+          candidate.setHours(0, 0, 0, 0);
+          continue;
+        }
+        if (allowedHours && !allowedHours.includes(candidate.getHours())) {
+          candidate.setHours(candidate.getHours() + 1, 0, 0, 0);
+          continue;
+        }
+        if (allowedMins && !allowedMins.includes(candidate.getMinutes())) {
+          candidate.setMinutes(candidate.getMinutes() + 1, 0, 0);
+          continue;
+        }
+        return new Date(candidate);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  let cursor = new Date();
+  for (let i = 0; i < n; i++) {
+    const fn = getNextCronTime ? (e: string, d: Date) => getNextCronTime.call(taskSchedulerService, e, d) : computeNext;
+    const next = fn(expr, cursor);
+    if (!next) break;
+    times.push(next.toISOString());
+    cursor = next;
+  }
+
+  res.json({ success: true, data: { times } });
+});
+
+/**
  * GET /api/tasks
  * 获取任务列表（支持筛选、分页，内联最近5条执行记录，返回 total）
  *
@@ -831,8 +936,8 @@ router.post('/:id/run', generalAuthRateLimiter, authenticate, async (req, res) =
       triggeredBy: operatorId,
     });
 
-    // 通过调度引擎分发（享受并发保护）
-    taskSchedulerService.dispatchTask(id, 'manual').catch(err => {
+    // 通过调度引擎分发（享受并发保护），传入实际操作者ID以便记录正确的触发用户
+    taskSchedulerService.dispatchTask(id, 'manual', operatorId).catch(err => {
       logger.errorLog(err, `Manual dispatch failed for task ${id}`, {});
     });
 
