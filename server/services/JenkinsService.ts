@@ -39,13 +39,36 @@ interface JenkinsQueueItem {
 /**
  * [dev-10] queueId → buildNumber 解析完成后的回调类型
  * 由调用方注入，异步回调中更新数据库
+ * @param buildNumber  Jenkins 真实构建号
+ * @param buildUrl     Jenkins 构建 URL
+ * @param queueWaitMs  构建在 Jenkins 队列中等待的时长（毫秒）
  */
-export type BuildResolvedCallback = (buildNumber: number, buildUrl: string) => Promise<void>;
+export type BuildResolvedCallback = (buildNumber: number, buildUrl: string, queueWaitMs: number) => Promise<void>;
 
 /**
  * 用例类型
  */
 export type CaseType = 'api' | 'ui' | 'performance';
+
+/**
+ * Jenkins Queue 指标（内存存储，进程重启后重置）
+ */
+export interface JenkinsQueueMetrics {
+  /** queueId 轮询总次数 */
+  totalPolls: number;
+  /** 成功解析出 buildNumber 的次数 */
+  resolvedCount: number;
+  /** 轮询超时/取消次数 */
+  timeoutCount: number;
+  /** 所有成功解析的队列等待时长（ms）列表，保留最近 1000 条 */
+  waitTimeSamples: number[];
+  /** 队列等待时长总和（ms，仅成功解析） */
+  totalWaitMs: number;
+  /** 平均队列等待时长（ms） */
+  avgWaitMs: number;
+  /** 最大队列等待时长（ms） */
+  maxWaitMs: number;
+}
 
 /**
  * Jenkins 服务类
@@ -55,6 +78,44 @@ export class JenkinsService {
   private config: JenkinsConfig;
 
   private enabled: boolean = true;
+
+  /** 内存指标：queueId → buildNumber 映射统计 */
+  private readonly queueMetrics: JenkinsQueueMetrics = {
+    totalPolls: 0,
+    resolvedCount: 0,
+    timeoutCount: 0,
+    waitTimeSamples: [],
+    totalWaitMs: 0,
+    avgWaitMs: 0,
+    maxWaitMs: 0,
+  };
+
+  /**
+   * 获取 Jenkins Queue 指标快照（用于 /metrics 接口）
+   */
+  getQueueMetrics(): Readonly<JenkinsQueueMetrics> {
+    return { ...this.queueMetrics };
+  }
+
+  /**
+   * 记录一次成功解析的队列等待时长
+   */
+  private recordQueueWait(waitMs: number): void {
+    this.queueMetrics.resolvedCount++;
+    this.queueMetrics.totalWaitMs += waitMs;
+    this.queueMetrics.waitTimeSamples.push(waitMs);
+    // 保留最近 1000 条样本
+    if (this.queueMetrics.waitTimeSamples.length > 1000) {
+      this.queueMetrics.waitTimeSamples.shift();
+    }
+    if (waitMs > this.queueMetrics.maxWaitMs) {
+      this.queueMetrics.maxWaitMs = waitMs;
+    }
+    // 重新计算平均值（基于全量 totalWaitMs / resolvedCount，精确）
+    this.queueMetrics.avgWaitMs = Math.round(
+      this.queueMetrics.totalWaitMs / this.queueMetrics.resolvedCount
+    );
+  }
 
   constructor() {
     // 从 Docker Secrets 或环境变量加载 Jenkins 配置
@@ -277,7 +338,7 @@ export class JenkinsService {
         if (onBuildResolved) {
           this.pollQueueForBuild(queueId, runId).then(buildInfo => {
             if (buildInfo) {
-              onBuildResolved(buildInfo.buildNumber, buildInfo.buildUrl).catch(err => {
+              onBuildResolved(buildInfo.buildNumber, buildInfo.buildUrl, buildInfo.queueWaitMs).catch(err => {
                 logger.warn('onBuildResolved callback failed', {
                   runId,
                   queueId,
@@ -346,21 +407,26 @@ export class JenkinsService {
    * @param runId 平台运行记录 ID（仅用于日志）
    * @param maxWaitMs 最长等待时间（毫秒），默认 60 秒
    * @param pollIntervalMs 轮询间隔（毫秒），默认 3 秒
+   * @returns 包含 buildNumber、buildUrl 和 queueWaitMs（队列等待时长）的对象，或 null（超时/取消）
    */
   private async pollQueueForBuild(
     queueId: number,
     runId: number,
     maxWaitMs = 60_000,
     pollIntervalMs = 3_000
-  ): Promise<{ buildNumber: number; buildUrl: string } | null> {
+  ): Promise<{ buildNumber: number; buildUrl: string; queueWaitMs: number } | null> {
     const logger = require('../utils/logger').default;
 
     // 规范化 Jenkins base URL（确保没有尾部斜杠）
     const base = this.config.baseUrl.replace(/\/+$/, '');
     const queueApiUrl = `${base}/queue/item/${queueId}/api/json`;
 
-    const deadline = Date.now() + maxWaitMs;
+    const startMs = Date.now();
+    const deadline = startMs + maxWaitMs;
     let attempt = 0;
+
+    // 更新总轮询次数
+    this.queueMetrics.totalPolls++;
 
     logger.debug('Starting queue poll for build resolution', {
       runId,
@@ -397,6 +463,7 @@ export class JenkinsService {
 
         // 构建被取消
         if (item.cancelled) {
+          this.queueMetrics.timeoutCount++;
           logger.warn('Jenkins queue item was cancelled', {
             runId,
             queueId,
@@ -409,6 +476,10 @@ export class JenkinsService {
         if (item.executable) {
           const buildNumber = item.executable.number;
           const buildUrl = this.normalizeJenkinsUrl(item.executable.url);
+          const queueWaitMs = Date.now() - startMs;
+
+          // 记录成功解析的队列等待时长指标
+          this.recordQueueWait(queueWaitMs);
 
           logger.info('Build started: resolved buildNumber via queueId', {
             runId,
@@ -416,10 +487,10 @@ export class JenkinsService {
             buildNumber,
             buildUrl,
             attempt,
-            waitedMs: Date.now() - (deadline - maxWaitMs),
+            queueWaitMs,
           }, 'JENKINS');
 
-          return { buildNumber, buildUrl };
+          return { buildNumber, buildUrl, queueWaitMs };
         }
 
         // 仍在队列等待中（why 字段描述原因，如 "等待 executor"）
@@ -444,6 +515,7 @@ export class JenkinsService {
     }
 
     // 超时仍未分配 buildNumber
+    this.queueMetrics.timeoutCount++;
     logger.warn('Queue poll timed out: build did not start within time limit', {
       runId,
       queueId,

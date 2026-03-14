@@ -100,10 +100,18 @@ describe('ExecutionService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset mock implementation
+    // 使用 mockClear 清除调用记录（不清除 mockReturnValue/mockResolvedValue 实现）
+    // 使用 mockReset 会清除所有实现，导致依赖默认返回值的测试失败
     Object.values(mockRepoInstance).forEach((mock: any) => {
-      if (mock.mockReset) mock.mockReset();
+      if (mock.mockClear) mock.mockClear();
     });
+
+    // 重新设置需要默认返回值的方法
+    mockRepoInstance.bulkUpdateErrorResults.mockResolvedValue(0);
+    mockRepoInstance.countResultsByStatus.mockResolvedValue({ passed: 0, failed: 0, skipped: 0 });
+    mockRepoInstance.updateTestResult.mockResolvedValue({});
+    mockRepoInstance.createTestResult.mockResolvedValue({});
+    mockRepoInstance.updateTestRunResults.mockResolvedValue({});
 
     service = new ExecutionService();
   });
@@ -243,6 +251,8 @@ describe('ExecutionService', () => {
       };
 
       mockRepoInstance.getExecutionDetail.mockResolvedValue(mockExecution);
+      // updateTestResult 返回 false 表示没有预创建记录，触发 createTestResult 新增
+      mockRepoInstance.updateTestResult.mockResolvedValue(false);
       mockRepoInstance.runInTransaction.mockImplementation(async (callback) => {
         return callback({});
       });
@@ -268,7 +278,8 @@ describe('ExecutionService', () => {
         duration: 300,
       });
 
-      expect(mockRepoInstance.createTestResults).toHaveBeenCalled();
+      // updateTestResult 返回 false 时会调用 createTestResult 新增结果
+      expect(mockRepoInstance.createTestResult).toHaveBeenCalled();
       expect(mockRepoInstance.updateExecutionResults).toHaveBeenCalledWith(
         456,
         expect.objectContaining({

@@ -230,12 +230,13 @@ router.post('/run-case', [
       [caseId],
       scriptPaths,
       callbackUrl,
-      async (buildNumber: number, buildUrl: string) => {
+      async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
         const buildId = String(buildNumber);
         logger.info('[dev-10] Build resolved via queueId poll, updating Jenkins info', {
           runId: capturedRunId,
           buildId,
           buildUrl,
+          queueWaitMs,
         }, LOG_CONTEXTS.JENKINS);
         await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
       }
@@ -337,12 +338,13 @@ router.post('/run-batch', [
       caseIds,
       scriptPaths,
       callbackUrl,
-      async (buildNumber: number, buildUrl: string) => {
+      async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
         const buildId = String(buildNumber);
         logger.info('[dev-10] Build resolved via queueId poll, updating batch Jenkins info', {
           runId: capturedRunId,
           buildId,
           buildUrl,
+          queueWaitMs,
         }, LOG_CONTEXTS.JENKINS);
         await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
       }

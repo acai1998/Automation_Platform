@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ 任务执行规范（必须遵守）
+
+**每次开始任何任务之前，必须：**
+1. 用自己的话重新复述用户的需求，明确描述要做什么、预期效果是什么
+2. 等待用户回复"确认"之后，才能开始执行任务
+3. 未经用户确认，不得修改任何代码或文件
+
 ## 开发命令
 
 ```bash
