@@ -44,6 +44,7 @@ export interface ManualSyncResult {
 
 /**
  * 执行单个用例
+ * 后端采用异步队列模式：立即创建执行记录并返回 runId，后台异步等待槽位后触发 Jenkins
  */
 export function useExecuteCase() {
   const queryClient = useQueryClient();
@@ -64,6 +65,7 @@ export function useExecuteCase() {
 
 /**
  * 批量执行用例
+ * 后端采用异步队列模式：立即创建执行记录并返回 runId，后台异步等待槽位后触发 Jenkins
  */
 export function useExecuteBatch() {
   const queryClient = useQueryClient();

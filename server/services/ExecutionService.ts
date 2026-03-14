@@ -491,7 +491,7 @@ export class ExecutionService {
     }, LOG_CONTEXTS.EXECUTION);
     webSocketService?.pushExecutionUpdate(runId, {
       status: 'aborted',
-      source: 'system',
+      source: 'monitor',
     });
   }
 

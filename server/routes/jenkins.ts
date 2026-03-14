@@ -191,6 +191,11 @@ router.post('/trigger', generalAuthRateLimiter, optionalAuth, rateLimitMiddlewar
 /**
  * POST /api/jenkins/run-case
  * 触发单个用例执行
+ *
+ * 异步队列模式：
+ * 1. 立即创建执行记录（status=pending）
+ * 2. 立即返回 runId 给前端（不阻塞）
+ * 3. 后台通过 enqueueDirectJob 等待并发槽位，槽位可用后再触发 Jenkins
  */
 router.post('/run-case', [
   generalAuthRateLimiter,
@@ -203,26 +208,14 @@ router.post('/run-case', [
   const triggeredBy: number = req.user?.id ?? (typeof req.body.triggeredBy === 'number' ? req.body.triggeredBy : 1);
   const slotLabel = `case:${caseId}`;
 
-  // ── 并发控制：申请调度器槽位 ──────────────────────────────
-  // acquireDirectSlot: 槽位不足时排队等待（异步阻塞），满后返回
   try {
-    await taskSchedulerService.acquireDirectSlot(slotLabel);
-  } catch (slotErr) {
-    // 队列满 or 超时
-    const message = slotErr instanceof Error ? slotErr.message : '并发队列已满';
-    logger.warn('[run-case] Slot acquire failed', { caseId, message }, LOG_CONTEXTS.JENKINS);
-    return res.status(503).json({ success: false, message });
-  }
-  // ── 槽位已获取，开始执行 ──────────────────────────────────
-
-  try {
-    logger.info('Starting single case execution', {
+    logger.info('Starting single case execution (async queue mode)', {
       caseId,
       projectId,
       triggeredBy,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 创建执行批次记录
+    // ── Step 1: 立即创建执行记录（状态 pending）──────────────
     const execution = await executionService.triggerTestExecution({
       caseIds: [caseId],
       projectId,
@@ -230,96 +223,126 @@ router.post('/run-case', [
       triggerType: 'manual',
     });
 
-    logger.info('Execution record created', {
+    logger.info('Execution record created, returning runId immediately', {
       runId: execution.runId,
       executionId: execution.executionId,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 将 runId 注册进槽位，槽位将在 Jenkins 回调或超时后释放
-    taskSchedulerService.registerDirectSlot(execution.runId, slotLabel);
-
-    // 解析脚本路径
-    const { scriptPaths, missingCaseIds } = await resolveScriptPaths([caseId]);
-    const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
-
-    if (missingCaseIds.length > 0) {
-      logger.warn('Some cases have no scriptPath configured', {
-        runId: execution.runId,
-        missingCaseIds,
-      }, LOG_CONTEXTS.JENKINS);
-    }
-
-    // 触发 Jenkins（非阻塞 ACK：先返回 runId，Jenkins 异步执行）
-    const capturedRunId = execution.runId;
-    const triggerResult = await jenkinsService.triggerBatchJob(
-      execution.runId,
-      [caseId],
-      scriptPaths,
-      callbackUrl,
-      async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
-        const buildId = String(buildNumber);
-        logger.info('[dev-10] Build resolved via queueId poll, updating Jenkins info', {
-          runId: capturedRunId,
-          buildId,
-          buildUrl,
-          queueWaitMs,
-        }, LOG_CONTEXTS.JENKINS);
-        await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
-      },
-      async (reason: 'cancelled' | 'timeout') => {
-        // [dev-11] Jenkins 队列取消/超时时，主动将平台执行状态更新为 aborted，释放槽位
-        logger.warn('[dev-11] Jenkins queue cancelled/timeout, marking execution as aborted', {
-          runId: capturedRunId,
-          reason,
-        }, LOG_CONTEXTS.JENKINS);
-        try {
-          await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
-        } catch (err) {
-          logger.warn('[dev-11] Failed to mark execution as aborted', {
-            runId: capturedRunId,
-            error: err instanceof Error ? err.message : String(err),
-          }, LOG_CONTEXTS.JENKINS);
-        }
-        taskSchedulerService.releaseSlotByRunId(capturedRunId);
-      }
-    );
-
-    logger.info('Jenkins trigger result', {
-      success: triggerResult.success,
-      message: triggerResult.message,
-      queueId: triggerResult.queueId,
-    }, LOG_CONTEXTS.JENKINS);
-
-    if (!triggerResult.success) {
-      // Jenkins 触发失败时立即释放槽位，不等回调
-      taskSchedulerService.releaseSlotByRunId(execution.runId);
-      logger.warn('Jenkins trigger failed, slot released immediately', {
-        runId: execution.runId,
-        message: triggerResult.message,
-      }, LOG_CONTEXTS.JENKINS);
-    }
-
+    // ── Step 2: 立即返回 runId，不等待 Jenkins ───────────────
     const duration = timer();
     res.json({
-      success: triggerResult.success,
+      success: true,
       data: {
         runId: execution.runId,
-        queueId: triggerResult.queueId,
+        status: 'queued',
       },
-      message: triggerResult.message,
+      message: '任务已加入执行队列',
       _concurrency: {
         slotsUsed: taskSchedulerService.getStatus().running.length,
         slotsLimit: taskSchedulerService.getStatus().concurrencyLimit,
+        directQueued: taskSchedulerService.getStatus().directQueueDepth,
       },
     });
+
+    // ── Step 3: 后台异步等待槽位 + 触发 Jenkins ──────────────
+    const capturedRunId = execution.runId;
+
+    try {
+      taskSchedulerService.enqueueDirectJob(slotLabel, async () => {
+        // 槽位获取后，注册 runId 占位
+        taskSchedulerService.registerDirectSlot(capturedRunId, slotLabel);
+
+        try {
+          // 解析脚本路径
+          const { scriptPaths, missingCaseIds } = await resolveScriptPaths([caseId]);
+          const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
+
+          if (missingCaseIds.length > 0) {
+            logger.warn('Some cases have no scriptPath configured', {
+              runId: capturedRunId,
+              missingCaseIds,
+            }, LOG_CONTEXTS.JENKINS);
+          }
+
+          // 触发 Jenkins
+          const triggerResult = await jenkinsService.triggerBatchJob(
+            capturedRunId,
+            [caseId],
+            scriptPaths,
+            callbackUrl,
+            async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
+              const buildId = String(buildNumber);
+              logger.info('[dev-10] Build resolved via queueId poll, updating Jenkins info', {
+                runId: capturedRunId,
+                buildId,
+                buildUrl,
+                queueWaitMs,
+              }, LOG_CONTEXTS.JENKINS);
+              await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+            },
+            async (reason: 'cancelled' | 'timeout') => {
+              logger.warn('[dev-11] Jenkins queue cancelled/timeout, marking execution as aborted', {
+                runId: capturedRunId,
+                reason,
+              }, LOG_CONTEXTS.JENKINS);
+              try {
+                await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
+              } catch (err) {
+                logger.warn('[dev-11] Failed to mark execution as aborted', {
+                  runId: capturedRunId,
+                  error: err instanceof Error ? err.message : String(err),
+                }, LOG_CONTEXTS.JENKINS);
+              }
+              taskSchedulerService.releaseSlotByRunId(capturedRunId);
+            }
+          );
+
+          if (!triggerResult.success) {
+            // Jenkins 触发失败，立即释放槽位
+            taskSchedulerService.releaseSlotByRunId(capturedRunId);
+            // 将执行状态标记为失败
+            try {
+              await executionService.markExecutionAborted(capturedRunId, `Jenkins trigger failed: ${triggerResult.message}`);
+            } catch { /* ignore */ }
+            logger.warn('[run-case] Jenkins trigger failed (async), slot released', {
+              runId: capturedRunId,
+              message: triggerResult.message,
+            }, LOG_CONTEXTS.JENKINS);
+          } else {
+            logger.info('[run-case] Jenkins trigger success (async)', {
+              runId: capturedRunId,
+              queueId: triggerResult.queueId,
+            }, LOG_CONTEXTS.JENKINS);
+          }
+        } catch (jenkinsErr) {
+          // Jenkins 执行异常，释放槽位并标记失败
+          taskSchedulerService.releaseSlotByRunId(capturedRunId);
+          try {
+            await executionService.markExecutionAborted(capturedRunId, `Jenkins error: ${jenkinsErr instanceof Error ? jenkinsErr.message : String(jenkinsErr)}`);
+          } catch { /* ignore */ }
+          logger.errorLog(jenkinsErr, '[run-case] Async Jenkins trigger error', { runId: capturedRunId, caseId });
+        }
+      });
+    } catch (queueErr) {
+      // 仅当队列已满才会到这里（enqueueDirectJob 同步抛出）
+      // runId 已返回给前端，将执行状态标记为失败
+      const queueErrMsg = queueErr instanceof Error ? queueErr.message : '并发队列已满';
+      logger.warn('[run-case] Queue full, marking execution as aborted', {
+        runId: capturedRunId,
+        message: queueErrMsg,
+      }, LOG_CONTEXTS.JENKINS);
+      try {
+        await executionService.markExecutionAborted(capturedRunId, queueErrMsg);
+      } catch { /* ignore */ }
+    }
+
   } catch (error: unknown) {
     const duration = timer();
-    logger.errorLog(error, 'Single case execution failed', {
+    logger.errorLog(error, 'Single case execution failed (creating record)', {
       caseId,
       projectId,
       durationMs: duration,
     });
-    // 执行异常时也释放槽位（runId 此时可能未创建，releaseSlotByRunId 对不存在的 runId 是 no-op）
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_CASE');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
@@ -328,6 +351,11 @@ router.post('/run-case', [
 /**
  * POST /api/jenkins/run-batch
  * 触发批量用例执行
+ *
+ * 异步队列模式：
+ * 1. 立即创建执行记录（status=pending）
+ * 2. 立即返回 runId 给前端（不阻塞）
+ * 3. 后台通过 enqueueDirectJob 等待并发槽位，槽位可用后再触发 Jenkins
  */
 router.post('/run-batch', [
   generalAuthRateLimiter,
@@ -342,25 +370,15 @@ router.post('/run-batch', [
   const labelIds = (caseIds as number[]).slice(0, 3).join(',') + (caseIds.length > 3 ? `…(${caseIds.length})` : '');
   const slotLabel = `batch:${labelIds}`;
 
-  // ── 并发控制：申请调度器槽位 ──────────────────────────────
   try {
-    await taskSchedulerService.acquireDirectSlot(slotLabel);
-  } catch (slotErr) {
-    const message = slotErr instanceof Error ? slotErr.message : '并发队列已满';
-    logger.warn('[run-batch] Slot acquire failed', { caseIds, message }, LOG_CONTEXTS.JENKINS);
-    return res.status(503).json({ success: false, message });
-  }
-  // ── 槽位已获取，开始执行 ──────────────────────────────────
-
-  try {
-    logger.info('Starting batch case execution', {
+    logger.info('Starting batch case execution (async queue mode)', {
       caseCount: caseIds.length,
       caseIds,
       projectId,
       triggeredBy,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 创建执行批次记录
+    // ── Step 1: 立即创建执行记录（状态 pending）──────────────
     const execution = await executionService.triggerTestExecution({
       caseIds,
       projectId,
@@ -368,93 +386,119 @@ router.post('/run-batch', [
       triggerType: 'manual',
     });
 
-    logger.info('Batch execution record created', {
+    logger.info('Batch execution record created, returning runId immediately', {
       runId: execution.runId,
       executionId: execution.executionId,
       totalCases: execution.totalCases,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 将 runId 注册进槽位，槽位将在 Jenkins 回调或超时后释放
-    taskSchedulerService.registerDirectSlot(execution.runId, slotLabel);
-
-    // 解析脚本路径
-    const { scriptPaths, missingCaseIds } = await resolveScriptPaths(caseIds);
-    const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
-
-    if (missingCaseIds.length > 0) {
-      logger.warn('Some cases have no scriptPath configured', {
-        runId: execution.runId,
-        missingCaseIds,
-      }, LOG_CONTEXTS.JENKINS);
-    }
-
-    // 触发 Jenkins
-    const capturedRunId = execution.runId;
-    const triggerResult = await jenkinsService.triggerBatchJob(
-      execution.runId,
-      caseIds,
-      scriptPaths,
-      callbackUrl,
-      async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
-        const buildId = String(buildNumber);
-        logger.info('[dev-10] Build resolved via queueId poll, updating batch Jenkins info', {
-          runId: capturedRunId,
-          buildId,
-          buildUrl,
-          queueWaitMs,
-        }, LOG_CONTEXTS.JENKINS);
-        await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
-      },
-      async (reason: 'cancelled' | 'timeout') => {
-        // [dev-11] Jenkins 队列取消/超时时，主动将平台执行状态更新为 aborted，释放槽位
-        logger.warn('[dev-11] Batch Jenkins queue cancelled/timeout, marking execution as aborted', {
-          runId: capturedRunId,
-          reason,
-        }, LOG_CONTEXTS.JENKINS);
-        try {
-          await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
-        } catch (err) {
-          logger.warn('[dev-11] Failed to mark batch execution as aborted', {
-            runId: capturedRunId,
-            error: err instanceof Error ? err.message : String(err),
-          }, LOG_CONTEXTS.JENKINS);
-        }
-        taskSchedulerService.releaseSlotByRunId(capturedRunId);
-      }
-    );
-
-    logger.info('Jenkins trigger result', {
-      success: triggerResult.success,
-      message: triggerResult.message,
-      queueId: triggerResult.queueId,
-    }, LOG_CONTEXTS.JENKINS);
-
-    if (!triggerResult.success) {
-      // Jenkins 触发失败时立即释放槽位
-      taskSchedulerService.releaseSlotByRunId(execution.runId);
-      logger.warn('Batch Jenkins trigger failed, slot released immediately', {
-        runId: execution.runId,
-        message: triggerResult.message,
-      }, LOG_CONTEXTS.JENKINS);
-    }
-
+    // ── Step 2: 立即返回 runId，不等待 Jenkins ───────────────
     const duration = timer();
     res.json({
-      success: triggerResult.success,
+      success: true,
       data: {
         runId: execution.runId,
         totalCases: execution.totalCases,
-        queueId: triggerResult.queueId,
+        status: 'queued',
       },
-      message: triggerResult.message,
+      message: '任务已加入执行队列',
       _concurrency: {
         slotsUsed: taskSchedulerService.getStatus().running.length,
         slotsLimit: taskSchedulerService.getStatus().concurrencyLimit,
+        directQueued: taskSchedulerService.getStatus().directQueueDepth,
       },
     });
+
+    // ── Step 3: 后台异步等待槽位 + 触发 Jenkins ──────────────
+    const capturedRunId = execution.runId;
+
+    try {
+      taskSchedulerService.enqueueDirectJob(slotLabel, async () => {
+        // 槽位获取后，注册 runId 占位
+        taskSchedulerService.registerDirectSlot(capturedRunId, slotLabel);
+
+        try {
+          // 解析脚本路径
+          const { scriptPaths, missingCaseIds } = await resolveScriptPaths(caseIds);
+          const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
+
+          if (missingCaseIds.length > 0) {
+            logger.warn('Some cases have no scriptPath configured', {
+              runId: capturedRunId,
+              missingCaseIds,
+            }, LOG_CONTEXTS.JENKINS);
+          }
+
+          // 触发 Jenkins
+          const triggerResult = await jenkinsService.triggerBatchJob(
+            capturedRunId,
+            caseIds,
+            scriptPaths,
+            callbackUrl,
+            async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
+              const buildId = String(buildNumber);
+              logger.info('[dev-10] Build resolved via queueId poll, updating batch Jenkins info', {
+                runId: capturedRunId,
+                buildId,
+                buildUrl,
+                queueWaitMs,
+              }, LOG_CONTEXTS.JENKINS);
+              await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+            },
+            async (reason: 'cancelled' | 'timeout') => {
+              logger.warn('[dev-11] Batch Jenkins queue cancelled/timeout, marking execution as aborted', {
+                runId: capturedRunId,
+                reason,
+              }, LOG_CONTEXTS.JENKINS);
+              try {
+                await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
+              } catch (err) {
+                logger.warn('[dev-11] Failed to mark batch execution as aborted', {
+                  runId: capturedRunId,
+                  error: err instanceof Error ? err.message : String(err),
+                }, LOG_CONTEXTS.JENKINS);
+              }
+              taskSchedulerService.releaseSlotByRunId(capturedRunId);
+            }
+          );
+
+          if (!triggerResult.success) {
+            taskSchedulerService.releaseSlotByRunId(capturedRunId);
+            try {
+              await executionService.markExecutionAborted(capturedRunId, `Jenkins trigger failed: ${triggerResult.message}`);
+            } catch { /* ignore */ }
+            logger.warn('[run-batch] Jenkins trigger failed (async), slot released', {
+              runId: capturedRunId,
+              message: triggerResult.message,
+            }, LOG_CONTEXTS.JENKINS);
+          } else {
+            logger.info('[run-batch] Jenkins trigger success (async)', {
+              runId: capturedRunId,
+              queueId: triggerResult.queueId,
+            }, LOG_CONTEXTS.JENKINS);
+          }
+        } catch (jenkinsErr) {
+          taskSchedulerService.releaseSlotByRunId(capturedRunId);
+          try {
+            await executionService.markExecutionAborted(capturedRunId, `Jenkins error: ${jenkinsErr instanceof Error ? jenkinsErr.message : String(jenkinsErr)}`);
+          } catch { /* ignore */ }
+          logger.errorLog(jenkinsErr, '[run-batch] Async Jenkins trigger error', { runId: capturedRunId, caseIds });
+        }
+      });
+    } catch (queueErr) {
+      const queueErrMsg = queueErr instanceof Error ? queueErr.message : '并发队列已满';
+      logger.warn('[run-batch] Queue full, marking execution as aborted', {
+        runId: capturedRunId,
+        message: queueErrMsg,
+      }, LOG_CONTEXTS.JENKINS);
+      try {
+        await executionService.markExecutionAborted(capturedRunId, queueErrMsg);
+      } catch { /* ignore */ }
+    }
+
   } catch (error: unknown) {
     const duration = timer();
-    logger.errorLog(error, 'Batch case execution failed', {
+    logger.errorLog(error, 'Batch case execution failed (creating record)', {
       caseIds,
       projectId,
       durationMs: duration,

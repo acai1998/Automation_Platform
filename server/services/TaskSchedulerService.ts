@@ -490,6 +490,77 @@ export class TaskSchedulerService {
   }
 
   /**
+   * 异步直连入队（run-case / run-batch 推荐使用）
+   *
+   * 行为：
+   * - 立即返回（非阻塞），不等待槽位
+   * - 若当前槽位有空余，则 setImmediate 后异步调用 job()
+   * - 若槽位满，则将 job 放入 directQueue，待槽位释放后自动触发
+   * - 队列已满（MAX_QUEUE_DEPTH）→ 抛出错误（调用方返回 503）
+   *
+   * @param label    来源标识（如 "case:123"），用于日志和监控展示
+   * @param job      异步任务回调，槽位可用时执行；接收 acquire 后的"占位 resolve"
+   *                 job 内部应调用 registerDirectSlot(runId, label) 注册实际 runId
+   */
+  enqueueDirectJob(label: string, job: () => Promise<void>): void {
+    if (this.runningSlots.size < CONCURRENCY_LIMIT) {
+      // 有空余槽位，异步立即执行（不阻塞当前调用栈）
+      logger.debug(`[Direct] Slot available, scheduling immediate job for ${label}`, {
+        slotsUsed: this.runningSlots.size,
+        limit: CONCURRENCY_LIMIT,
+      }, LOG_CONTEXTS.EXECUTION);
+      setImmediate(() => job().catch(err => {
+        logger.errorLog(err, `[Direct] Immediate job failed for ${label}`, { label });
+      }));
+      return;
+    }
+
+    // 队列深度保护
+    if (this.directQueue.length >= MAX_QUEUE_DEPTH) {
+      logger.warn(`[Direct] Queue full, rejecting ${label}`, {
+        directQueueDepth: this.directQueue.length,
+        maxQueueDepth: MAX_QUEUE_DEPTH,
+      }, LOG_CONTEXTS.EXECUTION);
+      throw new Error(`并发执行队列已满（${MAX_QUEUE_DEPTH}），请稍后再试`);
+    }
+
+    // 包装成 DirectQueueItem，resolve 时执行 job
+    const item: DirectQueueItem = {
+      enqueuedAt: Date.now(),
+      label,
+      resolve: () => {
+        job().catch(err => {
+          logger.errorLog(err, `[Direct] Queued job failed for ${label}`, { label });
+        });
+      },
+      reject: (err: Error) => {
+        logger.warn(`[Direct] Queued job rejected for ${label}: ${err.message}`, { label }, LOG_CONTEXTS.EXECUTION);
+      },
+    };
+
+    // 队列超时自动移除（超时后不再执行，但 runId 已创建，状态会因无回调而由 slot 超时处理）
+    item.timeoutTimer = setTimeout(() => {
+      const idx = this.directQueue.indexOf(item);
+      if (idx !== -1) {
+        this.directQueue.splice(idx, 1);
+        logger.warn(`[Direct] Queue item timed out for ${label}`, {
+          waitMs: Date.now() - item.enqueuedAt,
+        }, LOG_CONTEXTS.EXECUTION);
+        item.reject(new Error(`排队等待超时（${Math.round(QUEUE_ITEM_TIMEOUT_MS / 1000)}秒），任务已取消`));
+      }
+    }, QUEUE_ITEM_TIMEOUT_MS);
+    if (item.timeoutTimer.unref) item.timeoutTimer.unref();
+
+    this.directQueue.push(item);
+
+    logger.info(`[Direct] ${label} queued (concurrency limit ${CONCURRENCY_LIMIT} reached)`, {
+      label,
+      directQueuePosition: this.directQueue.length,
+      slotsUsed: this.runningSlots.size,
+    }, LOG_CONTEXTS.EXECUTION);
+  }
+
+  /**
    * 直连槽位申请（run-case / run-batch 专用）
    *
    * 行为：
