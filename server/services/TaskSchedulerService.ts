@@ -19,6 +19,7 @@ import { executionService } from './ExecutionService';
 import { AppDataSource } from '../config/database';
 import { TestCase } from '../entities/TestCase';
 import { In } from 'typeorm';
+import { ExecutionRepository } from '../repositories/ExecutionRepository';
 
 // ──────────────────────────────────────────────────────────
 // 类型定义
@@ -295,6 +296,14 @@ export class TaskSchedulerService {
     this.started = true;
     logger.info('TaskSchedulerService starting...', {}, LOG_CONTEXTS.EXECUTION);
 
+    // [dev-11] 服务启动时从数据库恢复"运行中"的槽位
+    // 解决：服务重启或部署后，之前已触发但未回调完成的任务无法在调度器中看到
+    try {
+      await this.recoverRunningSlots();
+    } catch (err) {
+      logger.errorLog(err, '[dev-11] Failed to recover running slots on startup', {});
+    }
+
     try {
       await this.loadAndRegisterAllTasks();
     } catch (err) {
@@ -308,6 +317,60 @@ export class TaskSchedulerService {
 
     logger.info('TaskSchedulerService started', {
       concurrencyLimit: CONCURRENCY_LIMIT,
+    }, LOG_CONTEXTS.EXECUTION);
+  }
+
+  /**
+   * [dev-11] 服务启动时从数据库恢复运行中的槽位
+   * 将 DB 中 status=running 的记录重新注册进 runningSlots
+   * 这样即使服务重启，调度器也能感知到当前有多少个任务在跑，不会超并发
+   */
+  private async recoverRunningSlots(): Promise<void> {
+    const executionRepository = new ExecutionRepository(AppDataSource);
+    const activeRuns = await executionRepository.getActiveRunningSlots(24);
+
+    if (activeRuns.length === 0) {
+      logger.info('[dev-11] No running slots to recover on startup', {}, LOG_CONTEXTS.EXECUTION);
+      return;
+    }
+
+    let recovered = 0;
+    for (const run of activeRuns) {
+      const runId = run.id;
+      const taskId = run.taskId ?? 0;
+      const startedAt = run.startTime ? new Date(run.startTime).getTime() : Date.now();
+      const elapsedMs = Date.now() - startedAt;
+      const remainingMs = Math.max(SLOT_HOLD_TIMEOUT_MS - elapsedMs, 30_000); // 至少保留 30 秒
+
+      // 设置剩余超时（防止服务重启后槽位永远不释放）
+      const timeoutTimer = setTimeout(() => {
+        const slot = this.runningSlots.get(runId);
+        if (slot) {
+          this.runningSlots.delete(runId);
+          logger.warn(`[dev-11] Recovered slot for runId=${runId} auto-released after timeout`, {
+            runId,
+            taskId,
+          }, LOG_CONTEXTS.EXECUTION);
+          this.drainDirectQueue();
+          this.drainQueue();
+        }
+      }, remainingMs);
+
+      if (timeoutTimer.unref) timeoutTimer.unref();
+
+      this.runningSlots.set(runId, {
+        taskId,
+        runId,
+        startedAt,
+        timeoutTimer,
+        label: `recovered:${runId}`,
+      });
+      recovered++;
+    }
+
+    logger.info(`[dev-11] Recovered ${recovered} running slot(s) from database on startup`, {
+      recovered,
+      runIds: activeRuns.map(r => r.id),
     }, LOG_CONTEXTS.EXECUTION);
   }
 

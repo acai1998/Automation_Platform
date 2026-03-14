@@ -1405,6 +1405,27 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   }
 
   /**
+   * [dev-11] 获取当前所有 running 状态的执行记录（用于服务启动时恢复调度器槽位）
+   * 只查最近 maxAgeHours 小时内启动的执行，避免捞出陈年旧账
+   */
+  async getActiveRunningSlots(maxAgeHours: number = 24): Promise<Array<{
+    id: number;
+    taskId: number | null;
+    startTime: Date | null;
+  }>> {
+    return this.testRunRepository.createQueryBuilder('testRun')
+      .select([
+        'testRun.id as id',
+        'testRun.taskId as taskId',
+        'testRun.startTime as startTime',
+      ])
+      .where('testRun.status = :status', { status: 'running' })
+      .andWhere('testRun.startTime > DATE_SUB(NOW(), INTERVAL :maxAgeHours HOUR)', { maxAgeHours })
+      .orderBy('testRun.startTime', 'ASC')
+      .getRawMany();
+  }
+
+  /**
    * 将指定 executionId 下所有 status=error 的预创建记录批量更新为目标状态
    */
   async bulkUpdateErrorResults(executionId: number, targetStatus: 'passed' | 'failed'): Promise<number> {
