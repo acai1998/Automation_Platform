@@ -133,6 +133,20 @@ export default function Tasks() {
   const totalPages = Math.max(1, Math.ceil(total / TASKS_CONFIG.PAGE_SIZE));
   const globalStats = result?.stats;
 
+  // [P1] 调度器状态轮询（每 10 秒刷新一次，用于展示排队中状态）
+  const { data: schedulerStatus } = useSchedulerStatus();
+
+  // [P1] 根据调度器状态计算任务的排队信息
+  const queueInfoByTaskId = useMemo(() => {
+    const map = new Map<number, { isQueued: boolean; queuePosition: number }>();
+    if (schedulerStatus?.queued) {
+      for (const item of schedulerStatus.queued) {
+        map.set(item.taskId, { isQueued: true, queuePosition: item.queuePosition });
+      }
+    }
+    return map;
+  }, [schedulerStatus]);
+
   // ── 操作 mutation ──────────────────────────────────
   const runTaskMutation = useRunTask();
   const createTaskMutation = useCreateTask();
@@ -586,6 +600,8 @@ export default function Tasks() {
                   runTaskMutation.isPending &&
                   runTaskMutation.variables === task.id
                 }
+                isQueued={queueInfoByTaskId.get(task.id)?.isQueued ?? false}
+                queuePosition={queueInfoByTaskId.get(task.id)?.queuePosition}
                 isBatchMode={isBatchMode}
                 isSelected={selectedTasks.has(task.id)}
                 onSelect={(checked) => handleSelectTask(task.id, checked)}
@@ -751,6 +767,8 @@ function TaskCard({
   onStats,
   onCancel,
   isRunning,
+  isQueued,
+  queuePosition,
   isBatchMode,
   isSelected,
   onSelect,
@@ -763,6 +781,10 @@ function TaskCard({
   onStats: () => void;
   onCancel: () => void;
   isRunning?: boolean;
+  /** [P1] 任务是否在调度器等待队列中 */
+  isQueued?: boolean;
+  /** [P1] 在队列中的位置（1-based） */
+  queuePosition?: number;
   isBatchMode?: boolean;
   isSelected?: boolean;
   onSelect?: (checked: boolean) => void;
@@ -945,16 +967,27 @@ function TaskCard({
       <CardFooter className="pt-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
         <Button
           onClick={onRun}
-          disabled={isRunning || task.status === 'archived'}
-          className="w-full gap-2 bg-white hover:bg-blue-50 text-blue-600 border-blue-200 hover:border-blue-300 dark:bg-slate-800 dark:text-blue-400 dark:border-slate-700"
+          disabled={isRunning || isQueued || task.status === 'archived'}
+          className={cn(
+            "w-full gap-2",
+            isQueued
+              ? "bg-amber-50 hover:bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700"
+              : "bg-white hover:bg-blue-50 text-blue-600 border-blue-200 hover:border-blue-300 dark:bg-slate-800 dark:text-blue-400 dark:border-slate-700"
+          )}
           variant="outline"
         >
           {isRunning ? (
             <Loader2 className="h-4 w-4 animate-spin" />
+          ) : isQueued ? (
+            <Clock className="h-4 w-4" />
           ) : (
             <Play className="h-4 w-4 fill-current" />
           )}
-          {isRunning ? TASK_MESSAGES.BTN_RUNNING : TASK_MESSAGES.BTN_RUN_NOW}
+          {isRunning
+            ? TASK_MESSAGES.BTN_RUNNING
+            : isQueued
+            ? `排队中 ${queuePosition ? `(第 ${queuePosition} 位)` : ''}`
+            : TASK_MESSAGES.BTN_RUN_NOW}
         </Button>
       </CardFooter>
     </Card>
@@ -1277,8 +1310,11 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
                 <p className="text-xs text-blue-400 mt-0.5">上限 {status.concurrencyLimit}</p>
               </div>
               <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 p-3 text-center">
-                <p className="text-2xl font-bold text-amber-600">{status.queued.length}</p>
+                <p className="text-2xl font-bold text-amber-600">{status.queueDepth ?? status.queued.length}</p>
                 <p className="text-xs text-slate-500 mt-1">等待队列</p>
+                {status.maxQueueDepth && (
+                  <p className="text-xs text-amber-400 mt-0.5">上限 {status.maxQueueDepth}</p>
+                )}
               </div>
               <div className="rounded-xl bg-green-50 dark:bg-green-900/20 p-3 text-center">
                 <p className="text-2xl font-bold text-green-600">{status.scheduled.length}</p>
@@ -1309,37 +1345,54 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            {/* 运行中的任务 */}
+            {/* 运行中的任务（P1：显示 taskId + runId + 已运行时长） */}
             {status.running.length > 0 && (
               <div className="space-y-1.5">
                 <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse inline-block" />
                   运行中 ({status.running.length})
                 </h4>
-                <div className="flex flex-wrap gap-1.5">
-                  {status.running.map((id) => (
-                    <span key={id} className="px-2 py-1 rounded-md text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-mono">
-                      Task #{id}
-                    </span>
-                  ))}
+                <div className="flex flex-col gap-1.5">
+                  {status.running.map((slot) => {
+                    const elapsedSec = Math.round((slot.elapsedMs ?? 0) / 1000);
+                    const elapsedDisplay = elapsedSec >= 60
+                      ? `${Math.floor(elapsedSec / 60)}m${elapsedSec % 60}s`
+                      : `${elapsedSec}s`;
+                    return (
+                      <div key={slot.runId ?? slot.taskId} className="flex items-center justify-between px-2 py-1 rounded-md text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-mono">
+                        <span>Task #{slot.taskId}</span>
+                        <span className="text-blue-400 ml-2">Run #{slot.runId}</span>
+                        <span className="text-blue-500 ml-auto">{elapsedDisplay}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
-            {/* 等待队列 */}
+            {/* 等待队列（P1：显示优先级、等待时长、触发方式） */}
             {status.queued.length > 0 && (
               <div className="space-y-1.5">
                 <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
                   等待队列 ({status.queued.length})
                 </h4>
-                <div className="flex flex-wrap gap-1.5">
-                  {status.queued.map((id, idx) => (
-                    <span key={id} className="px-2 py-1 rounded-md text-xs bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 font-mono flex items-center gap-1">
-                      <span className="text-amber-400">#{idx + 1}</span>
-                      Task #{id}
-                    </span>
-                  ))}
+                <div className="flex flex-col gap-1.5">
+                  {status.queued.map((item) => {
+                    const waitSec = Math.round((item.waitMs ?? 0) / 1000);
+                    const waitDisplay = waitSec >= 60
+                      ? `${Math.floor(waitSec / 60)}m${waitSec % 60}s`
+                      : `${waitSec}s`;
+                    const triggerLabel = item.triggerReason === 'manual' ? '手动' : item.triggerReason === 'retry' ? '重试' : '定时';
+                    return (
+                      <div key={`${item.taskId}-${item.queuePosition}`} className="flex items-center gap-2 px-2 py-1 rounded-md text-xs bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 font-mono">
+                        <span className="text-amber-400 font-bold w-5">#{item.queuePosition}</span>
+                        <span>Task #{item.taskId}</span>
+                        <span className="ml-1 px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-800/30 text-amber-600">{triggerLabel}</span>
+                        <span className="ml-auto text-amber-400">等待 {waitDisplay}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

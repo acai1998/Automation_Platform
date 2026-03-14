@@ -582,36 +582,95 @@ export class TaskSchedulerService {
   // ─────────────────────────────────────────────
 
   /**
-   * 分发任务执行
-   * - 超过并发上限时放入等待队列
-   * - 支持 Jenkins 触发或仅创建运行记录（视配置）
+   * [P1 重写] 分发任务执行
+   *
+   * 核心变化：
+   * 1. 并发检查基于 runningSlots.size（runId 维度），而非 runningTasks
+   * 2. 超过并发上限时，放入优先级队列（而非简单数组）
+   * 3. 槽位在 executeTask 返回后**不立即释放**，而是在 Jenkins 回调/超时后释放
+   * 4. 队列最大深度保护（MAX_QUEUE_DEPTH）+ 队列项超时（QUEUE_ITEM_TIMEOUT_MS）
    */
   async dispatchTask(taskId: number, triggerReason: 'scheduled' | 'manual' | 'retry' = 'scheduled', operatorId?: number): Promise<void> {
-    if (this.runningTasks.size >= CONCURRENCY_LIMIT) {
-      if (!this.waitQueue.includes(taskId)) {
-        this.waitQueue.push(taskId);
-        logger.info(`Task ${taskId} queued (concurrency limit ${CONCURRENCY_LIMIT} reached)`, {
-          queue: this.waitQueue,
+    if (this.runningSlots.size >= CONCURRENCY_LIMIT) {
+      // [P1] 队列深度保护
+      if (this.waitQueue.length >= MAX_QUEUE_DEPTH) {
+        logger.warn(`Task ${taskId} dropped: queue full (depth=${this.waitQueue.length}/${MAX_QUEUE_DEPTH})`, {
+          taskId,
+          queueDepth: this.waitQueue.length,
+          maxQueueDepth: MAX_QUEUE_DEPTH,
         }, LOG_CONTEXTS.EXECUTION);
+        return;
       }
+
+      // [P1] 同一任务已在队列中则跳过（防重复入队）
+      if (this.waitQueue.some(item => item.taskId === taskId)) {
+        logger.debug(`Task ${taskId} already in queue, skipping duplicate enqueue`, {}, LOG_CONTEXTS.EXECUTION);
+        return;
+      }
+
+      // [P1] 计算优先级
+      const priority = triggerReason === 'manual' ? PRIORITY_MANUAL
+        : triggerReason === 'retry' ? PRIORITY_RETRY
+        : PRIORITY_SCHEDULED;
+
+      const queueItem: QueueItem = {
+        taskId,
+        triggerReason,
+        operatorId,
+        enqueuedAt: Date.now(),
+        priority,
+      };
+
+      // [P1] 队列项超时：超过 QUEUE_ITEM_TIMEOUT_MS 自动移除
+      queueItem.timeoutTimer = setTimeout(() => {
+        const idx = this.waitQueue.findIndex(it => it === queueItem);
+        if (idx !== -1) {
+          this.waitQueue.splice(idx, 1);
+          logger.warn(`Task ${taskId} queue item timed out and removed (waited ${QUEUE_ITEM_TIMEOUT_MS}ms)`, {
+            taskId,
+            waitMs: Date.now() - queueItem.enqueuedAt,
+          }, LOG_CONTEXTS.EXECUTION);
+        }
+      }, QUEUE_ITEM_TIMEOUT_MS);
+      if (queueItem.timeoutTimer.unref) queueItem.timeoutTimer.unref();
+
+      // [P1] 按优先级插入（稳定排序：priority ASC，enqueuedAt ASC）
+      const insertIdx = this.waitQueue.findIndex(
+        item => item.priority > priority || (item.priority === priority && item.enqueuedAt > queueItem.enqueuedAt)
+      );
+      if (insertIdx === -1) {
+        this.waitQueue.push(queueItem);
+      } else {
+        this.waitQueue.splice(insertIdx, 0, queueItem);
+      }
+
+      logger.info(`Task ${taskId} queued (concurrency limit ${CONCURRENCY_LIMIT} reached)`, {
+        taskId,
+        triggerReason,
+        priority,
+        queuePosition: this.waitQueue.findIndex(it => it === queueItem) + 1,
+        queueDepth: this.waitQueue.length,
+      }, LOG_CONTEXTS.EXECUTION);
       return;
     }
 
-    this.runningTasks.add(taskId);
     logger.info(`Task ${taskId} dispatching (reason=${triggerReason})`, {
-      running: this.runningTasks.size,
+      taskId,
+      runningSlots: this.runningSlots.size,
       limit: CONCURRENCY_LIMIT,
     }, LOG_CONTEXTS.EXECUTION);
 
     try {
+      // [P1] executeTask 内部会在 Jenkins 触发成功后注册 slot，失败时不注册（不占用槽位）
       await this.executeTask(taskId, triggerReason, operatorId);
     } catch (err) {
       logger.errorLog(err, `Task ${taskId} execution error`, { taskId });
       await this.handleTaskFailure(taskId, err);
-    } finally {
-      this.runningTasks.delete(taskId);
+      // 执行失败时，槽位已在 executeTask 中注册（若注册了则由超时 timer 释放）
+      // 这里补充一次 drainQueue，确保失败不阻塞后续任务
       this.drainQueue();
     }
+    // 注意：不再在 finally 中释放槽位！槽位由 releaseSlotByRunId 或超时 timer 负责释放
   }
 
   /**
@@ -704,33 +763,77 @@ export class TaskSchedulerService {
     // 2. 触发 Jenkins（非阻塞，失败时不影响运行记录已创建）
     if (scriptPaths.length > 0) {
       try {
+        const capturedRunId = execution.runId;
+        // [dev-10] 传入 onBuildResolved 回调，当 Jenkins 分配真实 buildNumber 后异步更新数据库
         const triggerResult = await jenkinsService.triggerBatchJob(
           execution.runId,
           caseIds,
           scriptPaths,
-          callbackUrl
+          callbackUrl,
+          async (buildNumber: number, buildUrl: string) => {
+            const buildId = String(buildNumber);
+            logger.info(`[dev-10] Task ${taskId} build resolved via queueId poll`, {
+              taskId,
+              runId: capturedRunId,
+              buildId,
+              buildUrl,
+            }, LOG_CONTEXTS.EXECUTION);
+            await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+          }
         );
 
-        if (triggerResult.success && triggerResult.buildUrl) {
-          const buildIdMatch = triggerResult.buildUrl.match(/\/(\d+)\/$/);
-          const buildId = buildIdMatch ? buildIdMatch[1] : 'unknown';
-          await executionService.updateBatchJenkinsInfo(execution.runId, {
-            buildId,
-            buildUrl: triggerResult.buildUrl,
-          });
-        } else if (!triggerResult.success) {
+        if (triggerResult.success) {
+          // [P1] Jenkins 触发成功后注册槽位，槽位持有直到回调或超时
+          this.registerRunningSlot(taskId, execution.runId);
+        } else {
           logger.warn(`Jenkins trigger failed for task ${taskId}`, {
             message: triggerResult.message,
           }, LOG_CONTEXTS.EXECUTION);
           throw new Error(`Jenkins trigger failed: ${triggerResult.message}`);
         }
       } catch (jenkinsErr) {
-        // Jenkins 失败，将该任务记入重试
+        // Jenkins 失败，将该任务记入重试（不注册槽位，不占用并发名额）
         throw jenkinsErr;
       }
     } else {
       logger.warn(`Task ${taskId} has no script paths, execution record created but Jenkins not triggered`, {}, LOG_CONTEXTS.EXECUTION);
+      // 无脚本路径时，任务不会真正执行，不需要占用槽位
     }
+  }
+
+  /**
+   * [P1] 注册运行中槽位，并设置超时自动释放
+   */
+  private registerRunningSlot(taskId: number, runId: number): void {
+    // 超时自动释放槽位（防止 Jenkins 挂死或回调永远不来）
+    const timeoutTimer = setTimeout(() => {
+      const slot = this.runningSlots.get(runId);
+      if (slot) {
+        this.runningSlots.delete(runId);
+        logger.warn(`[P1] Slot for runId=${runId} (taskId=${taskId}) auto-released after ${SLOT_HOLD_TIMEOUT_MS}ms timeout`, {
+          runId,
+          taskId,
+          heldMs: SLOT_HOLD_TIMEOUT_MS,
+        }, LOG_CONTEXTS.EXECUTION);
+        this.drainQueue();
+      }
+    }, SLOT_HOLD_TIMEOUT_MS);
+
+    if (timeoutTimer.unref) timeoutTimer.unref();
+
+    this.runningSlots.set(runId, {
+      taskId,
+      runId,
+      startedAt: Date.now(),
+      timeoutTimer,
+    });
+
+    logger.info(`[P1] Slot registered for runId=${runId} (taskId=${taskId})`, {
+      runId,
+      taskId,
+      slotsUsed: this.runningSlots.size,
+      slotsLimit: CONCURRENCY_LIMIT,
+    }, LOG_CONTEXTS.EXECUTION);
   }
 
   /**
@@ -789,13 +892,21 @@ export class TaskSchedulerService {
     }
   }
 
-  /** 从等待队列取出一个任务执行 */
+  /** [P1] 从优先级队列取出任务执行（按 priority ASC, enqueuedAt ASC 排序） */
   private drainQueue(): void {
-    while (this.waitQueue.length > 0 && this.runningTasks.size < CONCURRENCY_LIMIT) {
-      const nextId = this.waitQueue.shift()!;
-      logger.debug(`Draining queue: dispatching task ${nextId}`, {}, LOG_CONTEXTS.EXECUTION);
-      this.dispatchTask(nextId, 'scheduled').catch(err => {
-        logger.errorLog(err, `Queue drain dispatch failed for task ${nextId}`, {});
+    while (this.waitQueue.length > 0 && this.runningSlots.size < CONCURRENCY_LIMIT) {
+      const next = this.waitQueue.shift()!;
+      // 取消队列超时 timer（已出队，不再需要）
+      if (next.timeoutTimer) clearTimeout(next.timeoutTimer);
+
+      logger.debug(`Draining queue: dispatching task ${next.taskId} (priority=${next.priority}, waited=${Date.now() - next.enqueuedAt}ms)`, {
+        taskId: next.taskId,
+        triggerReason: next.triggerReason,
+        queueDepth: this.waitQueue.length,
+      }, LOG_CONTEXTS.EXECUTION);
+
+      this.dispatchTask(next.taskId, next.triggerReason, next.operatorId).catch(err => {
+        logger.errorLog(err, `Queue drain dispatch failed for task ${next.taskId}`, {});
       });
     }
   }

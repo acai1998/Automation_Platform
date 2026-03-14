@@ -19,8 +19,28 @@ export interface JenkinsTriggerResult {
   success: boolean;
   queueId?: number;
   buildUrl?: string;
+  buildNumber?: number;
   message: string;
 }
+
+/**
+ * Jenkins Queue Item（通过 queueId 轮询获取的结果）
+ */
+interface JenkinsQueueItem {
+  id: number;
+  why: string | null;
+  cancelled: boolean;
+  executable?: {
+    number: number;
+    url: string;
+  };
+}
+
+/**
+ * [dev-10] queueId → buildNumber 解析完成后的回调类型
+ * 由调用方注入，异步回调中更新数据库
+ */
+export type BuildResolvedCallback = (buildNumber: number, buildUrl: string) => Promise<void>;
 
 /**
  * 用例类型
@@ -149,12 +169,20 @@ export class JenkinsService {
 
   /**
    * 触发 Jenkins Job 执行批量用例
+   *
+   * [dev-10] 使用 queueId 可靠映射 buildId（非阻塞设计）：
+   * 1. 立即触发 Jenkins 并从 Location header 获取 queueId
+   * 2. 立即返回 success（不等待构建开始），避免长时间阻塞调用方
+   * 3. 若提供了 onBuildResolved 回调，在后台异步轮询 Queue API，
+   *    一旦 Jenkins 分配了真实 buildNumber，调用回调更新数据库
+   * 注意：不再使用 lastBuild 推断（存在竞态条件，高并发时会拿到错误 build 号）
    */
   async triggerBatchJob(
     runId: number,
     caseIds: number[],
     scriptPaths: string[],
-    callbackUrl?: string
+    callbackUrl?: string,
+    onBuildResolved?: BuildResolvedCallback
   ): Promise<JenkinsTriggerResult> {
     const logger = require('../utils/logger').default;
 
@@ -215,30 +243,68 @@ export class JenkinsService {
       }, 'JENKINS');
 
       if (response.status === 201 || response.status === 200) {
-        // 从 Location header 获取 queue ID
+        // [dev-10] 从 Location header 提取 queueId（形如 .../queue/item/123/）
         const location = response.headers.get('Location');
         const queueId = location ? this.extractQueueId(location) : undefined;
 
-        logger.debug('Queue ID extracted', {
+        logger.debug('Queue ID extracted from Location header', {
           runId,
           queueId,
           location,
         }, 'JENKINS');
 
-        // 获取最新构建信息
-        const buildInfo = await this.getLatestBuildInfo(jobName);
-        
-        logger.info('Batch job triggered successfully', {
+        if (!queueId) {
+          // 无 queueId 时：不再调用 lastBuild（竞态风险），直接返回成功但无 buildUrl
+          logger.warn('No queueId in Location header, buildUrl will be unknown', {
+            runId,
+            location,
+          }, 'JENKINS');
+          return {
+            success: true,
+            queueId: undefined,
+            buildUrl: undefined,
+            buildNumber: undefined,
+            message: 'Batch job triggered successfully (queueId unavailable)',
+          };
+        }
+
+        logger.info('Batch job triggered successfully, resolving buildNumber in background', {
           runId,
           queueId,
-          buildNumber: buildInfo?.buildNumber,
-          buildUrl: buildInfo?.buildUrl,
         }, 'JENKINS');
 
+        // [dev-10] 后台异步轮询 Queue API 解析真实 buildNumber，不阻塞当前请求
+        if (onBuildResolved) {
+          this.pollQueueForBuild(queueId, runId).then(buildInfo => {
+            if (buildInfo) {
+              onBuildResolved(buildInfo.buildNumber, buildInfo.buildUrl).catch(err => {
+                logger.warn('onBuildResolved callback failed', {
+                  runId,
+                  queueId,
+                  error: err instanceof Error ? err.message : String(err),
+                }, 'JENKINS');
+              });
+            } else {
+              logger.warn('pollQueueForBuild returned null (timeout or cancelled)', {
+                runId,
+                queueId,
+              }, 'JENKINS');
+            }
+          }).catch(err => {
+            logger.warn('Background queue poll failed', {
+              runId,
+              queueId,
+              error: err instanceof Error ? err.message : String(err),
+            }, 'JENKINS');
+          });
+        }
+
+        // 立即返回（不等待 poll 完成），调用方可用 queueId 做追踪
         return {
           success: true,
           queueId,
-          buildUrl: buildInfo?.buildUrl,
+          buildUrl: undefined,   // 尚未解析，将由 onBuildResolved 回调更新
+          buildNumber: undefined,
           message: 'Batch job triggered successfully',
         };
       } else {
@@ -270,6 +336,131 @@ export class JenkinsService {
   }
 
   /**
+   * [dev-10] 通过 queueId 轮询 Jenkins Queue API，等待构建真正分配 buildNumber
+   *
+   * Jenkins 在接受触发请求后，构建先进入队列（Queue），等待 executor 空闲后才真正开始。
+   * Queue API: GET /queue/item/:queueId/api/json
+   * 当构建开始后，响应中会出现 executable.number 和 executable.url。
+   *
+   * @param queueId Jenkins 队列项 ID
+   * @param runId 平台运行记录 ID（仅用于日志）
+   * @param maxWaitMs 最长等待时间（毫秒），默认 60 秒
+   * @param pollIntervalMs 轮询间隔（毫秒），默认 3 秒
+   */
+  private async pollQueueForBuild(
+    queueId: number,
+    runId: number,
+    maxWaitMs = 60_000,
+    pollIntervalMs = 3_000
+  ): Promise<{ buildNumber: number; buildUrl: string } | null> {
+    const logger = require('../utils/logger').default;
+
+    // 规范化 Jenkins base URL（确保没有尾部斜杠）
+    const base = this.config.baseUrl.replace(/\/+$/, '');
+    const queueApiUrl = `${base}/queue/item/${queueId}/api/json`;
+
+    const deadline = Date.now() + maxWaitMs;
+    let attempt = 0;
+
+    logger.debug('Starting queue poll for build resolution', {
+      runId,
+      queueId,
+      queueApiUrl,
+      maxWaitMs,
+      pollIntervalMs,
+    }, 'JENKINS');
+
+    while (Date.now() < deadline) {
+      attempt++;
+
+      try {
+        const response = await fetch(queueApiUrl, {
+          method: 'GET',
+          headers: {
+            'Authorization': this.getAuthHeader(),
+          },
+        });
+
+        if (!response.ok) {
+          logger.warn('Queue poll HTTP error', {
+            runId,
+            queueId,
+            attempt,
+            status: response.status,
+          }, 'JENKINS');
+          // 非 200 时稍等再试（可能是瞬时网络问题）
+          await this.sleep(pollIntervalMs);
+          continue;
+        }
+
+        const item = await response.json() as JenkinsQueueItem;
+
+        // 构建被取消
+        if (item.cancelled) {
+          logger.warn('Jenkins queue item was cancelled', {
+            runId,
+            queueId,
+            attempt,
+          }, 'JENKINS');
+          return null;
+        }
+
+        // 构建已经分配到 executor，可以取出 buildNumber 和 buildUrl
+        if (item.executable) {
+          const buildNumber = item.executable.number;
+          const buildUrl = this.normalizeJenkinsUrl(item.executable.url);
+
+          logger.info('Build started: resolved buildNumber via queueId', {
+            runId,
+            queueId,
+            buildNumber,
+            buildUrl,
+            attempt,
+            waitedMs: Date.now() - (deadline - maxWaitMs),
+          }, 'JENKINS');
+
+          return { buildNumber, buildUrl };
+        }
+
+        // 仍在队列等待中（why 字段描述原因，如 "等待 executor"）
+        logger.debug('Build still in queue, waiting...', {
+          runId,
+          queueId,
+          attempt,
+          why: item.why,
+          remainingMs: deadline - Date.now(),
+        }, 'JENKINS');
+
+        await this.sleep(pollIntervalMs);
+      } catch (err) {
+        logger.warn('Queue poll exception', {
+          runId,
+          queueId,
+          attempt,
+          error: err instanceof Error ? err.message : String(err),
+        }, 'JENKINS');
+        await this.sleep(pollIntervalMs);
+      }
+    }
+
+    // 超时仍未分配 buildNumber
+    logger.warn('Queue poll timed out: build did not start within time limit', {
+      runId,
+      queueId,
+      maxWaitMs,
+      attempts: attempt,
+    }, 'JENKINS');
+    return null;
+  }
+
+  /**
+   * 简单的 sleep 工具函数
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
    * 从 Location header 中提取 Queue ID
    */
   private extractQueueId(location: string): number | undefined {
@@ -286,49 +477,6 @@ export class JenkinsService {
     // 替换错误的域名为正确的域名
     return url.replace(/http:\/\/www\.wiac\.xyz:8080/g, 'http://jenkins.wiac.xyz:8080')
               .replace(/https:\/\/www\.wiac\.xyz/g, 'https://jenkins.wiac.xyz');
-  }
-
-  /**
-   * 获取最新构建信息
-   */
-  private async getLatestBuildInfo(jobName: string): Promise<{ buildNumber: number; buildUrl: string } | null> {
-    const logger = require('../utils/logger').default;
-
-    if (!this.enabled) {
-      return null;
-    }
-
-    try {
-      const response = await fetch(`${this.config.baseUrl}/job/${jobName}/lastBuild/api/json`, {
-        method: 'GET',
-        headers: {
-          'Authorization': this.getAuthHeader(),
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json() as { number: number; url: string };
-        logger.debug('Latest build info retrieved', {
-          jobName,
-          buildNumber: data.number,
-        }, 'JENKINS');
-        return {
-          buildNumber: data.number,
-          buildUrl: this.normalizeJenkinsUrl(data.url),
-        };
-      } else {
-        logger.warn('Failed to fetch latest build info', {
-          jobName,
-          status: response.status,
-        }, 'JENKINS');
-      }
-    } catch (error) {
-      logger.debug('Exception while fetching latest build info', {
-        jobName,
-        error: error instanceof Error ? error.message : String(error),
-      }, 'JENKINS');
-    }
-    return null;
   }
 
   /**

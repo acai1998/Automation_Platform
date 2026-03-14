@@ -90,9 +90,19 @@ function isFailedStatus(status: string): boolean {
 }
 
 /**
- * 获取测试用例状态的显示标签
+ * 判断用例是否是「执行中」的占位记录（整体运行中且用例状态为 error）
+ * 触发执行时会预先创建 error 占位记录，等 Jenkins 回调后才更新为真实状态。
+ * 若此时用户进入详情页，应将这些占位 error 显示为「执行中」而非真实错误。
  */
-function getStatusLabel(status: TestRunResult['status']): string {
+function isRunningPlaceholder(status: string, runStatus?: string): boolean {
+  return status === "error" && (runStatus === "running" || runStatus === "pending");
+}
+
+/**
+ * 获取测试用例状态的显示标签（考虑整体运行状态）
+ */
+function getStatusLabel(status: TestRunResult['status'], runStatus?: string): string {
+  if (isRunningPlaceholder(status, runStatus)) return '执行中';
   return STATUS_LABEL_MAP[status] ?? 'UNKNOWN';
 }
 
@@ -113,7 +123,7 @@ function formatDuration(ms?: number | null) {
 
 // ─── 按分组视图组件 ───────────────────────────────────────────────────────────
 
-function GroupView({ results, loading }: { results: TestRunResult[]; loading: boolean }) {
+function GroupView({ results, loading, runStatus }: { results: TestRunResult[]; loading: boolean; runStatus?: string }) {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // 按模块分组
@@ -124,13 +134,13 @@ function GroupView({ results, loading }: { results: TestRunResult[]; loading: bo
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(item);
     }
-    // 有失败的组排前面
+    // 有失败的组排前面（执行中的占位 error 不算失败）
     return Array.from(map.entries()).sort(([, a], [, b]) => {
-      const aFail = a.some(r => isFailedStatus(r.status)) ? 0 : 1;
-      const bFail = b.some(r => isFailedStatus(r.status)) ? 0 : 1;
+      const aFail = a.some(r => isFailedStatus(r.status) && !isRunningPlaceholder(r.status, runStatus)) ? 0 : 1;
+      const bFail = b.some(r => isFailedStatus(r.status) && !isRunningPlaceholder(r.status, runStatus)) ? 0 : 1;
       return aFail - bFail;
     });
-  }, [results]);
+  }, [results, runStatus]);
 
   const toggleGroup = (key: string) => {
     setExpandedGroups(prev => {
@@ -160,9 +170,10 @@ function GroupView({ results, loading }: { results: TestRunResult[]; loading: bo
   return (
     <div className="divide-y divide-slate-200 dark:divide-slate-800">
       {groups.map(([groupName, items]) => {
-        const hasFail = items.some(r => isFailedStatus(r.status));
+        const hasFail = items.some(r => isFailedStatus(r.status) && !isRunningPlaceholder(r.status, runStatus));
         const passCount = items.filter(r => r.status === "passed").length;
-        const failCount = items.filter(r => isFailedStatus(r.status)).length;
+        const failCount = items.filter(r => isFailedStatus(r.status) && !isRunningPlaceholder(r.status, runStatus)).length;
+        const pendingCount = items.filter(r => isRunningPlaceholder(r.status, runStatus) || r.status === "pending").length;
         const skipCount = items.filter(r => r.status === "skipped").length;
         const expanded = expandedGroups.has(groupName);
 
@@ -202,6 +213,11 @@ function GroupView({ results, loading }: { results: TestRunResult[]; loading: bo
                     <MinusCircle className="h-3.5 w-3.5" /> {skipCount} 跳过
                   </span>
                 )}
+                {pendingCount > 0 && (
+                  <span className="flex items-center gap-1 text-blue-500 dark:text-blue-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> {pendingCount} 执行中
+                  </span>
+                )}
               </div>
             </button>
 
@@ -210,8 +226,9 @@ function GroupView({ results, loading }: { results: TestRunResult[]; loading: bo
                 <table className="w-full text-left text-sm">
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                     {items.map(item => {
-                      const failed = isFailedStatus(item.status);
-                      const statusText = getStatusLabel(item.status);
+                      const placeholder = isRunningPlaceholder(item.status, runStatus);
+                      const failed = !placeholder && isFailedStatus(item.status);
+                      const statusText = getStatusLabel(item.status, runStatus);
                       return (
                         <tr key={item.id} className={cn("px-6", failed ? "bg-rose-500/[0.02]" : "")}>
                           <td className="pl-14 pr-6 py-3">
@@ -224,9 +241,10 @@ function GroupView({ results, loading }: { results: TestRunResult[]; loading: bo
                               "flex items-center gap-1.5 text-xs font-bold uppercase",
                               item.status === "passed" ? "text-emerald-600 dark:text-emerald-400"
                               : failed ? "text-rose-600 dark:text-rose-400"
+                              : placeholder ? "text-blue-500 dark:text-blue-400"
                               : "text-slate-400",
                             )}>
-                              {item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5" /> : failed ? <XCircle className="h-3.5 w-3.5" /> : <MinusCircle className="h-3.5 w-3.5" />}
+                              {item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5" /> : failed ? <XCircle className="h-3.5 w-3.5" /> : placeholder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MinusCircle className="h-3.5 w-3.5" />}
                               {statusText}
                             </div>
                           </td>
@@ -585,7 +603,7 @@ export default function ReportDetail() {
           </div>
 
           {activeTab === "groups" && (
-            <GroupView results={pagedResults} loading={resultLoading} />
+            <GroupView results={pagedResults} loading={resultLoading} runStatus={run?.status} />
           )}
 
           {activeTab === "cases" && <>
@@ -664,9 +682,10 @@ export default function ReportDetail() {
                 )}
 
                 {pagedResults.map((item) => {
-                  const failed = isFailedStatus(item.status);
+                  const placeholder = isRunningPlaceholder(item.status, run?.status);
+                  const failed = !placeholder && isFailedStatus(item.status);
                   const expanded = expandedRows.has(item.id);
-                  const statusText = getStatusLabel(item.status);
+                  const statusText = getStatusLabel(item.status, run?.status);
 
                   return (
                     <Fragment key={item.id}>
@@ -699,10 +718,12 @@ export default function ReportDetail() {
                                 ? "text-emerald-600 dark:text-emerald-500"
                                 : failed
                                   ? "text-rose-600 dark:text-rose-500"
-                                  : "text-slate-500 dark:text-slate-400",
+                                  : placeholder
+                                    ? "text-blue-500 dark:text-blue-400"
+                                    : "text-slate-500 dark:text-slate-400",
                             )}
                           >
-                            {item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5" /> : failed ? <XCircle className="h-3.5 w-3.5" /> : <MinusCircle className="h-3.5 w-3.5" />}
+                            {item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5" /> : failed ? <XCircle className="h-3.5 w-3.5" /> : placeholder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MinusCircle className="h-3.5 w-3.5" />}
                             {statusText}
                           </div>
                         </td>
@@ -776,6 +797,11 @@ export default function ReportDetail() {
                                       </div>
                                     )}
                                   </>
+                                ) : placeholder ? (
+                                  <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 flex items-center gap-3">
+                                    <Loader2 className="h-5 w-5 text-blue-500 flex-shrink-0 animate-spin" />
+                                    <p className="text-sm text-blue-700 dark:text-blue-400 font-medium">用例正在执行中，请等待 Jenkins 任务完成后刷新查看结果</p>
+                                  </div>
                                 ) : (
                                   <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-4 flex items-center gap-3">
                                     <CheckCircle2 className="h-5 w-5 text-emerald-500 flex-shrink-0" />

@@ -353,11 +353,33 @@ export function useTaskAuditLogs(taskId: number | null, limit = 50, offset = 0) 
 
 // ---------- 调度器状态 ----------
 
+/** [P1] 运行中槽位详情 */
+export interface RunningSlotInfo {
+  taskId: number;
+  runId: number;
+  elapsedMs: number;
+}
+
+/** [P1] 队列项详情 */
+export interface QueuedItemInfo {
+  taskId: number;
+  triggerReason: string;
+  waitMs: number;
+  priority: number;
+  queuePosition: number;
+}
+
 export interface SchedulerStatus {
-  running: number[];
-  queued: number[];
+  /** [P1] 运行中的槽位详情（runId 维度） */
+  running: RunningSlotInfo[];
+  /** [P1] 等待队列详情（含优先级、等待时长） */
+  queued: QueuedItemInfo[];
   scheduled: number[];
   concurrencyLimit: number;
+  /** [P1] 当前队列深度 */
+  queueDepth: number;
+  /** [P1] 队列最大深度 */
+  maxQueueDepth: number;
 }
 
 export function useSchedulerStatus() {

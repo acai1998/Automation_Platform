@@ -664,10 +664,17 @@ describe('Tasks Page', () => {
       } as any);
 
       const mockSchedulerStatus: SchedulerStatus = {
-        running: [1, 2],
-        queued: [3],
+        running: [
+          { taskId: 1, runId: 101, elapsedMs: 5000 },
+          { taskId: 2, runId: 102, elapsedMs: 3000 },
+        ],
+        queued: [
+          { taskId: 3, triggerReason: 'manual', waitMs: 1000, priority: 1, queuePosition: 1 },
+        ],
         scheduled: [4, 5],
         concurrencyLimit: 3,
+        queueDepth: 1,
+        maxQueueDepth: 50,
       };
       vi.spyOn(useTasksHooks, 'useSchedulerStatus').mockReturnValue({
         data: mockSchedulerStatus,
@@ -696,10 +703,19 @@ describe('Tasks Page', () => {
       } as any);
 
       const mockSchedulerStatus: SchedulerStatus = {
-        running: [1, 2],
-        queued: [3, 4, 5],
+        running: [
+          { taskId: 1, runId: 101, elapsedMs: 5000 },
+          { taskId: 2, runId: 102, elapsedMs: 3000 },
+        ],
+        queued: [
+          { taskId: 3, triggerReason: 'manual', waitMs: 1000, priority: 1, queuePosition: 1 },
+          { taskId: 4, triggerReason: 'scheduled', waitMs: 2000, priority: 2, queuePosition: 2 },
+          { taskId: 5, triggerReason: 'retry', waitMs: 3000, priority: 3, queuePosition: 3 },
+        ],
         scheduled: [6],
         concurrencyLimit: 3,
+        queueDepth: 3,
+        maxQueueDepth: 50,
       };
       vi.spyOn(useTasksHooks, 'useSchedulerStatus').mockReturnValue({
         data: mockSchedulerStatus,
@@ -733,6 +749,8 @@ describe('Tasks Page', () => {
         queued: [],
         scheduled: [],
         concurrencyLimit: 3,
+        queueDepth: 0,
+        maxQueueDepth: 50,
       };
       vi.spyOn(useTasksHooks, 'useSchedulerStatus').mockReturnValue({
         data: emptyStatus,
@@ -759,10 +777,14 @@ describe('Tasks Page', () => {
       } as any);
 
       const mockStatus: SchedulerStatus = {
-        running: [1],
+        running: [
+          { taskId: 1, runId: 201, elapsedMs: 10000 },
+        ],
         queued: [],
         scheduled: [],
         concurrencyLimit: 5,
+        queueDepth: 0,
+        maxQueueDepth: 50,
       };
       vi.spyOn(useTasksHooks, 'useSchedulerStatus').mockReturnValue({
         data: mockStatus,

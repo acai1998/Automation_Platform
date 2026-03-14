@@ -26,8 +26,8 @@ describe('Database Configuration', () => {
       expect(DB_CONFIG_CONSTANTS.DEFAULT_HOST).toBe('localhost');
       expect(DB_CONFIG_CONSTANTS.DEFAULT_USER).toBe('root');
       expect(DB_CONFIG_CONSTANTS.DEFAULT_DATABASE).toBe('autotest');
-      expect(DB_CONFIG_CONSTANTS.CONNECTION_LIMIT).toBe(10);
-      expect(DB_CONFIG_CONSTANTS.QUEUE_LIMIT).toBe(20);
+      expect(DB_CONFIG_CONSTANTS.CONNECTION_LIMIT).toBe(20);
+      expect(DB_CONFIG_CONSTANTS.QUEUE_LIMIT).toBe(30);
       expect(DB_CONFIG_CONSTANTS.RETRY_ATTEMPTS).toBe(3);
       expect(DB_CONFIG_CONSTANTS.RETRY_DELAY).toBe(3000);
       expect(DB_CONFIG_CONSTANTS.CHARSET).toBe('utf8mb4');
@@ -152,8 +152,8 @@ describe('Database Configuration', () => {
         password: 'test-password',
         database: 'test-db',
         waitForConnections: true,
-        connectionLimit: 10,
-        queueLimit: 20,
+        connectionLimit: 20,
+        queueLimit: 30,
         enableKeepAlive: true,
         keepAliveInitialDelay: 10000,
         connectTimeout: 10000,
@@ -168,8 +168,8 @@ describe('Database Configuration', () => {
 
       // Assert
       expect(config).toHaveProperty('waitForConnections', true);
-      expect(config).toHaveProperty('connectionLimit', 10);
-      expect(config).toHaveProperty('queueLimit', 20);
+      expect(config).toHaveProperty('connectionLimit', 20);
+      expect(config).toHaveProperty('queueLimit', 30);
       expect(config).toHaveProperty('enableKeepAlive', true);
       expect(config).toHaveProperty('keepAliveInitialDelay', 10000);
       expect(config).toHaveProperty('connectTimeout', 10000);

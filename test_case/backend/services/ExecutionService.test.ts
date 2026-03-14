@@ -7,32 +7,59 @@ import logger from '../../../server/utils/logger';
 const { mockRepoInstance } = vi.hoisted(() => {
   return {
     mockRepoInstance: {
+      // 基础 CRUD 方法
       getExecutionsWithJenkinsInfo: vi.fn(),
       getTestRunStatus: vi.fn(),
       markExecutionRunning: vi.fn(),
       runInTransaction: vi.fn(),
       createTestResults: vi.fn(),
+      createTestResult: vi.fn().mockResolvedValue({}),
       updateExecutionResults: vi.fn(),
+      updateTestResult: vi.fn().mockResolvedValue({}),
       getExecutionDetail: vi.fn(),
       getRecentExecutions: vi.fn(),
       cancelExecution: vi.fn(),
       triggerExecution: vi.fn(),
       getTestRunDetail: vi.fn(),
+      getTestRunDetailRow: vi.fn(),
       getExecutionResults: vi.fn(),
+      getResultsByRunId: vi.fn(),
       updateJenkinsInfo: vi.fn(),
       completeBatch: vi.fn(),
       findExecutionIdByRunId: vi.fn(),
+      findExecutionId: vi.fn(),
       getTestRunBasicInfo: vi.fn(),
       getAllTestRuns: vi.fn(),
       getRunCases: vi.fn(),
       updateTestRunStatus: vi.fn(),
+      updateTestRunResults: vi.fn().mockResolvedValue({}),
       getPotentiallyTimedOutExecutions: vi.fn(),
       markExecutionAsTimedOut: vi.fn(),
+      bulkUpdateErrorResults: vi.fn().mockResolvedValue(0),
+      countResultsByStatus: vi.fn().mockResolvedValue({ passed: 0, failed: 0, skipped: 0 }),
+      createTaskExecution: vi.fn(),
+      createTestRun: vi.fn(),
+      getActiveCases: vi.fn(),
+      getPotentiallyStuckExecutions: vi.fn(),
+      markOldStuckExecutionsAsAbandoned: vi.fn(),
+      syncTestRunByExecutionId: vi.fn(),
     }
   };
 });
 
 // Mock dependencies
+// JenkinsStatusService 使用 require('../utils/secrets')，需要提供完整 mock 防止模块加载失败
+vi.mock('../../../server/services/JenkinsStatusService', () => ({
+  JenkinsStatusService: vi.fn().mockImplementation(() => ({
+    getBuildStatus: vi.fn(),
+    parseBuildResults: vi.fn(),
+  })),
+  jenkinsStatusService: {
+    getBuildStatus: vi.fn(),
+    parseBuildResults: vi.fn(),
+  },
+  TestResults: {},
+}));
 vi.mock('../../../server/repositories/ExecutionRepository', () => {
   return {
     ExecutionRepository: class {
@@ -42,7 +69,6 @@ vi.mock('../../../server/repositories/ExecutionRepository', () => {
     }
   };
 });
-vi.mock('../../../server/services/JenkinsStatusService');
 vi.mock('../../../server/services/DashboardService', () => ({
   dashboardService: {
     refreshDailySummary: vi.fn(),

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { In } from 'typeorm';
 import { executionService } from '../services/ExecutionService';
 import { jenkinsService } from '../services/JenkinsService';
+import { taskSchedulerService } from '../services/TaskSchedulerService';
 import { ipWhitelistMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
 import { requestValidator } from '../middleware/RequestValidator';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
@@ -222,44 +223,31 @@ router.post('/run-case', [
       }, LOG_CONTEXTS.JENKINS);
     }
 
+    // [dev-10] 传入 onBuildResolved 回调，当 Jenkins 分配到真实 buildNumber 后异步更新数据库
+    const capturedRunId = execution.runId;
     const triggerResult = await jenkinsService.triggerBatchJob(
       execution.runId,
       [caseId],
       scriptPaths,
-      callbackUrl
+      callbackUrl,
+      async (buildNumber: number, buildUrl: string) => {
+        const buildId = String(buildNumber);
+        logger.info('[dev-10] Build resolved via queueId poll, updating Jenkins info', {
+          runId: capturedRunId,
+          buildId,
+          buildUrl,
+        }, LOG_CONTEXTS.JENKINS);
+        await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+      }
     );
     
     logger.info('Jenkins trigger result', {
       success: triggerResult.success,
       message: triggerResult.message,
-      buildUrl: triggerResult.buildUrl,
       queueId: triggerResult.queueId,
     }, LOG_CONTEXTS.JENKINS);
 
-    if (triggerResult.success) {
-      // 更新Jenkins构建信息
-      if (triggerResult.buildUrl) {
-        // 解析Jenkins URL获取build ID
-        const buildIdMatch = triggerResult.buildUrl.match(/\/(\d+)\/$/);
-        const buildId = buildIdMatch ? buildIdMatch[1] : 'unknown';
-        
-        logger.debug('Updating Jenkins info', {
-          runId: execution.runId,
-          buildId,
-          buildUrl: triggerResult.buildUrl
-        }, LOG_CONTEXTS.JENKINS);
-        
-        await executionService.updateBatchJenkinsInfo(execution.runId, {
-          buildId,
-          buildUrl: triggerResult.buildUrl,
-        });
-
-        logger.info('Jenkins info updated successfully', {
-          runId: execution.runId,
-          buildId,
-        }, LOG_CONTEXTS.JENKINS);
-      }
-    } else {
+    if (!triggerResult.success) {
       logger.warn('Jenkins trigger failed', {
         runId: execution.runId,
         message: triggerResult.message,
@@ -271,7 +259,7 @@ router.post('/run-case', [
       success: triggerResult.success,
       data: {
         runId: execution.runId,
-        buildUrl: triggerResult.buildUrl,
+        queueId: triggerResult.queueId,
       },
       message: triggerResult.message,
     });
@@ -342,43 +330,31 @@ router.post('/run-batch', [
       }, LOG_CONTEXTS.JENKINS);
     }
 
+    // [dev-10] 传入 onBuildResolved 回调，当 Jenkins 分配到真实 buildNumber 后异步更新数据库
+    const capturedRunId = execution.runId;
     const triggerResult = await jenkinsService.triggerBatchJob(
       execution.runId,
       caseIds,
       scriptPaths,
-      callbackUrl
+      callbackUrl,
+      async (buildNumber: number, buildUrl: string) => {
+        const buildId = String(buildNumber);
+        logger.info('[dev-10] Build resolved via queueId poll, updating batch Jenkins info', {
+          runId: capturedRunId,
+          buildId,
+          buildUrl,
+        }, LOG_CONTEXTS.JENKINS);
+        await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+      }
     );
     
     logger.info('Jenkins trigger result', {
       success: triggerResult.success,
       message: triggerResult.message,
-      buildUrl: triggerResult.buildUrl,
       queueId: triggerResult.queueId,
     }, LOG_CONTEXTS.JENKINS);
 
-    if (triggerResult.success) {
-      // 更新Jenkins构建信息
-      if (triggerResult.buildUrl) {
-        const buildIdMatch = triggerResult.buildUrl.match(/\/(\d+)\/$/);
-        const buildId = buildIdMatch ? buildIdMatch[1] : 'unknown';
-        
-        logger.debug('Updating batch Jenkins info', {
-          runId: execution.runId,
-          buildId,
-          buildUrl: triggerResult.buildUrl
-        }, LOG_CONTEXTS.JENKINS);
-        
-        await executionService.updateBatchJenkinsInfo(execution.runId, {
-          buildId,
-          buildUrl: triggerResult.buildUrl,
-        });
-
-        logger.info('Batch Jenkins info updated successfully', {
-          runId: execution.runId,
-          buildId,
-        }, LOG_CONTEXTS.JENKINS);
-      }
-    } else {
+    if (!triggerResult.success) {
       logger.warn('Batch Jenkins trigger failed', {
         runId: execution.runId,
         message: triggerResult.message,
@@ -391,7 +367,7 @@ router.post('/run-batch', [
       data: {
         runId: execution.runId,
         totalCases: execution.totalCases,
-        buildUrl: triggerResult.buildUrl,
+        queueId: triggerResult.queueId,
       },
       message: triggerResult.message,
     });
@@ -590,6 +566,9 @@ router.post('/callback', [
       durationMs,
       results: normalizedResults,
     });
+
+    // [P1] 回调成功后通知调度器释放并发槽位（核心：槽位释放时机后移到回调时）
+    taskSchedulerService.releaseSlotByRunId(runId);
 
     const processingTime = timer();
     logger.info('Callback processed successfully', {

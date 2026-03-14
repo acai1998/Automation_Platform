@@ -91,7 +91,7 @@ export class RequestValidator {
     const totalReportedCases = passedCases + failedCases + skippedCases;
     if (results.length > 0 && results.length !== totalReportedCases) {
       // 仅在请求上附加警告标记，供后端 handler 感知（不影响通过）
-      (req as Record<string, unknown>)['_callbackCountMismatch'] = {
+      (req as unknown as Record<string, unknown>)['_callbackCountMismatch'] = {
         resultsCount: results.length,
         reportedTotal: totalReportedCases,
         passedCases,
@@ -105,7 +105,7 @@ export class RequestValidator {
       const resultValidation = this.validateResults(results);
       if (!resultValidation.isValid) {
         // 不拒绝，仅附加警告，让后端按实际数据处理
-        (req as Record<string, unknown>)['_resultValidationWarnings'] = resultValidation.errors;
+        (req as unknown as Record<string, unknown>)['_resultValidationWarnings'] = resultValidation.errors;
       }
     }
 

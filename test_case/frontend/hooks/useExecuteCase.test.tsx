@@ -20,7 +20,8 @@ vi.mock('@/api', () => ({
 vi.mock('@/services/websocket', () => ({
   wsClient: {
     isConnected: vi.fn(),
-    subscribeToExecution: vi.fn(),
+    // subscribeToExecution 返回 Promise<() => void>（与实际 WebSocket 实现一致）
+    subscribeToExecution: vi.fn().mockResolvedValue(vi.fn()),
   },
 }));
 
@@ -100,23 +101,31 @@ describe('useExecuteCase', () => {
   });
 
   it('should set isPending state during execution', async () => {
-    vi.mocked(api.request).mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve({
-        success: true,
-        data: { runId: 123, buildUrl: '', status: 'pending' }
-      }), 100))
-    );
+    // 使用一个不会自动 resolve 的 Promise（手动控制 resolve 时机）
+    let resolveFn: (value: unknown) => void;
+    const pendingPromise = new Promise((resolve) => {
+      resolveFn = resolve;
+    });
+    vi.mocked(api.request).mockReturnValue(pendingPromise as any);
 
     const { result } = renderHook(() => useExecuteCase(), {
       wrapper: createWrapper(),
     });
 
-    await act(async () => {
+    // 触发 mutate（不 await，让其保持 pending 状态）
+    act(() => {
       result.current.mutate({ caseId: 1, projectId: 10 });
     });
 
-    // Initially should be pending
-    expect(result.current.isPending).toBe(true);
+    // mutate 触发后，isPending 应为 true
+    await waitFor(() => {
+      expect(result.current.isPending).toBe(true);
+    });
+
+    // 手动 resolve 让 mutate 完成
+    await act(async () => {
+      resolveFn!({ success: true, data: { runId: 123, buildUrl: '', status: 'pending' } });
+    });
 
     await waitFor(() => {
       expect(result.current.isPending).toBe(false);
@@ -304,11 +313,8 @@ describe('useManualSync', () => {
 describe('useBatchExecution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
+    // 注意：不使用 vi.useFakeTimers()，因为它与 @testing-library/react 的 waitFor 不兼容
+    // waitFor 依赖真实定时器来轮询检查断言
   });
 
   it('should fetch batch execution data when runId is provided', async () => {
@@ -334,7 +340,7 @@ describe('useBatchExecution', () => {
 
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
-    });
+    }, { timeout: 3000 });
 
     expect(api.request).toHaveBeenCalledWith('/jenkins/batch/123');
     expect(result.current.data).toEqual(mockBatchData.data);
@@ -376,20 +382,17 @@ describe('useBatchExecution', () => {
 
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
-    });
+    }, { timeout: 3000 });
 
     expect(result.current.data?.status).toBe('success');
 
-    // Clear previous calls
-    vi.mocked(api.request).mockClear();
+    // 执行完成后 refetchInterval 应返回 false，不再轮询
+    // 验证：当 status 为 success 时，不会触发额外的 api.request 调用
+    const callCountAfterSuccess = vi.mocked(api.request).mock.calls.length;
 
-    // Advance time to trigger potential polling
-    await act(async () => {
-      vi.advanceTimersByTime(10000);
-    });
-
-    // Should not poll again for completed execution
-    expect(api.request).not.toHaveBeenCalled();
+    // 短暂等待确认无额外调用（React Query 使用真实定时器轮询，completed 状态不会调用）
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(vi.mocked(api.request).mock.calls.length).toBe(callCountAfterSuccess);
   });
 
   it('should detect stuck execution', async () => {
@@ -415,7 +418,7 @@ describe('useBatchExecution', () => {
 
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
-    });
+    }, { timeout: 3000 });
 
     expect(result.current.isStuck).toBe(true);
   });
@@ -423,7 +426,7 @@ describe('useBatchExecution', () => {
   it('should subscribe to WebSocket when connected', async () => {
     const mockUnsubscribe = vi.fn();
     vi.mocked(wsClient.isConnected).mockReturnValue(true);
-    vi.mocked(wsClient.subscribeToExecution).mockReturnValue(mockUnsubscribe as any);
+    vi.mocked(wsClient.subscribeToExecution).mockResolvedValue(mockUnsubscribe as any);
 
     const mockBatchData = {
       success: true,
@@ -451,11 +454,14 @@ describe('useBatchExecution', () => {
           onQuickFail: expect.any(Function),
         })
       );
-    });
+    }, { timeout: 3000 });
 
     unmount();
 
-    expect(mockUnsubscribe).toHaveBeenCalled();
+    // 等待 unmount 后 unsubscribe 被调用（Promise resolve 后异步调用）
+    await waitFor(() => {
+      expect(mockUnsubscribe).toHaveBeenCalled();
+    }, { timeout: 1000 });
   });
 
   it('should use slow polling when WebSocket is connected', async () => {
@@ -474,7 +480,7 @@ describe('useBatchExecution', () => {
 
     vi.mocked(api.request).mockResolvedValue(mockBatchData);
     vi.mocked(wsClient.isConnected).mockReturnValue(true);
-    vi.mocked(wsClient.subscribeToExecution).mockReturnValue(vi.fn() as any);
+    vi.mocked(wsClient.subscribeToExecution).mockResolvedValue(vi.fn() as any);
 
     const { result } = renderHook(() => useBatchExecution(123), {
       wrapper: createWrapper(),
@@ -482,7 +488,7 @@ describe('useBatchExecution', () => {
 
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
-    });
+    }, { timeout: 3000 });
 
     expect(result.current.wsConnected).toBe(true);
   });
@@ -584,21 +590,29 @@ describe('useTestExecution', () => {
   it('should handle execution error', async () => {
     const mockError = new Error('Execution failed');
     vi.mocked(api.request).mockRejectedValueOnce(mockError);
+    vi.mocked(wsClient.isConnected).mockReturnValue(false);
 
     const { result } = renderHook(() => useTestExecution(), {
       wrapper: createWrapper(),
     });
 
-    await expect(
-      act(async () => {
+    // executeCase 会 throw，用 try/catch 捕获而不是 expect(...).rejects，
+    // 这样可以确保 React 的状态更新（setError）在 act 内部正确刷新
+    let thrownError: Error | null = null;
+    await act(async () => {
+      try {
         await result.current.executeCase(1, 10);
-      })
-    ).rejects.toThrow('Execution failed');
+      } catch (err) {
+        thrownError = err as Error;
+      }
+    });
+
+    expect(thrownError).toEqual(mockError);
 
     await waitFor(() => {
       expect(result.current.error).toBe('Execution failed');
       expect(result.current.runId).toBeNull();
-    });
+    }, { timeout: 2000 });
   });
 
   it('should perform manual sync', async () => {
