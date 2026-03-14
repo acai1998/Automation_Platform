@@ -45,7 +45,7 @@ export interface ExecutionDetail {
 }
 
 /**
- * 最近执行记录接口
+ * 最近运行记录接口
  */
 export interface RecentExecution {
   id: number;
@@ -166,7 +166,7 @@ export interface TestRunStatusInfo {
 }
 
 /**
- * 执行记录 Repository
+ * 运行记录 Repository
  */
 export class ExecutionRepository extends BaseRepository<TaskExecution> {
   private testRunRepository: Repository<TestRun>;
@@ -201,7 +201,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   }
 
   /**
-   * 创建任务执行记录
+   * 创建任务运行记录
    */
   async createTaskExecution(executionData: {
     taskId?: number;
@@ -304,7 +304,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   }
 
   /**
-   * 获取最近执行记录
+   * 获取最近运行记录
    */
   async getRecentExecutions(limit: number = 10): Promise<RecentExecution[]> {
     return this.repository.createQueryBuilder('execution')
@@ -755,7 +755,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
    * 3. 如果没有找到结果，记录警告并返回 null
    * 
    * @param runId 执行批次ID
-   * @returns 关联的执行记录ID，如果找不到则返回 null
+   * @returns 关联的运行记录ID，如果找不到则返回 null
    */
   async findExecutionIdByRunId(runId: number): Promise<number | null> {
     // 1. 获取 TestRun 的详细信息（含创建时间）
@@ -813,7 +813,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
    */
   async updateTestResult(
     executionId: number,
-    caseId: number,
+    caseId: number | undefined | null,
     result: {
       status: string;
       duration: number;
@@ -826,6 +826,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       responseData?: string;
       startTime?: Date;
       endTime?: Date;
+      caseName?: string;
     }
   ): Promise<boolean> {
     const updateData: Partial<TestRunResult> = {
@@ -842,12 +843,29 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       endTime: result.endTime || null,
     };
 
-    const updateResult = await this.testRunResultRepository.update(
-      { executionId, caseId },
-      updateData
-    );
+    // 优先用 caseId 匹配；无 caseId 时降级用 caseName 匹配（Jenkins 只传 caseName 的场景）
+    if (caseId) {
+      const updateResult = await this.testRunResultRepository.update(
+        { executionId, caseId },
+        updateData
+      );
+      if ((updateResult.affected ?? 0) > 0) return true;
+    }
 
-    return (updateResult.affected ?? 0) > 0;
+    if (result.caseName) {
+      const updateResult = await this.testRunResultRepository
+        .createQueryBuilder()
+        .update(TestRunResult)
+        .set(updateData)
+        .where('execution_id = :executionId AND case_name = :caseName', {
+          executionId,
+          caseName: result.caseName,
+        })
+        .execute();
+      return (updateResult.affected ?? 0) > 0;
+    }
+
+    return false;
   }
 
   /**
@@ -899,7 +917,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   }
 
   /**
-   * 获取可能超时的执行记录
+   * 获取可能超时的运行记录
    */
   async getPotentiallyTimedOutExecutions(timeoutThreshold: Date): Promise<PotentiallyTimedOutExecution[]> {
     return this.testRunRepository.createQueryBuilder('testRun')
@@ -915,7 +933,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   }
 
   /**
-   * 获取有 Jenkins 信息的执行记录
+   * 获取有 Jenkins 信息的运行记录
    */
   async getExecutionsWithJenkinsInfo(limit: number = 50): Promise<ExecutionWithJenkinsInfo[]> {
     return this.testRunRepository.createQueryBuilder('testRun')
@@ -933,8 +951,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   }
 
   /**
-   * 获取可能卡住的执行记录（用于 ExecutionMonitorService）
-   * 查询状态为 pending/running 且超过指定时间阈值的执行记录
+   * 获取可能卡住的运行记录（用于 ExecutionMonitorService）
+   * 查询状态为 pending/running 且超过指定时间阈值的运行记录
    */
   async getPotentiallyStuckExecutions(thresholdSeconds: number, limit: number = 20): Promise<StuckExecution[]> {
     // 只检查最近 24 小时内的执行（优化：避免查询过期的旧执行）
@@ -1025,7 +1043,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         totalCases: cases.length,
       });
 
-      // 3. 创建任务执行记录
+      // 3. 创建任务运行记录
       const taskExecution = await this.createTaskExecution({
         taskId: input.taskId,
         taskName: input.taskName,
@@ -1088,6 +1106,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         assertionsTotal?: number;
         assertionsPassed?: number;
         responseData?: string;
+        startTime?: string | number;
+        endTime?: string | number;
       }>;
     },
     executionId?: number
@@ -1155,6 +1175,15 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
           // 有详细结果列表：逐条更新
           for (const result of results.results) {
             try {
+              // 优先使用 Jenkins 回传的时间，降级为当前时间
+              const resolveTime = (v: string | number | undefined): Date | undefined => {
+                if (!v) return undefined;
+                const d = typeof v === 'number' ? new Date(v) : new Date(v);
+                return isNaN(d.getTime()) ? undefined : d;
+              };
+              const startTime = resolveTime(result.startTime) ?? new Date();
+              const endTime   = resolveTime(result.endTime)   ?? new Date();
+
               const updated = await this.updateTestResult(actualExecutionId, result.caseId, {
                 status: result.status,
                 duration: result.duration,
@@ -1165,8 +1194,9 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
                 assertionsTotal: result.assertionsTotal,
                 assertionsPassed: result.assertionsPassed,
                 responseData: result.responseData,
-                startTime: new Date(),
-                endTime: new Date(),
+                startTime,
+                endTime,
+                caseName: result.caseName,  // 无 caseId 时按 caseName fallback 匹配
               });
 
               if (!updated) {
@@ -1183,8 +1213,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
                   assertionsTotal: result.assertionsTotal,
                   assertionsPassed: result.assertionsPassed,
                   responseData: result.responseData,
-                  startTime: new Date(),
-                  endTime: new Date(),
+                  startTime,
+                  endTime,
                 });
               }
             } catch (error) {

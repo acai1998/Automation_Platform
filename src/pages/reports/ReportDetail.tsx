@@ -353,7 +353,7 @@ export default function ReportDetail() {
           onClick={() => navigate("/reports")}
           className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
         >
-          返回执行记录
+          返回运行记录
         </button>
       </div>
     );
@@ -377,7 +377,7 @@ export default function ReportDetail() {
             onClick={() => navigate("/reports")}
             className="px-4 py-2 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-white text-sm font-semibold hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors"
           >
-            返回执行记录
+            返回运行记录
           </button>
         </div>
       </div>
@@ -401,7 +401,7 @@ export default function ReportDetail() {
           onClick={() => navigate("/reports")}
           className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
         >
-          返回执行记录
+          返回运行记录
         </button>
       </div>
     );
@@ -415,11 +415,11 @@ export default function ReportDetail() {
         <div className="mb-8">
           <nav className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-4">
 <button className="hover:text-primary" onClick={() => navigate("/reports")}>
-执行记录
+运行记录
 </button>
             <ChevronDown className="h-3 w-3 -rotate-90" />
             <span className="text-slate-900 dark:text-slate-200 font-medium">
-              执行 #{run.id}
+              运行详情
             </span>
           </nav>
 
@@ -434,7 +434,7 @@ export default function ReportDetail() {
                 </button>
 
                 <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-                  执行 <span className="font-mono">#{run.id}</span>
+                  <span className="font-mono">#{run.id}</span>
                 </h1>
 
                 <span
@@ -736,8 +736,31 @@ export default function ReportDetail() {
                                         <p className="text-sm font-mono text-rose-700 dark:text-rose-300 break-all">{item.error_message}</p>
                                       </div>
                                     ) : (
-                                      <div className="bg-slate-100 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
-                                        <p className="text-sm text-slate-500 italic">暂无错误信息</p>
+                                      <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
+                                        <div className="flex items-start gap-2">
+                                          <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                                          <div>
+                                            <p className="text-sm font-bold text-amber-700 dark:text-amber-400 mb-1">未收到错误详情</p>
+                                            <p className="text-xs text-amber-600 dark:text-amber-500">
+                                              Jenkins 执行器未上报错误信息，可能是用例启动失败或执行环境异常。
+                                              {run.jenkins_url && (
+                                                <>
+                                                  {" 请"}
+                                                  <a
+                                                    href={run.jenkins_url}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="font-bold underline hover:text-amber-800 dark:hover:text-amber-300 inline-flex items-center gap-0.5"
+                                                  >
+                                                    前往 Jenkins 查看日志
+                                                    <ExternalLink className="h-3 w-3" />
+                                                  </a>
+                                                  {"。"}
+                                                </>
+                                              )}
+                                            </p>
+                                          </div>
+                                        </div>
                                       </div>
                                     )}
 

@@ -286,17 +286,68 @@ pipeline {
                             failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
                         }
 
-                        // use curl to send callback
+                        // 构建每条用例的详细结果列表（从 test-report.json 解析）
+                        def resultsJson = "[]"
                         try {
+                            def reportFile = "${testDir}/test-report.json"
+                            if (fileExists(reportFile)) {
+                                def reportText = readFile(file: reportFile)
+                                def report = new groovy.json.JsonSlurperClassic().parseText(reportText)
+                                def tests = report?.tests
+                                if (tests) {
+                                    def resultsList = []
+                                    tests.each { t ->
+                                        def testStatus = t.outcome ?: 'failed'
+                                        // pytest outcome: passed/failed/error/skipped
+                                        if (testStatus == 'error') testStatus = 'failed'
+                                        def durationMs = t.call?.duration != null ? (t.call.duration * 1000).toLong() : 0
+                                        // pytest-json-report 时间字段为 Unix 秒（浮点），乘以 1000 得毫秒
+                                        def startSec = t.setup?.start ?: t.call?.start
+                                        def stopSec  = t.teardown?.stop ?: t.call?.stop
+                                        def startMs  = startSec != null ? (startSec * 1000).toLong() : null
+                                        def endMs    = stopSec  != null ? (stopSec  * 1000).toLong() : null
+                                        // 提取 case_name（去掉模块路径，只保留函数名）
+                                        def caseName = t.nodeid ?: 'unknown'
+                                        if (caseName.contains('::')) {
+                                            caseName = caseName.split('::').last()
+                                        }
+                                        // 提取错误信息
+                                        def errMsg = ''
+                                        if (t.call?.longrepr) {
+                                            errMsg = t.call.longrepr.toString().take(500).replace('"', '\\"').replace('\n', '\\n').replace('\r', '')
+                                        }
+                                        resultsList << """{
+                                            "caseName": "${caseName}",
+                                            "status": "${testStatus}",
+                                            "duration": ${durationMs},
+                                            "startTime": ${startMs},
+                                            "endTime": ${endMs},
+                                            "errorMessage": "${errMsg}"
+                                        }"""
+                                    }
+                                    if (resultsList) {
+                                        resultsJson = "[${resultsList.join(',')}]"
+                                    }
+                                }
+                            }
+                        } catch (Exception parseErr) {
+                            echo "⚠️ Failed to parse test results: ${parseErr.message}"
+                        }
+
+                        // use curl to send callback（含每条用例详情）
+                        try {
+                            // 写入临时文件避免 shell 参数过长
+                            def payloadFile = "${WORKSPACE}/callback_payload.json"
+                            writeFile file: payloadFile, text: """{"runId": ${params.RUN_ID}, "status": "${finalStatus}", "passedCases": ${passedCount}, "failedCases": ${failedCount}, "skippedCases": ${skippedCount}, "durationMs": ${duration}, "results": ${resultsJson}}"""
                             sh """
                                 curl -X POST '${callbackUrl}' \\
                                     -H 'Content-Type: application/json' \\
                                     --connect-timeout 10 \\
                                     --max-time 30 \\
-                                    -d '{"runId": ${params.RUN_ID}, "status": "${finalStatus}", "passedCases": ${passedCount}, "failedCases": ${failedCount}, "skippedCases": ${skippedCount}, "durationMs": ${duration}}' \\
+                                    -d @${payloadFile} \\
                                     || echo '❌ curl callback failed'
                             """
-                            echo "✅ Callback sent (passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount})"
+                            echo "✅ Callback sent (passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount}, results=${resultsJson.size()}chars)"
                         } catch (Exception e) {
                             echo "⚠️ Callback failed: ${e.message}"
                         }
