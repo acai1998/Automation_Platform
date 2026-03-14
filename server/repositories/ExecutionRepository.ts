@@ -1407,22 +1407,23 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   /**
    * [dev-11] 获取当前所有 running 状态的执行记录（用于服务启动时恢复调度器槽位）
    * 只查最近 maxAgeHours 小时内启动的执行，避免捞出陈年旧账
+   * 使用原生 SQL 避免 TypeORM 实体元数据依赖（防止启动顺序竞态问题）
    */
   async getActiveRunningSlots(maxAgeHours: number = 24): Promise<Array<{
     id: number;
     taskId: number | null;
     startTime: Date | null;
   }>> {
-    return this.testRunRepository.createQueryBuilder('testRun')
-      .select([
-        'testRun.id as id',
-        'testRun.taskId as taskId',
-        'testRun.startTime as startTime',
-      ])
-      .where('testRun.status = :status', { status: 'running' })
-      .andWhere('testRun.startTime > DATE_SUB(NOW(), INTERVAL :maxAgeHours HOUR)', { maxAgeHours })
-      .orderBy('testRun.startTime', 'ASC')
-      .getRawMany();
+    const rows = await this.testRunRepository.query(
+      `SELECT r.id, e.task_id AS taskId, r.start_time AS startTime
+       FROM Auto_TestRun r
+       LEFT JOIN Auto_TestCaseTaskExecutions e ON r.execution_id = e.id
+       WHERE r.status = 'running'
+         AND r.start_time > DATE_SUB(NOW(), INTERVAL ? HOUR)
+       ORDER BY r.start_time ASC`,
+      [maxAgeHours]
+    ) as Array<{ id: number; taskId: number | null; startTime: Date | null }>;
+    return rows;
   }
 
   /**

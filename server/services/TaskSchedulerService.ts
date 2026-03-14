@@ -345,10 +345,18 @@ export class TaskSchedulerService {
    * [dev-11] 服务启动时从数据库恢复运行中的槽位
    * 将 DB 中 status=running 的记录重新注册进 runningSlots
    * 这样即使服务重启，调度器也能感知到当前有多少个任务在跑，不会超并发
+   * 注意：使用原生 query 而非 TypeORM，避免 AppDataSource 尚未初始化的竞态问题
    */
   private async recoverRunningSlots(): Promise<void> {
-    const executionRepository = new ExecutionRepository(AppDataSource);
-    const activeRuns = await executionRepository.getActiveRunningSlots(24);
+    const activeRuns = await query<Array<{ id: number; taskId: number | null; startTime: string | null }>>(
+      `SELECT r.id, e.task_id AS taskId, r.start_time AS startTime
+       FROM Auto_TestRun r
+       LEFT JOIN Auto_TestCaseTaskExecutions e ON r.execution_id = e.id
+       WHERE r.status = 'running'
+         AND r.start_time > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+       ORDER BY r.start_time ASC`,
+      []
+    );
 
     if (activeRuns.length === 0) {
       logger.info('[dev-11] No running slots to recover on startup', {}, LOG_CONTEXTS.EXECUTION);

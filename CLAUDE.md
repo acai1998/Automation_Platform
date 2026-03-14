@@ -31,6 +31,31 @@ npm run preview
 npm run server:build
 ```
 
+## 本地调试环境
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 前端页面 | http://localhost:5173 | Vite 开发服务器 |
+| 后端 API | http://localhost:3000 | Express API 服务 |
+
+> 调试时直接使用本地服务，前端 5173 端口，API 3000 端口。
+
+**测试账号**（本地登录）：
+- 邮箱：`zhaoliu@autotest.com`
+- 密码：`test123456`
+
+**常用调试接口**：
+```bash
+# 调度器实时状态
+curl http://localhost:3000/api/tasks/scheduler/status
+
+# Jenkins 健康检查
+curl http://localhost:3000/api/jenkins/health
+
+# 诊断执行问题
+curl "http://localhost:3000/api/jenkins/diagnose?runId=123"
+```
+
 ## 测试
 
 ```bash
