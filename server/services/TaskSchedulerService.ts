@@ -56,13 +56,34 @@ export interface QueueItem {
 
 /**
  * 运行中槽位（P1：以 runId 为维度，替代原来的 taskId）
+ * label：用于直连执行（run-case/run-batch），标识来源（如 "case:123" / "batch:123"）
  */
 interface RunningSlot {
+  /** taskId：任务调度时填写；直连执行时为 0 */
   taskId: number;
   runId: number;
   startedAt: number;
   /** 执行超时 timer handle */
   timeoutTimer: NodeJS.Timeout;
+  /** 直连执行标签（如 "case:123" / "batch:5,6,7"），调度执行时为 undefined */
+  label?: string;
+}
+
+/**
+ * 直连等待队列项（run-case / run-batch 专用）
+ * 与 QueueItem 分开，避免混入任务优先级队列
+ */
+interface DirectQueueItem {
+  /** 入队时间（ms） */
+  enqueuedAt: number;
+  /** 标识来源（如 "case:123" / "batch:5,6,7"） */
+  label: string;
+  /** 队列超时 timer handle */
+  timeoutTimer?: NodeJS.Timeout;
+  /** resolve：槽位可用时通知等待方 */
+  resolve: () => void;
+  /** reject：超时或队列满时通知等待方 */
+  reject: (err: Error) => void;
 }
 
 interface RetryState {
@@ -241,6 +262,12 @@ export class TaskSchedulerService {
    */
   private waitQueue: QueueItem[] = [];
 
+  /**
+   * 直连等待队列（run-case / run-batch 专用）
+   * FIFO，与 waitQueue 共享 runningSlots 并发上限
+   */
+  private directQueue: DirectQueueItem[] = [];
+
   /** 重试状态 */
   private retryStates: Map<number, RetryState> = new Map();
 
@@ -302,10 +329,16 @@ export class TaskSchedulerService {
     for (const item of this.waitQueue) {
       if (item.timeoutTimer) clearTimeout(item.timeoutTimer);
     }
+    // 清理直连队列，拒绝所有等待中的请求
+    for (const item of this.directQueue) {
+      if (item.timeoutTimer) clearTimeout(item.timeoutTimer);
+      item.reject(new Error('Scheduler stopped'));
+    }
     this.retryStates.clear();
     this.taskCache.clear();
     this.runningSlots.clear();
     this.waitQueue = [];
+    this.directQueue = [];
     this.started = false;
     logger.info('TaskSchedulerService stopped', {}, LOG_CONTEXTS.EXECUTION);
   }
@@ -347,11 +380,13 @@ export class TaskSchedulerService {
    * 新增：队列深度、每个队列项的排队时长、每个运行槽位已运行时长
    */
   getStatus(): {
-    running: Array<{ taskId: number; runId: number; elapsedMs: number }>;
+    running: Array<{ taskId: number; runId: number; elapsedMs: number; label?: string }>;
     queued: Array<{ taskId: number; triggerReason: string; waitMs: number; priority: number; queuePosition: number }>;
+    directQueued: Array<{ label: string; waitMs: number; queuePosition: number }>;
     scheduled: number[];
     concurrencyLimit: number;
     queueDepth: number;
+    directQueueDepth: number;
     maxQueueDepth: number;
   } {
     const now = Date.now();
@@ -360,6 +395,7 @@ export class TaskSchedulerService {
         taskId: slot.taskId,
         runId: slot.runId,
         elapsedMs: now - slot.startedAt,
+        label: slot.label,
       })),
       queued: this.waitQueue.map((item, idx) => ({
         taskId: item.taskId,
@@ -368,9 +404,15 @@ export class TaskSchedulerService {
         priority: item.priority,
         queuePosition: idx + 1,
       })),
+      directQueued: this.directQueue.map((item, idx) => ({
+        label: item.label,
+        waitMs: now - item.enqueuedAt,
+        queuePosition: idx + 1,
+      })),
       scheduled: Array.from(this.taskCache.keys()),
       concurrencyLimit: CONCURRENCY_LIMIT,
       queueDepth: this.waitQueue.length,
+      directQueueDepth: this.directQueue.length,
       maxQueueDepth: MAX_QUEUE_DEPTH,
     };
   }
@@ -382,6 +424,125 @@ export class TaskSchedulerService {
   getQueuePosition(taskId: number): number {
     const idx = this.waitQueue.findIndex(item => item.taskId === taskId);
     return idx === -1 ? 0 : idx + 1;
+  }
+
+  /**
+   * 直连槽位申请（run-case / run-batch 专用）
+   *
+   * 行为：
+   * - 当前 runningSlots 未满 → 立即返回（可立即执行）
+   * - 已满但队列未满 → 排队等待，直到有槽位释放（Promise 在槽位可用时 resolve）
+   * - 队列已满 → 立即 reject（返回 503）
+   * - 等待超时（QUEUE_ITEM_TIMEOUT_MS）→ 自动 reject
+   *
+   * 注意：调用方必须在执行完成（或失败）后调用 releaseDirectSlot(runId) 释放槽位。
+   *
+   * @param label 来源标识（如 "case:123"），用于日志和监控展示
+   * @returns Promise<void>，resolve 时可以开始执行
+   */
+  async acquireDirectSlot(label: string): Promise<void> {
+    if (this.runningSlots.size < CONCURRENCY_LIMIT) {
+      logger.debug(`[Direct] Slot acquired immediately for ${label}`, {
+        slotsUsed: this.runningSlots.size,
+        limit: CONCURRENCY_LIMIT,
+      }, LOG_CONTEXTS.EXECUTION);
+      return; // 直接通过
+    }
+
+    // 队列深度保护
+    if (this.directQueue.length >= MAX_QUEUE_DEPTH) {
+      logger.warn(`[Direct] Queue full, rejecting ${label}`, {
+        directQueueDepth: this.directQueue.length,
+        maxQueueDepth: MAX_QUEUE_DEPTH,
+      }, LOG_CONTEXTS.EXECUTION);
+      throw new Error(`并发执行队列已满（${MAX_QUEUE_DEPTH}），请稍后再试`);
+    }
+
+    // 排队等待
+    return new Promise<void>((resolve, reject) => {
+      const item: DirectQueueItem = {
+        enqueuedAt: Date.now(),
+        label,
+        resolve,
+        reject,
+      };
+
+      // 队列超时自动移除
+      item.timeoutTimer = setTimeout(() => {
+        const idx = this.directQueue.indexOf(item);
+        if (idx !== -1) {
+          this.directQueue.splice(idx, 1);
+          logger.warn(`[Direct] Queue item timed out for ${label}`, {
+            waitMs: Date.now() - item.enqueuedAt,
+          }, LOG_CONTEXTS.EXECUTION);
+          reject(new Error(`排队等待超时（${Math.round(QUEUE_ITEM_TIMEOUT_MS / 1000)}秒），请稍后再试`));
+        }
+      }, QUEUE_ITEM_TIMEOUT_MS);
+      if (item.timeoutTimer.unref) item.timeoutTimer.unref();
+
+      this.directQueue.push(item);
+
+      logger.info(`[Direct] ${label} queued (concurrency limit ${CONCURRENCY_LIMIT} reached)`, {
+        label,
+        directQueuePosition: this.directQueue.length,
+        slotsUsed: this.runningSlots.size,
+      }, LOG_CONTEXTS.EXECUTION);
+    });
+  }
+
+  /**
+   * 直连槽位注册（acquireDirectSlot 通过后调用，将 runId 注入槽位记录）
+   * 槽位持有至 Jenkins 回调（releaseSlotByRunId）或超时自动释放
+   */
+  registerDirectSlot(runId: number, label: string): void {
+    const timeoutTimer = setTimeout(() => {
+      const slot = this.runningSlots.get(runId);
+      if (slot) {
+        this.runningSlots.delete(runId);
+        logger.warn(`[Direct] Slot for runId=${runId} (${label}) auto-released after timeout`, {
+          runId,
+          label,
+          heldMs: SLOT_HOLD_TIMEOUT_MS,
+        }, LOG_CONTEXTS.EXECUTION);
+        this.drainDirectQueue();
+        this.drainQueue();
+      }
+    }, SLOT_HOLD_TIMEOUT_MS);
+
+    if (timeoutTimer.unref) timeoutTimer.unref();
+
+    this.runningSlots.set(runId, {
+      taskId: 0, // 直连执行无 taskId
+      runId,
+      startedAt: Date.now(),
+      timeoutTimer,
+      label,
+    });
+
+    logger.info(`[Direct] Slot registered for runId=${runId} (${label})`, {
+      runId,
+      label,
+      slotsUsed: this.runningSlots.size,
+      slotsLimit: CONCURRENCY_LIMIT,
+    }, LOG_CONTEXTS.EXECUTION);
+  }
+
+  /**
+   * 从直连等待队列中取出下一个等待方并通知（FIFO）
+   * 在槽位释放后（releaseSlotByRunId / drainQueue）调用
+   */
+  private drainDirectQueue(): void {
+    while (this.directQueue.length > 0 && this.runningSlots.size < CONCURRENCY_LIMIT) {
+      const next = this.directQueue.shift()!;
+      if (next.timeoutTimer) clearTimeout(next.timeoutTimer);
+
+      logger.debug(`[Direct] Draining queue: releasing slot for ${next.label} (waited ${Date.now() - next.enqueuedAt}ms)`, {
+        label: next.label,
+        directQueueDepth: this.directQueue.length,
+      }, LOG_CONTEXTS.EXECUTION);
+
+      next.resolve();
+    }
   }
 
   /**
@@ -401,7 +562,8 @@ export class TaskSchedulerService {
       heldMs: Date.now() - slot.startedAt,
     }, LOG_CONTEXTS.EXECUTION);
 
-    // 槽位释放后，尝试从队列中取出下一个任务
+    // 槽位释放后，尝试从队列中取出下一个任务（任务队列和直连队列都需要 drain）
+    this.drainDirectQueue();
     this.drainQueue();
   }
 

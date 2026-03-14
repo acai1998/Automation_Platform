@@ -215,6 +215,18 @@ export class IPWhitelistMiddleware {
 }
 
 /**
+ * RateLimitMiddleware 429 指标
+ */
+export interface RateLimitMetrics {
+  /** 自上次重置以来触发 429 的总次数 */
+  total429Count: number;
+  /** 每分钟 429 次数（最近 60 个 1 秒桶的滚动窗口） */
+  rate429PerMinute: number;
+  /** 当前活跃 IP 数 */
+  activeIPs: number;
+}
+
+/**
  * 频率限制中间件
  * 防止 Jenkins 接口被滥用
  */
@@ -224,6 +236,15 @@ export class RateLimitMiddleware {
   private readonly windowMs: number;
   private readonly cleanupInterval: NodeJS.Timeout;
 
+  /** 429 计数器（总量） */
+  private total429Count = 0;
+  /** 滚动窗口 429 计数（60 个 1 秒桶） */
+  private readonly rate429Buckets: number[] = new Array(60).fill(0);
+  /** 当前桶索引 */
+  private rate429BucketIndex = 0;
+  /** 滚动窗口计时器 */
+  private readonly rate429Timer: NodeJS.Timeout;
+
   constructor(maxRequests: number = 300, windowMs: number = 60 * 1000) {
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
@@ -232,6 +253,32 @@ export class RateLimitMiddleware {
     this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredCounts();
     }, 10 * 60 * 1000) as NodeJS.Timeout;
+
+    // 每秒推进滚动窗口桶
+    this.rate429Timer = setInterval(() => {
+      this.rate429BucketIndex = (this.rate429BucketIndex + 1) % 60;
+      this.rate429Buckets[this.rate429BucketIndex] = 0;
+    }, 1_000) as NodeJS.Timeout;
+  }
+
+  /**
+   * 手动增加 429 计数（供外部调用，如 CallbackQueue 队满时）
+   */
+  public increment429Count(): void {
+    this.total429Count++;
+    this.rate429Buckets[this.rate429BucketIndex]++;
+  }
+
+  /**
+   * 获取 rate limit 指标快照
+   */
+  public getMetrics(): RateLimitMetrics {
+    const rate429PerMinute = this.rate429Buckets.reduce((sum, v) => sum + v, 0);
+    return {
+      total429Count: this.total429Count,
+      rate429PerMinute,
+      activeIPs: this.requestCounts.size,
+    };
   }
 
   /**
@@ -277,7 +324,8 @@ export class RateLimitMiddleware {
     }
 
     if (record.count >= this.maxRequests) {
-      // 超过频率限制
+      // 超过频率限制：累计 429 指标
+      this.increment429Count();
       const retryAfterSeconds = Math.ceil((record.resetTime - now) / 1000);
       res.set('Retry-After', retryAfterSeconds.toString());
       res.status(429).json({
@@ -317,6 +365,7 @@ export class RateLimitMiddleware {
    */
   public cleanup(): void {
     clearInterval(this.cleanupInterval);
+    clearInterval(this.rate429Timer);
     this.requestCounts.clear();
     console.log('RateLimitMiddleware cleaned up');
   }

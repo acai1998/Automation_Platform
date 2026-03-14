@@ -358,9 +358,11 @@ export interface RunningSlotInfo {
   taskId: number;
   runId: number;
   elapsedMs: number;
+  /** 直连执行标签（如 "case:123" / "batch:5,6,7"），任务调度时为 undefined */
+  label?: string;
 }
 
-/** [P1] 队列项详情 */
+/** [P1] 队列项详情（任务调度队列） */
 export interface QueuedItemInfo {
   taskId: number;
   triggerReason: string;
@@ -369,15 +371,26 @@ export interface QueuedItemInfo {
   queuePosition: number;
 }
 
+/** 直连等待队列项详情（run-case / run-batch 专用） */
+export interface DirectQueuedItemInfo {
+  label: string;
+  waitMs: number;
+  queuePosition: number;
+}
+
 export interface SchedulerStatus {
-  /** [P1] 运行中的槽位详情（runId 维度） */
+  /** [P1] 运行中的槽位详情（runId 维度，含任务调度和直连执行） */
   running: RunningSlotInfo[];
-  /** [P1] 等待队列详情（含优先级、等待时长） */
+  /** [P1] 任务调度等待队列详情（含优先级、等待时长） */
   queued: QueuedItemInfo[];
+  /** 直连执行等待队列详情（run-case / run-batch） */
+  directQueued: DirectQueuedItemInfo[];
   scheduled: number[];
   concurrencyLimit: number;
-  /** [P1] 当前队列深度 */
+  /** [P1] 任务调度队列深度 */
   queueDepth: number;
+  /** 直连队列深度 */
+  directQueueDepth: number;
   /** [P1] 队列最大深度 */
   maxQueueDepth: number;
 }

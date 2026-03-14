@@ -671,9 +671,11 @@ describe('Tasks Page', () => {
         queued: [
           { taskId: 3, triggerReason: 'manual', waitMs: 1000, priority: 1, queuePosition: 1 },
         ],
+        directQueued: [],
         scheduled: [4, 5],
         concurrencyLimit: 3,
         queueDepth: 1,
+        directQueueDepth: 0,
         maxQueueDepth: 50,
       };
       vi.spyOn(useTasksHooks, 'useSchedulerStatus').mockReturnValue({
@@ -712,9 +714,11 @@ describe('Tasks Page', () => {
           { taskId: 4, triggerReason: 'scheduled', waitMs: 2000, priority: 2, queuePosition: 2 },
           { taskId: 5, triggerReason: 'retry', waitMs: 3000, priority: 3, queuePosition: 3 },
         ],
+        directQueued: [],
         scheduled: [6],
         concurrencyLimit: 3,
         queueDepth: 3,
+        directQueueDepth: 0,
         maxQueueDepth: 50,
       };
       vi.spyOn(useTasksHooks, 'useSchedulerStatus').mockReturnValue({
@@ -747,9 +751,11 @@ describe('Tasks Page', () => {
       const emptyStatus: SchedulerStatus = {
         running: [],
         queued: [],
+        directQueued: [],
         scheduled: [],
         concurrencyLimit: 3,
         queueDepth: 0,
+        directQueueDepth: 0,
         maxQueueDepth: 50,
       };
       vi.spyOn(useTasksHooks, 'useSchedulerStatus').mockReturnValue({
@@ -781,9 +787,11 @@ describe('Tasks Page', () => {
           { taskId: 1, runId: 201, elapsedMs: 10000 },
         ],
         queued: [],
+        directQueued: [],
         scheduled: [],
         concurrencyLimit: 5,
         queueDepth: 0,
+        directQueueDepth: 0,
         maxQueueDepth: 50,
       };
       vi.spyOn(useTasksHooks, 'useSchedulerStatus').mockReturnValue({

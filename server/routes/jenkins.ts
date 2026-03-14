@@ -3,6 +3,7 @@ import { In } from 'typeorm';
 import { executionService } from '../services/ExecutionService';
 import { jenkinsService } from '../services/JenkinsService';
 import { taskSchedulerService } from '../services/TaskSchedulerService';
+import { callbackQueue, type CallbackPayload } from '../services/CallbackQueue';
 import { ipWhitelistMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
 import { requestValidator } from '../middleware/RequestValidator';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
@@ -13,6 +14,24 @@ import { AppDataSource } from '../config/database';
 import { TestCase } from '../entities/TestCase';
 
 const router = Router();
+
+/**
+ * [P2-B] 注册 CallbackQueue 消费者
+ * 将 completeBatchExecution + releaseSlot 的整个处理流程注入队列 worker
+ * 在路由模块初始化时立即注册，确保消费者在第一个请求到来之前已就绪
+ */
+callbackQueue.register(async (payload: CallbackPayload) => {
+  await executionService.completeBatchExecution(payload.runId, {
+    status: payload.status,
+    passedCases: payload.passedCases,
+    failedCases: payload.failedCases,
+    skippedCases: payload.skippedCases,
+    durationMs: payload.durationMs,
+    results: payload.results as Parameters<typeof executionService.completeBatchExecution>[1]['results'],
+  });
+  // 回调成功后通知调度器释放并发槽位
+  taskSchedulerService.releaseSlotByRunId(payload.runId);
+});
 
 /**
  * 解析并去重脚本路径
@@ -180,11 +199,23 @@ router.post('/run-case', [
   requestValidator.validateSingleExecution
 ], async (req: Request, res: Response) => {
   const timer = createTimer();
+  const { caseId, projectId } = req.body;
+  const triggeredBy: number = req.user?.id ?? (typeof req.body.triggeredBy === 'number' ? req.body.triggeredBy : 1);
+  const slotLabel = `case:${caseId}`;
+
+  // ── 并发控制：申请调度器槽位 ──────────────────────────────
+  // acquireDirectSlot: 槽位不足时排队等待（异步阻塞），满后返回
   try {
-    const { caseId, projectId } = req.body;
-    // 优先使用认证用户 ID，回退到请求体中的 triggeredBy，最后才用默认值 1（系统管理员）
-    const triggeredBy: number = req.user?.id ?? (typeof req.body.triggeredBy === 'number' ? req.body.triggeredBy : 1);
-    
+    await taskSchedulerService.acquireDirectSlot(slotLabel);
+  } catch (slotErr) {
+    // 队列满 or 超时
+    const message = slotErr instanceof Error ? slotErr.message : '并发队列已满';
+    logger.warn('[run-case] Slot acquire failed', { caseId, message }, LOG_CONTEXTS.JENKINS);
+    return res.status(503).json({ success: false, message });
+  }
+  // ── 槽位已获取，开始执行 ──────────────────────────────────
+
+  try {
     logger.info('Starting single case execution', {
       caseId,
       projectId,
@@ -198,23 +229,18 @@ router.post('/run-case', [
       triggeredBy,
       triggerType: 'manual',
     });
-    
+
     logger.info('Execution record created', {
       runId: execution.runId,
       executionId: execution.executionId,
-      totalCases: execution.totalCases,
-      caseIds: execution.caseIds,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 解析并透传脚本路径，避免 Jenkins 在无脚本参数时执行空测试
+    // 将 runId 注册进槽位，槽位将在 Jenkins 回调或超时后释放
+    taskSchedulerService.registerDirectSlot(execution.runId, slotLabel);
+
+    // 解析脚本路径
     const { scriptPaths, missingCaseIds } = await resolveScriptPaths([caseId]);
     const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
-    logger.debug('Triggering Jenkins job', {
-      runId: execution.runId,
-      caseId,
-      scriptPathCount: scriptPaths.length,
-      callbackUrl,
-    }, LOG_CONTEXTS.JENKINS);
 
     if (missingCaseIds.length > 0) {
       logger.warn('Some cases have no scriptPath configured', {
@@ -223,7 +249,7 @@ router.post('/run-case', [
       }, LOG_CONTEXTS.JENKINS);
     }
 
-    // [dev-10] 传入 onBuildResolved 回调，当 Jenkins 分配到真实 buildNumber 后异步更新数据库
+    // 触发 Jenkins（非阻塞 ACK：先返回 runId，Jenkins 异步执行）
     const capturedRunId = execution.runId;
     const triggerResult = await jenkinsService.triggerBatchJob(
       execution.runId,
@@ -241,7 +267,7 @@ router.post('/run-case', [
         await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
       }
     );
-    
+
     logger.info('Jenkins trigger result', {
       success: triggerResult.success,
       message: triggerResult.message,
@@ -249,7 +275,9 @@ router.post('/run-case', [
     }, LOG_CONTEXTS.JENKINS);
 
     if (!triggerResult.success) {
-      logger.warn('Jenkins trigger failed', {
+      // Jenkins 触发失败时立即释放槽位，不等回调
+      taskSchedulerService.releaseSlotByRunId(execution.runId);
+      logger.warn('Jenkins trigger failed, slot released immediately', {
         runId: execution.runId,
         message: triggerResult.message,
       }, LOG_CONTEXTS.JENKINS);
@@ -263,14 +291,19 @@ router.post('/run-case', [
         queueId: triggerResult.queueId,
       },
       message: triggerResult.message,
+      _concurrency: {
+        slotsUsed: taskSchedulerService.getStatus().running.length,
+        slotsLimit: taskSchedulerService.getStatus().concurrencyLimit,
+      },
     });
   } catch (error: unknown) {
     const duration = timer();
     logger.errorLog(error, 'Single case execution failed', {
-      caseId: req.body?.caseId,
-      projectId: req.body?.projectId,
+      caseId,
+      projectId,
       durationMs: duration,
     });
+    // 执行异常时也释放槽位（runId 此时可能未创建，releaseSlotByRunId 对不存在的 runId 是 no-op）
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_CASE');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
@@ -287,11 +320,23 @@ router.post('/run-batch', [
   requestValidator.validateBatchExecution
 ], async (req: Request, res: Response) => {
   const timer = createTimer();
+  const { caseIds, projectId } = req.body;
+  const triggeredBy: number = req.user?.id ?? (typeof req.body.triggeredBy === 'number' ? req.body.triggeredBy : 1);
+  // label 展示前几个 caseId，避免过长
+  const labelIds = (caseIds as number[]).slice(0, 3).join(',') + (caseIds.length > 3 ? `…(${caseIds.length})` : '');
+  const slotLabel = `batch:${labelIds}`;
+
+  // ── 并发控制：申请调度器槽位 ──────────────────────────────
   try {
-    const { caseIds, projectId } = req.body;
-    // 优先使用认证用户 ID，回退到请求体中的 triggeredBy，最后才用默认值 1（系统管理员）
-    const triggeredBy: number = req.user?.id ?? (typeof req.body.triggeredBy === 'number' ? req.body.triggeredBy : 1);
-    
+    await taskSchedulerService.acquireDirectSlot(slotLabel);
+  } catch (slotErr) {
+    const message = slotErr instanceof Error ? slotErr.message : '并发队列已满';
+    logger.warn('[run-batch] Slot acquire failed', { caseIds, message }, LOG_CONTEXTS.JENKINS);
+    return res.status(503).json({ success: false, message });
+  }
+  // ── 槽位已获取，开始执行 ──────────────────────────────────
+
+  try {
     logger.info('Starting batch case execution', {
       caseCount: caseIds.length,
       caseIds,
@@ -306,23 +351,19 @@ router.post('/run-batch', [
       triggeredBy,
       triggerType: 'manual',
     });
-    
+
     logger.info('Batch execution record created', {
       runId: execution.runId,
       executionId: execution.executionId,
       totalCases: execution.totalCases,
-      caseIds: execution.caseIds,
     }, LOG_CONTEXTS.JENKINS);
 
-    // 解析并透传脚本路径，避免 Jenkins 在无脚本参数时执行空测试
+    // 将 runId 注册进槽位，槽位将在 Jenkins 回调或超时后释放
+    taskSchedulerService.registerDirectSlot(execution.runId, slotLabel);
+
+    // 解析脚本路径
     const { scriptPaths, missingCaseIds } = await resolveScriptPaths(caseIds);
     const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
-    logger.debug('Triggering Jenkins job for batch', {
-      runId: execution.runId,
-      caseCount: caseIds.length,
-      scriptPathCount: scriptPaths.length,
-      callbackUrl,
-    }, LOG_CONTEXTS.JENKINS);
 
     if (missingCaseIds.length > 0) {
       logger.warn('Some cases have no scriptPath configured', {
@@ -331,7 +372,7 @@ router.post('/run-batch', [
       }, LOG_CONTEXTS.JENKINS);
     }
 
-    // [dev-10] 传入 onBuildResolved 回调，当 Jenkins 分配到真实 buildNumber 后异步更新数据库
+    // 触发 Jenkins
     const capturedRunId = execution.runId;
     const triggerResult = await jenkinsService.triggerBatchJob(
       execution.runId,
@@ -349,7 +390,7 @@ router.post('/run-batch', [
         await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
       }
     );
-    
+
     logger.info('Jenkins trigger result', {
       success: triggerResult.success,
       message: triggerResult.message,
@@ -357,7 +398,9 @@ router.post('/run-batch', [
     }, LOG_CONTEXTS.JENKINS);
 
     if (!triggerResult.success) {
-      logger.warn('Batch Jenkins trigger failed', {
+      // Jenkins 触发失败时立即释放槽位
+      taskSchedulerService.releaseSlotByRunId(execution.runId);
+      logger.warn('Batch Jenkins trigger failed, slot released immediately', {
         runId: execution.runId,
         message: triggerResult.message,
       }, LOG_CONTEXTS.JENKINS);
@@ -372,12 +415,16 @@ router.post('/run-batch', [
         queueId: triggerResult.queueId,
       },
       message: triggerResult.message,
+      _concurrency: {
+        slotsUsed: taskSchedulerService.getStatus().running.length,
+        slotsLimit: taskSchedulerService.getStatus().concurrencyLimit,
+      },
     });
   } catch (error: unknown) {
     const duration = timer();
     logger.errorLog(error, 'Batch case execution failed', {
-      caseIds: req.body?.caseIds,
-      projectId: req.body?.projectId,
+      caseIds,
+      projectId,
       durationMs: duration,
     });
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_BATCH');
@@ -458,189 +505,124 @@ router.post('/callback', [
   ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit,
   requestValidator.validateCallback
-], async (req: Request, res: Response) => {
-  const timer = createTimer();
-  let callbackStatus = 'unknown';
+], (req: Request, res: Response) => {
+  /**
+   * [P2-B] 快速 ACK 模式
+   * 1. 仅做轻量校验和数据规范化（同步、无 I/O）
+   * 2. 将任务入队到 callbackQueue
+   * 3. 立即返回 202 Accepted，Jenkins 不会超时重试
+   * 4. 后台 worker 异步消费队列，执行 completeBatchExecution + releaseSlot
+   */
+  const receiveTimeMs = Date.now();
   const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
 
-  try {
-    const { runId, status, passedCases: reportedPassedCases = 0, failedCases: reportedFailedCases = 0, skippedCases: reportedSkippedCases = 0, durationMs = 0, results = [] } = req.body;
-    callbackStatus = status;
+  const {
+    runId,
+    status,
+    passedCases: reportedPassedCases = 0,
+    failedCases: reportedFailedCases = 0,
+    skippedCases: reportedSkippedCases = 0,
+    durationMs = 0,
+    results = [],
+  } = req.body;
 
-    const normalizedResults = Array.isArray(results) ? results : [];
-    let passedCases = typeof reportedPassedCases === 'number' ? reportedPassedCases : 0;
-    let failedCases = typeof reportedFailedCases === 'number' ? reportedFailedCases : 0;
-    let skippedCases = typeof reportedSkippedCases === 'number' ? reportedSkippedCases : 0;
+  const normalizedResults = Array.isArray(results) ? results : [];
+  let passedCases = typeof reportedPassedCases === 'number' ? reportedPassedCases : 0;
+  let failedCases = typeof reportedFailedCases === 'number' ? reportedFailedCases : 0;
+  let skippedCases = typeof reportedSkippedCases === 'number' ? reportedSkippedCases : 0;
 
-    if (normalizedResults.length > 0) {
-      let derivedPassedCases = 0;
-      let derivedFailedCases = 0;
-      let derivedSkippedCases = 0;
+  // 从详细结果推导计数（与旧逻辑一致）
+  if (normalizedResults.length > 0) {
+    let derivedPassed = 0;
+    let derivedFailed = 0;
+    let derivedSkipped = 0;
 
-      for (const result of normalizedResults as Array<Record<string, unknown>>) {
-        const caseStatus = String(result['status'] || '').toLowerCase();
-        if (caseStatus === 'passed') {
-          derivedPassedCases += 1;
-        } else if (caseStatus === 'failed' || caseStatus === 'error') {
-          derivedFailedCases += 1;
-        } else {
-          derivedSkippedCases += 1;
-        }
-      }
-
-      const totalReportedCases = passedCases + failedCases + skippedCases;
-      const totalDerivedCases = derivedPassedCases + derivedFailedCases + derivedSkippedCases;
-      const shouldUseDerivedCounts = totalReportedCases === 0
-        || totalReportedCases !== normalizedResults.length
-        || totalReportedCases !== totalDerivedCases;
-
-      if (shouldUseDerivedCounts) {
-        logger.warn('Callback summary mismatch, using derived counts from detailed results', {
-          runId,
-          reported: {
-            passedCases,
-            failedCases,
-            skippedCases,
-            total: totalReportedCases,
-          },
-          derived: {
-            passedCases: derivedPassedCases,
-            failedCases: derivedFailedCases,
-            skippedCases: derivedSkippedCases,
-            total: totalDerivedCases,
-          },
-          resultsCount: normalizedResults.length,
-        }, LOG_CONTEXTS.JENKINS);
-
-        passedCases = derivedPassedCases;
-        failedCases = derivedFailedCases;
-        skippedCases = derivedSkippedCases;
-      }
+    for (const result of normalizedResults as Array<Record<string, unknown>>) {
+      const caseStatus = String(result['status'] || '').toLowerCase();
+      if (caseStatus === 'passed') derivedPassed++;
+      else if (caseStatus === 'failed' || caseStatus === 'error') derivedFailed++;
+      else derivedSkipped++;
     }
 
-    // Enhanced logging with more context
-    logger.info('Jenkins callback received', {
-      runId,
-      status,
-      passedCases,
-      failedCases,
-      skippedCases,
-      durationMs,
-      resultsCount: normalizedResults.length,
-      clientIP,
-      userAgent: req.get('User-Agent'),
-    }, LOG_CONTEXTS.JENKINS);
+    const totalReported = passedCases + failedCases + skippedCases;
+    const totalDerived  = derivedPassed + derivedFailed + derivedSkipped;
+    const shouldUseDerived = totalReported === 0
+      || totalReported !== normalizedResults.length
+      || totalReported !== totalDerived;
 
-    // Validate data consistency
-    const totalReportedCases = passedCases + failedCases + skippedCases;
-    if (normalizedResults.length > 0 && totalReportedCases !== normalizedResults.length) {
-      logger.warn('Data inconsistency detected', {
+    if (shouldUseDerived) {
+      logger.warn('Callback summary mismatch, using derived counts', {
         runId,
-        reportedTotal: totalReportedCases,
-        actualResults: normalizedResults.length,
+        reported: { passedCases, failedCases, skippedCases, total: totalReported },
+        derived:  { passedCases: derivedPassed, failedCases: derivedFailed, skippedCases: derivedSkipped, total: totalDerived },
+        resultsCount: normalizedResults.length,
       }, LOG_CONTEXTS.JENKINS);
+      passedCases = derivedPassed;
+      failedCases = derivedFailed;
+      skippedCases = derivedSkipped;
     }
+  }
 
-    // Validate status value
-    // 注：'cancelled' 会在 completeBatch 中自动映射为 'aborted' 以支持数据库枚举
-    const validStatuses = ['success', 'failed', 'cancelled'];
-    if (!validStatuses.includes(status)) {
-      logger.warn('Invalid status received', {
-        runId,
-        providedStatus: status,
-        validStatuses,
-        treatAs: 'failed',
-      }, LOG_CONTEXTS.JENKINS);
-    }
+  // 规范化状态值
+  const validStatuses = ['success', 'failed', 'cancelled'] as const;
+  type ValidStatus = typeof validStatuses[number];
+  const normalizedStatus: ValidStatus = (validStatuses as readonly string[]).includes(status)
+    ? (status as ValidStatus)
+    : 'failed';
 
-    logger.debug('Processing batch execution completion', {
+  if (!validStatuses.includes(status)) {
+    logger.warn('Invalid callback status, treating as failed', {
       runId,
-      status: validStatuses.includes(status) ? status : 'failed',
-      resultsCount: normalizedResults.length,
+      providedStatus: status,
+      validStatuses,
     }, LOG_CONTEXTS.JENKINS);
+  }
 
-    // 完成执行批次 - status 会自动被正规化处理
-    await executionService.completeBatchExecution(runId, {
-      status: validStatuses.includes(status) ? status : 'failed',
-      passedCases,
-      failedCases,
-      skippedCases,
-      durationMs,
-      results: normalizedResults,
-    });
+  logger.info('Jenkins callback received, enqueuing for async processing', {
+    runId,
+    status: normalizedStatus,
+    passedCases,
+    failedCases,
+    skippedCases,
+    durationMs,
+    resultsCount: normalizedResults.length,
+    clientIP,
+    userAgent: req.get('User-Agent'),
+    receiveTimeMs,
+  }, LOG_CONTEXTS.JENKINS);
 
-    // [P1] 回调成功后通知调度器释放并发槽位（核心：槽位释放时机后移到回调时）
-    taskSchedulerService.releaseSlotByRunId(runId);
+  // 入队（非阻塞）
+  const enqueued = callbackQueue.enqueue({
+    runId,
+    status: normalizedStatus,
+    passedCases,
+    failedCases,
+    skippedCases,
+    durationMs,
+    results: normalizedResults,
+  });
 
-    const processingTime = timer();
-    logger.info('Callback processed successfully', {
+  if (!enqueued) {
+    // 队列已满：返回 429 让 Jenkins 稍后重试
+    rateLimitMiddleware.increment429Count();
+    logger.error('Callback queue full, returning 429', {
       runId,
-      status: callbackStatus,
-      processingTimeMs: processingTime,
+      queueMetrics: callbackQueue.getMetrics(),
     }, LOG_CONTEXTS.JENKINS);
-
-    logger.info(`Execution status updated from Jenkins callback (runId=${runId})`, {
-      runId,
-      status: callbackStatus,
-      resultsCount: normalizedResults.length,
-      updateSource: 'jenkins_callback',
-      clientIP,
-    }, LOG_CONTEXTS.JENKINS);
-
-    res.json({
-      success: true,
-      message: 'Callback processed successfully',
-      processingTimeMs: processingTime
-    });
-  } catch (error: unknown) {
-    const processingTime = timer();
-
-    logger.errorLog(error, 'Failed to process Jenkins callback', {
-      runId: req.body?.runId,
-      status: callbackStatus,
-      processingTimeMs: processingTime,
-      clientIP,
-    });
-
-    // Try to update execution status to failed if we have a runId
-    if (req.body?.runId) {
-      try {
-        logger.warn('Attempting fallback: marking execution as failed', {
-          runId: req.body.runId,
-        }, LOG_CONTEXTS.JENKINS);
-
-        await executionService.completeBatchExecution(req.body.runId, {
-          status: 'failed',
-          passedCases: 0,
-          failedCases: 1,
-          skippedCases: 0,
-          durationMs: 0,
-          results: [{
-            caseId: 0,
-            caseName: 'Callback Processing Error',
-            status: 'failed',
-            duration: 0,
-            errorMessage: `Callback processing failed: ${sanitizeErrorMessage(error, 'CALLBACK_FALLBACK')}`
-          }],
-        });
-
-        logger.info('Fallback: Successfully marked execution as failed', {
-          runId: req.body.runId,
-        }, LOG_CONTEXTS.JENKINS);
-      } catch (fallbackError) {
-        logger.errorLog(fallbackError, 'Fallback failed: Unable to mark execution as failed', {
-          runId: req.body.runId,
-        });
-      }
-    }
-
-    const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_CALLBACK');
-    res.status(500).json({
+    return res.status(429).json({
       success: false,
-      message: sanitizedMessage,
-      processingTimeMs: processingTime
+      message: 'Callback queue is full. Please retry later.',
+      retryAfter: 5,
     });
   }
+
+  // 快速 ACK（202 Accepted：已接受，正在异步处理）
+  const ackTimeMs = Date.now() - receiveTimeMs;
+  return res.status(202).json({
+    success: true,
+    message: 'Callback accepted for async processing',
+    ackTimeMs,
+  });
 });
 
 /**
@@ -1638,6 +1620,89 @@ router.get('/monitor/status', generalAuthRateLimiter, rateLimitMiddleware.limit,
       success: false,
       message: `Failed to get monitor status: ${message}`,
     });
+  }
+});
+
+/**
+ * GET /api/jenkins/metrics
+ * 获取 Jenkins 集成相关的所有监控指标（P2-C）
+ *
+ * 聚合指标：
+ * - rateLimit: 429 次数、每分钟 429 速率、活跃 IP 数
+ * - callbackQueue: 队列深度、总入队/处理/失败数、平均排队时长、重试分布
+ * - jenkinsQueue: queueId 轮询总次数、成功解析数、超时/取消数、平均/最大等待时长
+ * - process: 内存使用、进程运行时长
+ *
+ * 访问控制：需要认证（通过 optionalAuth 获取用户信息，如未认证则仅返回部分指标）
+ */
+router.get('/metrics', [generalAuthRateLimiter, optionalAuth], (_req: Request, res: Response) => {
+  try {
+    const rateLimitMetrics = rateLimitMiddleware.getMetrics();
+    const queueMetrics = callbackQueue.getMetrics();
+    const jenkinsQueueMetrics = jenkinsService.getQueueMetrics();
+    const memUsage = process.memoryUsage();
+
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      data: {
+        /**
+         * 速率限制指标
+         */
+        rateLimit: {
+          total429Count: rateLimitMetrics.total429Count,
+          rate429PerMinute: rateLimitMetrics.rate429PerMinute,
+          activeIPs: rateLimitMetrics.activeIPs,
+        },
+
+        /**
+         * 回调队列指标（P2-B）
+         */
+        callbackQueue: {
+          queueDepth: queueMetrics.queueDepth,
+          workerBusy: queueMetrics.workerBusy,
+          totalEnqueued: queueMetrics.totalEnqueued,
+          totalProcessed: queueMetrics.totalProcessed,
+          totalFailed: queueMetrics.totalFailed,
+          avgWaitMs: queueMetrics.avgWaitMs,
+          maxWaitMs: queueMetrics.maxWaitMs,
+          retryDistribution: queueMetrics.retryDistribution,
+          // 最近 20 条排队时长样本（用于画趋势图）
+          recentWaitSamples: queueMetrics.waitTimeSamples.slice(-20),
+        },
+
+        /**
+         * Jenkins 构建队列指标（P2-A）
+         */
+        jenkinsQueue: {
+          totalPolls: jenkinsQueueMetrics.totalPolls,
+          resolvedCount: jenkinsQueueMetrics.resolvedCount,
+          timeoutCount: jenkinsQueueMetrics.timeoutCount,
+          avgWaitMs: jenkinsQueueMetrics.avgWaitMs,
+          maxWaitMs: jenkinsQueueMetrics.maxWaitMs,
+          resolutionRate: jenkinsQueueMetrics.totalPolls > 0
+            ? Math.round((jenkinsQueueMetrics.resolvedCount / jenkinsQueueMetrics.totalPolls) * 100)
+            : 0,
+          // 最近 20 条 Jenkins 队列等待时长样本
+          recentWaitSamples: jenkinsQueueMetrics.waitTimeSamples.slice(-20),
+        },
+
+        /**
+         * 进程级指标
+         */
+        process: {
+          uptimeSeconds: Math.floor(process.uptime()),
+          memoryMB: {
+            rss: Math.round(memUsage.rss / 1024 / 1024),
+            heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+            heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+          },
+        },
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 
