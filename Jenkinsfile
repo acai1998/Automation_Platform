@@ -11,7 +11,7 @@ pipeline {
     }
     
     environment {
-        PLATFORM_API_URL = 'http://autotest.wiac.xyz'
+        PLATFORM_API_URL = 'https://autotest.wiac.xyz'
         PYTHON_ENV = "${WORKSPACE}/venv"
     }
     
@@ -32,7 +32,8 @@ pipeline {
                             curl -X POST "${PLATFORM_API_URL}/api/executions/${params.RUN_ID}/start" \\
                                 -H 'Content-Type: application/json' \\
                                 --connect-timeout 5 \\
-                                --max-time 10 || echo '⚠️ 标记执行开始失败，继续处理'
+                                --max-time 10 \\
+                                -L -k || echo '⚠️ 标记执行开始失败，继续处理'
                         """
                     }
                 }
@@ -223,8 +224,7 @@ pipeline {
     
     post {
         always {
-            node('test-runner') {
-                script {
+            script {
                     echo "清理环境..."
 
                     def testDir = params.REPO_URL ? 'test-cases' : '.'
@@ -344,6 +344,8 @@ pipeline {
                                     -H 'Content-Type: application/json' \\
                                     --connect-timeout 10 \\
                                     --max-time 30 \\
+                                    -L \\
+                                    -k \\
                                     -d @${payloadFile} \\
                                     || echo '❌ curl callback failed'
                             """
@@ -354,34 +356,33 @@ pipeline {
                         echo "==============================="
                     }
                 }
-            }
         }
-        
+
         success {
             script {
                 echo "✅ Pipeline执行成功"
             }
         }
-        
-        failure {
-            node('test-runner') {
-                script {
-                    echo "❌ Pipeline执行失败"
 
-                    // 回调平台，标记为失败
-                    if (params.RUN_ID && params.CALLBACK_URL) {
-                        def duration = currentBuild.duration ?: 0
-                        // CALLBACK_URL 由服务端构造，已包含完整路径（含 /api/jenkins/callback）
-                        sh """
-                            echo "正在回调失败状态到平台..."
-                            curl -X POST '${params.CALLBACK_URL}' \\
-                                -H 'Content-Type: application/json' \\
-                                --connect-timeout 10 \\
-                                --max-time 30 \\
-                                -d '{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}, "buildUrl": "${BUILD_URL}"}' \\
-                                || echo "失败回调请求失败，但继续处理"
-                        """
-                    }
+        failure {
+            script {
+                echo "❌ Pipeline执行失败"
+
+                // 回调平台，标记为失败
+                if (params.RUN_ID && params.CALLBACK_URL) {
+                    def duration = currentBuild.duration ?: 0
+                    // CALLBACK_URL 由服务端构造，已包含完整路径（含 /api/jenkins/callback）
+                    sh """
+                        echo "正在回调失败状态到平台..."
+                        curl -X POST '${params.CALLBACK_URL}' \\
+                            -H 'Content-Type: application/json' \\
+                            --connect-timeout 10 \\
+                            --max-time 30 \\
+                            -L \\
+                            -k \\
+                            -d '{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}, "buildUrl": "${BUILD_URL}"}' \\
+                            || echo "失败回调请求失败，但继续处理"
+                    """
                 }
             }
         }
