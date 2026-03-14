@@ -21,16 +21,19 @@ const router = Router();
  * 在路由模块初始化时立即注册，确保消费者在第一个请求到来之前已就绪
  */
 callbackQueue.register(async (payload: CallbackPayload) => {
-  await executionService.completeBatchExecution(payload.runId, {
-    status: payload.status,
-    passedCases: payload.passedCases,
-    failedCases: payload.failedCases,
-    skippedCases: payload.skippedCases,
-    durationMs: payload.durationMs,
-    results: payload.results as Parameters<typeof executionService.completeBatchExecution>[1]['results'],
-  });
-  // 回调成功后通知调度器释放并发槽位
-  taskSchedulerService.releaseSlotByRunId(payload.runId);
+  try {
+    await executionService.completeBatchExecution(payload.runId, {
+      status: payload.status,
+      passedCases: payload.passedCases,
+      failedCases: payload.failedCases,
+      skippedCases: payload.skippedCases,
+      durationMs: payload.durationMs,
+      results: payload.results as Parameters<typeof executionService.completeBatchExecution>[1]['results'],
+    });
+  } finally {
+    // 不依赖回调处理成功与否，先释放并发槽位，避免卡住后续执行
+    taskSchedulerService.releaseSlotByRunId(payload.runId);
+  }
 });
 
 /**
@@ -248,9 +251,9 @@ router.post('/run-case', [
     const capturedRunId = execution.runId;
 
     try {
-      taskSchedulerService.enqueueDirectJob(slotLabel, async () => {
-        // 槽位获取后，注册 runId 占位
-        taskSchedulerService.registerDirectSlot(capturedRunId, slotLabel);
+      taskSchedulerService.enqueueDirectJob(slotLabel, async (placeholderRunId: number) => {
+        // 槽位获取后，用真实 runId 替换占位槽位
+        taskSchedulerService.registerDirectSlot(capturedRunId, slotLabel, placeholderRunId);
 
         try {
           // 解析脚本路径
@@ -413,9 +416,9 @@ router.post('/run-batch', [
     const capturedRunId = execution.runId;
 
     try {
-      taskSchedulerService.enqueueDirectJob(slotLabel, async () => {
-        // 槽位获取后，注册 runId 占位
-        taskSchedulerService.registerDirectSlot(capturedRunId, slotLabel);
+      taskSchedulerService.enqueueDirectJob(slotLabel, async (placeholderRunId: number) => {
+        // 槽位获取后，用真实 runId 替换占位槽位
+        taskSchedulerService.registerDirectSlot(capturedRunId, slotLabel, placeholderRunId);
 
         try {
           // 解析脚本路径

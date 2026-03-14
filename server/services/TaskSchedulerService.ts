@@ -81,8 +81,8 @@ interface DirectQueueItem {
   label: string;
   /** 队列超时 timer handle */
   timeoutTimer?: NodeJS.Timeout;
-  /** resolve：槽位可用时通知等待方 */
-  resolve: () => void;
+  /** resolve：槽位可用时通知等待方，传入占位 runId 供 job 替换 */
+  resolve: (placeholderRunId: number) => void;
   /** reject：超时或队列满时通知等待方 */
   reject: (err: Error) => void;
 }
@@ -116,6 +116,9 @@ const QUEUE_ITEM_TIMEOUT_MS = parseInt(process.env.TASK_QUEUE_TIMEOUT_MS || Stri
 
 /** [P1] 运行中槽位最长持有时间（毫秒），超时后强制释放，默认 30 分钟 */
 const SLOT_HOLD_TIMEOUT_MS = parseInt(process.env.TASK_SLOT_TIMEOUT_MS || String(30 * 60 * 1000), 10);
+
+/** [P1] 运行槽位与 DB 状态对账间隔（毫秒），默认 5 秒 */
+const SLOT_RECONCILE_INTERVAL_MS = parseInt(process.env.TASK_SLOT_RECONCILE_INTERVAL_MS || '5000', 10);
 
 /** [P1] 队列优先级：手动触发 > 定时触发 > 重试 */
 const PRIORITY_MANUAL = 1;
@@ -278,6 +281,18 @@ export class TaskSchedulerService {
   /** 是否已启动 */
   private started = false;
 
+  /** 占位 runId 计数器（负数，递减，保证不与真实 runId 冲突） */
+  private _placeholderRunIdCounter = 0;
+
+  /** 周期轮询 DB 同步任务变更的定时器 */
+  private taskPollTimer?: NodeJS.Timeout;
+
+  /** [P1] 周期对账 runningSlots 与 DB 终态的定时器 */
+  private slotReconcileTimer?: NodeJS.Timeout;
+
+  /** [P1] 避免并发执行多次槽位对账 */
+  private slotReconcileInFlight = false;
+
   // ─────────────────────────────────────────────
   // 生命周期
   // ─────────────────────────────────────────────
@@ -311,12 +326,18 @@ export class TaskSchedulerService {
     }
 
     // 每 60 秒轮询一次，检查是否有新 scheduled 任务或任务更新
-    const pollTimer = setInterval(() => this.pollTaskChanges(), 60 * 1000);
-    // 避免 interval 阻止进程退出
-    if (pollTimer.unref) pollTimer.unref();
+    this.taskPollTimer = setInterval(() => this.pollTaskChanges(), 60 * 1000);
+    if (this.taskPollTimer.unref) this.taskPollTimer.unref();
+
+    // [P1] 每隔几秒对账一次：若 DB 已终态但槽位仍占用，自动释放槽位
+    this.slotReconcileTimer = setInterval(() => {
+      void this.reconcileFinishedSlotsFromDb();
+    }, SLOT_RECONCILE_INTERVAL_MS);
+    if (this.slotReconcileTimer.unref) this.slotReconcileTimer.unref();
 
     logger.info('TaskSchedulerService started', {
       concurrencyLimit: CONCURRENCY_LIMIT,
+      slotReconcileIntervalMs: SLOT_RECONCILE_INTERVAL_MS,
     }, LOG_CONTEXTS.EXECUTION);
   }
 
@@ -374,6 +395,51 @@ export class TaskSchedulerService {
     }, LOG_CONTEXTS.EXECUTION);
   }
 
+  /**
+   * [P1] 定时对账槽位状态：若 DB 中执行已终态，则主动释放内存槽位
+   * 兜底场景：回调缺失 / 回调处理失败 / 手动同步导致槽位遗留
+   */
+  private async reconcileFinishedSlotsFromDb(): Promise<void> {
+    if (this.slotReconcileInFlight || this.runningSlots.size === 0) return;
+
+    this.slotReconcileInFlight = true;
+    try {
+      const runIds = Array.from(this.runningSlots.keys());
+      const placeholders = runIds.map(() => '?').join(',');
+
+      const rows = await query<Array<{ id: number; status: string }>>(
+        `SELECT id, status FROM Auto_TestRun WHERE id IN (${placeholders})`,
+        runIds,
+      );
+
+      const activeStatuses = new Set(['pending', 'running']);
+      const statusByRunId = new Map(rows.map(row => [row.id, row.status]));
+
+      let releasedCount = 0;
+      for (const runId of runIds) {
+        const status = statusByRunId.get(runId);
+        if (!status || !activeStatuses.has(status)) {
+          this.releaseSlotByRunId(runId, status ? 'db_reconcile' : 'db_missing');
+          releasedCount++;
+        }
+      }
+
+      if (releasedCount > 0) {
+        logger.info(`[P1] Reconciled and released ${releasedCount} stale slot(s)`, {
+          scannedRunIds: runIds,
+          releasedCount,
+        }, LOG_CONTEXTS.EXECUTION);
+      }
+    } catch (err) {
+      logger.warn('[P1] Failed to reconcile running slots with DB status', {
+        error: err instanceof Error ? err.message : String(err),
+        runningSlotCount: this.runningSlots.size,
+      }, LOG_CONTEXTS.EXECUTION);
+    } finally {
+      this.slotReconcileInFlight = false;
+    }
+  }
+
   /** 停止所有定时器，清理资源 */
   stop(): void {
     for (const [taskId, timer] of this.timers) {
@@ -381,6 +447,19 @@ export class TaskSchedulerService {
       clearInterval(timer);
       this.timers.delete(taskId);
     }
+
+    if (this.taskPollTimer) {
+      clearInterval(this.taskPollTimer);
+      this.taskPollTimer = undefined;
+    }
+
+    if (this.slotReconcileTimer) {
+      clearInterval(this.slotReconcileTimer);
+      this.slotReconcileTimer = undefined;
+    }
+
+    this.slotReconcileInFlight = false;
+
     for (const [, state] of this.retryStates) {
       if (state.timer) clearTimeout(state.timer);
     }
@@ -499,17 +578,39 @@ export class TaskSchedulerService {
    * - 队列已满（MAX_QUEUE_DEPTH）→ 抛出错误（调用方返回 503）
    *
    * @param label    来源标识（如 "case:123"），用于日志和监控展示
-   * @param job      异步任务回调，槽位可用时执行；接收 acquire 后的"占位 resolve"
-   *                 job 内部应调用 registerDirectSlot(runId, label) 注册实际 runId
+   * @param job      异步任务回调，槽位可用时执行；接收占位 runId（负数），
+   *                 job 内部应调用 registerDirectSlot(realRunId, label, placeholderRunId) 替换占位
    */
-  enqueueDirectJob(label: string, job: () => Promise<void>): void {
+  enqueueDirectJob(label: string, job: (placeholderRunId: number) => Promise<void>): void {
     if (this.runningSlots.size < CONCURRENCY_LIMIT) {
-      // 有空余槽位，异步立即执行（不阻塞当前调用栈）
-      logger.debug(`[Direct] Slot available, scheduling immediate job for ${label}`, {
+      // 有空余槽位，立即预占一个槽位，再异步执行 job
+      const placeholderRunId = --this._placeholderRunIdCounter;
+      const placeholderTimer = setTimeout(() => {
+        if (this.runningSlots.has(placeholderRunId)) {
+          this.runningSlots.delete(placeholderRunId);
+          logger.warn(`[Direct] Placeholder slot ${placeholderRunId} for ${label} expired (immediate path)`, {
+            label,
+          }, LOG_CONTEXTS.EXECUTION);
+          this.drainDirectQueue();
+          this.drainQueue();
+        }
+      }, 30_000);
+      if (placeholderTimer.unref) placeholderTimer.unref();
+
+      this.runningSlots.set(placeholderRunId, {
+        taskId: 0,
+        runId: placeholderRunId,
+        startedAt: Date.now(),
+        timeoutTimer: placeholderTimer,
+        label: `placeholder:${label}`,
+      });
+
+      logger.debug(`[Direct] Slot pre-allocated immediately (placeholder=${placeholderRunId}) for ${label}`, {
         slotsUsed: this.runningSlots.size,
         limit: CONCURRENCY_LIMIT,
       }, LOG_CONTEXTS.EXECUTION);
-      setImmediate(() => job().catch(err => {
+
+      setImmediate(() => job(placeholderRunId).catch(err => {
         logger.errorLog(err, `[Direct] Immediate job failed for ${label}`, { label });
       }));
       return;
@@ -524,12 +625,12 @@ export class TaskSchedulerService {
       throw new Error(`并发执行队列已满（${MAX_QUEUE_DEPTH}），请稍后再试`);
     }
 
-    // 包装成 DirectQueueItem，resolve 时执行 job
+    // 包装成 DirectQueueItem，resolve(placeholderRunId) 时执行 job
     const item: DirectQueueItem = {
       enqueuedAt: Date.now(),
       label,
-      resolve: () => {
-        job().catch(err => {
+      resolve: (placeholderRunId: number) => {
+        job(placeholderRunId).catch(err => {
           logger.errorLog(err, `[Direct] Queued job failed for ${label}`, { label });
         });
       },
@@ -558,6 +659,9 @@ export class TaskSchedulerService {
       directQueuePosition: this.directQueue.length,
       slotsUsed: this.runningSlots.size,
     }, LOG_CONTEXTS.EXECUTION);
+
+    // 入队后立即尝试一次 drain，防止入队时恰好有槽位释放的竞态
+    setImmediate(() => this.drainDirectQueue());
   }
 
   /**
@@ -597,7 +701,7 @@ export class TaskSchedulerService {
       const item: DirectQueueItem = {
         enqueuedAt: Date.now(),
         label,
-        resolve,
+        resolve: (_placeholderRunId: number) => resolve(),
         reject,
       };
 
@@ -625,10 +729,22 @@ export class TaskSchedulerService {
   }
 
   /**
-   * 直连槽位注册（acquireDirectSlot 通过后调用，将 runId 注入槽位记录）
+   * 直连槽位注册（enqueueDirectJob job 内部调用，将真实 runId 替换占位槽位）
    * 槽位持有至 Jenkins 回调（releaseSlotByRunId）或超时自动释放
+   *
+   * @param runId           真实的执行 runId（正数）
+   * @param label           来源标识
+   * @param placeholderRunId 占位 runId（负数），注册前先删除占位槽位；不传则不删
    */
-  registerDirectSlot(runId: number, label: string): void {
+  registerDirectSlot(runId: number, label: string, placeholderRunId?: number): void {
+    // 移除占位槽位（释放占位的超时 timer）
+    if (placeholderRunId !== undefined) {
+      const placeholder = this.runningSlots.get(placeholderRunId);
+      if (placeholder) {
+        clearTimeout(placeholder.timeoutTimer);
+        this.runningSlots.delete(placeholderRunId);
+      }
+    }
     const timeoutTimer = setTimeout(() => {
       const slot = this.runningSlots.get(runId);
       if (slot) {
@@ -664,35 +780,66 @@ export class TaskSchedulerService {
   /**
    * 从直连等待队列中取出下一个等待方并通知（FIFO）
    * 在槽位释放后（releaseSlotByRunId / drainQueue）调用
+   *
+   * 关键设计：drain 出一个 job 后，立即用占位 runId（负数）预占一个槽位，
+   * 防止 while 循环在 job 异步执行前重复 drain（竞态条件）。
+   * job 内部调用 registerDirectSlot(realRunId) 时会覆盖占位槽位。
    */
   private drainDirectQueue(): void {
     while (this.directQueue.length > 0 && this.runningSlots.size < CONCURRENCY_LIMIT) {
       const next = this.directQueue.shift()!;
       if (next.timeoutTimer) clearTimeout(next.timeoutTimer);
 
-      logger.debug(`[Direct] Draining queue: releasing slot for ${next.label} (waited ${Date.now() - next.enqueuedAt}ms)`, {
+      // 用占位 runId（负数，递减保证唯一）立即预占槽位，防止并发多取
+      const placeholderRunId = --this._placeholderRunIdCounter;
+      const placeholderTimer = setTimeout(() => {
+        // 占位超时（正常情况下 registerDirectSlot 会在几毫秒内替换掉占位）
+        if (this.runningSlots.has(placeholderRunId)) {
+          this.runningSlots.delete(placeholderRunId);
+          logger.warn(`[Direct] Placeholder slot ${placeholderRunId} for ${next.label} expired, releasing`, {
+            label: next.label,
+          }, LOG_CONTEXTS.EXECUTION);
+          this.drainDirectQueue();
+          this.drainQueue();
+        }
+      }, 30_000); // 30秒兜底
+      if (placeholderTimer.unref) placeholderTimer.unref();
+
+      this.runningSlots.set(placeholderRunId, {
+        taskId: 0,
+        runId: placeholderRunId,
+        startedAt: Date.now(),
+        timeoutTimer: placeholderTimer,
+        label: `placeholder:${next.label}`,
+      });
+
+      logger.debug(`[Direct] Draining queue: slot pre-allocated (placeholder=${placeholderRunId}) for ${next.label} (waited ${Date.now() - next.enqueuedAt}ms)`, {
         label: next.label,
+        placeholderRunId,
         directQueueDepth: this.directQueue.length,
+        slotsUsed: this.runningSlots.size,
       }, LOG_CONTEXTS.EXECUTION);
 
-      next.resolve();
+      // 通知 job 执行；job 内部应调用 registerDirectSlot(realRunId) 替换占位槽位
+      next.resolve(placeholderRunId);
     }
   }
 
   /**
-   * [P1] Jenkins 回调时通知调度器释放槽位（核心：槽位释放时机后移）
-   * 由 jenkins.ts 回调处理成功后调用
+   * [P1] 释放运行槽位
+   * 默认在 Jenkins 回调成功后调用；也可由对账任务兜底释放
    */
-  releaseSlotByRunId(runId: number): void {
+  releaseSlotByRunId(runId: number, source: 'callback' | 'db_reconcile' | 'db_missing' = 'callback'): void {
     const slot = this.runningSlots.get(runId);
     if (!slot) return;
 
     clearTimeout(slot.timeoutTimer);
     this.runningSlots.delete(runId);
 
-    logger.info(`[P1] Slot released for runId=${runId} (taskId=${slot.taskId}) via callback`, {
+    logger.info(`[P1] Slot released for runId=${runId} (taskId=${slot.taskId}) via ${source}`, {
       runId,
       taskId: slot.taskId,
+      source,
       heldMs: Date.now() - slot.startedAt,
     }, LOG_CONTEXTS.EXECUTION);
 
