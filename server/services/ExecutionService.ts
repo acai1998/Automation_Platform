@@ -571,15 +571,13 @@ export class ExecutionService {
           cacheSize: this.runIdToExecutionIdCache.size,
         }, LOG_CONTEXTS.EXECUTION);
       } else {
-        logger.debug('ExecutionId not in cache, querying database', {
+        logger.debug('ExecutionId not in cache, repository will resolve by run binding', {
           runId,
           cacheSize: this.runIdToExecutionIdCache.size,
         }, LOG_CONTEXTS.EXECUTION);
-        // 降级：从数据库查询
-        executionId = await this.executionRepository.findExecutionIdByRunId(runId) || undefined;
       }
 
-      // 3. 完成批次执行，同时传递 executionId 以提高效率
+      // 3. 完成批次执行，同时传递 executionId（若无缓存则交由仓储层优先走 Auto_TestRun.execution_id 解析）
       // 注：completeBatch 会自动将 'cancelled' 映射为 'aborted'
       await this.executionRepository.completeBatch(runId, results, executionId);
 
