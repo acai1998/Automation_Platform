@@ -942,6 +942,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     // 【修复】当 caseId 缺失或为 0 时，尝试用 caseName 匹配
     // 优先精确匹配，其次模糊匹配（以防格式略有差异）
     if (result.caseName) {
+      // 【第 2 层】精确匹配（完全相同）
       const updateResult = await this.testRunResultRepository
         .createQueryBuilder()
         .update(TestRunResult)
@@ -953,16 +954,28 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         .execute();
       if ((updateResult.affected ?? 0) > 0) return true;
 
-      // 【降级方案】如果精确匹配失败，尝试模糊匹配（以防 caseName 前缀有变化）
-      // 例：期望 'test_case_1' 但收到 'case_1'
+      // 【第 3 层】大小写不敏感的精确匹配
+      const caseInsensitiveResult = await this.testRunResultRepository
+        .createQueryBuilder()
+        .update(TestRunResult)
+        .set(updateData)
+        .where('execution_id = :executionId AND LOWER(case_name) = LOWER(:caseName)', {
+          executionId,
+          caseName: result.caseName,
+        })
+        .execute();
+      if ((caseInsensitiveResult.affected ?? 0) > 0) return true;
+
+      // 【第 4 层】包含式模糊匹配（占位符 caseName 包含回调的 caseName）
+      // 例：期望 'TestGeolocation::test_geolocation' 但收到 'test_geolocation'
       const fuzzyUpdateResult = await this.testRunResultRepository
         .createQueryBuilder()
         .update(TestRunResult)
         .set(updateData)
-        .where('execution_id = :executionId AND (case_name LIKE :caseName OR case_name LIKE :fuzzyPattern)', {
+        .where('execution_id = :executionId AND (LOWER(case_name) LIKE LOWER(:fuzzyPattern1) OR LOWER(case_name) LIKE LOWER(:fuzzyPattern2))', {
           executionId,
-          caseName: result.caseName,
-          fuzzyPattern: `%${result.caseName}%`,
+          fuzzyPattern1: `%${result.caseName}%`,
+          fuzzyPattern2: `%${result.caseName.replace(/.*::/g, '')}%`, // 去掉命名空间
         })
         .execute();
       if ((fuzzyUpdateResult.affected ?? 0) > 0) return true;
@@ -1306,6 +1319,17 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       if (resolvedExecutionId) {
         if (results.results && results.results.length > 0) {
           await this.updateDetailedCaseResults(runId, resolvedExecutionId, results.results);
+
+          // 修复12: 清理残留的 ERROR 占位符
+          // 当 Jenkins 回调只返回部分测试结果时（如10个用例只返回3个），
+          // updateDetailedCaseResults 只会更新这3个用例，剩余的 ERROR 占位符不会被清理。
+          // 需要根据整体执行状态批量更新这些残留占位符。
+          await this.cleanupResidualErrorPlaceholders(
+            runId,
+            resolvedExecutionId,
+            results.results.length,
+            results
+          );
         } else {
           await this.updateSummaryOnlyResults(runId, resolvedExecutionId, results);
         }
@@ -1421,7 +1445,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   /**
    * 将指定 executionId 下所有 status=error 的预创建记录批量更新为目标状态
    */
-  async bulkUpdateErrorResults(executionId: number, targetStatus: 'passed' | 'failed'): Promise<number> {
+  async bulkUpdateErrorResults(executionId: number, targetStatus: 'passed' | 'failed' | 'skipped'): Promise<number> {
     const result = await this.testRunResultRepository.query(`
       UPDATE Auto_TestRunResults
       SET status = ?, end_time = NOW()
@@ -1702,6 +1726,125 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         LOG_CONTEXTS.REPOSITORY
       );
     }
+  }
+
+  /**
+   * 修复12: 清理残留的 ERROR 占位符
+   *
+   * 场景：Jenkins 回调只返回部分测试结果（如网络故障、超时、脚本异常）
+   * 例如：10个用例只返回3个结果，剩余7个 ERROR 占位符不会被 updateDetailedCaseResults 清理
+   *
+   * 解决方案：
+   * 1. 统计已更新的结果数量 vs 回调中的统计数 (passedCases + failedCases + skippedCases)
+   * 2. 计算预期的总用例数（数据库记录总数）
+   * 3. 检查是否有残留的 ERROR 占位符
+   * 4. 根据整体执行状态批量更新残留占位符
+   *
+   * @param runId TestRun ID
+   * @param executionId TaskExecution ID
+   * @param detailedResultsCount 回调中详细结果的数量
+   * @param results 回调中的完整结果数据
+   */
+  private async cleanupResidualErrorPlaceholders(
+    runId: number,
+    executionId: number,
+    detailedResultsCount: number,
+    results: BatchResults
+  ): Promise<void> {
+    // 1. 获取该 executionId 下的所有结果状态分布
+    const statusCounts = await this.countResultsByStatus(executionId);
+    const totalFromCallback = results.passedCases + results.failedCases + results.skippedCases;
+
+    // 2. 检查是否有残留的 ERROR 占位符
+    const errorCountQuery = await this.testRunResultRepository.query(`
+      SELECT COUNT(*) AS errorCount
+      FROM Auto_TestRunResults
+      WHERE execution_id = ? AND status = 'error'
+    `, [executionId]) as Array<{ errorCount: string }>;
+    const residualErrorCount = Number(errorCountQuery[0]?.errorCount ?? 0);
+
+    // 如果没有残留 ERROR 占位符，无需处理
+    if (residualErrorCount === 0) {
+      logger.debug(
+        `No residual ERROR placeholders found, skip cleanup`,
+        { runId, executionId, detailedResultsCount, totalFromCallback },
+        LOG_CONTEXTS.REPOSITORY
+      );
+      return;
+    }
+
+    // 3. 判断是否有部分结果缺失的情况
+    // 如果回调中的统计数与详细结果数不一致，说明确实存在部分结果缺失
+    const hasPartialResults = detailedResultsCount < totalFromCallback || statusCounts.total > detailedResultsCount;
+
+    logger.info(
+      `Detected residual ERROR placeholders, will clean up based on overall status`,
+      {
+        runId,
+        executionId,
+        detailedResultsCount,
+        totalFromCallback,
+        dbTotal: statusCounts.total,
+        residualErrorCount,
+        hasPartialResults,
+        overallStatus: results.status,
+      },
+      LOG_CONTEXTS.REPOSITORY
+    );
+
+    // 4. 根据整体执行状态批量更新残留的 ERROR 占位符
+    // 安全策略：当存在部分结果缺失时，不应用"假定性"状态，避免假阳性
+    // - 如果整体状态是 success 且没有部分结果缺失，将残留 ERROR 更新为 passed
+    // - 如果整体状态是 success 但有部分结果缺失，将残留 ERROR 更新为 skipped（安全处理）
+    // - 如果整体状态是 failed，将残留 ERROR 更新为 failed（保守处理）
+    // - 如果整体状态是 aborted/cancelled，将残留 ERROR 更新为 skipped
+    let targetStatus: 'passed' | 'failed' | 'skipped';
+    let reason: string;
+
+    if (results.status === 'success') {
+      if (hasPartialResults) {
+        // 安全处理：部分结果缺失时，残留 ERROR 可能是未执行的用例，标记为 skipped 避免假阳性
+        targetStatus = 'skipped';
+        reason = 'overall execution succeeded but partial results missing - marking as skipped to avoid false positives';
+      } else {
+        // 完整结果场景：残留 ERROR 可能是 Jenkins 未返回的结果，假设它们通过了
+        targetStatus = 'passed';
+        reason = 'overall execution succeeded with complete results';
+      }
+    } else if (results.status === 'failed') {
+      // 失败场景：保守处理，将残留 ERROR 标记为 failed
+      targetStatus = 'failed';
+      reason = 'overall execution failed';
+    } else {
+      // 取消/中断场景：将残留 ERROR 标记为 skipped
+      targetStatus = 'skipped';
+      reason = 'execution was cancelled or aborted';
+    }
+
+    const updatedCount = await this.bulkUpdateErrorResults(executionId, targetStatus);
+
+    logger.info(
+      `Cleaned up residual ERROR placeholders`,
+      {
+        runId,
+        executionId,
+        residualErrorCount,
+        updatedCount,
+        targetStatus,
+        reason,
+        hasPartialResults,
+        overallStatus: results.status,
+      },
+      LOG_CONTEXTS.REPOSITORY
+    );
+
+    // 5. 同步更新统计数（确保数据库统计与实际状态一致）
+    const newCounts = await this.countResultsByStatus(executionId);
+    await this.testRunRepository.update(runId, {
+      passedCases: newCounts.passed,
+      failedCases: newCounts.failed,
+      skippedCases: newCounts.skipped,
+    });
   }
 
   /**

@@ -257,20 +257,65 @@ export class ExecutionService {
         }
         
         // 【修复】清理残留的 error 占位符
-        // 场景1：没有详细结果（results.length === 0）
-        // 场景2：有详细结果但仍然有未匹配的占位符（因为 caseId 缺失或格式不一致）
-        // 此时应根据整体状态更新所有剩余的 error 占位符
-        if (passedCases === 0 && failedCases === 0 && skippedCases === 0) {
-          const mappedResultStatus: 'passed' | 'failed' =
-            (input.status === 'success') ? 'passed' : 'failed';
-          await this.executionRepository.bulkUpdateErrorResults(input.executionId, mappedResultStatus);
+        // 【重要】必须无条件执行，因为可能存在以下场景：
+        // 1. 没有详细结果（results.length === 0）
+        // 2. 有详细结果但未完全匹配（因为 caseId 或 caseName 不一致）
+        // 3. 回调数据部分或全部被过滤掉（无效的 caseId）
+        // 4. caseName 格式不一致导致匹配失败
+        // 所以我们需要检查是否仍有 error 状态的占位符，如果有就清理
+        try {
+          const statusSummary = await this.executionRepository.countResultsByStatus(input.executionId);
+          // countResultsByStatus 中的 'failed' 包括了 'failed' 和 'error'，所以需要单独查询
+          const errorRows = await (this.executionRepository as any).testRunResultRepository.query(
+            'SELECT COUNT(*) as errorCount FROM Auto_TestRunResults WHERE execution_id = ? AND status = ?',
+            [input.executionId, 'error']
+          ) as Array<{ errorCount: number }>;
+          const errorCount = Number(errorRows[0]?.errorCount ?? 0);
 
-          // 重新汇总统计数
-          const summary = await this.executionRepository.countResultsByStatus(input.executionId);
-          passedCases  = summary.passed;
-          failedCases  = summary.failed;
-          skippedCases = summary.skipped;
+          if (errorCount > 0) {
+            // 【修复假阳性问题】在标记 ERROR 占位符之前，验证回调结果是否完整
+            // 如果 results.length 不等于预期的 totalCases，说明回调数据不完整，
+            // 此时不应将 ERROR 标记为 'passed'，而应强制降级为 'failed'
+            const expectedTotal = execution.execution.totalCases;
+            const actualResults = input.results.length;
+            const isResultComplete = actualResults >= expectedTotal;
+
+            // 决策逻辑：
+            // 1. 如果回调数据完整 (actualResults >= expectedTotal)，按 Jenkins 状态映射
+            // 2. 如果回调数据不完整，强制标记为 'failed'，避免假阳性
+            const mappedResultStatus: 'passed' | 'failed' =
+              (input.status === 'success' && isResultComplete) ? 'passed' : 'failed';
+
+            const cleaned = await this.executionRepository.bulkUpdateErrorResults(input.executionId, mappedResultStatus);
+
+            // 如果因为结果不完整而强制降级，记录警告
+            if (!isResultComplete && input.status === 'success') {
+              logger.warn('Forcing ERROR placeholders to failed due to incomplete callback results', {
+                executionId: input.executionId,
+                expectedTotal,
+                actualResults,
+                cleanedCount: cleaned,
+                jenkinsStatus: input.status,
+                mappedStatus: mappedResultStatus,
+              }, LOG_CONTEXTS.EXECUTION);
+            } else {
+              logger.info('Cleaned up orphaned ERROR placeholders', {
+                executionId: input.executionId,
+                cleanedCount: cleaned,
+                mappedStatus: mappedResultStatus,
+                resultComplete: isResultComplete,
+              }, LOG_CONTEXTS.EXECUTION);
+            }
+          }
+        } catch (err) {
+          logger.warn('Failed to clean up orphaned ERROR placeholders', { executionId: input.executionId, error: err });
         }
+
+        // 重新汇总统计数
+        const summary = await this.executionRepository.countResultsByStatus(input.executionId);
+        passedCases  = summary.passed;
+        failedCases  = summary.failed;
+        skippedCases = summary.skipped;
 
         // 2.3 更新 Auto_TestCaseTaskExecutions 记录
         // TaskExecution 状态不支持 'aborted'，需要映射为 'cancelled'

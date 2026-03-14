@@ -310,13 +310,15 @@ function normalizeCallbackResults(results: unknown[]): Auto_TestRunResultsInput[
     const caseIdRaw = toNumber(row['caseId'] ?? row['case_id']);
     const caseName = toOptionalString(row['caseName'] ?? row['case_name']);
     
-    // 【修复】严格验证：必须有有效的 caseId 或 caseName，否则过滤掉
-    // 避免生成 caseId=0, caseName='unknown_case' 的垃圾数据导致无法匹配占位符
+    // 【修复】严格验证：必须有有效的 caseId，否则过滤掉
+    // caseId 是匹配占位符的唯一可靠标识，不能是 0
+    // caseName 只能作为辅助，不能单独用于新增记录
     const hasValidCaseId = caseIdRaw && caseIdRaw > 0;
-    const hasValidCaseName = caseName && caseName.trim().length > 0;
-    if (!hasValidCaseId && !hasValidCaseName) {
-      logger.warn('Filtered out incomplete test result: missing both valid caseId and caseName', {
+    if (!hasValidCaseId) {
+      logger.warn('Filtered out test result: missing valid caseId', {
         row,
+        caseId: caseIdRaw,
+        caseName,
       });
       return [];
     }
@@ -329,8 +331,8 @@ function normalizeCallbackResults(results: unknown[]): Auto_TestRunResultsInput[
     const responseDataRaw = row['responseData'] ?? row['response_data'];
 
     return [{
-      caseId: hasValidCaseId ? caseIdRaw : 0,
-      caseName: caseName || (hasValidCaseId ? `case_${caseIdRaw}` : ''),
+      caseId: caseIdRaw,
+      caseName: caseName || `case_${caseIdRaw}`,
       status: normalizeStatus(row['status']),
       duration: durationRaw !== undefined ? Math.max(0, durationRaw) : 0,
       errorMessage: toOptionalString(row['errorMessage'] ?? row['error_message']),
