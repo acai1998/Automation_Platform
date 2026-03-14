@@ -265,6 +265,22 @@ router.post('/run-case', [
           queueWaitMs,
         }, LOG_CONTEXTS.JENKINS);
         await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+      },
+      async (reason: 'cancelled' | 'timeout') => {
+        // [dev-11] Jenkins 队列取消/超时时，主动将平台执行状态更新为 aborted，释放槽位
+        logger.warn('[dev-11] Jenkins queue cancelled/timeout, marking execution as aborted', {
+          runId: capturedRunId,
+          reason,
+        }, LOG_CONTEXTS.JENKINS);
+        try {
+          await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
+        } catch (err) {
+          logger.warn('[dev-11] Failed to mark execution as aborted', {
+            runId: capturedRunId,
+            error: err instanceof Error ? err.message : String(err),
+          }, LOG_CONTEXTS.JENKINS);
+        }
+        taskSchedulerService.releaseSlotByRunId(capturedRunId);
       }
     );
 
@@ -388,6 +404,22 @@ router.post('/run-batch', [
           queueWaitMs,
         }, LOG_CONTEXTS.JENKINS);
         await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+      },
+      async (reason: 'cancelled' | 'timeout') => {
+        // [dev-11] Jenkins 队列取消/超时时，主动将平台执行状态更新为 aborted，释放槽位
+        logger.warn('[dev-11] Batch Jenkins queue cancelled/timeout, marking execution as aborted', {
+          runId: capturedRunId,
+          reason,
+        }, LOG_CONTEXTS.JENKINS);
+        try {
+          await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
+        } catch (err) {
+          logger.warn('[dev-11] Failed to mark batch execution as aborted', {
+            runId: capturedRunId,
+            error: err instanceof Error ? err.message : String(err),
+          }, LOG_CONTEXTS.JENKINS);
+        }
+        taskSchedulerService.releaseSlotByRunId(capturedRunId);
       }
     );
 

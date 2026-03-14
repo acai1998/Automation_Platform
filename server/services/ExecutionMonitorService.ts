@@ -440,6 +440,20 @@ export class ExecutionMonitorService {
     const runId = execution.id;
 
     try {
+      // [dev-11] 兜底处理：如果执行超过 2 分钟仍无 jenkinsBuildId，说明 Jenkins 触发已失败
+      // 正常情况下 pollQueueForBuild 在 60 秒内会解析出 buildId，超过 2 分钟说明已完全丢失
+      const NO_BUILD_ID_TIMEOUT_SECONDS = EXECUTION_MONITOR_CONFIG.EARLY_STUCK_THRESHOLD_SECONDS; // 默认 120s
+      if (!execution.jenkinsBuildId && execution.durationSeconds !== null && execution.durationSeconds > NO_BUILD_ID_TIMEOUT_SECONDS) {
+        logger.warn('Execution has no jenkinsBuildId after threshold, marking as aborted', {
+          runId,
+          durationSeconds: execution.durationSeconds,
+          thresholdSeconds: NO_BUILD_ID_TIMEOUT_SECONDS,
+          currentStatus: execution.status,
+        }, LOG_CONTEXTS.MONITOR);
+        await executionService.markExecutionAborted(runId, 'no_jenkins_build_id_timeout');
+        return { updated: true, jenkinsStatus: 'aborted' };
+      }
+
       // Sync status from Jenkins (uses existing method with retries)
       const syncResult = await executionService.syncExecutionStatusFromJenkins(runId);
 

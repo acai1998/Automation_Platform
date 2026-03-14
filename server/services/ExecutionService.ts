@@ -467,6 +467,35 @@ export class ExecutionService {
   }
 
   /**
+   * [dev-11] 将执行批次标记为 aborted
+   * 用于 Jenkins 队列取消/超时、或手动中止时主动同步平台状态
+   * 幂等：如果已经是终态则跳过
+   */
+  async markExecutionAborted(runId: number, reason: string = 'aborted'): Promise<void> {
+    const execution = await this.executionRepository.getTestRunStatus(runId);
+    if (!execution) {
+      logger.warn(`markExecutionAborted: execution not found (runId=${runId})`, {}, LOG_CONTEXTS.EXECUTION);
+      return;
+    }
+    const finalStatuses = ['success', 'failed', 'aborted', 'cancelled'];
+    if (finalStatuses.includes(execution.status)) {
+      logger.debug(`markExecutionAborted: already in final status (runId=${runId}, status=${execution.status}), skipping`, {}, LOG_CONTEXTS.EXECUTION);
+      return;
+    }
+    await this.executionRepository.updateTestRunStatus(runId, 'aborted', {
+      durationMs: execution.startTime ? Date.now() - new Date(execution.startTime).getTime() : 0,
+    });
+    logger.info(`markExecutionAborted: execution marked as aborted (runId=${runId}, reason=${reason})`, {
+      runId,
+      reason,
+    }, LOG_CONTEXTS.EXECUTION);
+    webSocketService?.pushExecutionUpdate(runId, {
+      status: 'aborted',
+      source: 'system',
+    });
+  }
+
+  /**
    * 完成执行批次
    * 
    * 改进：
@@ -813,7 +842,7 @@ export class ExecutionService {
       case 'UNSTABLE':
         return 'failed';
       case 'ABORTED':
-        return 'cancelled';
+        return 'aborted';
       case 'NOT_BUILT':
       case 'QUEUED':        // 在队列中等待执行
       case 'PAUSED':        // 构建已暂停

@@ -46,6 +46,13 @@ interface JenkinsQueueItem {
 export type BuildResolvedCallback = (buildNumber: number, buildUrl: string, queueWaitMs: number) => Promise<void>;
 
 /**
+ * [dev-11] Jenkins 队列取消/超时时的回调类型
+ * 当 pollQueueForBuild 返回 null（构建被取消或等待超时）时调用
+ * @param reason  取消原因：'cancelled'（Jenkins 队列项被取消）或 'timeout'（轮询超时）
+ */
+export type BuildCancelledCallback = (reason: 'cancelled' | 'timeout') => Promise<void>;
+
+/**
  * 用例类型
  */
 export type CaseType = 'api' | 'ui' | 'performance';
@@ -243,7 +250,8 @@ export class JenkinsService {
     caseIds: number[],
     scriptPaths: string[],
     callbackUrl?: string,
-    onBuildResolved?: BuildResolvedCallback
+    onBuildResolved?: BuildResolvedCallback,
+    onBuildCancelled?: BuildCancelledCallback
   ): Promise<JenkinsTriggerResult> {
     const logger = require('../utils/logger').default;
 
@@ -335,21 +343,37 @@ export class JenkinsService {
         }, 'JENKINS');
 
         // [dev-10] 后台异步轮询 Queue API 解析真实 buildNumber，不阻塞当前请求
-        if (onBuildResolved) {
+        if (onBuildResolved || onBuildCancelled) {
           this.pollQueueForBuild(queueId, runId).then(buildInfo => {
-            if (buildInfo) {
-              onBuildResolved(buildInfo.buildNumber, buildInfo.buildUrl, buildInfo.queueWaitMs).catch(err => {
-                logger.warn('onBuildResolved callback failed', {
-                  runId,
-                  queueId,
-                  error: err instanceof Error ? err.message : String(err),
-                }, 'JENKINS');
-              });
+            if (buildInfo && 'buildNumber' in buildInfo) {
+              // 构建成功启动：通知调用方更新 buildId/buildUrl
+              if (onBuildResolved) {
+                onBuildResolved(buildInfo.buildNumber, buildInfo.buildUrl, buildInfo.queueWaitMs).catch(err => {
+                  logger.warn('onBuildResolved callback failed', {
+                    runId,
+                    queueId,
+                    error: err instanceof Error ? err.message : String(err),
+                  }, 'JENKINS');
+                });
+              }
             } else {
-              logger.warn('pollQueueForBuild returned null (timeout or cancelled)', {
+              // 构建被取消或轮询超时：通知调用方将平台执行状态更新为 aborted
+              const reason = buildInfo && 'cancelled' in buildInfo ? 'cancelled' : 'timeout';
+              logger.warn('pollQueueForBuild: build not started', {
                 runId,
                 queueId,
+                reason,
               }, 'JENKINS');
+              if (onBuildCancelled) {
+                onBuildCancelled(reason).catch(err => {
+                  logger.warn('onBuildCancelled callback failed', {
+                    runId,
+                    queueId,
+                    reason,
+                    error: err instanceof Error ? err.message : String(err),
+                  }, 'JENKINS');
+                });
+              }
             }
           }).catch(err => {
             logger.warn('Background queue poll failed', {
@@ -414,7 +438,7 @@ export class JenkinsService {
     runId: number,
     maxWaitMs = 60_000,
     pollIntervalMs = 3_000
-  ): Promise<{ buildNumber: number; buildUrl: string; queueWaitMs: number } | null> {
+  ): Promise<{ buildNumber: number; buildUrl: string; queueWaitMs: number } | null | { cancelled: true } | { timeout: true }> {
     const logger = require('../utils/logger').default;
 
     // 规范化 Jenkins base URL（确保没有尾部斜杠）
@@ -469,7 +493,7 @@ export class JenkinsService {
             queueId,
             attempt,
           }, 'JENKINS');
-          return null;
+          return { cancelled: true };
         }
 
         // 构建已经分配到 executor，可以取出 buildNumber 和 buildUrl
@@ -522,7 +546,7 @@ export class JenkinsService {
       maxWaitMs,
       attempts: attempt,
     }, 'JENKINS');
-    return null;
+    return { timeout: true };
   }
 
   /**

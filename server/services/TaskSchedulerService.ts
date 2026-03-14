@@ -941,6 +941,24 @@ export class TaskSchedulerService {
               buildUrl,
             }, LOG_CONTEXTS.EXECUTION);
             await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+          },
+          async (reason: 'cancelled' | 'timeout') => {
+            // [dev-11] Jenkins 队列取消/超时，主动将平台执行状态更新为 aborted 并释放槽位
+            logger.warn(`[dev-11] Task ${taskId} Jenkins queue ${reason}, marking execution as aborted`, {
+              taskId,
+              runId: capturedRunId,
+              reason,
+            }, LOG_CONTEXTS.EXECUTION);
+            try {
+              await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
+            } catch (err) {
+              logger.warn(`[dev-11] Failed to mark task execution as aborted`, {
+                taskId,
+                runId: capturedRunId,
+                error: err instanceof Error ? err.message : String(err),
+              }, LOG_CONTEXTS.EXECUTION);
+            }
+            this.releaseSlotByRunId(capturedRunId);
           }
         );
 
