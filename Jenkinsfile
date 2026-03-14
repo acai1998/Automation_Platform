@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+    agent { label 'test-runner' }
     
     parameters {
         string(name: 'RUN_ID', description: '执行批次ID', defaultValue: '')
@@ -223,7 +223,7 @@ pipeline {
     
     post {
         always {
-            node('') {
+            node('test-runner') {
                 script {
                     echo "清理环境..."
 
@@ -364,7 +364,7 @@ pipeline {
         }
         
         failure {
-            node('') {
+            node('test-runner') {
                 script {
                     echo "❌ Pipeline执行失败"
 
