@@ -404,31 +404,36 @@ export class TaskSchedulerService {
 
     this.slotReconcileInFlight = true;
     try {
-      const runIds = Array.from(this.runningSlots.keys());
-      const placeholders = runIds.map(() => '?').join(',');
+      // 只对账真实 runId（正数），跳过占位 runId（负数）
+      // 注意：不能提前 return，否则跳过 finally 块导致 slotReconcileInFlight 永久为 true
+      const runIds = Array.from(this.runningSlots.keys()).filter(id => id > 0);
 
-      const rows = await query<Array<{ id: number; status: string }>>(
-        `SELECT id, status FROM Auto_TestRun WHERE id IN (${placeholders})`,
-        runIds,
-      );
+      if (runIds.length > 0) {
+        const placeholders = runIds.map(() => '?').join(',');
 
-      const activeStatuses = new Set(['pending', 'running']);
-      const statusByRunId = new Map(rows.map(row => [row.id, row.status]));
+        const rows = await query<Array<{ id: number; status: string }>>(
+          `SELECT id, status FROM Auto_TestRun WHERE id IN (${placeholders})`,
+          runIds,
+        );
 
-      let releasedCount = 0;
-      for (const runId of runIds) {
-        const status = statusByRunId.get(runId);
-        if (!status || !activeStatuses.has(status)) {
-          this.releaseSlotByRunId(runId, status ? 'db_reconcile' : 'db_missing');
-          releasedCount++;
+        const activeStatuses = new Set(['pending', 'running']);
+        const statusByRunId = new Map(rows.map(row => [row.id, row.status]));
+
+        let releasedCount = 0;
+        for (const runId of runIds) {
+          const status = statusByRunId.get(runId);
+          if (!status || !activeStatuses.has(status)) {
+            this.releaseSlotByRunId(runId, status ? 'db_reconcile' : 'db_missing');
+            releasedCount++;
+          }
         }
-      }
 
-      if (releasedCount > 0) {
-        logger.info(`[P1] Reconciled and released ${releasedCount} stale slot(s)`, {
-          scannedRunIds: runIds,
-          releasedCount,
-        }, LOG_CONTEXTS.EXECUTION);
+        if (releasedCount > 0) {
+          logger.info(`[P1] Reconciled and released ${releasedCount} stale slot(s)`, {
+            scannedRunIds: runIds,
+            releasedCount,
+          }, LOG_CONTEXTS.EXECUTION);
+        }
       }
     } catch (err) {
       logger.warn('[P1] Failed to reconcile running slots with DB status', {
@@ -831,7 +836,8 @@ export class TaskSchedulerService {
    */
   releaseSlotByRunId(runId: number, source: 'callback' | 'db_reconcile' | 'db_missing' = 'callback'): void {
     const slot = this.runningSlots.get(runId);
-    if (!slot) return;
+    // 不允许通过此方法释放占位槽位（负数 runId），占位由 registerDirectSlot 内部管理
+    if (!slot || runId < 0) return;
 
     clearTimeout(slot.timeoutTimer);
     this.runningSlots.delete(runId);
