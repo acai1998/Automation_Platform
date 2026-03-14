@@ -292,11 +292,13 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
   /**
    * 更新执行状态为运行中
+   * 同时清除 endTime，防止从终态回退时出现数据不一致
    */
   async markExecutionRunning(executionId: number): Promise<void> {
     await this.repository.update(executionId, {
       status: TaskExecutionStatus.RUNNING,
       startTime: new Date(),
+      endTime: null as unknown as Date, // 清除可能存在的旧 endTime，确保数据一致性
     });
   }
 
@@ -1191,6 +1193,77 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     executionId?: number
   ): Promise<void> {
     return this.executeInTransaction(async (_queryRunner) => {
+      // 0. 二次校验：防止并发回调导致正确结果被错误数据覆盖
+      // 修复：在幂等性检查与实际更新之间存在时间窗口，可能导致后到的错误回调覆盖先到的正确结果
+      const currentTestRun = await this.testRunRepository.findOne({
+        where: { id: runId },
+        select: ['id', 'status', 'passedCases', 'failedCases', 'skippedCases'],
+      });
+
+      const finalStatuses = ['success', 'failed', 'cancelled', 'aborted'];
+      const hasDetailedResults = Array.isArray(results.results) && results.results.length > 0;
+      const hasSummaryCounts = (results.passedCases + results.failedCases + results.skippedCases) > 0;
+
+      if (currentTestRun && finalStatuses.includes(currentTestRun.status)) {
+        // 数据版本检查：判断新数据是否比现有数据"更好"
+        const currentHasRealData = (currentTestRun.passedCases ?? 0) > 0 ||
+                                    (currentTestRun.failedCases ?? 0) > 0 ||
+                                    (currentTestRun.skippedCases ?? 0) > 0;
+
+        // 终态已存在真实数据时，检查新数据是否会导致数据"倒退"
+        // 修复：无论新回调是否有详细结果，都要检查数据质量
+        if (currentHasRealData) {
+          const currentTotal = (currentTestRun.passedCases ?? 0) +
+                              (currentTestRun.failedCases ?? 0) +
+                              (currentTestRun.skippedCases ?? 0);
+          const newTotal = results.passedCases + results.failedCases + results.skippedCases;
+          const currentPassed = currentTestRun.passedCases ?? 0;
+          const newPassed = results.passedCases;
+
+          // 判断数据是否变差：
+          // 1. 总量减少（测试结果不完整）
+          // 2. 总量相同但 passed 减少（正确结果被错误结果覆盖）
+          // 3. 无详细结果且回调数据总量相同或更少（可能是空回调或部分数据）
+          const isDataRegression = newTotal < currentTotal ||
+                                   (newTotal === currentTotal && newPassed < currentPassed) ||
+                                   (!hasDetailedResults && newTotal <= currentTotal);
+
+          if (isDataRegression) {
+            logger.warn(
+              'completeBatch: rejected regression update - existing data is better than new callback',
+              {
+                runId,
+                currentStatus: currentTestRun.status,
+                currentPassed: currentTestRun.passedCases,
+                currentFailed: currentTestRun.failedCases,
+                currentSkipped: currentTestRun.skippedCases,
+                newPassed: results.passedCases,
+                newFailed: results.failedCases,
+                newSkipped: results.skippedCases,
+                hasDetailedResults,
+                newTotal,
+                currentTotal,
+                source: 'concurrent_callback_protection'
+              },
+              LOG_CONTEXTS.REPOSITORY
+            );
+            return; // 拒绝更新，保留现有的正确数据
+          }
+        }
+
+        logger.info(
+          'completeBatch: allowing update to completed run with new payload',
+          {
+            runId,
+            currentStatus: currentTestRun.status,
+            hasDetailedResults,
+            hasSummaryCounts,
+            source: 'concurrent_callback_protection'
+          },
+          LOG_CONTEXTS.REPOSITORY
+        );
+      }
+
       // 1. 更新 TestRun 记录（将 cancelled 映射为 aborted 以兼容数据库枚举）
       const mappedStatus = this.mapStatusForTestRun(results.status);
       await this.testRunRepository.update(runId, {
@@ -1240,10 +1313,21 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       skippedCases?: number;
     }
   ): Promise<void> {
+    const normalizedStatus = status === 'cancelled' ? 'aborted' : status;
     const updateData: QueryDeepPartialEntity<TestRun> = {
-      status: status as 'pending' | 'running' | 'success' | 'failed' | 'aborted',
-      endTime: new Date()
+      status: normalizedStatus as 'pending' | 'running' | 'success' | 'failed' | 'aborted',
     };
+
+    // 终态时设置 endTime
+    if (['success', 'failed', 'aborted'].includes(normalizedStatus)) {
+      updateData.endTime = new Date();
+    } else if (['running', 'pending'].includes(normalizedStatus)) {
+      // 非终态（running/pending）时清除 endTime，防止从终态回退时出现数据不一致
+      // 场景：Jenkins 轮询误判（building=true）或网络延迟导致状态错乱
+      // 确保数据一致性：running/pending 状态不应有结束时间
+      updateData.endTime = null as unknown as Date;
+    }
+
     if (options?.durationMs !== undefined) updateData.durationMs = options.durationMs;
     if (options?.passedCases !== undefined) updateData.passedCases = options.passedCases;
     if (options?.failedCases !== undefined) updateData.failedCases = options.failedCases;

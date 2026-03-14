@@ -464,6 +464,15 @@ export function useDeleteTask() {
   });
 }
 
+// ---------- 批量操作结果 ----------
+
+export interface BatchOperationResult {
+  successes: number;
+  failures: number;
+  total: number;
+  failedTaskIds: number[];
+}
+
 // ---------- 批量更新状态 ----------
 
 export function useBatchUpdateTaskStatus() {
@@ -476,7 +485,7 @@ export function useBatchUpdateTaskStatus() {
     }: {
       taskIds: number[];
       status: 'active' | 'paused' | 'archived'
-    }) => {
+    }): Promise<BatchOperationResult> => {
       // 并行 API 调用以提高性能
       const results = await Promise.allSettled(
         taskIds.map(id =>
@@ -491,10 +500,14 @@ export function useBatchUpdateTaskStatus() {
         )
       );
 
-      const successes = results.filter(r => r.status === 'fulfilled').length;
-      const failures = results.filter(r => r.status === 'rejected').length;
+      const failedTaskIds = results
+        .map((result, index) => (result.status === 'rejected' ? taskIds[index] : null))
+        .filter((id): id is number => id !== null);
 
-      return { successes, failures, total: taskIds.length };
+      const successes = taskIds.length - failedTaskIds.length;
+      const failures = failedTaskIds.length;
+
+      return { successes, failures, total: taskIds.length, failedTaskIds };
     },
 
     // 乐观更新所有选中的任务
@@ -542,7 +555,7 @@ export function useBatchDeleteTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (taskIds: number[]) => {
+    mutationFn: async (taskIds: number[]): Promise<BatchOperationResult> => {
       const results = await Promise.allSettled(
         taskIds.map(id =>
           fetch(`/api/tasks/${id}`, {
@@ -555,10 +568,14 @@ export function useBatchDeleteTask() {
         )
       );
 
-      const successes = results.filter(r => r.status === 'fulfilled').length;
-      const failures = results.filter(r => r.status === 'rejected').length;
+      const failedTaskIds = results
+        .map((result, index) => (result.status === 'rejected' ? taskIds[index] : null))
+        .filter((id): id is number => id !== null);
 
-      return { successes, failures, total: taskIds.length };
+      const successes = taskIds.length - failedTaskIds.length;
+      const failures = failedTaskIds.length;
+
+      return { successes, failures, total: taskIds.length, failedTaskIds };
     },
 
     // 乐观移除所有选中的任务
@@ -673,7 +690,7 @@ export function useBatchRunTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (taskIds: number[]) => {
+    mutationFn: async (taskIds: number[]): Promise<BatchOperationResult> => {
       // 限制最大并发为 3，避免同时发出大量请求拥塞后端调度器和 DB 连接池
       const results = await runWithConcurrencyLimit(
         taskIds,
@@ -688,10 +705,14 @@ export function useBatchRunTask() {
         3
       );
 
-      const successes = results.filter(r => r.status === 'fulfilled').length;
-      const failures = results.filter(r => r.status === 'rejected').length;
+      const failedTaskIds = results
+        .map((result, index) => (result.status === 'rejected' ? taskIds[index] : null))
+        .filter((id): id is number => id !== null);
 
-      return { successes, failures, total: taskIds.length };
+      const successes = taskIds.length - failedTaskIds.length;
+      const failures = failedTaskIds.length;
+
+      return { successes, failures, total: taskIds.length, failedTaskIds };
     },
 
     // 批量运行不需要乐观更新，因为运行状态由服务器控制

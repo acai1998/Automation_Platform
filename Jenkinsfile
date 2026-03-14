@@ -339,17 +339,52 @@ pipeline {
                             // 写入临时文件避免 shell 参数过长
                             def payloadFile = "${WORKSPACE}/callback_payload.json"
                             writeFile file: payloadFile, text: """{"runId": ${params.RUN_ID}, "status": "${finalStatus}", "passedCases": ${passedCount}, "failedCases": ${failedCount}, "skippedCases": ${skippedCount}, "durationMs": ${duration}, "results": ${resultsJson}}"""
-                            sh """
-                                curl -X POST '${callbackUrl}' \\
-                                    -H 'Content-Type: application/json' \\
-                                    --connect-timeout 10 \\
-                                    --max-time 30 \\
-                                    -L \\
-                                    -k \\
-                                    -d @${payloadFile} \\
-                                    || echo '❌ curl callback failed'
-                            """
-                            echo "✅ Callback sent (passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount}, results=${resultsJson.size()}chars)"
+
+                            def callbackExitCode = sh(
+                                script: """
+                                    set +e
+                                    callback_ok=0
+                                    attempt=1
+                                    while [ "\$attempt" -le 3 ]; do
+                                        response_file="${WORKSPACE}/callback_response_${BUILD_NUMBER}_\${attempt}.txt"
+                                        http_code=\$(curl -sS -o "\${response_file}" -w '%{http_code}' -X POST '${callbackUrl}' \\
+                                            -H 'Content-Type: application/json' \\
+                                            --connect-timeout 10 \\
+                                            --max-time 30 \\
+                                            -L \\
+                                            -k \\
+                                            -d @${payloadFile})
+                                        curl_exit=\$?
+
+                                        echo "[callback] attempt=\${attempt}, curl_exit=\${curl_exit}, http_code=\${http_code}"
+                                        if [ -f "\${response_file}" ]; then
+                                            echo "[callback] response body:"
+                                            cat "\${response_file}"
+                                            echo ""
+                                        fi
+
+                                        if [ "\${curl_exit}" -eq 0 ] && { [ "\${http_code}" = "202" ] || [ "\${http_code}" = "200" ]; }; then
+                                            callback_ok=1
+                                            break
+                                        fi
+
+                                        sleep \$((attempt * 2))
+                                        attempt=\$((attempt + 1))
+                                    done
+
+                                    if [ "\${callback_ok}" -ne 1 ]; then
+                                        echo "❌ callback request failed after retries"
+                                        exit 1
+                                    fi
+                                """,
+                                returnStatus: true
+                            )
+
+                            if (callbackExitCode == 0) {
+                                echo "✅ Callback sent (passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount}, results=${resultsJson.size()}chars)"
+                            } else {
+                                echo "❌ Callback failed after retries, exitCode=${callbackExitCode}"
+                            }
                         } catch (Exception e) {
                             echo "⚠️ Callback failed: ${e.message}"
                         }
@@ -372,17 +407,37 @@ pipeline {
                 if (params.RUN_ID && params.CALLBACK_URL) {
                     def duration = currentBuild.duration ?: 0
                     // CALLBACK_URL 由服务端构造，已包含完整路径（含 /api/jenkins/callback）
-                    sh """
-                        echo "正在回调失败状态到平台..."
-                        curl -X POST '${params.CALLBACK_URL}' \\
-                            -H 'Content-Type: application/json' \\
-                            --connect-timeout 10 \\
-                            --max-time 30 \\
-                            -L \\
-                            -k \\
-                            -d '{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}, "buildUrl": "${BUILD_URL}"}' \\
-                            || echo "失败回调请求失败，但继续处理"
-                    """
+                    def failureCallbackExit = sh(
+                        script: """
+                            set +e
+                            echo "正在回调失败状态到平台..."
+                            response_file="${WORKSPACE}/callback_failure_response_${BUILD_NUMBER}.txt"
+                            http_code=\$(curl -sS -o "\${response_file}" -w '%{http_code}' -X POST '${params.CALLBACK_URL}' \\
+                                -H 'Content-Type: application/json' \\
+                                --connect-timeout 10 \\
+                                --max-time 30 \\
+                                -L \\
+                                -k \\
+                                -d '{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}, "buildUrl": "${BUILD_URL}"}')
+                            curl_exit=\$?
+
+                            echo "[failure-callback] curl_exit=\${curl_exit}, http_code=\${http_code}"
+                            if [ -f "\${response_file}" ]; then
+                                echo "[failure-callback] response body:"
+                                cat "\${response_file}"
+                                echo ""
+                            fi
+
+                            if [ "\${curl_exit}" -ne 0 ] || { [ "\${http_code}" != "202" ] && [ "\${http_code}" != "200" ]; }; then
+                                exit 1
+                            fi
+                        """,
+                        returnStatus: true
+                    )
+
+                    if (failureCallbackExit != 0) {
+                        echo "⚠️ 失败回调请求失败，exitCode=${failureCallbackExit}"
+                    }
                 }
             }
         }

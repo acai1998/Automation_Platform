@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { memo, useState, useMemo, useEffect, useCallback } from 'react';
 import { useLocation } from 'wouter';
 import {
   Boxes,
@@ -80,8 +80,10 @@ import {
   type TaskExecution,
   type CreateTaskInput,
   type TaskListParams,
+  type BatchOperationResult,
 } from '@/hooks/useTasks';
 import { Checkbox } from '@/components/ui/checkbox';
+import type { CheckedState } from '@radix-ui/react-checkbox';
 import { BatchActionBar } from '@/components/tasks/BatchActionBar';
 import { BatchConfirmDialog } from '@/components/tasks/BatchConfirmDialog';
 import { useAllCasesForSelect, type TestCase as CaseItem, type CaseType } from '@/hooks/useCases';
@@ -96,6 +98,55 @@ import {
   SUCCESS_RATE_THRESHOLDS,
 } from '@/constants/tasks';
 import { TASK_MESSAGES, TASK_PAGE } from '@/constants/messages';
+
+type TaskTriggerType = 'manual' | 'scheduled' | 'ci_triggered';
+type TaskStatusFilter = '' | 'active' | 'paused' | 'archived';
+type TaskTriggerFilter = '' | TaskTriggerType;
+
+const TASK_STATUS_FILTER_OPTIONS: readonly TaskStatusFilter[] = [
+  '',
+  'active',
+  'paused',
+  'archived',
+];
+
+const TASK_TRIGGER_FILTER_OPTIONS: readonly TaskTriggerFilter[] = [
+  '',
+  'manual',
+  'scheduled',
+  'ci_triggered',
+];
+
+const TASK_TRIGGER_TYPE_OPTIONS: ReadonlyArray<{ value: TaskTriggerType; label: string }> = [
+  { value: 'manual', label: '手动触发' },
+  { value: 'scheduled', label: '定时触发' },
+  { value: 'ci_triggered', label: 'CI 触发' },
+];
+
+const CASE_TYPE_FILTER_OPTIONS: ReadonlyArray<{ value: CaseType | ''; label: string }> = [
+  { value: '', label: '全部' },
+  { value: 'api', label: 'API' },
+  { value: 'ui', label: 'UI' },
+  { value: 'performance', label: '性能' },
+];
+
+const AUDIT_ACTION_LABELS: Record<string, { label: string; color: string }> = {
+  created: { label: '创建任务', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+  updated: { label: '更新任务', color: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300' },
+  deleted: { label: '删除任务', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+  status_changed: { label: '状态变更', color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' },
+  manually_triggered: { label: '手动触发', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
+  execution_cancelled: { label: '取消执行', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
+  compensated: { label: '漏触补偿', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
+  triggered: { label: '调度触发', color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' },
+  retry_scheduled: { label: '重试排队', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+  permanently_failed: { label: '彻底失败', color: 'bg-red-200 text-red-800 dark:bg-red-900/50 dark:text-red-200' },
+};
+
+const isCheckedState = (checked: CheckedState): boolean => checked === true;
+
+const getErrorMessage = (error: unknown, fallback: string = TASK_MESSAGES.GENERIC_ERROR): string =>
+  error instanceof Error ? error.message : fallback;
 
 /* ─── 主页面 ─────────────────────────────────────────── */
 
@@ -274,6 +325,19 @@ export default function Tasks() {
     }
   }, [deleteTarget, deleteTaskMutation]);
 
+  const handleEditTask = useCallback((task: Task) => {
+    setEditingTask(task);
+    setFormOpen(true);
+  }, []);
+
+  const handleOpenDeleteDialog = useCallback((task: Task) => {
+    setDeleteTarget(task);
+  }, []);
+
+  const handleOpenStatsDialog = useCallback((task: Task) => {
+    setStatsTarget(task);
+  }, []);
+
   const clearFilters = useCallback(() => {
     setKeyword('');
     setDebouncedKeyword('');
@@ -285,10 +349,11 @@ export default function Tasks() {
   const hasActiveFilters = keyword || statusFilter || triggerFilter;
 
   // ── 批量操作辅助函数 ──────────────────────────────────────
-  const handleSelectTask = useCallback((taskId: number, checked: boolean) => {
-    setSelectedTasks(prev => {
+  const handleSelectTask = useCallback((taskId: number, checked: CheckedState) => {
+    const shouldSelect = isCheckedState(checked);
+    setSelectedTasks((prev) => {
       const newSet = new Set(prev);
-      if (checked) {
+      if (shouldSelect) {
         newSet.add(taskId);
       } else {
         newSet.delete(taskId);
@@ -297,9 +362,9 @@ export default function Tasks() {
     });
   }, []);
 
-  const handleSelectAll = useCallback((checked: boolean) => {
-    if (checked) {
-      setSelectedTasks(new Set(tasks.map(t => t.id)));
+  const handleSelectAll = useCallback((checked: CheckedState) => {
+    if (isCheckedState(checked)) {
+      setSelectedTasks(new Set(tasks.map((t) => t.id)));
     } else {
       setSelectedTasks(new Set());
     }
@@ -313,7 +378,13 @@ export default function Tasks() {
   // 计算选择状态
   const selectedCount = selectedTasks.size;
   const isAllSelected = tasks.length > 0 && selectedCount === tasks.length;
-  const selectedTasksList = tasks.filter(t => selectedTasks.has(t.id));
+  const isPartiallySelected = selectedCount > 0 && selectedCount < tasks.length;
+  const selectAllState: CheckedState = isAllSelected
+    ? true
+    : isPartiallySelected
+      ? 'indeterminate'
+      : false;
+  const selectedTasksList = tasks.filter((t) => selectedTasks.has(t.id));
 
   // 批量操作处理函数
   const handleBatchActivate = useCallback(() => {
@@ -337,17 +408,19 @@ export default function Tasks() {
   }, [selectedCount]);
 
   const handleBatchConfirm = useCallback(async () => {
-    if (!batchDialog) return { successes: 0, failures: 0 };
+    if (!batchDialog) {
+      return { successes: 0, failures: 0 };
+    }
 
     const taskIds = Array.from(selectedTasks);
 
     try {
-      let result;
+      let result: BatchOperationResult;
       switch (batchDialog.action) {
         case 'activate':
           result = await batchUpdateStatusMutation.mutateAsync({
             taskIds,
-            status: 'active'
+            status: 'active',
           });
           toast.success(`成功启用 ${result.successes} 个任务`);
           break;
@@ -355,7 +428,7 @@ export default function Tasks() {
         case 'pause':
           result = await batchUpdateStatusMutation.mutateAsync({
             taskIds,
-            status: 'paused'
+            status: 'paused',
           });
           toast.success(`成功暂停 ${result.successes} 个任务`);
           break;
@@ -369,23 +442,35 @@ export default function Tasks() {
           result = await batchRunMutation.mutateAsync(taskIds);
           toast.success(`成功运行 ${result.successes} 个任务`);
           break;
-
-        default:
-          result = { successes: 0, failures: 0 };
       }
 
       if (result.failures > 0) {
-        toast.error(`${result.failures} 个任务操作失败`);
+        const previewFailedIds = result.failedTaskIds.slice(0, 5).join(', ');
+        const hasMore = result.failedTaskIds.length > 5;
+        const failureDescription = result.failedTaskIds.length > 0
+          ? `失败任务ID: ${previewFailedIds}${hasMore ? ' ...' : ''}`
+          : '请重试或查看后端日志';
+
+        toast.error(`${result.failures} 个任务操作失败`, {
+          description: failureDescription,
+        });
       }
 
       clearSelection();
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : '批量操作失败';
-      toast.error(message);
+      toast.error(getErrorMessage(error, '批量操作失败'));
       return { successes: 0, failures: selectedCount };
     }
-  }, [batchDialog, selectedTasks, selectedCount, batchUpdateStatusMutation, batchDeleteMutation, batchRunMutation, clearSelection]);
+  }, [
+    batchDialog,
+    selectedTasks,
+    selectedCount,
+    batchUpdateStatusMutation,
+    batchDeleteMutation,
+    batchRunMutation,
+    clearSelection,
+  ]);
 
   // ── 渲染 ──────────────────────────────────────────
   return (
@@ -418,7 +503,7 @@ export default function Tasks() {
           {isBatchMode && (
             <div className="flex items-center gap-2 px-2">
               <Checkbox
-                checked={isAllSelected}
+                checked={selectAllState}
                 onCheckedChange={handleSelectAll}
               />
               <span className="text-sm text-slate-600 dark:text-slate-400">全选</span>
@@ -497,7 +582,7 @@ export default function Tasks() {
         {/* 状态筛选 */}
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-slate-400" />
-          {(['', 'active', 'paused', 'archived'] as const).map((v) => (
+          {TASK_STATUS_FILTER_OPTIONS.map((v) => (
             <Button
               key={v}
               variant={statusFilter === v ? 'default' : 'outline'}
@@ -515,7 +600,7 @@ export default function Tasks() {
 
         {/* 触发类型筛选 */}
         <div className="flex items-center gap-2">
-          {(['', 'manual', 'scheduled', 'ci_triggered'] as const).map((v) => (
+          {TASK_TRIGGER_FILTER_OPTIONS.map((v) => (
             <Button
               key={v}
               variant={triggerFilter === v ? 'default' : 'outline'}
@@ -563,7 +648,7 @@ export default function Tasks() {
           <div className="p-4 rounded-full bg-red-50 dark:bg-red-900/20">
             <AlertCircle className="h-10 w-10 text-red-500" />
           </div>
-          <p className="text-red-600 font-medium">{TASK_MESSAGES.LOAD_ERROR}: {(error as Error).message}</p>
+          <p className="text-red-600 font-medium">{TASK_MESSAGES.LOAD_ERROR}: {getErrorMessage(error)}</p>
           <Button variant="outline" onClick={() => refetch()}>
             {TASK_MESSAGES.BTN_RETRY}
           </Button>
@@ -587,15 +672,12 @@ export default function Tasks() {
               <TaskCard
                 key={task.id}
                 task={task}
-                onRun={() => handleRunTask(task.id, task.name)}
-                onEdit={() => {
-                  setEditingTask(task);
-                  setFormOpen(true);
-                }}
-                onToggleStatus={() => handleToggleStatus(task)}
-                onDelete={() => setDeleteTarget(task)}
-                onStats={() => setStatsTarget(task)}
-                onCancel={() => handleCancelLatestExecution(task)}
+                onRunTask={handleRunTask}
+                onEditTask={handleEditTask}
+                onToggleStatus={handleToggleStatus}
+                onDeleteTask={handleOpenDeleteDialog}
+                onStatsTask={handleOpenStatsDialog}
+                onCancelTask={handleCancelLatestExecution}
                 isRunning={
                   runTaskMutation.isPending &&
                   runTaskMutation.variables === task.id
@@ -604,7 +686,7 @@ export default function Tasks() {
                 queuePosition={queueInfoByTaskId.get(task.id)?.queuePosition}
                 isBatchMode={isBatchMode}
                 isSelected={selectedTasks.has(task.id)}
-                onSelect={(checked) => handleSelectTask(task.id, checked)}
+                onSelectTask={handleSelectTask}
               />
             ))}
           </div>
@@ -649,7 +731,7 @@ export default function Tasks() {
                         variant={page === p ? 'default' : 'outline'}
                         size="icon"
                         className="h-8 w-8 text-xs"
-                        onClick={() => setPage(p as number)}
+                        onClick={() => setPage(p)}
                       >
                         {p}
                       </Button>
@@ -758,28 +840,14 @@ export default function Tasks() {
 
 /* ─── 任务卡片 ─────────────────────────────────────────── */
 
-function TaskCard({
-  task,
-  onRun,
-  onEdit,
-  onToggleStatus,
-  onDelete,
-  onStats,
-  onCancel,
-  isRunning,
-  isQueued,
-  queuePosition,
-  isBatchMode,
-  isSelected,
-  onSelect,
-}: {
+interface TaskCardProps {
   task: Task;
-  onRun: () => void;
-  onEdit: () => void;
-  onToggleStatus: () => void;
-  onDelete: () => void;
-  onStats: () => void;
-  onCancel: () => void;
+  onRunTask: (taskId: number, taskName: string) => void;
+  onEditTask: (task: Task) => void;
+  onToggleStatus: (task: Task) => void;
+  onDeleteTask: (task: Task) => void;
+  onStatsTask: (task: Task) => void;
+  onCancelTask: (task: Task) => void;
   isRunning?: boolean;
   /** [P1] 任务是否在调度器等待队列中 */
   isQueued?: boolean;
@@ -787,8 +855,24 @@ function TaskCard({
   queuePosition?: number;
   isBatchMode?: boolean;
   isSelected?: boolean;
-  onSelect?: (checked: boolean) => void;
-}) {
+  onSelectTask?: (taskId: number, checked: CheckedState) => void;
+}
+
+const TaskCard = memo(function TaskCard({
+  task,
+  onRunTask,
+  onEditTask,
+  onToggleStatus,
+  onDeleteTask,
+  onStatsTask,
+  onCancelTask,
+  isRunning,
+  isQueued,
+  queuePosition,
+  isBatchMode,
+  isSelected,
+  onSelectTask,
+}: TaskCardProps) {
   const [, navigate] = useLocation();
   const lastExecution = task.recentExecutions?.[0];
   const successRate =
@@ -812,13 +896,41 @@ function TaskCard({
     }
   }, [task.case_ids]);
 
-  const handleViewReport = () => {
+  const handleViewReport = useCallback(() => {
     if (task.latestRunId) {
       navigate(`/reports/${task.latestRunId}`);
     } else {
       navigate('/reports');
     }
-  };
+  }, [navigate, task.latestRunId]);
+
+  const handleRun = useCallback(() => {
+    onRunTask(task.id, task.name);
+  }, [onRunTask, task.id, task.name]);
+
+  const handleEdit = useCallback(() => {
+    onEditTask(task);
+  }, [onEditTask, task]);
+
+  const handleToggle = useCallback(() => {
+    onToggleStatus(task);
+  }, [onToggleStatus, task]);
+
+  const handleDelete = useCallback(() => {
+    onDeleteTask(task);
+  }, [onDeleteTask, task]);
+
+  const handleStats = useCallback(() => {
+    onStatsTask(task);
+  }, [onStatsTask, task]);
+
+  const handleCancel = useCallback(() => {
+    onCancelTask(task);
+  }, [onCancelTask, task]);
+
+  const handleSelect = useCallback((checked: CheckedState) => {
+    onSelectTask?.(task.id, checked);
+  }, [onSelectTask, task.id]);
 
   return (
     <Card className={cn(
@@ -831,7 +943,7 @@ function TaskCard({
           {isBatchMode && (
             <Checkbox
               checked={isSelected}
-              onCheckedChange={onSelect}
+              onCheckedChange={handleSelect}
               className="mt-1 shrink-0"
             />
           )}
@@ -858,7 +970,7 @@ function TaskCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={onEdit} className="gap-2">
+              <DropdownMenuItem onClick={handleEdit} className="gap-2">
                 <Pencil className="h-4 w-4" />
                 {TASK_MESSAGES.BTN_EDIT_TASK}
               </DropdownMenuItem>
@@ -866,18 +978,18 @@ function TaskCard({
                 <FileText className="h-4 w-4" />
                 {TASK_MESSAGES.BTN_VIEW_REPORT}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={onStats} className="gap-2">
+              <DropdownMenuItem onClick={handleStats} className="gap-2">
                 <TrendingUp className="h-4 w-4" />
                 查看统计
               </DropdownMenuItem>
               {hasActiveExecution && (
-                <DropdownMenuItem onClick={onCancel} className="gap-2 text-orange-600">
+                <DropdownMenuItem onClick={handleCancel} className="gap-2 text-orange-600">
                   <XCircle className="h-4 w-4" />
                   取消运行
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onToggleStatus} className="gap-2">
+              <DropdownMenuItem onClick={handleToggle} className="gap-2">
                 {task.status === 'active' ? (
                   <>
                     <ToggleLeft className="h-4 w-4" />
@@ -891,7 +1003,7 @@ function TaskCard({
                 )}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onDelete} className="text-red-600 gap-2">
+              <DropdownMenuItem onClick={handleDelete} className="text-red-600 gap-2">
                 <Trash2 className="h-4 w-4" />
                 {TASK_MESSAGES.BTN_DELETE_TASK}
               </DropdownMenuItem>
@@ -966,7 +1078,7 @@ function TaskCard({
 
       <CardFooter className="pt-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
         <Button
-          onClick={onRun}
+          onClick={handleRun}
           disabled={isRunning || isQueued || task.status === 'archived'}
           className={cn(
             "w-full gap-2",
@@ -992,7 +1104,9 @@ function TaskCard({
       </CardFooter>
     </Card>
   );
-}
+});
+
+TaskCard.displayName = 'TaskCard';
 
 /* ─── 执行状态小圆点 ─────────────────────────────────────── */
 
@@ -1024,19 +1138,6 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
 
   const successRateColor = (rate: number) =>
     rate >= 80 ? 'text-green-600' : rate >= 50 ? 'text-orange-500' : 'text-red-500';
-
-  const AUDIT_ACTION_LABELS: Record<string, { label: string; color: string }> = {
-    created: { label: '创建任务', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-    updated: { label: '更新任务', color: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300' },
-    deleted: { label: '删除任务', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
-    status_changed: { label: '状态变更', color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' },
-    manually_triggered: { label: '手动触发', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
-    execution_cancelled: { label: '取消执行', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
-    compensated: { label: '漏触补偿', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
-    triggered: { label: '调度触发', color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' },
-    retry_scheduled: { label: '重试排队', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-    permanently_failed: { label: '彻底失败', color: 'bg-red-200 text-red-800 dark:bg-red-900/50 dark:text-red-200' },
-  };
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
@@ -1095,7 +1196,7 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
               ) : statsError ? (
                 <div className="flex items-center gap-2 text-red-600 py-4">
                   <AlertCircle className="h-5 w-5" />
-                  <span>加载失败：{(statsError as Error).message}</span>
+                  <span>加载失败：{getErrorMessage(statsError)}</span>
                 </div>
               ) : stats ? (
                 <div className="space-y-6">
@@ -1298,7 +1399,7 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
         ) : error ? (
           <div className="flex items-center gap-2 text-red-600 py-4">
             <AlertCircle className="h-5 w-5" />
-            <span>加载失败：{(error as Error).message}</span>
+            <span>加载失败：{getErrorMessage(error)}</span>
           </div>
         ) : status ? (
           <div className="space-y-5 py-2">
@@ -1310,7 +1411,9 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
                 <p className="text-xs text-blue-400 mt-0.5">上限 {status.concurrencyLimit}</p>
               </div>
               <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 p-3 text-center">
-                <p className="text-2xl font-bold text-amber-600">{status.queueDepth ?? status.queued.length}</p>
+                <p className="text-2xl font-bold text-amber-600">
+                  {(status.queueDepth ?? status.queued.length) + (status.directQueueDepth ?? status.directQueued.length)}
+                </p>
                 <p className="text-xs text-slate-500 mt-1">等待队列</p>
                 {status.maxQueueDepth && (
                   <p className="text-xs text-amber-400 mt-0.5">上限 {status.maxQueueDepth}</p>
@@ -1397,6 +1500,31 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
+            {/* 直连等待队列（run-case / run-batch） */}
+            {status.directQueued.length > 0 && (
+              <div className="space-y-1.5">
+                <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-violet-400 inline-block" />
+                  直连等待队列 ({status.directQueued.length})
+                </h4>
+                <div className="flex flex-col gap-1.5">
+                  {status.directQueued.map((item) => {
+                    const waitSec = Math.round((item.waitMs ?? 0) / 1000);
+                    const waitDisplay = waitSec >= 60
+                      ? `${Math.floor(waitSec / 60)}m${waitSec % 60}s`
+                      : `${waitSec}s`;
+                    return (
+                      <div key={`${item.label}-${item.queuePosition}`} className="flex items-center gap-2 px-2 py-1 rounded-md text-xs bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 font-mono">
+                        <span className="text-violet-400 font-bold w-5">#{item.queuePosition}</span>
+                        <span className="truncate">{item.label}</span>
+                        <span className="ml-auto text-violet-400">等待 {waitDisplay}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* 已计划的任务 */}
             {status.scheduled.length > 0 && (
               <div className="space-y-1.5">
@@ -1414,7 +1542,7 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            {status.running.length === 0 && status.queued.length === 0 && (
+            {status.running.length === 0 && status.queued.length === 0 && status.directQueued.length === 0 && (
               <div className="text-center py-4 text-slate-400">
                 <CheckCircle2 className="h-10 w-10 mx-auto mb-2 opacity-30" />
                 <p className="text-sm">调度器空闲，无任务运行</p>
@@ -1472,7 +1600,7 @@ const CRON_PRESETS = [
 function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [triggerType, setTriggerType] = useState<'manual' | 'scheduled' | 'ci_triggered'>('manual');
+  const [triggerType, setTriggerType] = useState<TaskTriggerType>('manual');
   const [cronExpression, setCronExpression] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -1483,10 +1611,11 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
     return () => clearTimeout(t);
   }, [cronExpression]);
 
+  const cronPreviewExpr = triggerType === 'scheduled' ? debouncedCron : '';
   const {
     data: cronPreviewData,
     isFetching: cronPreviewLoading,
-  } = useCronPreview(debouncedCron, 5);
+  } = useCronPreview(cronPreviewExpr, 5);
 
   // ── 关联用例状态 ──────────────────────────────────────
   const [selectedCaseIds, setSelectedCaseIds] = useState<number[]>([]);
@@ -1511,15 +1640,21 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
   });
   const allCases = casesData?.data ?? [];
 
-  // API 加载完毕后，补全已选用例对象中缺失的条目（如编辑场景首次加载）
+  // 同步已选用例对象缓存（避免在事件回调内嵌套 setState）
   useEffect(() => {
-    if (allCases.length === 0) return;
+    if (selectedCaseIds.length === 0) {
+      setSelectedCaseObjects([]);
+      return;
+    }
+
     setSelectedCaseObjects((prev) => {
-      const existingIds = new Set(prev.map((c) => c.id));
-      const toAdd = allCases.filter(
-        (c) => selectedCaseIds.includes(c.id) && !existingIds.has(c.id)
-      );
-      return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+      const cacheById = new Map<number, CaseItem>();
+      prev.forEach((item) => cacheById.set(item.id, item));
+      allCases.forEach((item) => cacheById.set(item.id, item));
+
+      return selectedCaseIds
+        .map((id) => cacheById.get(id))
+        .filter((item): item is CaseItem => item !== undefined);
     });
   }, [allCases, selectedCaseIds]);
 
@@ -1530,20 +1665,14 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
   );
 
   // 已选用例对象：按 selectedCaseIds 顺序展示，保证顺序稳定
-  const selectedCases = useMemo(
-    () =>
-      selectedCaseIds
-        .map((id) => selectedCaseObjects.find((c) => c.id === id))
-        .filter(Boolean) as CaseItem[],
-    [selectedCaseIds, selectedCaseObjects]
-  );
+  const selectedCases = selectedCaseObjects;
 
   // 回填编辑数据
   useEffect(() => {
     if (open) {
       setName(task?.name ?? '');
       setDescription(task?.description ?? '');
-      setTriggerType((task?.trigger_type as 'manual' | 'scheduled' | 'ci_triggered') ?? 'manual');
+      setTriggerType(task?.trigger_type ?? 'manual');
       setCronExpression(task?.cron_expression ?? '');
       setErrors({});
       setCaseSearch('');
@@ -1565,24 +1694,12 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
   }, [open, task]);
 
   const toggleCaseSelect = useCallback((caseId: number) => {
-    setSelectedCaseIds((prev) => {
-      const isSelected = prev.includes(caseId);
-      if (isSelected) {
-        // 移除时同步清理对象缓存
-        setSelectedCaseObjects((objs) => objs.filter((c) => c.id !== caseId));
-        return prev.filter((id) => id !== caseId);
-      } else {
-        // 新增时立即从 allCases 中补入对象缓存（若 API 已返回）
-        const caseObj = allCases.find((c) => c.id === caseId);
-        if (caseObj) {
-          setSelectedCaseObjects((objs) =>
-            objs.some((c) => c.id === caseId) ? objs : [...objs, caseObj]
-          );
-        }
-        return [...prev, caseId];
-      }
-    });
-  }, [allCases]);
+    setSelectedCaseIds((prev) =>
+      prev.includes(caseId)
+        ? prev.filter((id) => id !== caseId)
+        : [...prev, caseId]
+    );
+  }, []);
 
   const validate = () => {
     const errs: Record<string, string> = {};
@@ -1696,13 +1813,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
               {TASK_MESSAGES.FORM_TRIGGER_LABEL}
             </label>
             <div className="flex gap-2" role="group" aria-label={TASK_MESSAGES.FORM_TRIGGER_LABEL}>
-              {(
-                [
-                  { value: 'manual', label: '手动触发' },
-                  { value: 'scheduled', label: '定时触发' },
-                  { value: 'ci_triggered', label: 'CI 触发' },
-                ] as const
-              ).map(({ value, label }) => (
+              {TASK_TRIGGER_TYPE_OPTIONS.map(({ value, label }) => (
                 <button
                   key={value}
                   type="button"
@@ -1873,12 +1984,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                     />
                   </div>
                   <div className="flex gap-1">
-                    {([
-                      { value: '' as const, label: '全部' },
-                      { value: 'api' as const, label: 'API' },
-                      { value: 'ui' as const, label: 'UI' },
-                      { value: 'performance' as const, label: '性能' },
-                    ] as { value: CaseType | ''; label: string }[]).map(({ value, label }) => (
+                    {CASE_TYPE_FILTER_OPTIONS.map(({ value, label }) => (
                       <button
                         key={value}
                         type="button"
@@ -1939,7 +2045,10 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                   {selectedCaseIds.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => setSelectedCaseIds([])}
+                      onClick={() => {
+                        setSelectedCaseIds([]);
+                        setSelectedCaseObjects([]);
+                      }}
                       className="text-[11px] text-red-400 hover:text-red-600 transition-colors"
                     >
                       清空已选

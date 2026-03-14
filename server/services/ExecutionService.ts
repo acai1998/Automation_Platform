@@ -545,16 +545,35 @@ export class ExecutionService {
         throw new Error(`Execution not found: runId=${runId}`);
       }
 
-      // 2. 幂等性检查：如果执行已经完成，避免重复更新
+      // 2. 幂等性检查：仅跳过“无结果载荷”的空重复回调
+      // 场景：Jenkins 轮询/手动同步可能先把 TestRun 标记为终态，随后回调才携带详细 results 到达。
+      // 该场景必须继续执行回写，否则会残留预创建的 error 占位记录。
       const finalStatuses = ['success', 'failed', 'cancelled', 'aborted'];
+      const hasDetailedResults = Array.isArray(results.results) && results.results.length > 0;
+      const hasSummaryCounts = (results.passedCases + results.failedCases + results.skippedCases) > 0;
+
       if (finalStatuses.includes(execution.status)) {
-        logger.warn('Execution already completed, skipping duplicate callback', {
+        if (!hasDetailedResults && !hasSummaryCounts) {
+          logger.warn('Execution already completed, skipping empty duplicate callback', {
+            runId,
+            currentStatus: execution.status,
+            newStatus: results.status,
+            source: 'idempotency_check',
+            hasDetailedResults,
+            hasSummaryCounts,
+          }, LOG_CONTEXTS.EXECUTION);
+          return;
+        }
+
+        logger.warn('Execution already completed, but callback carries result payload; continuing reconciliation', {
           runId,
           currentStatus: execution.status,
           newStatus: results.status,
-          source: 'idempotency_check'
+          source: 'idempotency_reconcile',
+          hasDetailedResults,
+          hasSummaryCounts,
+          resultsCount: results.results?.length || 0,
         }, LOG_CONTEXTS.EXECUTION);
-        return;
       }
 
       logger.debug('Found execution record', {
@@ -774,22 +793,38 @@ export class ExecutionService {
         };
       }
 
-      // 6. 如果状态不一致，尝试获取详细测试结果
-      let testResults: TestResults | null = null;
-      if (!buildStatus.building && buildStatus.result) {
-        testResults = await jenkinsStatusService.parseBuildResults(
-          execution.jenkinsJob,
-          execution.jenkinsBuildId
-        );
-      }
-
-      // 7. 更新状态
+      // 6. 先快速更新主状态，避免详细报告解析阻塞状态收敛
       const updated = await this.updateExecutionStatusFromJenkins(runId, {
         status: jenkinsStatusMapped,
         building: buildStatus.building,
         duration: buildStatus.duration,
-        testResults
       });
+
+      // 7. Jenkins 构建已结束时，再补充详细测试结果（失败不影响主状态）
+      if (!buildStatus.building && buildStatus.result) {
+        try {
+          const testResults = await jenkinsStatusService.parseBuildResults(
+            execution.jenkinsJob,
+            execution.jenkinsBuildId
+          );
+
+          if (testResults) {
+            await this.updateExecutionStatusFromJenkins(runId, {
+              status: jenkinsStatusMapped,
+              building: buildStatus.building,
+              duration: buildStatus.duration,
+              testResults,
+            });
+          }
+        } catch (detailError) {
+          logger.warn('Failed to enrich execution with Jenkins test details', {
+            runId,
+            jenkinsJob: execution.jenkinsJob,
+            jenkinsBuildId: execution.jenkinsBuildId,
+            error: detailError instanceof Error ? detailError.message : String(detailError),
+          }, LOG_CONTEXTS.EXECUTION);
+        }
+      }
 
       return {
         success: true,
