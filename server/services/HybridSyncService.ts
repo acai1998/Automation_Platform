@@ -76,7 +76,7 @@ export class HybridSyncService {
 
   /**
    * 开始监控执行状态
-   * 在创建执行记录后调用，开始等待回调
+   * 在创建运行记录后调用，开始等待回调
    */
   async startMonitoring(runId: number, options?: Partial<MonitoringConfig>): Promise<void> {
     const config = { ...this.config, ...options };

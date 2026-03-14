@@ -24,7 +24,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
 /**
- * 执行记录页面
+ * 运行记录页面
  * 采用与用例管理一致的现代化 SaaS Dashboard 风格
  * 数据读取自 Auto_TestRun 表
  */
@@ -103,7 +103,7 @@ export default function Reports() {
             </div>
             <div>
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-                执行记录
+                运行记录
               </h1>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
                 查看和分析自动化测试运行历史记录

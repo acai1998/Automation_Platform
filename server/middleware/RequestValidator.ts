@@ -85,28 +85,27 @@ export class RequestValidator {
     // 额外的业务逻辑校验
     const { passedCases = 0, failedCases = 0, skippedCases = 0, results = [] } = req.body;
 
-    // 校验用例数量一致性
+    // 校验用例数量一致性（宽松策略：不拒绝请求，仅标记警告并让后端自动修正）
+    // 原因：Jenkins 在某些场景下（如部分执行失败、超时取消）回传的汇总数和 results 可能不一致
+    //       后续 jenkins.ts 的 completeBatchExecution 会通过 derived counts 自动修正
     const totalReportedCases = passedCases + failedCases + skippedCases;
     if (results.length > 0 && results.length !== totalReportedCases) {
-      res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        message: `Results count (${results.length}) does not match total cases (${totalReportedCases})`
-      });
-      return;
+      // 仅在请求上附加警告标记，供后端 handler 感知（不影响通过）
+      (req as Record<string, unknown>)['_callbackCountMismatch'] = {
+        resultsCount: results.length,
+        reportedTotal: totalReportedCases,
+        passedCases,
+        failedCases,
+        skippedCases,
+      };
     }
 
-    // 校验结果数组格式
+    // 校验结果数组格式（宽松：单个 result 格式错误只跳过，不拒绝整批）
     if (results.length > 0) {
       const resultValidation = this.validateResults(results);
       if (!resultValidation.isValid) {
-        res.status(400).json({
-          success: false,
-          error: 'Results validation failed',
-          message: resultValidation.errors.join(', '),
-          details: resultValidation.errors
-        });
-        return;
+        // 不拒绝，仅附加警告，让后端按实际数据处理
+        (req as Record<string, unknown>)['_resultValidationWarnings'] = resultValidation.errors;
       }
     }
 

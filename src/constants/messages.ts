@@ -6,7 +6,7 @@
 export const TASK_MESSAGES = {
   // 成功消息
   RUN_SUCCESS: (name: string) => `任务 "${name}" 已开始执行`,
-  RUN_SUCCESS_DESC: '执行任务已创建，请稍后在执行记录查看结果',
+  RUN_SUCCESS_DESC: '执行任务已创建，请稍后在运行记录查看结果',
   CREATE_SUCCESS: '任务创建成功',
   UPDATE_SUCCESS: '任务更新成功',
   DELETE_SUCCESS: (name: string) => `任务 "${name}" 已删除`,
@@ -34,7 +34,7 @@ export const TASK_MESSAGES = {
 
   // 确认消息
   DELETE_CONFIRM_TITLE: '确认删除任务',
-  DELETE_CONFIRM_DESC: '此操作不可撤销。删除后，该任务的执行记录仍会保留。',
+  DELETE_CONFIRM_DESC: '此操作不可撤销。删除后，该任务的运行记录仍会保留。',
   DELETE_CONFIRM_TARGET: (name: string) => `即将删除：${name}`,
 
   // 空状态消息

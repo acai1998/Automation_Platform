@@ -41,7 +41,7 @@ const navItems: NavItem[] = [
     ],
   },
   { icon: <Boxes className="h-5 w-5" />, label: "任务管理", href: "/tasks" },
-  { icon: <BarChart3 className="h-5 w-5" />, label: "执行记录", href: "/reports" },
+  { icon: <BarChart3 className="h-5 w-5" />, label: "运行记录", href: "/reports" },
   { icon: <Settings className="h-5 w-5" />, label: "系统设置", href: "/settings" },
 ];
 

@@ -224,7 +224,7 @@ export class RateLimitMiddleware {
   private readonly windowMs: number;
   private readonly cleanupInterval: NodeJS.Timeout;
 
-  constructor(maxRequests: number = 100, windowMs: number = 60 * 1000) {
+  constructor(maxRequests: number = 300, windowMs: number = 60 * 1000) {
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
 

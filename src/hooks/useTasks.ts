@@ -600,21 +600,57 @@ export function useCronPreview(cronExpression: string, count = 5) {
 
 // ---------- 批量运行 ----------
 
+/**
+ * 限并发批量执行异步任务
+ * @param items 待处理项列表
+ * @param fn 每项的异步处理函数
+ * @param concurrency 最大并发数（默认 3）
+ * @returns PromiseSettledResult 数组，与 Promise.allSettled 返回格式一致
+ */
+async function runWithConcurrencyLimit<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  concurrency = 3
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = [];
+  let index = 0;
+
+  async function worker(): Promise<void> {
+    while (index < items.length) {
+      const current = index++;
+      try {
+        const value = await fn(items[current]);
+        results[current] = { status: 'fulfilled', value };
+      } catch (reason) {
+        results[current] = { status: 'rejected', reason };
+      }
+    }
+  }
+
+  // 启动 concurrency 个 worker 同时跑
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+
+  return results;
+}
+
 export function useBatchRunTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (taskIds: number[]) => {
-      const results = await Promise.allSettled(
-        taskIds.map(id =>
+      // 限制最大并发为 3，避免同时发出大量请求拥塞后端调度器和 DB 连接池
+      const results = await runWithConcurrencyLimit(
+        taskIds,
+        (id) =>
           fetch(`/api/tasks/${id}/run`, {
             method: 'POST',
             headers: buildAuthHeaders(),
           }).then(res => {
             if (!res.ok) throw new Error(`Task ${id} failed`);
             return res.json();
-          })
-        )
+          }),
+        3
       );
 
       const successes = results.filter(r => r.status === 'fulfilled').length;

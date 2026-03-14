@@ -7,6 +7,8 @@
  * 3. 服务启动恢复：检测漏触发（上次执行时间 + cron 间隔 < now），进行补偿执行
  * 4. 并发上限（CONCURRENCY_LIMIT）：超限时将任务放入等待队列
  * 5. 失败重试：支持 maxRetries / retryDelayMs 配置
+ * 6. [P1] 并发槽位以 runId 为维度，槽位在 Jenkins 回调或执行超时后释放
+ * 7. [P1] 等待队列支持优先级、入队时间、最大深度和队列超时机制
  */
 
 import { query, queryOne, getPool } from '../config/database';
@@ -37,6 +39,32 @@ export interface ScheduledTask {
   lastRunAt: Date | null;
 }
 
+/**
+ * 队列项（P1：替代原来的 number[]，携带完整调度元信息）
+ */
+export interface QueueItem {
+  taskId: number;
+  triggerReason: 'scheduled' | 'manual' | 'retry';
+  operatorId?: number;
+  /** 入队时间（ms） */
+  enqueuedAt: number;
+  /** 优先级（数字越小优先级越高），manual > scheduled > retry */
+  priority: number;
+  /** 队列超时 timer handle */
+  timeoutTimer?: NodeJS.Timeout;
+}
+
+/**
+ * 运行中槽位（P1：以 runId 为维度，替代原来的 taskId）
+ */
+interface RunningSlot {
+  taskId: number;
+  runId: number;
+  startedAt: number;
+  /** 执行超时 timer handle */
+  timeoutTimer: NodeJS.Timeout;
+}
+
 interface RetryState {
   taskId: number;
   attempt: number;
@@ -57,6 +85,20 @@ const SCHEDULER_USER_ID = 0;
 
 /** 最大漏触发补偿窗口（毫秒），默认 24 小时 */
 const MAX_MISSED_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** [P1] 等待队列最大深度，超过后拒绝新入队（防止内存无限增长） */
+const MAX_QUEUE_DEPTH = parseInt(process.env.TASK_MAX_QUEUE_DEPTH || '50', 10);
+
+/** [P1] 队列项最长等待时间（毫秒），超时后自动从队列中移除，默认 10 分钟 */
+const QUEUE_ITEM_TIMEOUT_MS = parseInt(process.env.TASK_QUEUE_TIMEOUT_MS || String(10 * 60 * 1000), 10);
+
+/** [P1] 运行中槽位最长持有时间（毫秒），超时后强制释放，默认 30 分钟 */
+const SLOT_HOLD_TIMEOUT_MS = parseInt(process.env.TASK_SLOT_TIMEOUT_MS || String(30 * 60 * 1000), 10);
+
+/** [P1] 队列优先级：手动触发 > 定时触发 > 重试 */
+const PRIORITY_MANUAL = 1;
+const PRIORITY_SCHEDULED = 2;
+const PRIORITY_RETRY = 3;
 
 // ──────────────────────────────────────────────────────────
 // Cron 工具函数（轻量级，无第三方依赖）
@@ -187,11 +229,17 @@ export class TaskSchedulerService {
   /** taskId → setInterval / setTimeout handle */
   private timers: Map<number, NodeJS.Timeout> = new Map();
 
-  /** 当前并发运行中的任务 ID 集合 */
-  private runningTasks: Set<number> = new Set();
+  /**
+   * [P1] 当前运行中的槽位，key 为 runId（替代原来的 taskId Set）
+   * 槽位在 Jenkins 回调或超时后才释放
+   */
+  private runningSlots: Map<number, RunningSlot> = new Map();
 
-  /** 等待执行的任务队列 (FIFO) */
-  private waitQueue: number[] = [];
+  /**
+   * [P1] 等待执行的优先级队列（替代原来的 number[]）
+   * 按 priority ASC, enqueuedAt ASC 排序
+   */
+  private waitQueue: QueueItem[] = [];
 
   /** 重试状态 */
   private retryStates: Map<number, RetryState> = new Map();
@@ -246,9 +294,17 @@ export class TaskSchedulerService {
     for (const [, state] of this.retryStates) {
       if (state.timer) clearTimeout(state.timer);
     }
+    // [P1] 清理运行中槽位的超时 timer
+    for (const [, slot] of this.runningSlots) {
+      clearTimeout(slot.timeoutTimer);
+    }
+    // [P1] 清理队列项的超时 timer
+    for (const item of this.waitQueue) {
+      if (item.timeoutTimer) clearTimeout(item.timeoutTimer);
+    }
     this.retryStates.clear();
     this.taskCache.clear();
-    this.runningTasks.clear();
+    this.runningSlots.clear();
     this.waitQueue = [];
     this.started = false;
     logger.info('TaskSchedulerService stopped', {}, LOG_CONTEXTS.EXECUTION);
@@ -277,24 +333,76 @@ export class TaskSchedulerService {
       this.timers.delete(taskId);
     }
     this.taskCache.delete(taskId);
-    // 从等待队列中也清除
-    this.waitQueue = this.waitQueue.filter(id => id !== taskId);
+    // [P1] 从等待队列中也清除，并取消队列超时 timer
+    const removedItems = this.waitQueue.filter(item => item.taskId === taskId);
+    for (const item of removedItems) {
+      if (item.timeoutTimer) clearTimeout(item.timeoutTimer);
+    }
+    this.waitQueue = this.waitQueue.filter(item => item.taskId !== taskId);
     logger.debug(`Task ${taskId} unregistered from scheduler`, {}, LOG_CONTEXTS.EXECUTION);
   }
 
-  /** 获取调度器当前状态（供监控接口使用） */
+  /**
+   * [P1] 获取调度器当前状态（扩展版，供监控接口使用）
+   * 新增：队列深度、每个队列项的排队时长、每个运行槽位已运行时长
+   */
   getStatus(): {
-    running: number[];
-    queued: number[];
+    running: Array<{ taskId: number; runId: number; elapsedMs: number }>;
+    queued: Array<{ taskId: number; triggerReason: string; waitMs: number; priority: number; queuePosition: number }>;
     scheduled: number[];
     concurrencyLimit: number;
+    queueDepth: number;
+    maxQueueDepth: number;
   } {
+    const now = Date.now();
     return {
-      running: Array.from(this.runningTasks),
-      queued: [...this.waitQueue],
+      running: Array.from(this.runningSlots.values()).map(slot => ({
+        taskId: slot.taskId,
+        runId: slot.runId,
+        elapsedMs: now - slot.startedAt,
+      })),
+      queued: this.waitQueue.map((item, idx) => ({
+        taskId: item.taskId,
+        triggerReason: item.triggerReason,
+        waitMs: now - item.enqueuedAt,
+        priority: item.priority,
+        queuePosition: idx + 1,
+      })),
       scheduled: Array.from(this.taskCache.keys()),
       concurrencyLimit: CONCURRENCY_LIMIT,
+      queueDepth: this.waitQueue.length,
+      maxQueueDepth: MAX_QUEUE_DEPTH,
     };
+  }
+
+  /**
+   * [P1] 查询某个任务在队列中的位置（供前端显示"排队中"状态）
+   * @returns 1-based position，0 表示不在队列中
+   */
+  getQueuePosition(taskId: number): number {
+    const idx = this.waitQueue.findIndex(item => item.taskId === taskId);
+    return idx === -1 ? 0 : idx + 1;
+  }
+
+  /**
+   * [P1] Jenkins 回调时通知调度器释放槽位（核心：槽位释放时机后移）
+   * 由 jenkins.ts 回调处理成功后调用
+   */
+  releaseSlotByRunId(runId: number): void {
+    const slot = this.runningSlots.get(runId);
+    if (!slot) return;
+
+    clearTimeout(slot.timeoutTimer);
+    this.runningSlots.delete(runId);
+
+    logger.info(`[P1] Slot released for runId=${runId} (taskId=${slot.taskId}) via callback`, {
+      runId,
+      taskId: slot.taskId,
+      heldMs: Date.now() - slot.startedAt,
+    }, LOG_CONTEXTS.EXECUTION);
+
+    // 槽位释放后，尝试从队列中取出下一个任务
+    this.drainQueue();
   }
 
   // ─────────────────────────────────────────────
@@ -476,7 +584,7 @@ export class TaskSchedulerService {
   /**
    * 分发任务执行
    * - 超过并发上限时放入等待队列
-   * - 支持 Jenkins 触发或仅创建执行记录（视配置）
+   * - 支持 Jenkins 触发或仅创建运行记录（视配置）
    */
   async dispatchTask(taskId: number, triggerReason: 'scheduled' | 'manual' | 'retry' = 'scheduled', operatorId?: number): Promise<void> {
     if (this.runningTasks.size >= CONCURRENCY_LIMIT) {
@@ -507,7 +615,7 @@ export class TaskSchedulerService {
   }
 
   /**
-   * 实际执行任务：创建执行记录 + 触发 Jenkins
+   * 实际执行任务：创建运行记录 + 触发 Jenkins
    */
   private async executeTask(taskId: number, triggerReason: string, operatorId?: number): Promise<void> {
     // 从 DB 重新读取任务配置（确保最新）
@@ -558,7 +666,7 @@ export class TaskSchedulerService {
 
     const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
 
-    // 1. 创建执行记录
+    // 1. 创建运行记录
     // triggerReason 为 'manual' 时使用 'manual'，其余（'scheduled'/'retry'）使用 'schedule'
     const resolvedTriggerType: 'manual' | 'jenkins' | 'schedule' =
       triggerReason === 'manual' ? 'manual' : 'schedule';
@@ -593,7 +701,7 @@ export class TaskSchedulerService {
       caseCount: caseIds.length,
     });
 
-    // 2. 触发 Jenkins（非阻塞，失败时不影响执行记录已创建）
+    // 2. 触发 Jenkins（非阻塞，失败时不影响运行记录已创建）
     if (scriptPaths.length > 0) {
       try {
         const triggerResult = await jenkinsService.triggerBatchJob(

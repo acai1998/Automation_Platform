@@ -1,7 +1,7 @@
 -- autotest.Auto_TestCaseTaskExecutions definition
 
 CREATE TABLE `Auto_TestCaseTaskExecutions` (
-  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '执行记录唯一标识',
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '运行记录唯一标识',
   `task_id` int(11) DEFAULT NULL COMMENT '关联的任务ID',
   `task_name` varchar(200) DEFAULT NULL COMMENT '任务名称快照',
   `trigger_type` enum('manual','scheduled','ci_triggered') DEFAULT NULL COMMENT '本次执行的触发方式',
@@ -28,4 +28,4 @@ CREATE TABLE `Auto_TestCaseTaskExecutions` (
   CONSTRAINT `Auto_TestCaseTaskExecutions_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `Auto_TestCaseTasks` (`id`) ON DELETE SET NULL,
   CONSTRAINT `Auto_TestCaseTaskExecutions_ibfk_2` FOREIGN KEY (`executed_by`) REFERENCES `Auto_Users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `Auto_TestCaseTaskExecutions_ibfk_3` FOREIGN KEY (`environment_id`) REFERENCES `Auto_TestEnvironments` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=60 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试任务执行记录表';
+) ENGINE=InnoDB AUTO_INCREMENT=60 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试任务运行记录表';

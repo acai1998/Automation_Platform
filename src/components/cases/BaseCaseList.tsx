@@ -6,6 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useCases, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
 import { useTestExecution } from '@/hooks/useExecuteCase';
 import { toast } from 'sonner';
+import { showExecutionSuccessToast, showExecutionErrorToast } from '@/components/ui/execution-toast';
 
 /**
  * 分页配置常量
@@ -171,32 +172,31 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
 
   // 处理运行用例
   const handleRunCase = async (caseId: number, caseName: string, projectId: number | null) => {
-    // 如果没有项目ID，使用默认项目ID 1
     const finalProjectId = projectId || 1;
-    
+
     // 设置该用例为加载状态
     setLoadingCaseIds(prev => new Set(prev).add(caseId));
-    
+
     try {
       const result = await executeCase(caseId, finalProjectId);
-      
-      // 显示成功提示,包含 Jenkins 链接
-      toast.success(`用例 "${caseName}" 已开始执行`, {
-        description: result?.buildUrl 
-          ? '点击下方按钮查看 Jenkins 执行详情' 
-          : '执行任务已创建,请稍后在执行记录页面查看结果',
-        duration: 5000,
-        action: result?.buildUrl ? {
-          label: '查看 Jenkins',
-          onClick: () => window.open(result.buildUrl, '_blank')
-        } : undefined,
+
+      // 使用新的双按钮 Toast（桌面端优化版）
+      showExecutionSuccessToast({
+        runId: result.runId,
+        buildUrl: result.buildUrl,
+        // caseName: caseName, // 可选：取消注释此行以显示用例名称
       });
+
     } catch (err) {
       const message = err instanceof Error ? err.message : '执行失败';
-      toast.error(message, {
+
+      // 使用新的错误 Toast（带重试功能）
+      showExecutionErrorToast({
+        message,
         description: '请检查 Jenkins 连接或稍后重试',
-        duration: 4000,
+        onRetry: () => handleRunCase(caseId, caseName, projectId),
       });
+
     } finally {
       // 移除该用例的加载状态
       setLoadingCaseIds(prev => {

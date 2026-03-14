@@ -91,7 +91,7 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
  * POST /api/jenkins/trigger
  * 触发 Jenkins Job 执行
  *
- * 此接口创建执行记录并返回 executionId，供 Jenkins 后续回调使用
+ * 此接口创建运行记录并返回 executionId，供 Jenkins 后续回调使用
  * 支持两种模式：
  * 1. 直接传入 caseIds 数组
  * 2. 传入 taskId，自动从数据库查找任务的 caseIds 和任务名称
@@ -141,7 +141,7 @@ router.post('/trigger', generalAuthRateLimiter, optionalAuth, rateLimitMiddlewar
       });
     }
 
-    // 创建执行记录
+    // 创建运行记录
     const execution = await executionService.triggerTestExecution({
       caseIds: caseIds as number[],
       projectId,
@@ -473,9 +473,10 @@ router.get('/status/:executionId', generalAuthRateLimiter, rateLimitMiddleware.l
  * POST /api/jenkins/callback
  * Jenkins 执行结果回调接口
  * 通过 IP 白名单验证，无需额外认证
+ * 注意：此接口不使用 generalAuthRateLimiter，避免高并发回调时触发 429
+ * 安全由 ipWhitelistMiddleware 白名单保护，并使用专用的 rateLimitMiddleware
  */
 router.post('/callback', [
-  generalAuthRateLimiter,
   ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit,
   requestValidator.validateCallback
@@ -710,7 +711,6 @@ router.get('/batch/:runId', generalAuthRateLimiter, rateLimitMiddleware.limit, a
  * 通过 IP 白名单验证
  */
 router.post('/callback/test', [
-  generalAuthRateLimiter,
   ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit
 ], async (req: Request, res: Response) => {
@@ -887,12 +887,11 @@ router.post('/callback/test', [
 
 /**
  * POST /api/jenkins/callback/manual-sync/:runId
- * 手动同步执行状态 - 用于修复卡住的执行记录
+ * 手动同步执行状态 - 用于修复卡住的运行记录
  * 从数据库查询当前状态并允许手动更新
  * 通过 IP 白名单验证
  */
 router.post('/callback/manual-sync/:runId', [
-  generalAuthRateLimiter,
   ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit
 ], async (req: Request, res: Response) => {
@@ -926,7 +925,7 @@ router.post('/callback/manual-sync/:runId', [
       timestamp: new Date().toISOString()
     }, LOG_CONTEXTS.JENKINS);
 
-    // 查询现有执行记录
+    // 查询现有运行记录
     const execution = await executionService.getBatchExecution(runId);
     
     if (!execution.execution) {

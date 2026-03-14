@@ -1150,7 +1150,7 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
                   {stats.trend.length === 0 && stats.topErrors.length === 0 && (
                     <div className="text-center py-6 text-slate-400">
                       <CheckCircle2 className="h-12 w-12 mx-auto mb-2 opacity-30" />
-                      <p>近 30 天内暂无执行记录</p>
+                      <p>近 30 天内暂无运行记录</p>
                     </div>
                   )}
                 </div>

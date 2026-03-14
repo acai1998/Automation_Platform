@@ -288,7 +288,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
   }
 
   /**
-   * 判断趋势数据是否包含有效执行记录
+   * 判断趋势数据是否包含有效运行记录
    */
   private hasTrendExecutionData(rows: DailySummaryData[]): boolean {
     return rows.some((row) =>

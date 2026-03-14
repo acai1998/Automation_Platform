@@ -440,7 +440,7 @@ router.post('/:id/callback', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Case not found' });
     }
 
-    // 记录执行结果（可以扩展为写入执行记录表）
+    // 记录执行结果（可以扩展为写入运行记录表）
     console.log(`Case ${id} execution completed: status=${status}, duration=${duration}ms`);
     if (errorMessage) {
       console.log(`Error: ${errorMessage}`);

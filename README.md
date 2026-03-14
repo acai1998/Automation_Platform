@@ -18,7 +18,7 @@
 - 📝 **测试用例管理** - 创建、编辑、组织测试用例，支持标签和优先级分类
 - ⏰ **任务调度** - 支持手动触发、定时调度（Cron）和 CI 触发
 - 🔗 **Jenkins 集成** - 触发 Jenkins Job 执行，接收执行结果回调
-- 📈 **执行历史** - 完整的执行记录和详细的测试结果
+- 📈 **执行历史** - 完整的运行记录和详细的测试结果
 - 🌙 **深色模式** - 支持浅色/深色主题切换
 
 ## 🛠️ 技术栈
@@ -129,7 +129,7 @@ automation-platform/
 | `/api/dashboard/trend` | GET | 趋势数据 |
 | `/api/cases` | GET | 获取测试用例列表 |
 | `/api/tasks` | GET | 获取任务列表 |
-| `/api/executions` | GET | 获取执行记录 |
+| `/api/executions` | GET | 获取运行记录 |
 | `/api/executions/callback` | POST | Jenkins 执行结果回调 |
 | `/api/jenkins/trigger` | POST | 触发 Jenkins 执行 |
 | `/api/jenkins/tasks/:id/cases` | GET | 获取任务用例列表 |
@@ -188,7 +188,7 @@ curl -X POST http://localhost:3000/api/executions/callback \
 | `Auto_Users` | 用户表 |
 | `Auto_TestRun` | 测试执行批次表 |
 | `Auto_TestRunResults` | 测试用例执行结果表 |
-| `Auto_TestCaseTaskExecutions` | 测试任务执行记录表 |
+| `Auto_TestCaseTaskExecutions` | 测试任务运行记录表 |
 | `Auto_TestCaseDailySummaries` | 测试用例每日统计汇总表 |
 
 **注意**：数据库表结构由 DBA 统一管理，本地不进行表结构初始化。

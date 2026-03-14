@@ -21,7 +21,7 @@
 | 1 | Auto_Users | 用户表 | 主表 |
 | 2 | Auto_TestCase | 测试用例资产表 | 主表 |
 | 3 | Auto_TestRun | 测试执行批次表 | 主表 |
-| 4 | Auto_TestCaseTaskExecutions | 测试任务执行记录表 | 主表/从表 |
+| 4 | Auto_TestCaseTaskExecutions | 测试任务运行记录表 | 主表/从表 |
 | 5 | Auto_TestRunResults | 测试用例执行结果表 | 从表 |
 | 6 | Auto_TestCaseDailySummaries | 测试用例每日统计汇总表 | 独立表 |
 
@@ -139,7 +139,7 @@
 
 ---
 
-### 4. Auto_TestCaseTaskExecutions（测试任务执行记录表）
+### 4. Auto_TestCaseTaskExecutions（测试任务运行记录表）
 
 **作用：** 记录测试任务的执行历史和状态。面向任务维度，作为执行结果的主记录。
 
@@ -147,7 +147,7 @@
 
 | 字段名 | 类型 | 说明 |
 |--------|------|------|
-| `id` | INT | 主键 - 执行记录ID |
+| `id` | INT | 主键 - 运行记录ID |
 | `task_id` | INT | 任务ID（可为NULL） |
 | `task_name` | VARCHAR | 任务名称 |
 | `status` | ENUM | 状态（pending/running/success/failed/cancelled） |
@@ -180,7 +180,7 @@
 | 字段名 | 类型 | 说明 |
 |--------|------|------|
 | `id` | INT | 主键 - 结果记录ID |
-| `execution_id` | INT | 执行记录ID（外键 → Auto_TestCaseTaskExecutions.id） |
+| `execution_id` | INT | 运行记录ID（外键 → Auto_TestCaseTaskExecutions.id） |
 | `case_id` | INT | 用例ID（外键 → Auto_TestCase.id） |
 | `case_name` | VARCHAR | 用例名称（冗余字段，便于查询） |
 | `status` | ENUM | 状态（passed/failed/skipped/error） |
@@ -256,7 +256,7 @@
            ▼
 ┌──────────────────────────────┐
 │ Auto_TestCaseTaskExecutions  │
-│ (任务执行记录表)             │
+│ (任务运行记录表)             │
 └──────────┬───────────────────┘
            │ executed_by
            │
@@ -331,7 +331,7 @@
 
 ## 典型业务场景 SQL 示例
 
-### 场景1：查询执行记录及执行者信息
+### 场景1：查询运行记录及执行者信息
 
 ```sql
 SELECT 
@@ -416,7 +416,7 @@ LIMIT 20;
 | `/api/auth/*` | `Auto_Users` | 用户认证、注册、登录 |
 | `/api/cases` | `Auto_TestCase` | 用例CRUD操作 |
 | `/api/cases/:id/run` | `Auto_TestCase` + `Auto_TestRun` | 触发单用例执行 |
-| `/api/jenkins/trigger` | `Auto_TestRun` + `Auto_TestCaseTaskExecutions` | 创建执行记录 |
+| `/api/jenkins/trigger` | `Auto_TestRun` + `Auto_TestCaseTaskExecutions` | 创建运行记录 |
 | `/api/executions/callback` | `Auto_TestRunResults` + `Auto_TestCaseTaskExecutions` | Jenkins回调更新结果 |
 | `/api/executions/test-runs` | `Auto_TestRun` | 查询执行批次列表 |
 | `/api/executions/:id/results` | `Auto_TestRunResults` + `Auto_TestCase` | 查询执行结果详情 |

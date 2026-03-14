@@ -196,7 +196,7 @@ POST /api/executions/:id/sync
 POST /api/executions/sync-stuck
 ```
 
-批量同步长时间未更新的执行记录。
+批量同步长时间未更新的运行记录。
 
 ### 查询卡住的执行
 

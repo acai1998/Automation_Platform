@@ -56,6 +56,8 @@ export interface Auto_TestRunResultsInput {
   assertionsTotal?: number;     // Total number of assertions in the test
   assertionsPassed?: number;    // Number of assertions that passed
   responseData?: string;        // API response data as JSON string
+  startTime?: string | number;  // Test case start time (ISO string or timestamp)
+  endTime?: string | number;    // Test case end time (ISO string or timestamp)
 }
 
 export interface ExecutionCallbackInput {
@@ -82,7 +84,7 @@ export interface ExecutionTriggerResult {
 
 /**
  * 执行服务
- * 负责创建执行记录、处理外部系统回调、状态更新
+ * 负责创建运行记录、处理外部系统回调、状态更新
  * 注：实际测试执行由 Jenkins 等外部系统完成
  * 
  * 核心职责：
@@ -118,7 +120,7 @@ export class ExecutionService {
 
   /**
    * 初始化缓存清理任务
-   * 使用 LRU 策略：保持最新的执行记录，删除最旧的
+   * 使用 LRU 策略：保持最新的运行记录，删除最旧的
    */
   private initializeCacheCleanup() {
     // 每10分钟检查一次，清理超过限制的缓存
@@ -172,7 +174,7 @@ export class ExecutionService {
    * - 支持详细诊断字段
    * 
    * @param input 回调输入，包含执行ID和结果列表
-   * @throws Error 如果执行记录不存在或数据库操作失败
+   * @throws Error 如果运行记录不存在或数据库操作失败
    */
   async handleCallback(input: ExecutionCallbackInput): Promise<void> {
     const timer = createTimer();
@@ -185,7 +187,7 @@ export class ExecutionService {
         duration: input.duration,
       }, LOG_CONTEXTS.EXECUTION);
 
-      // 1. 验证执行记录存在
+      // 1. 验证运行记录存在
       const execution = await this.executionRepository.getExecutionDetail(input.executionId);
 
       if (!execution) {
@@ -208,6 +210,15 @@ export class ExecutionService {
         // 2.2 更新或插入用例结果记录（先尝试更新预创建记录，再新增，避免重复）
         if (input.results.length > 0) {
           for (const result of input.results) {
+            // 优先使用 Jenkins 回传的时间，降级为当前时间
+            const resolveTime = (v: string | number | undefined): Date | undefined => {
+              if (!v) return undefined;
+              const d = typeof v === 'number' ? new Date(v) : new Date(v);
+              return isNaN(d.getTime()) ? undefined : d;
+            };
+            const startTime = resolveTime(result.startTime) ?? undefined;
+            const endTime   = resolveTime(result.endTime)   ?? new Date();
+
             const updated = await this.executionRepository.updateTestResult(input.executionId, result.caseId, {
               status: result.status,
               duration: result.duration,
@@ -218,7 +229,8 @@ export class ExecutionService {
               assertionsTotal: result.assertionsTotal,
               assertionsPassed: result.assertionsPassed,
               responseData: result.responseData,
-              endTime: new Date(),
+              startTime,
+              endTime,
             });
 
             if (!updated) {
@@ -236,7 +248,8 @@ export class ExecutionService {
                 assertionsTotal: result.assertionsTotal,
                 assertionsPassed: result.assertionsPassed,
                 responseData: result.responseData,
-                endTime: new Date(),
+                startTime,
+                endTime,
               });
             }
           }
@@ -316,7 +329,7 @@ export class ExecutionService {
   }
 
   /**
-   * 获取最近执行记录（使用远程数据库表）
+   * 获取最近运行记录（使用远程数据库表）
    */
   async getRecentExecutions(limit = 10) {
     return this.executionRepository.getRecentExecutions(limit);
@@ -466,7 +479,7 @@ export class ExecutionService {
    * 
    * @param runId 运行批次ID
    * @param results 执行结果，包括状态、统计和详细结果
-   * @throws Error 如果找不到执行记录或数据库操作失败
+   * @throws Error 如果找不到运行记录或数据库操作失败
    */
   async completeBatchExecution(runId: number, results: {
     status: 'success' | 'failed' | 'cancelled' | 'aborted';
@@ -479,7 +492,7 @@ export class ExecutionService {
     const timer = createTimer();
 
     try {
-      // 1. 验证执行记录是否存在
+      // 1. 验证运行记录是否存在
       const execution = await this.executionRepository.getTestRunDetail(runId);
 
       // 计算回调延迟（从执行创建到回调接收的时间）
@@ -665,7 +678,7 @@ export class ExecutionService {
     jenkinsStatus?: string;
   }> {
     try {
-      // 1. 获取执行记录
+      // 1. 获取运行记录
       const execution = await this.executionRepository.getTestRunStatus(runId);
 
       if (!execution) {
@@ -817,7 +830,7 @@ export class ExecutionService {
   }
 
   /**
-   * 根据Jenkins状态更新执行记录
+   * 根据Jenkins状态更新运行记录
    */
   private async updateExecutionStatusFromJenkins(runId: number, jenkinsData: {
     status: string;
@@ -1077,15 +1090,15 @@ export class ExecutionService {
       }> = [];
 
       if (runId) {
-        // 获取单个执行记录
+        // 获取单个运行记录
         const execution = await this.executionRepository.getTestRunStatus(runId);
         if (execution && execution.jenkinsJob && execution.jenkinsBuildId) {
           executions = [execution];
         }
       } else {
-        // 获取最近的有 Jenkins 信息的执行记录
+        // 获取最近的有 Jenkins 信息的运行记录
         const allExecutions = await this.executionRepository.getExecutionsWithJenkinsInfo(limit);
-        // 过滤掉没有 Jenkins 信息的执行记录
+        // 过滤掉没有 Jenkins 信息的运行记录
         executions = allExecutions.filter((e): e is typeof e & { jenkinsJob: string; jenkinsBuildId: string } => 
           e.jenkinsJob !== null && e.jenkinsJob !== undefined &&
           e.jenkinsBuildId !== null && e.jenkinsBuildId !== undefined

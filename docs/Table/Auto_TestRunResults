@@ -2,7 +2,7 @@
 
 CREATE TABLE `Auto_TestRunResults` (
   `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '结果记录唯一标识',
-  `execution_id` int(11) NOT NULL COMMENT '关联的执行记录ID',
+  `execution_id` int(11) NOT NULL COMMENT '关联的运行记录ID',
   `case_id` int(11) DEFAULT NULL COMMENT '关联的用例ID',
   `case_name` varchar(200) DEFAULT NULL COMMENT '用例名称快照',
   `status` enum('passed','failed','skipped','error') DEFAULT NULL COMMENT '执行结果',

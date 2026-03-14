@@ -2,7 +2,7 @@ import { hybridSyncService, MonitoringConfig } from './HybridSyncService';
 import { executionService } from './ExecutionService';
 
 /**
- * 执行记录接口
+ * 运行记录接口
  */
 export interface ExecutionRecord {
   id: number;
@@ -109,7 +109,7 @@ export class ExecutionScheduler {
     try {
       console.log(`Starting monitoring for runId: ${runId}`);
 
-      // 1. 获取执行记录详情（如果没有提供）
+      // 1. 获取运行记录详情（如果没有提供）
       let executionDetails = execution;
       if (!executionDetails) {
         const batchExecution = await executionService.getBatchExecution(runId);
@@ -184,7 +184,7 @@ export class ExecutionScheduler {
   }
 
   /**
-   * 根据执行记录选择监控策略
+   * 根据运行记录选择监控策略
    */
   private getMonitoringStrategy(execution: ExecutionRecord): MonitoringStrategy {
     // 策略选择逻辑

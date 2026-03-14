@@ -186,7 +186,7 @@ router.get('/cron/preview', (req, res) => {
 
 /**
  * GET /api/tasks
- * 获取任务列表（支持筛选、分页，内联最近5条执行记录，返回 total）
+ * 获取任务列表（支持筛选、分页，内联最近5条运行记录，返回 total）
  *
  * Query params:
  *   projectId     - 按项目筛选
@@ -295,7 +295,7 @@ router.get('/', async (req, res) => {
     const activeCount = statsResult[0]?.active_count ?? 0;
     const todayRuns = todayRunsResult[0]?.today_runs ?? 0;
 
-    // 批量获取所有任务的最近5条执行记录（避免 N+1）
+    // 批量获取所有任务的最近5条运行记录（避免 N+1）
     let executionsByTaskId: Map<number, TaskExecution[]> = new Map();
     if (tasks.length > 0) {
       const taskIds = tasks.map((t) => t.id);
@@ -346,7 +346,7 @@ router.get('/', async (req, res) => {
 
 /**
  * GET /api/tasks/:id
- * 获取任务详情（含关联用例 + 最近执行记录）
+ * 获取任务详情（含关联用例 + 最近运行记录）
  */
 router.get('/:id', async (req, res) => {
   try {
@@ -388,7 +388,7 @@ router.get('/:id', async (req, res) => {
       }
     }
 
-    // 并行获取最近执行记录和最新关联 TestRun
+    // 并行获取最近运行记录和最新关联 TestRun
     const [recentExecutions, latestRunRow] = await Promise.all([
       query<TaskExecution[]>(`
 SELECT id, status, start_time, end_time, duration, passed_cases, failed_cases, total_cases
@@ -809,7 +809,7 @@ router.post('/:id/executions/:execId/cancel', generalAuthRateLimiter, authentica
     );
 
     if (!exec) {
-      return res.status(404).json({ success: false, message: '执行记录不存在或不属于该任务' });
+      return res.status(404).json({ success: false, message: '运行记录不存在或不属于该任务' });
     }
     if (!['pending', 'running'].includes(exec.status)) {
       return res.status(400).json({ success: false, message: `当前状态 ${exec.status} 不可取消` });

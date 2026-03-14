@@ -14,8 +14,8 @@ const dbConfigWithoutDB = {
   user: getSecretOrEnv('DB_USER', 'root'),
   password: getSecretOrEnv('DB_PASSWORD'),  // 支持从 Docker Secret 读取
   waitForConnections: true,
-  connectionLimit: 5,  // 减少连接数限制
-  queueLimit: 0,
+  connectionLimit: 20,  // 提升连接数上限，支持高并发执行场景
+  queueLimit: 30,       // 限制排队请求数，防止内存泄漏
   enableKeepAlive: true,
   keepAliveInitialDelay: 10000,
   // 连接超时和空闲超时配置

@@ -222,7 +222,7 @@ router.get("/:id", async (req, res) => {
 
  /**
  * GET /api/executions
- * 获取执行记录列表
+ * 获取运行记录列表
  */
 router.get('/', async (req, res) => {
   try {
