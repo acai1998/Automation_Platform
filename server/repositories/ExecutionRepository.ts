@@ -1340,7 +1340,74 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
           LOG_CONTEXTS.REPOSITORY
         );
       }
+
+      // 【安全防护】无论采用哪个更新路径，都执行最后的全局清理
+      // 防止在特殊场景（既无详细结果也无汇总统计）下 ERROR 占位符残留
+      if (resolvedExecutionId) {
+        await this.performFinalErrorCleanup(resolvedExecutionId, results);
+      }
     });
+  }
+
+  /**
+   * 【安全防护】最终的全局 ERROR 清理
+   * 在所有其他更新完成后执行，确保不会有遗漏的 ERROR 占位符
+   * 这是一个防御性的清理，不依赖任何前置条件
+   */
+  private async performFinalErrorCleanup(executionId: number, results: BatchResults): Promise<void> {
+    try {
+      const errorRows = await this.testRunResultRepository.query(`
+        SELECT COUNT(*) AS errorCount
+        FROM Auto_TestRunResults
+        WHERE execution_id = ? AND status = 'error'
+      `, [executionId]) as Array<{ errorCount: string }>;
+
+      const residualErrorCount = Number(errorRows[0]?.errorCount ?? 0);
+
+      if (residualErrorCount === 0) {
+        logger.debug(
+          'Final error cleanup: no orphaned errors found',
+          { executionId },
+          LOG_CONTEXTS.REPOSITORY
+        );
+        return;
+      }
+
+      // 根据运行状态决定清理目标
+      let targetStatus: 'passed' | 'failed' | 'skipped';
+      const mappedStatus = this.mapStatusForTestRun(results.status);
+
+      if (mappedStatus === 'success') {
+        targetStatus = 'passed';
+      } else if (mappedStatus === 'failed') {
+        targetStatus = 'failed';
+      } else {
+        targetStatus = 'skipped';
+      }
+
+      const cleaned = await this.bulkUpdateErrorResults(executionId, targetStatus);
+
+      logger.info(
+        'Final error cleanup completed',
+        {
+          executionId,
+          residualErrorCount,
+          cleaned,
+          targetStatus,
+          reason: 'safety-cleanup-after-all-updates',
+        },
+        LOG_CONTEXTS.REPOSITORY
+      );
+    } catch (error) {
+      logger.warn(
+        'Final error cleanup failed, but execution will continue',
+        {
+          executionId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        LOG_CONTEXTS.REPOSITORY
+      );
+    }
   }
 
   /**

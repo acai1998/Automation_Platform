@@ -15,6 +15,7 @@ import casesRoutes from './routes/cases';
 import tasksRoutes from './routes/tasks';
 import jenkinsRoutes from './routes/jenkins';
 import authRoutes from './routes/auth';
+import maintenanceRoutes from './routes/maintenance';
 import { dailySummaryScheduler } from './services/DailySummaryScheduler';
 import { executionMonitorService } from './services/ExecutionMonitorService';
 import { initializeWebSocketService, webSocketService } from './services/WebSocketService';
@@ -133,6 +134,7 @@ app.use('/api/executions', executionRoutes);
 app.use('/api/cases', casesRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/jenkins', jenkinsRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {
