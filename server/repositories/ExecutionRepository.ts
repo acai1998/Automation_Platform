@@ -100,6 +100,7 @@ export interface TestRunRow {
   jenkins_job: string | null;
   jenkins_build_id: string | null;
   jenkins_url: string | null;
+  abort_reason: string | null;
   total_cases: number;
   passed_cases: number;
   failed_cases: number;
@@ -516,6 +517,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         tr.status, tr.trigger_type, tr.trigger_by,
         COALESCE(u.display_name, u.username, "系统") as trigger_by_name,
         tr.jenkins_job, tr.jenkins_build_id, tr.jenkins_url,
+        JSON_UNQUOTE(JSON_EXTRACT(tr.run_config, '$.abortReason')) AS abort_reason,
         tr.total_cases, tr.passed_cases, tr.failed_cases, tr.skipped_cases,
         tr.duration_ms, tr.start_time, tr.end_time, tr.created_at
       FROM Auto_TestRun tr
@@ -738,6 +740,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         tr.jenkins_job,
         tr.jenkins_build_id,
         tr.jenkins_url,
+        JSON_UNQUOTE(JSON_EXTRACT(tr.run_config, '$.abortReason')) AS abort_reason,
         tr.total_cases,
         tr.passed_cases,
         tr.failed_cases,
@@ -927,8 +930,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       endTime: result.endTime || null,
     };
 
-    // 优先用 caseId 匹配；无 caseId 时降级用 caseName 匹配（Jenkins 只传 caseName 的场景）
-    if (caseId) {
+    // 【修复】优先用 caseId 匹配；无 caseId 或为 0 时降级用 caseName 匹配（Jenkins 只传 caseName 的场景）
+    if (caseId && caseId > 0) {
       const updateResult = await this.testRunResultRepository.update(
         { executionId, caseId },
         updateData
@@ -936,6 +939,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       if ((updateResult.affected ?? 0) > 0) return true;
     }
 
+    // 【修复】当 caseId 缺失或为 0 时，尝试用 caseName 匹配
+    // 优先精确匹配，其次模糊匹配（以防格式略有差异）
     if (result.caseName) {
       const updateResult = await this.testRunResultRepository
         .createQueryBuilder()
@@ -946,7 +951,21 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
           caseName: result.caseName,
         })
         .execute();
-      return (updateResult.affected ?? 0) > 0;
+      if ((updateResult.affected ?? 0) > 0) return true;
+
+      // 【降级方案】如果精确匹配失败，尝试模糊匹配（以防 caseName 前缀有变化）
+      // 例：期望 'test_case_1' 但收到 'case_1'
+      const fuzzyUpdateResult = await this.testRunResultRepository
+        .createQueryBuilder()
+        .update(TestRunResult)
+        .set(updateData)
+        .where('execution_id = :executionId AND (case_name LIKE :caseName OR case_name LIKE :fuzzyPattern)', {
+          executionId,
+          caseName: result.caseName,
+          fuzzyPattern: `%${result.caseName}%`,
+        })
+        .execute();
+      if ((fuzzyUpdateResult.affected ?? 0) > 0) return true;
     }
 
     return false;
@@ -1311,6 +1330,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       passedCases?: number;
       failedCases?: number;
       skippedCases?: number;
+      abortReason?: string;
     }
   ): Promise<void> {
     const normalizedStatus = status === 'cancelled' ? 'aborted' : status;
@@ -1332,6 +1352,34 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     if (options?.passedCases !== undefined) updateData.passedCases = options.passedCases;
     if (options?.failedCases !== undefined) updateData.failedCases = options.failedCases;
     if (options?.skippedCases !== undefined) updateData.skippedCases = options.skippedCases;
+
+    if (normalizedStatus === 'aborted' && options?.abortReason) {
+      const current = await this.testRunRepository.findOne({
+        where: { id: runId },
+        select: ['id', 'runConfig'],
+      });
+      const currentConfig = current?.runConfig;
+      let parsedConfig: Record<string, unknown> = {};
+
+      if (currentConfig && typeof currentConfig === 'object' && !Array.isArray(currentConfig)) {
+        parsedConfig = currentConfig as Record<string, unknown>;
+      } else if (typeof currentConfig === 'string') {
+        try {
+          const parsed = JSON.parse(currentConfig) as unknown;
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            parsedConfig = parsed as Record<string, unknown>;
+          }
+        } catch {
+          parsedConfig = {};
+        }
+      }
+
+      updateData.runConfig = {
+        ...parsedConfig,
+        abortReason: options.abortReason,
+        abortAt: new Date().toISOString(),
+      };
+    }
 
     await this.testRunRepository.update(runId, updateData);
   }

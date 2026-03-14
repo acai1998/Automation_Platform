@@ -231,6 +231,7 @@ export class ExecutionService {
               responseData: result.responseData,
               startTime,
               endTime,
+              caseName: result.caseName,  // 【修复】传递 caseName 用于 Fallback 匹配
             });
 
             if (!updated) {
@@ -253,8 +254,13 @@ export class ExecutionService {
               });
             }
           }
-        } else if (passedCases === 0 && failedCases === 0 && skippedCases === 0) {
-          // 没有详细结果且统计数全为0：根据整体状态批量更新预创建的 error 记录
+        }
+        
+        // 【修复】清理残留的 error 占位符
+        // 场景1：没有详细结果（results.length === 0）
+        // 场景2：有详细结果但仍然有未匹配的占位符（因为 caseId 缺失或格式不一致）
+        // 此时应根据整体状态更新所有剩余的 error 占位符
+        if (passedCases === 0 && failedCases === 0 && skippedCases === 0) {
           const mappedResultStatus: 'passed' | 'failed' =
             (input.status === 'success') ? 'passed' : 'failed';
           await this.executionRepository.bulkUpdateErrorResults(input.executionId, mappedResultStatus);
@@ -484,6 +490,7 @@ export class ExecutionService {
     }
     await this.executionRepository.updateTestRunStatus(runId, 'aborted', {
       durationMs: execution.startTime ? Date.now() - new Date(execution.startTime).getTime() : 0,
+      abortReason: reason,
     });
     logger.info(`markExecutionAborted: execution marked as aborted (runId=${runId}, reason=${reason})`, {
       runId,

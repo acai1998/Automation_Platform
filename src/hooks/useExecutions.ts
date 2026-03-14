@@ -12,6 +12,7 @@ export interface TestRunRecord {
   jenkins_job: string | null;
   jenkins_build_id: string | null;
   jenkins_url: string | null;
+  abort_reason: string | null;
   status: 'pending' | 'running' | 'success' | 'failed' | 'aborted';
   start_time: string | null;
   end_time: string | null;

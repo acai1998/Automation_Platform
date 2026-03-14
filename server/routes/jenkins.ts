@@ -29,6 +29,18 @@ const HEALTH_CHECK_TIMEOUT_MS = 5_000;
 const DEFAULT_JENKINS_URL = 'http://jenkins.wiac.xyz:8080/';
 /** Jenkins 健康检查默认用户 */
 const DEFAULT_JENKINS_USER = 'root';
+/** 触发前 Jenkins 预检查默认超时（毫秒） */
+const DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS = 3_000;
+/** 触发前 Jenkins 预检查超时（毫秒） */
+const TRIGGER_PRECHECK_TIMEOUT_MS = Math.max(
+  1_000,
+  Number.parseInt(
+    process.env.JENKINS_TRIGGER_PRECHECK_TIMEOUT_MS ?? String(DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS),
+    10
+  ) || DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS
+);
+/** 是否启用触发前 Jenkins 预检查 */
+const TRIGGER_PRECHECK_ENABLED = (process.env.JENKINS_TRIGGER_PRECHECK_ENABLED ?? 'true') !== 'false';
 
 /**
  * [P2-B] 注册 CallbackQueue 消费者
@@ -115,6 +127,63 @@ function scheduleCallbackFallbackSync(runId: number, source: 'run-case' | 'run-b
   }, CALLBACK_FALLBACK_SYNC_DELAY_MS);
 
   timer.unref?.();
+}
+
+/**
+ * 执行触发前的 Jenkins 连通性预检查。
+ * 目标：在 Jenkins 不可用时快速失败，避免创建后立刻变成 aborted 的运行记录。
+ */
+async function runJenkinsTriggerPrecheck(source: 'run-case' | 'run-batch'): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!TRIGGER_PRECHECK_ENABLED) {
+    return { ok: true };
+  }
+
+  let timeoutId: NodeJS.Timeout | undefined;
+  try {
+    const timeoutPromise = new Promise<{ connected: false; message: string }>((resolve) => {
+      timeoutId = setTimeout(() => {
+        resolve({
+          connected: false,
+          message: `Jenkins precheck timeout after ${TRIGGER_PRECHECK_TIMEOUT_MS}ms`,
+        });
+      }, TRIGGER_PRECHECK_TIMEOUT_MS);
+      timeoutId.unref?.();
+    });
+
+    const checkResult = await Promise.race([
+      jenkinsService.testConnection(),
+      timeoutPromise,
+    ]);
+
+    if (checkResult.connected) {
+      return { ok: true };
+    }
+
+    logger.warn('[trigger-precheck] Jenkins unavailable, rejecting trigger request', {
+      source,
+      reason: checkResult.message,
+      timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
+    }, LOG_CONTEXTS.JENKINS);
+
+    return {
+      ok: false,
+      reason: checkResult.message || 'Jenkins unavailable',
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    logger.warn('[trigger-precheck] Jenkins precheck failed with exception', {
+      source,
+      reason,
+      timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
+    }, LOG_CONTEXTS.JENKINS);
+
+    return {
+      ok: false,
+      reason,
+    };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 /**
@@ -240,7 +309,15 @@ function normalizeCallbackResults(results: unknown[]): Auto_TestRunResultsInput[
 
     const caseIdRaw = toNumber(row['caseId'] ?? row['case_id']);
     const caseName = toOptionalString(row['caseName'] ?? row['case_name']);
-    if ((!caseIdRaw || caseIdRaw <= 0) && !caseName) {
+    
+    // 【修复】严格验证：必须有有效的 caseId 或 caseName，否则过滤掉
+    // 避免生成 caseId=0, caseName='unknown_case' 的垃圾数据导致无法匹配占位符
+    const hasValidCaseId = caseIdRaw && caseIdRaw > 0;
+    const hasValidCaseName = caseName && caseName.trim().length > 0;
+    if (!hasValidCaseId && !hasValidCaseName) {
+      logger.warn('Filtered out incomplete test result: missing both valid caseId and caseName', {
+        row,
+      });
       return [];
     }
 
@@ -252,8 +329,8 @@ function normalizeCallbackResults(results: unknown[]): Auto_TestRunResultsInput[
     const responseDataRaw = row['responseData'] ?? row['response_data'];
 
     return [{
-      caseId: caseIdRaw && caseIdRaw > 0 ? caseIdRaw : 0,
-      caseName: caseName ?? (caseIdRaw && caseIdRaw > 0 ? `case_${caseIdRaw}` : 'unknown_case'),
+      caseId: hasValidCaseId ? caseIdRaw : 0,
+      caseName: caseName || (hasValidCaseId ? `case_${caseIdRaw}` : ''),
       status: normalizeStatus(row['status']),
       duration: durationRaw !== undefined ? Math.max(0, durationRaw) : 0,
       errorMessage: toOptionalString(row['errorMessage'] ?? row['error_message']),
@@ -397,6 +474,19 @@ router.post('/run-case', [
       projectId,
       triggeredBy,
     }, LOG_CONTEXTS.JENKINS);
+
+    const precheck = await runJenkinsTriggerPrecheck('run-case');
+    if (!precheck.ok) {
+      return res.status(503).json({
+        success: false,
+        message: 'Jenkins 当前不可用，请稍后重试',
+        details: {
+          reason: precheck.reason,
+          source: 'run-case-precheck',
+          retryable: true,
+        },
+      });
+    }
 
     // ── Step 1: 立即创建执行记录（状态 pending）──────────────
     const execution = await executionService.triggerTestExecution({
@@ -561,6 +651,19 @@ router.post('/run-batch', [
       projectId,
       triggeredBy,
     }, LOG_CONTEXTS.JENKINS);
+
+    const precheck = await runJenkinsTriggerPrecheck('run-batch');
+    if (!precheck.ok) {
+      return res.status(503).json({
+        success: false,
+        message: 'Jenkins 当前不可用，请稍后重试',
+        details: {
+          reason: precheck.reason,
+          source: 'run-batch-precheck',
+          retryable: true,
+        },
+      });
+    }
 
     // ── Step 1: 立即创建执行记录（状态 pending）──────────────
     const execution = await executionService.triggerTestExecution({

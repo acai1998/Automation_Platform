@@ -426,6 +426,7 @@ export default function ReportDetail() {
   }
 
   const hasFailures = run.failed_cases > 0;
+  const abortReason = run.abort_reason?.trim() || '';
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
@@ -484,6 +485,13 @@ export default function ReportDetail() {
                 {" | "}
                 触发时间: <span className="text-slate-700 dark:text-slate-200 font-medium font-mono">{formatTime(run.start_time ?? run.created_at, true)}</span>
               </p>
+
+              {run.status === 'aborted' && abortReason && (
+                <div className="ml-9 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                  <span className="font-semibold">中止原因：</span>
+                  <span className="break-all">{abortReason}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3">

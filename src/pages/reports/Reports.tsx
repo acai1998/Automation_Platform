@@ -207,7 +207,12 @@ export default function Reports() {
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
-                        <StatusBadge status={record.status} />
+                        <StatusBadge status={record.status} reason={record.abort_reason} />
+                        {record.status === 'aborted' && record.abort_reason && (
+                          <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400 max-w-[220px] truncate" title={record.abort_reason}>
+                            原因: {record.abort_reason}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-1.5 text-xs mb-1">
@@ -262,7 +267,7 @@ export default function Reports() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1.5">
                           <span className="text-[10px] font-mono text-slate-400">{record.id}</span>
-                          <StatusBadge status={record.status} />
+                          <StatusBadge status={record.status} reason={record.abort_reason} />
                         </div>
                         <div className="flex items-center gap-1 mt-1">
                           <TriggerTypeBadge type={record.trigger_type} />
@@ -436,7 +441,7 @@ function TriggerTypeBadge({ type }: { type: string }) {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, reason }: { status: string; reason?: string | null }) {
   const configs: Record<string, { label: string, variant: "success" | "destructive" | "secondary" | "outline" | "warning", icon: any }> = {
     success: { label: '成功', variant: 'success', icon: CheckCircle2 },
     failed: { label: '失败', variant: 'destructive', icon: XCircle },
@@ -448,9 +453,10 @@ function StatusBadge({ status }: { status: string }) {
 
   const config = configs[status] || { label: status, variant: 'outline', icon: AlertCircle };
   const Icon = config.icon;
+  const title = status === 'aborted' && reason ? `中止原因: ${reason}` : undefined;
 
   return (
-    <Badge variant={config.variant} className="gap-1.5 px-2 py-0.5 font-medium">
+    <Badge variant={config.variant} className="gap-1.5 px-2 py-0.5 font-medium" title={title}>
       <Icon className={cn("h-3 w-3", status === 'running' && "animate-spin")} />
       {config.label}
     </Badge>
