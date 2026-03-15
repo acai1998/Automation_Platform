@@ -1010,6 +1010,10 @@ export class ExecutionService {
 
   /**
    * 更新测试用例结果
+   * 
+   * 改进：在轮询路径中也清理残留的 ERROR 占位符，确保与回调路径一致。
+   * 场景：轮询到 Jenkins 已完成，但只能获取部分详细结果或生成基本结果时，
+   * 需要清理 run 创建时预创建的所有 ERROR 占位符。
    */
   private async updateTestResultsFromJenkins(runId: number, testResults: TestResults): Promise<void> {
     // 首先找到关联的 executionId
@@ -1065,6 +1069,25 @@ export class ExecutionService {
           caseName: result.caseName,
         });
       }
+    }
+
+    // 【轮询路径清理】获取当前 run 状态，清理残留的 ERROR 占位符
+    try {
+      const run = await this.executionRepository.getTestRunStatus(runId);
+      if (run && ['success', 'failed', 'aborted'].includes(run.status)) {
+        // 调用方法清理该 execution 中所有 ERROR 状态的结果
+        await this.executionRepository.cleanupErrorPlaceholdersForExecution(
+          executionId,
+          run.status
+        );
+      }
+    } catch (cleanupError) {
+      logger.warn('Failed to cleanup error placeholders during polling sync', {
+        runId,
+        executionId,
+        error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      }, LOG_CONTEXTS.EXECUTION);
+      // 不影响主流程
     }
   }
 

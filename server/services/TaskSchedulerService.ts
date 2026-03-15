@@ -1180,7 +1180,10 @@ export class TaskSchedulerService {
     });
     const scriptPaths = [...new Set(cases.map(c => c.scriptPath?.trim()).filter(Boolean))] as string[];
 
-    const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
+    const callbackBase = ((process.env.API_CALLBACK_URL ?? '').trim() || 'http://localhost:3000').replace(/\/+$/, '');
+    const callbackUrl = callbackBase.endsWith('/api/jenkins/callback')
+      ? callbackBase
+      : `${callbackBase}/api/jenkins/callback`;
 
     // 1. 创建运行记录
     // triggerReason 为 'manual' 时使用 'manual'，其余（'scheduled'/'retry'）使用 'schedule'

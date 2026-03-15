@@ -15,13 +15,18 @@ import casesRoutes from './routes/cases';
 import tasksRoutes from './routes/tasks';
 import jenkinsRoutes from './routes/jenkins';
 import authRoutes from './routes/auth';
-import maintenanceRoutes from './routes/maintenance';
 import { dailySummaryScheduler } from './services/DailySummaryScheduler';
 import { executionMonitorService } from './services/ExecutionMonitorService';
 import { initializeWebSocketService, webSocketService } from './services/WebSocketService';
 import { taskSchedulerService } from './services/TaskSchedulerService';
+import { ExecutionRepository } from './repositories/ExecutionRepository';
+import { AppDataSource } from './config/dataSource';
+import { authenticate, requireAdmin } from './middleware/auth';
 
 const app = express();
+
+// 全局 executionRepository 实例（在 DataSource 初始化后使用）
+let executionRepository: ExecutionRepository | null = null;
 const BASE_PORT = parseInt(process.env.PORT || '3000', 10);
 const MAX_PORT_ATTEMPTS = 10;
 
@@ -46,6 +51,9 @@ testConnection().then(async (connected) => {
     logger.info('MariaDB connected successfully', {}, LOG_CONTEXTS.DATABASE);
     try {
       await initializeDataSource();
+
+      // 初始化 ExecutionRepository 实例
+      executionRepository = new ExecutionRepository(AppDataSource);
 
       // 初始化每日汇总数据（历史数据回填）
       await initializeDailySummaryData();
@@ -134,7 +142,191 @@ app.use('/api/executions', executionRoutes);
 app.use('/api/cases', casesRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/jenkins', jenkinsRoutes);
-app.use('/api/maintenance', maintenanceRoutes);
+
+// 【紧急修复】修复孤立的 TestRun 记录
+// 安全修复：添加 authenticate 和 requireAdmin 中间件，确保只有管理员才能执行数据修复操作
+app.post('/api/fix-orphaned-runs', authenticate, requireAdmin, async (req, res) => {
+  try {
+    if (!executionRepository) {
+      return res.status(503).json({
+        success: false,
+        message: 'ExecutionRepository not initialized yet',
+      });
+    }
+    const result = await executionRepository.fixOrphanedTestRuns();
+    res.json({
+      success: true,
+      message: '孤立 TestRun 修复完成',
+      ...result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: '修复失败',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+// 【新增】修复特定的 TestRun，直接绑定到对应的 execution_id
+// 用于处理 TestRun.execution_id 为 NULL 的情况
+// 场景：如果 TestRun 的 ID 与其对应的 TaskExecution ID 相同，直接绑定
+// 安全修复：添加 authenticate 和 requireAdmin 中间件，确保只有管理员才能执行数据修复操作
+app.post('/api/fix-specific-run/:runId', authenticate, requireAdmin, async (req, res) => {
+  // 资源泄漏修复：将 queryRunner 声明在外层，确保在任何情况下都能正确释放
+  let queryRunner: ReturnType<typeof AppDataSource.createQueryRunner> | null = null;
+
+  try {
+    if (!executionRepository) {
+      return res.status(503).json({
+        success: false,
+        message: 'ExecutionRepository not initialized yet',
+      });
+    }
+
+    const runId = parseInt(req.params.runId, 10);
+    if (isNaN(runId) || runId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid runId. Must be a positive integer.',
+      });
+    }
+
+    const datasource = AppDataSource;
+    if (!datasource.isInitialized) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not initialized yet',
+      });
+    }
+
+    queryRunner = datasource.createQueryRunner();
+
+    // 1. 查询 TestRun 当前状态
+    const testRunRows = await queryRunner.query(
+      'SELECT id, execution_id, trigger_by, jenkins_build_id, created_at FROM Auto_TestRun WHERE id = ?',
+      [runId]
+    ) as Array<{ id: number; execution_id: number | null; trigger_by: number; jenkins_build_id: string; created_at: Date }>;
+
+    if (!testRunRows || testRunRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `TestRun not found: runId=${runId}`,
+      });
+    }
+
+    const testRun = testRunRows[0];
+
+    // 2. 如果 execution_id 已设置，不需要修复
+    if (testRun.execution_id !== null) {
+      return res.status(200).json({
+        success: true,
+        message: 'TestRun already has correct execution_id',
+        data: {
+          runId: testRun.id,
+          executionId: testRun.execution_id,
+          status: 'already_linked',
+        },
+      });
+    }
+
+    // 3. 尝试三种方法找到正确的 execution_id：
+    //    a. 首先查找与相同 Jenkins build ID 的 TaskExecution
+    //    b. 如果失败，检查 TaskExecution ID 是否与 TestRun ID 相同
+    //    c. 如果上述都失败，使用时间窗口反查
+
+    let correctExecutionId: number | null = null;
+
+    // 方法 a: 通过 Jenkins build ID 匹配
+    if (testRun.jenkins_build_id) {
+      const jenkinsMatchRows = await queryRunner.query(
+        'SELECT id FROM Auto_TestCaseTaskExecutions WHERE jenkins_build_id = ? LIMIT 1',
+        [testRun.jenkins_build_id]
+      ) as Array<{ id: number }>;
+
+      if (jenkinsMatchRows && jenkinsMatchRows.length > 0) {
+        correctExecutionId = jenkinsMatchRows[0].id;
+        logger.info(`Found execution by Jenkins build ID: ${correctExecutionId}`, {}, LOG_CONTEXTS.REPOSITORY);
+      }
+    }
+
+    // 方法 b: 检查相同 ID 的 TaskExecution 是否存在
+    if (!correctExecutionId) {
+      const sameIdRows = await queryRunner.query(
+        'SELECT id FROM Auto_TestCaseTaskExecutions WHERE id = ? LIMIT 1',
+        [runId]
+      ) as Array<{ id: number }>;
+
+      if (sameIdRows && sameIdRows.length > 0) {
+        correctExecutionId = runId;
+        logger.info(`Found execution with same ID as TestRun: ${correctExecutionId}`, {}, LOG_CONTEXTS.REPOSITORY);
+      }
+    }
+
+    // 方法 c: 时间窗口反查
+    if (!correctExecutionId) {
+      const timeWindowRows = await queryRunner.query(`
+        SELECT e.id
+        FROM Auto_TestCaseTaskExecutions e
+        WHERE e.executed_by = ?
+          AND e.created_at BETWEEN DATE_SUB(?, INTERVAL 120 SECOND) AND DATE_ADD(?, INTERVAL 120 SECOND)
+        ORDER BY ABS(TIMESTAMPDIFF(SECOND, e.created_at, ?)) ASC
+        LIMIT 1
+      `, [testRun.trigger_by, testRun.created_at, testRun.created_at, testRun.created_at]
+      ) as Array<{ id: number }>;
+
+      if (timeWindowRows && timeWindowRows.length > 0) {
+        correctExecutionId = timeWindowRows[0].id;
+        logger.info(`Found execution by time-window search: ${correctExecutionId}`, {}, LOG_CONTEXTS.REPOSITORY);
+      }
+    }
+
+    if (!correctExecutionId) {
+      return res.status(404).json({
+        success: false,
+        message: `Could not find matching execution for TestRun ${runId}`,
+        data: {
+          runId,
+          searched: {
+            jenkinsJobId: testRun.jenkins_build_id,
+            triggeredBy: testRun.trigger_by,
+            createdAt: testRun.created_at,
+          },
+        },
+      });
+    }
+
+    // 4. 更新 TestRun 的 execution_id
+    await queryRunner.query(
+      'UPDATE Auto_TestRun SET execution_id = ? WHERE id = ?',
+      [correctExecutionId, runId]
+    );
+
+    logger.info(`Fixed TestRun ${runId} → execution_id ${correctExecutionId}`, {}, LOG_CONTEXTS.REPOSITORY);
+
+    return res.json({
+      success: true,
+      message: `Fixed TestRun ${runId}`,
+      data: {
+        runId,
+        executionId: correctExecutionId,
+        status: 'fixed',
+      },
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: '修复失败',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    // 资源泄漏修复：确保在任何情况下都释放 queryRunner
+    if (queryRunner) {
+      await queryRunner.release();
+    }
+  }
+});
 
 // 健康检查
 app.get('/api/health', (req, res) => {

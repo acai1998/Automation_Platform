@@ -10,7 +10,7 @@ CREATE TABLE `Auto_TestCase` (
   `module` varchar(100) DEFAULT NULL COMMENT '功能模块名称',
   `priority` enum('P0','P1','P2','P3') DEFAULT 'P1' COMMENT '优先级',
   `type` enum('api','ui','performance','security') DEFAULT 'api' COMMENT '用例类型',
-  `tags` varchar(500) DEFAULT NULL COMMENT '标签',
+  `tags` json DEFAULT NULL COMMENT '标签（JSON数组）',
   `owner` varchar(100) DEFAULT NULL COMMENT '用例负责人',
   `source` enum('git','manual') DEFAULT 'git' COMMENT '来源',
   `enabled` tinyint(1) DEFAULT 1 COMMENT '是否有效（Git 中删除则 false）',

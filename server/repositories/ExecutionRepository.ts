@@ -1224,13 +1224,30 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     results: BatchResults,
     executionId?: number
   ): Promise<void> {
-    return this.executeInTransaction(async (_queryRunner) => {
+    return this.executeInTransaction(async (queryRunner) => {
       // 0. 二次校验：防止并发回调导致正确结果被错误数据覆盖
-      // 修复：在幂等性检查与实际更新之间存在时间窗口，可能导致后到的错误回调覆盖先到的正确结果
-      const currentTestRun = await this.testRunRepository.findOne({
-        where: { id: runId },
-        select: ['id', 'status', 'passedCases', 'failedCases', 'skippedCases'],
-      });
+      // 并发安全修复：使用悲观锁（SELECT ... FOR UPDATE）确保检查和更新的原子性
+      // 这可以防止两个并发回调同时通过检查然后相互覆盖的情况
+      const lockResult = await queryRunner.query(`
+        SELECT id, status, passed_cases, failed_cases, skipped_cases
+        FROM Auto_TestRun
+        WHERE id = ?
+        FOR UPDATE
+      `, [runId]) as Array<{
+        id: number;
+        status: string;
+        passed_cases: number | null;
+        failed_cases: number | null;
+        skipped_cases: number | null;
+      }>;
+
+      const currentTestRun = lockResult.length > 0 ? {
+        id: lockResult[0].id,
+        status: lockResult[0].status,
+        passedCases: lockResult[0].passed_cases,
+        failedCases: lockResult[0].failed_cases,
+        skippedCases: lockResult[0].skipped_cases,
+      } : null;
 
       const finalStatuses = ['success', 'failed', 'cancelled', 'aborted'];
       const hasDetailedResults = Array.isArray(results.results) && results.results.length > 0;
@@ -1408,6 +1425,137 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         LOG_CONTEXTS.REPOSITORY
       );
     }
+  }
+
+  /**
+   * 【轮询路径清理】清理指定 execution 中的 ERROR 占位符
+   * 用于轮询同步路径中，当 Jenkins 状态已完成但结果为虚拟/部分时，清理预创建的 ERROR 占位符
+   */
+  async cleanupErrorPlaceholdersForExecution(executionId: number, runStatus: string): Promise<number> {
+    try {
+      // 查询是否存在 ERROR 占位符
+      const errorRows = await this.testRunResultRepository.query(`
+        SELECT COUNT(*) AS errorCount
+        FROM Auto_TestRunResults
+        WHERE execution_id = ? AND status = 'error'
+      `, [executionId]) as Array<{ errorCount: string }>;
+
+      const residualErrorCount = Number(errorRows[0]?.errorCount ?? 0);
+
+      if (residualErrorCount === 0) {
+        logger.debug(
+          'cleanupErrorPlaceholdersForExecution: no errors found',
+          { executionId },
+          LOG_CONTEXTS.REPOSITORY
+        );
+        return 0;
+      }
+
+      // 根据运行状态映射清理目标
+      let targetStatus: 'passed' | 'failed' | 'skipped';
+      if (runStatus === 'success') {
+        targetStatus = 'passed';
+      } else if (runStatus === 'failed') {
+        targetStatus = 'failed';
+      } else {
+        targetStatus = 'skipped';
+      }
+
+      const cleaned = await this.bulkUpdateErrorResults(executionId, targetStatus);
+
+      logger.info(
+        'Cleaned error placeholders in polling sync path',
+        {
+          executionId,
+          runStatus,
+          residualErrorCount,
+          cleaned,
+          targetStatus,
+          reason: 'polling-sync-cleanup',
+        },
+        LOG_CONTEXTS.REPOSITORY
+      );
+
+      return cleaned;
+    } catch (error) {
+      logger.warn(
+        'Failed to cleanup error placeholders',
+        {
+          executionId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        LOG_CONTEXTS.REPOSITORY
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * 【紧急修复】修复孤立的 TestRun（没有绑定 execution_id）
+   * 
+   * 问题：旧的 TestRun 没有设置 execution_id 字段，导致查询结果时通过时间窗口反查
+   * 可能得到错误的 executionId，进而获取错误的用例结果
+   * 
+   * 解决方案：
+   * 1. 查找所有 execution_id 为 NULL 的 TestRun
+   * 2. 通过触发者 + 时间窗口匹配最近的 TaskExecution
+   * 3. 回填 execution_id 字段
+   */
+  async fixOrphanedTestRuns(): Promise<{ fixed: number; checked: number }> {
+    let fixed = 0;
+    let checked = 0;
+
+    try {
+      // 查找所有 execution_id 为 NULL 的 TestRun
+      const orphanedRuns = await this.testRunRepository.query(`
+        SELECT tr.id, tr.trigger_by, tr.created_at
+        FROM Auto_TestRun tr
+        WHERE tr.execution_id IS NULL
+        ORDER BY tr.id DESC
+        LIMIT 100
+      `) as Array<{ id: number; trigger_by: number; created_at: Date }>;
+
+      checked = orphanedRuns.length;
+
+      if (orphanedRuns.length === 0) {
+        logger.info('No orphaned TestRuns found', {}, LOG_CONTEXTS.REPOSITORY);
+        return { fixed: 0, checked: 0 };
+      }
+
+      logger.info(`Found ${orphanedRuns.length} orphaned TestRuns, attempting to fix...`, {}, LOG_CONTEXTS.REPOSITORY);
+
+      for (const run of orphanedRuns) {
+        // 通过时间窗口 + 触发者查找最近的 TaskExecution
+        const matchingExecutions = await this.repository.query(`
+          SELECT e.id as execution_id
+          FROM Auto_TestCaseTaskExecutions e
+          WHERE e.executed_by = ?
+            AND e.created_at BETWEEN DATE_SUB(?, INTERVAL 120 SECOND) AND DATE_ADD(?, INTERVAL 120 SECOND)
+          ORDER BY ABS(TIMESTAMPDIFF(SECOND, e.created_at, ?)) ASC
+          LIMIT 1
+        `, [
+          run.trigger_by,
+          run.created_at, run.created_at, run.created_at
+        ]) as Array<{ execution_id: number }>;
+
+        if (matchingExecutions && matchingExecutions.length > 0) {
+          const executionId = matchingExecutions[0].execution_id;
+          await this.testRunRepository.update(run.id, { executionId });
+          fixed++;
+          logger.info(`Fixed TestRun #${run.id} → executionId ${executionId}`, {}, LOG_CONTEXTS.REPOSITORY);
+        }
+      }
+
+      logger.info(`Orphaned TestRuns fix completed: ${fixed}/${checked} fixed`, { fixed, checked }, LOG_CONTEXTS.REPOSITORY);
+    } catch (error) {
+      logger.warn(
+        'Failed to fix orphaned TestRuns',
+        { error: error instanceof Error ? error.message : String(error) },
+        LOG_CONTEXTS.REPOSITORY
+      );
+    }
+
+    return { fixed, checked };
   }
 
   /**

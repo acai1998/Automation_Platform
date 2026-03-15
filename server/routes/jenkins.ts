@@ -130,6 +130,21 @@ function scheduleCallbackFallbackSync(runId: number, source: 'run-case' | 'run-b
 }
 
 /**
+ * 构造 Jenkins 回调 URL：兼容配置基础地址或完整 callback 路径。
+ */
+function buildCallbackUrl(): string {
+  const configuredBase = (process.env.API_CALLBACK_URL ?? 'http://localhost:3000').trim();
+
+  // 兼容老配置：如果配置已包含 callback 路径，优先直接使用。
+  const trimmed = configuredBase.replace(/\/+$/, '');
+  if (trimmed.endsWith('/api/jenkins/callback')) {
+    return trimmed;
+  }
+
+  return `${trimmed}/api/jenkins/callback`;
+}
+
+/**
  * 执行触发前的 Jenkins 连通性预检查。
  * 目标：在 Jenkins 不可用时快速失败，避免创建后立刻变成 aborted 的运行记录。
  */
@@ -530,7 +545,7 @@ router.post('/run-case', [
         try {
           // 解析脚本路径
           const { scriptPaths, missingCaseIds } = await resolveScriptPaths([caseId]);
-          const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
+          const callbackUrl = buildCallbackUrl();
 
           if (missingCaseIds.length > 0) {
             logger.warn('Some cases have no scriptPath configured', {
@@ -709,7 +724,7 @@ router.post('/run-batch', [
         try {
           // 解析脚本路径
           const { scriptPaths, missingCaseIds } = await resolveScriptPaths(caseIds);
-          const callbackUrl = `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`;
+          const callbackUrl = buildCallbackUrl();
 
           if (missingCaseIds.length > 0) {
             logger.warn('Some cases have no scriptPath configured', {

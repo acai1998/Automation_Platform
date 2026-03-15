@@ -1,0 +1,18 @@
+-- autotest.Auto_TaskAuditLogs definition
+
+CREATE TABLE `Auto_TaskAuditLogs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '日志ID',
+  `task_id` int(11) NOT NULL COMMENT '关联任务ID',
+  `action` varchar(100) NOT NULL COMMENT '操作类型（created/updated/deleted/status_changed/manually_triggered/execution_cancelled/compensated/triggered/retry_scheduled/permanently_failed）',
+  `operator_id` int(11) DEFAULT NULL COMMENT '操作人ID（NULL=系统自动）',
+  `metadata` text DEFAULT NULL COMMENT '操作元数据（JSON）',
+  `created_at` datetime NOT NULL DEFAULT current_timestamp() COMMENT '操作时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_task` (`task_id`),
+  KEY `idx_audit_operator` (`operator_id`),
+  KEY `idx_audit_action` (`action`),
+  KEY `idx_audit_created` (`created_at`),
+  KEY `idx_audit_task_created` (`task_id`,`created_at` DESC),
+  CONSTRAINT `fk_audit_task` FOREIGN KEY (`task_id`) REFERENCES `Auto_TestCaseTasks` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_audit_operator` FOREIGN KEY (`operator_id`) REFERENCES `Auto_Users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='任务操作审计日志表';

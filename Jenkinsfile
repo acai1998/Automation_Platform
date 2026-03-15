@@ -119,7 +119,7 @@ pipeline {
                     } else {
                         testCommand += "pytest"
                     }
-                    testCommand += " --json-report --json-report-file=test-report.json -v"
+                    testCommand += " --json-report --json-report-file=test-report.json --junitxml=junit.xml -v"
                     
                     sh """
                         cd ${testDir}
@@ -228,7 +228,7 @@ pipeline {
                     echo "清理环境..."
 
                     def testDir = params.REPO_URL ? 'test-cases' : '.'
-                    def reportArtifactPath = "${testDir}/test-report.json"
+                    def reportArtifactPath = testDir == 'test-cases' ? 'test-cases/test-report.json' : 'test-report.json'
                     def junitPattern = testDir == 'test-cases'
                         ? '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
                         : '**/junit.xml,**/.pytest_cache/**/junit.xml'
@@ -242,8 +242,9 @@ pipeline {
 
                     try {
                         junit allowEmptyResults: true, testResults: junitPattern
-                    } catch (Exception e) {
-                        echo "JUnit报告处理失败: ${e.message}"
+                    } catch (Throwable t) {
+                        // 兼容未安装 JUnit 插件的 Jenkins 实例，避免 post 阶段直接失败
+                        echo "JUnit报告处理失败: ${t.message}"
                     }
 
                     // 最终回调 - 确保状态同步
@@ -352,8 +353,11 @@ pipeline {
                                             --connect-timeout 10 \\
                                             --max-time 30 \\
                                             -L \\
+                                            --post301 \\
+                                            --post302 \\
+                                            --post303 \\
                                             -k \\
-                                            -d @${payloadFile})
+                                            --data-binary @${payloadFile})
                                         curl_exit=\$?
 
                                         echo "[callback] attempt=\${attempt}, curl_exit=\${curl_exit}, http_code=\${http_code}"
@@ -411,14 +415,21 @@ pipeline {
                         script: """
                             set +e
                             echo "正在回调失败状态到平台..."
+                            payload_file="${WORKSPACE}/callback_failure_payload_${BUILD_NUMBER}.json"
+                            cat > "${payload_file}" <<'JSON_PAYLOAD'
+{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}, "buildUrl": "${env.BUILD_URL}"}
+JSON_PAYLOAD
                             response_file="${WORKSPACE}/callback_failure_response_${BUILD_NUMBER}.txt"
                             http_code=\$(curl -sS -o "\${response_file}" -w '%{http_code}' -X POST '${params.CALLBACK_URL}' \\
                                 -H 'Content-Type: application/json' \\
                                 --connect-timeout 10 \\
                                 --max-time 30 \\
                                 -L \\
+                                --post301 \\
+                                --post302 \\
+                                --post303 \\
                                 -k \\
-                                -d '{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}, "buildUrl": "${BUILD_URL}"}')
+                                --data-binary @${payload_file})
                             curl_exit=\$?
 
                             echo "[failure-callback] curl_exit=\${curl_exit}, http_code=\${http_code}"

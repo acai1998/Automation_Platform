@@ -10,6 +10,7 @@ export interface JenkinsConfig {
     ui: string;
     performance: string;
   };
+  testRepoUrl?: string;
 }
 
 /**
@@ -136,6 +137,12 @@ export class JenkinsService {
       return;
     }
 
+    const configuredTestRepoUrl = (
+      process.env.JENKINS_TEST_REPO_URL
+      || process.env.TEST_CASE_REPO_URL
+      || ''
+    ).trim();
+
     this.config = {
       baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/',
       username: process.env.JENKINS_USER || 'root',
@@ -145,12 +152,14 @@ export class JenkinsService {
         ui: process.env.JENKINS_JOB_UI || 'ui-automation',
         performance: process.env.JENKINS_JOB_PERF || 'performance-automation',
       },
+      testRepoUrl: configuredTestRepoUrl || undefined,
     };
 
     logger.info('JenkinsService initialized', {
       baseUrl: this.config.baseUrl,
       username: this.config.username,
       jobs: this.config.jobs,
+      hasTestRepoUrl: Boolean(this.config.testRepoUrl),
     }, 'JENKINS');
   }
 
@@ -197,6 +206,9 @@ export class JenkinsService {
 
     if (callbackUrl) {
       params.append('CALLBACK_URL', callbackUrl);
+    }
+    if (this.config.testRepoUrl) {
+      params.append('REPO_URL', this.config.testRepoUrl);
     }
 
     try {
@@ -279,6 +291,9 @@ export class JenkinsService {
     if (callbackUrl) {
       params.append('CALLBACK_URL', callbackUrl);
     }
+    if (this.config.testRepoUrl) {
+      params.append('REPO_URL', this.config.testRepoUrl);
+    }
 
     try {
       logger.debug('Starting batch job trigger', {
@@ -286,6 +301,7 @@ export class JenkinsService {
         jobName,
         caseCount: caseIds.length,
         hasCallbackUrl: !!callbackUrl,
+        hasTestRepoUrl: Boolean(this.config.testRepoUrl),
       }, 'JENKINS');
 
       // 调用 Jenkins API

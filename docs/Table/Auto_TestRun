@@ -6,7 +6,7 @@ CREATE TABLE `Auto_TestRun` (
   `trigger_type` enum('manual','jenkins','schedule') NOT NULL COMMENT '触发方式',
   `execution_id` int(11) DEFAULT NULL COMMENT '关联的 Auto_TestCaseTaskExecutions.id',
   `trigger_by` int(11) DEFAULT NULL COMMENT '触发人',
-  `jenkins_job` varchar(200) DEFAULT NULL COMMENT 'Jenkins Job 名称',
+  `jenkins_job` varchar(255) DEFAULT NULL COMMENT 'Jenkins Job 名称',
   `jenkins_build_id` varchar(100) DEFAULT NULL COMMENT 'Jenkins Build ID',
   `jenkins_url` varchar(500) DEFAULT NULL COMMENT 'Jenkins 构建地址',
   `status` enum('pending','running','success','failed','aborted') DEFAULT 'pending',
