@@ -1659,11 +1659,15 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
   /**
    * 将指定 executionId 下所有 status=error 的预创建记录批量更新为目标状态
+   * 同时填充 start_time（若为 NULL 则用 NOW()）和 duration（若为 NULL 则用 0）
    */
   async bulkUpdateErrorResults(executionId: number, targetStatus: 'passed' | 'failed' | 'skipped'): Promise<number> {
     const result = await this.testRunResultRepository.query(`
       UPDATE Auto_TestRunResults
-      SET status = ?, end_time = NOW()
+      SET status = ?,
+          end_time = NOW(),
+          start_time = COALESCE(start_time, NOW()),
+          duration = COALESCE(duration, 0)
       WHERE execution_id = ? AND status = 'error'
     `, [targetStatus, executionId]) as { affectedRows?: number; changedRows?: number };
     return result?.affectedRows ?? 0;
@@ -2103,11 +2107,23 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         const skippedIds = preCreatedResults.slice(failedEnd).map(r => r.id);
 
         const now = new Date();
+        const nowStr = now.toISOString().slice(0, 19).replace('T', ' ');
+        // 计算每条记录的平均耗时（总耗时 / 用例数），用于填充没有精确耗时的占位符记录
+        const avgDurationMs = results.durationMs > 0 && preCreatedResults.length > 0
+          ? Math.round(results.durationMs / preCreatedResults.length)
+          : 0;
         const batchUpdate = async (ids: number[], status: 'passed' | 'failed' | 'skipped') => {
           if (ids.length === 0) return;
-          await this.testRunResultRepository.update(
-            { id: In(ids) },
-            { status, endTime: now }
+          // 使用原生 SQL 支持 COALESCE：已有精确值的记录不覆盖，只填充 NULL 的占位记录
+          const placeholders = ids.map(() => '?').join(', ');
+          await this.testRunResultRepository.query(
+            `UPDATE Auto_TestRunResults
+             SET status = ?,
+                 end_time = ?,
+                 start_time = COALESCE(start_time, ?),
+                 duration = COALESCE(duration, ?)
+             WHERE id IN (${placeholders})`,
+            [status, now, nowStr, avgDurationMs, ...ids]
           );
         };
 
@@ -2165,7 +2181,10 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
 
           await this.testRunResultRepository.query(`
             UPDATE Auto_TestRunResults
-            SET status = ?, end_time = NOW()
+            SET status = ?,
+                end_time = NOW(),
+                start_time = COALESCE(start_time, NOW()),
+                duration = COALESCE(duration, 0)
             WHERE execution_id = ? AND status = 'error'
           `, [mappedStatus, executionId]);
 
