@@ -178,21 +178,26 @@ def sync_to_db(cases):
         with conn.cursor() as cursor:
             synced = 0
             for case in cases:
+                # 使用 case_key 唯一索引去重（uniq_case_key）
+                # 当用例文件从目录A移动到目录B时，case_key（ClassName::method_name）
+                # 不变但 script_path 会变，ON DUPLICATE KEY UPDATE 会同步更新 script_path，
+                # 避免产生重复记录。
                 sql = """
                     INSERT INTO Auto_TestCase
                         (case_key, name, description, module, type, priority, script_path, tags, owner, repo_id, source, enabled)
                     VALUES
                         (%(case_key)s, %(name)s, %(description)s, %(module)s, %(type)s, %(priority)s, %(script_path)s, %(tags)s, %(owner)s, 1, 'git', 1)
                     ON DUPLICATE KEY UPDATE
-                        name = VALUES(name),
+                        name        = VALUES(name),
                         description = VALUES(description),
-                        module = VALUES(module),
-                        type = VALUES(type),
-                        priority = VALUES(priority),
-                        tags = VALUES(tags),
-                        owner = VALUES(owner),
-                        enabled = 1,
-                        updated_at = NOW()
+                        module      = VALUES(module),
+                        type        = VALUES(type),
+                        priority    = VALUES(priority),
+                        script_path = VALUES(script_path),
+                        tags        = VALUES(tags),
+                        owner       = VALUES(owner),
+                        enabled     = 1,
+                        updated_at  = NOW()
                 """
                 try:
                     cursor.execute(sql, case)

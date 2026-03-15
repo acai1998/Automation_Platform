@@ -2,7 +2,7 @@
 
 CREATE TABLE `Auto_TestCase` (
   `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '用例唯一标识',
-  `case_key` varchar(200) NOT NULL COMMENT '用例唯一Key（函数名 / case_id）',
+  `case_key` varchar(200) DEFAULT NULL COMMENT '用例唯一Key（函数名 / case_id）',
   `name` varchar(200) NOT NULL COMMENT '用例展示名称',
   `description` text DEFAULT NULL COMMENT '用例描述',
   `project_id` int(11) DEFAULT NULL COMMENT '所属项目ID',
@@ -22,6 +22,7 @@ CREATE TABLE `Auto_TestCase` (
   `created_at` datetime DEFAULT current_timestamp() COMMENT '创建时间',
   `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp() COMMENT '更新时间',
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_case_key` (`case_key`),
   UNIQUE KEY `uniq_repo_case` (`repo_id`,`script_path`(255)),
   KEY `idx_cases_project` (`project_id`),
   KEY `idx_cases_module` (`module`),
