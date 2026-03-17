@@ -170,6 +170,18 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   // 是否有活动筛选
   const hasActiveFilters = filters.priority.length > 0 || filters.owner.length > 0 || search !== '';
 
+  const getExecutionErrorDescription = (message: string): string => {
+    if (message.includes('未启用') || message.includes('No active test cases found')) {
+      return '该用例已禁用，请先启用后再重试';
+    }
+
+    if (message.includes('Jenkins 当前不可用')) {
+      return 'Jenkins 暂时不可用，请稍后重试';
+    }
+
+    return '请检查 Jenkins 连接或稍后重试';
+  };
+
   // 处理运行用例
   const handleRunCase = async (caseId: number, caseName: string, projectId: number | null) => {
     const finalProjectId = projectId || 1;
@@ -193,7 +205,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       // 使用新的错误 Toast（带重试功能）
       showExecutionErrorToast({
         message,
-        description: '请检查 Jenkins 连接或稍后重试',
+        description: getExecutionErrorDescription(message),
         onRetry: () => handleRunCase(caseId, caseName, projectId),
       });
 

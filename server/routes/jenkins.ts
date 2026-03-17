@@ -282,6 +282,43 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
   return originalMessage;
 }
 
+function resolveExecutionBusinessError(error: unknown): {
+  statusCode: number;
+  message: string;
+  details: { reason: 'inactive_case' | 'inactive_cases'; caseIds: number[] };
+} | null {
+  const originalMessage = error instanceof Error ? error.message : String(error ?? '');
+  const noActiveCasesMatch = originalMessage.match(/No active test cases found with IDs:\s*(.+)$/i);
+  if (!noActiveCasesMatch) return null;
+
+  const caseIds = noActiveCasesMatch[1]
+    .split(',')
+    .map(part => Number.parseInt(part.trim(), 10))
+    .filter(Number.isFinite);
+
+  if (caseIds.length === 0) return null;
+
+  if (caseIds.length === 1) {
+    return {
+      statusCode: 400,
+      message: `测试用例 ${caseIds[0]} 未启用，请先启用后再执行`,
+      details: {
+        reason: 'inactive_case',
+        caseIds,
+      },
+    };
+  }
+
+  return {
+    statusCode: 400,
+    message: `存在未启用的测试用例，请先启用后再执行：${caseIds.join(', ')}`,
+    details: {
+      reason: 'inactive_cases',
+      caseIds,
+    },
+  };
+}
+
 /**
  * 规范化 Jenkins 回调中的 results 载荷，兼容 camelCase/snake_case 字段。
  * 目标：确保后续 completeBatchExecution 能稳定回写用例明细，避免残留占位 error。
@@ -460,6 +497,15 @@ router.post('/trigger', generalAuthRateLimiter, optionalAuth, rateLimitMiddlewar
       }
     });
   } catch (error: unknown) {
+    const businessError = resolveExecutionBusinessError(error);
+    if (businessError) {
+      return res.status(businessError.statusCode).json({
+        success: false,
+        message: businessError.message,
+        details: businessError.details,
+      });
+    }
+
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_TRIGGER');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
@@ -634,6 +680,16 @@ router.post('/run-case', [
       projectId,
       durationMs: duration,
     });
+
+    const businessError = resolveExecutionBusinessError(error);
+    if (businessError) {
+      return res.status(businessError.statusCode).json({
+        success: false,
+        message: businessError.message,
+        details: businessError.details,
+      });
+    }
+
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_CASE');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
@@ -808,6 +864,16 @@ router.post('/run-batch', [
       projectId,
       durationMs: duration,
     });
+
+    const businessError = resolveExecutionBusinessError(error);
+    if (businessError) {
+      return res.status(businessError.statusCode).json({
+        success: false,
+        message: businessError.message,
+        details: businessError.details,
+      });
+    }
+
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_BATCH');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
