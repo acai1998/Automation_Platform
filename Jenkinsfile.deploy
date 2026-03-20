@@ -1,5 +1,8 @@
 pipeline {
-    agent any
+    // 固定在部署机执行，避免随机调度到测试节点
+    agent {
+        label 'master'
+    }
 
     // 每4小时定时构建一次（0点、4点、8点、12点、16点、20点）
     triggers {
@@ -8,6 +11,8 @@ pipeline {
 
     // 避免并发部署互相覆盖
     options {
+        // 已在 DEPLOY_DIR 手动拉取代码，跳过 Jenkins 默认 Checkout SCM
+        skipDefaultCheckout(true)
         disableConcurrentBuilds()
         timestamps()
         timeout(time: 10, unit: 'MINUTES')  // 超过20分钟自动终止
@@ -163,8 +168,8 @@ pipeline {
                 echo "  请查看上方日志排查问题"
                 echo "================================================"
             }
-            // 使用 node 包裹 sh 步骤，避免 Checkout SCM 阶段失败时缺少节点上下文
-            node('') {
+            // 固定在部署机输出日志，避免再次随机调度
+            node('master') {
                 script {
                     def appName = env.APP_NAME ?: 'autotest-platform'
                     sh "pm2 logs ${appName} --lines 30 --nostream || true"
