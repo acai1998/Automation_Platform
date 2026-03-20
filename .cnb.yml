@@ -1,71 +1,34 @@
-version: "1.0"
-triggers:
-  - name: Sync_CNB_to_GitHub
-    event: push
-    branch: master
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
-    steps:
-      - name: checkout_cnb_repo
-        run: |
-          git clone https://cnb.cool/ImAcaiy/Automation_Platform.git
-          cd Automation_Platform
+master:
+  push:
+    - env:
+        GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
+      stages:
+        - name: sync_to_github
+          script:
+            - git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
+            - cd /tmp/Automation_Platform
+            - git remote add github "$GITHUB_REPO"
+            - git config user.name "CNB Sync Bot"
+            - git config user.email "noreply@cnb.cool"
+            - |
+              echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
+              git config credential.helper "store --file=.git/credentials"
+            - git push github master --force
+            - rm -f .git/credentials
 
-      - name: add_github_remote
-        run: |
-          git remote add github ${{ env.GITHUB_REPO }}
-
-      - name: configure_git_credentials
-        run: |
-          git config user.name "CNB Sync Bot"
-          git config user.email "noreply@cnb.cool"
-
-      - name: force_push_to_github
-        run: |
-          # 使用GitHub Token进行认证
-          echo "https://oauth2:${{ secrets.GITHUB_TOKEN }}@github.com" > .git/credentials
-          git config credential.helper "store --file=.git/credentials"
-
-          # 强制推送到GitHub master分支
-          git push github master --force
-
-      - name: cleanup
-        if: always()
-        run: |
-          rm -f .git/credentials
-
-  - name: sync_to_github_scheduled
-    schedule: "0 */4 * * *"  # 每4小时执行一次
-    branch: master
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
-    steps:
-      - name: checkout_cnb_repo
-        run: |
-          git clone https://cnb.cool/ImAcaiy/Automation_Platform.git
-          cd Automation_Platform
-
-      - name: add_github_remote
-        run: |
-          git remote add github ${{ env.GITHUB_REPO }}
-
-      - name: configure_git_credentials
-        run: |
-          git config user.name "CNB Sync Bot"
-          git config user.email "noreply@cnb.cool"
-
-      - name: force_push_to_github
-        run: |
-          # 使用GitHub Token进行认证
-          echo "https://oauth2:${{ secrets.GITHUB_TOKEN }}@github.com" > .git/credentials
-          git config credential.helper "store --file=.git/credentials"
-
-          # 强制推送到GitHub master分支
-          git push github master --force
-
-      - name: cleanup
-        if: always()
-        run: |
-          rm -f .git/credentials
+  "crontab: 0 */4 * * *":
+    - env:
+        GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
+      stages:
+        - name: sync_to_github
+          script:
+            - git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
+            - cd /tmp/Automation_Platform
+            - git remote add github "$GITHUB_REPO"
+            - git config user.name "CNB Sync Bot"
+            - git config user.email "noreply@cnb.cool"
+            - |
+              echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
+              git config credential.helper "store --file=.git/credentials"
+            - git push github master --force
+            - rm -f .git/credentials
