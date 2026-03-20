@@ -1,6 +1,7 @@
 master:
   push:
-    - env:
+    - imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
+      env:
         GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
       stages:
         - name: sync_to_github
@@ -16,7 +17,8 @@ master:
             - rm -f .git/credentials
 
   "crontab: 0 */4 * * *":
-    - env:
+    - imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
+      env:
         GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
       stages:
         - name: sync_to_github
