@@ -10,9 +10,8 @@ master:
             - git remote add github "$GITHUB_REPO"
             - git config user.name "CNB Sync Bot"
             - git config user.email "noreply@cnb.cool"
-            - |
-              echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
-              git config credential.helper "store --file=.git/credentials"
+            - echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
+            - git config credential.helper "store --file=.git/credentials"
             - git push github master --force
             - rm -f .git/credentials
 
@@ -27,8 +26,7 @@ master:
             - git remote add github "$GITHUB_REPO"
             - git config user.name "CNB Sync Bot"
             - git config user.email "noreply@cnb.cool"
-            - |
-              echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
-              git config credential.helper "store --file=.git/credentials"
+            - echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
+            - git config credential.helper "store --file=.git/credentials"
             - git push github master --force
             - rm -f .git/credentials
