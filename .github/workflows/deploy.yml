@@ -1,7 +1,10 @@
 name: Deploy to Production
 
 on:
-  workflow_dispatch:  # 仅支持手动触发（自动部署已迁移至 CNB：.cnb.deploy.yml）
+  push:
+    branches:
+      - master
+  workflow_dispatch:  # 同时保留手动触发
 
 jobs:
   deploy:

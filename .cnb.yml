@@ -1,21 +1,13 @@
 master:
   push:
-    - name: "同步 GitHub & 部署服务器"
+    - name: "同步代码到 GitHub"
       imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
       env:
         GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
-        APP_DIR: "/opt/Automation_Platform"
-        APP_NAME: "autotest-platform"
-        # 以下敏感变量请在 CNB 仓库「设置 → CI/CD 变量」中配置：
-        #   SERVER_HOST    : 服务器 IP
-        #   SERVER_USER    : SSH 登录用户名
-        #   SERVER_PORT    : SSH 端口（默认 22）
-        #   SERVER_SSH_KEY : SSH 私钥全文
       stages:
-        - name: "同步代码到 GitHub"
+        - name: "推送到 GitHub"
           script:
             - echo "========== 开始同步到 GitHub =========="
-            - echo "正在克隆 CNB 仓库..."
             - git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
             - cd /tmp/Automation_Platform
             - git remote add github "$GITHUB_REPO"
@@ -23,70 +15,9 @@ master:
             - git config user.email "noreply@cnb.cool"
             - echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
             - git config credential.helper "store --file=.git/credentials"
-            - echo "正在推送到 GitHub..."
             - git push github master --force
             - rm -f .git/credentials
-            - echo "========================================"
             - echo "✅ 同步到 GitHub 成功！"
-            - echo "========================================"
-
-        - name: "SSH 部署到服务器"
-          script: |
-            set -e
-            echo "========== 开始自动部署到服务器 =========="
-
-            # 配置 SSH 免密登录
-            mkdir -p ~/.ssh && chmod 700 ~/.ssh
-            echo "$SERVER_SSH_KEY" | base64 -d > ~/.ssh/deploy_key
-            chmod 600 ~/.ssh/deploy_key
-            echo "StrictHostKeyChecking no" >> ~/.ssh/config
-
-            # ===== 调试：验证密钥格式 =====
-            echo "[DEBUG] 密钥文件大小: $(wc -c < ~/.ssh/deploy_key) bytes"
-            echo "[DEBUG] 密钥头部: $(head -1 ~/.ssh/deploy_key)"
-            echo "[DEBUG] 密钥尾部: $(tail -1 ~/.ssh/deploy_key)"
-            ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null && echo "[DEBUG] ✅ 密钥格式验证通过" || echo "[DEBUG] ❌ 密钥格式无效"
-            # ===== 调试结束 =====
-
-            # 构造 SSH 基础命令
-            _PORT="${SERVER_PORT:-22}"
-            _SSH="ssh -i ~/.ssh/deploy_key -p $_PORT $SERVER_USER@$SERVER_HOST"
-
-            # 验证连接
-            echo "正在连接服务器 $SERVER_HOST:$_PORT ..."
-            $_SSH "echo '✅ SSH 连接成功，主机：\$(hostname)'"
-
-            # 检查项目目录
-            $_SSH "test -d $APP_DIR || { echo '❌ 项目目录不存在：$APP_DIR'; exit 1; }"
-
-            # 拉取最新代码
-            echo "拉取最新代码..."
-            $_SSH "cd $APP_DIR && git pull origin master"
-
-            # 安装依赖
-            echo "安装依赖..."
-            $_SSH "cd $APP_DIR && npm install --production=false"
-
-            # 构建前端
-            echo "构建前端..."
-            $_SSH "cd $APP_DIR && npm run build"
-
-            # 编译后端
-            echo "编译后端..."
-            $_SSH "cd $APP_DIR && npm run server:build"
-
-            # 热重载应用
-            echo "热重载应用..."
-            $_SSH "cd $APP_DIR && (pm2 reload $APP_NAME --update-env 2>/dev/null || pm2 start ecosystem.config.js --env production)"
-            $_SSH "pm2 save"
-
-            # 清理临时密钥
-            rm -f ~/.ssh/deploy_key
-
-            echo "========================================"
-            echo "✅ 部署完成！"
-            $_SSH "pm2 status $APP_NAME"
-            echo "========================================"
 
   "crontab: 0 */4 * * *":
     - name: "定时同步代码到 GitHub"
@@ -94,10 +25,9 @@ master:
       env:
         GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
       stages:
-        - name: "同步代码到 GitHub"
+        - name: "推送到 GitHub"
           script:
             - echo "========== 开始同步到 GitHub =========="
-            - echo "正在克隆 CNB 仓库..."
             - git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
             - cd /tmp/Automation_Platform
             - git remote add github "$GITHUB_REPO"
@@ -105,9 +35,6 @@ master:
             - git config user.email "noreply@cnb.cool"
             - echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
             - git config credential.helper "store --file=.git/credentials"
-            - echo "正在推送到 GitHub..."
             - git push github master --force
             - rm -f .git/credentials
-            - echo "========================================"
             - echo "✅ 同步到 GitHub 成功！"
-            - echo "========================================"
