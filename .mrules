@@ -997,7 +997,6 @@ bash deployment/scripts/verify-env.sh
 - [API 文档](docs/API_DOCUMENTATION.md)
 - [项目结构说明](docs/PROJECT_STRUCTURE.md)
 - [项目快速开始](docs/QUICK_START.md)
-- [运行详情页说明](docs/运行详情页.md)
 - [部署指南](deployment/README.md)
 
 ---
@@ -1059,5 +1058,5 @@ bash deployment/scripts/verify-env.sh
 
 ---
 
-**最后更新时间**：2026-03-12
+**最后更新时间**：2026-03-15
 **文档版本**：v1.3.1
