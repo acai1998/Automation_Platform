@@ -1,0 +1,46 @@
+master:
+  push:
+    - imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
+      env:
+        GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
+      stages:
+        - name: sync_to_github
+          script:
+            - echo "========== 开始同步到 GitHub =========="
+            - echo "正在克隆 CNB 仓库..."
+            - git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
+            - cd /tmp/Automation_Platform
+            - git remote add github "$GITHUB_REPO"
+            - git config user.name "CNB Sync Bot"
+            - git config user.email "noreply@cnb.cool"
+            - echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
+            - git config credential.helper "store --file=.git/credentials"
+            - echo "正在推送到 GitHub..."
+            - git push github master --force
+            - rm -f .git/credentials
+            - echo "========================================"
+            - echo "✅ 同步到 GitHub 成功！"
+            - echo "========================================"
+
+  "crontab: 0 */4 * * *":
+    - imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
+      env:
+        GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
+      stages:
+        - name: sync_to_github
+          script:
+            - echo "========== 开始同步到 GitHub =========="
+            - echo "正在克隆 CNB 仓库..."
+            - git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
+            - cd /tmp/Automation_Platform
+            - git remote add github "$GITHUB_REPO"
+            - git config user.name "CNB Sync Bot"
+            - git config user.email "noreply@cnb.cool"
+            - echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
+            - git config credential.helper "store --file=.git/credentials"
+            - echo "正在推送到 GitHub..."
+            - git push github master --force
+            - rm -f .git/credentials
+            - echo "========================================"
+            - echo "✅ 同步到 GitHub 成功！"
+            - echo "========================================"
