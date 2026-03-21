@@ -1,0 +1,61 @@
+master:
+  push:
+    - env:
+        APP_DIR: "/opt/Automation_Platform"
+        APP_NAME: "autotest-platform"
+        # 以下敏感变量请在 CNB 仓库「设置 → CI/CD 变量」中配置，不要写在此文件中：
+        #   SERVER_HOST    : 服务器 IP（如 117.72.182.23）
+        #   SERVER_USER    : SSH 登录用户名（如 root）
+        #   SERVER_PORT    : SSH 端口（默认 22，可不填）
+        #   SERVER_SSH_KEY : SSH 私钥全文内容
+      stages:
+        - name: deploy_to_server
+          script: |
+            set -e
+            echo "========== 开始自动部署到服务器 =========="
+
+            # 配置 SSH 免密登录
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            echo "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            echo "StrictHostKeyChecking no" >> ~/.ssh/config
+
+            # 构造 SSH 基础命令（变量在同一 shell 中有效）
+            _PORT="${SERVER_PORT:-22}"
+            _SSH="ssh -i ~/.ssh/deploy_key -p $_PORT $SERVER_USER@$SERVER_HOST"
+
+            # 验证连接
+            echo "正在连接服务器 $SERVER_HOST:$_PORT ..."
+            $_SSH "echo '✅ SSH 连接成功，主机：\$(hostname)'"
+
+            # 检查项目目录（未初始化时给出明确提示）
+            $_SSH "test -d $APP_DIR || { echo '❌ 项目目录不存在：$APP_DIR，请先在服务器执行初始化脚本'; exit 1; }"
+
+            # 拉取最新代码
+            echo "拉取最新代码..."
+            $_SSH "cd $APP_DIR && git pull origin master"
+
+            # 安装依赖
+            echo "安装依赖..."
+            $_SSH "cd $APP_DIR && npm install --production=false"
+
+            # 构建前端（必须先于后端，vite build 会清空 dist/）
+            echo "构建前端..."
+            $_SSH "cd $APP_DIR && npm run build"
+
+            # 编译后端 TypeScript
+            echo "编译后端..."
+            $_SSH "cd $APP_DIR && npm run server:build"
+
+            # 热重载（已运行则 reload，否则首次 start）
+            echo "热重载应用..."
+            $_SSH "cd $APP_DIR && (pm2 reload $APP_NAME --update-env 2>/dev/null || pm2 start ecosystem.config.js --env production)"
+            $_SSH "pm2 save"
+
+            # 清理临时密钥
+            rm -f ~/.ssh/deploy_key
+
+            echo "========================================"
+            echo "✅ 部署完成！"
+            $_SSH "pm2 status $APP_NAME"
+            echo "========================================"
