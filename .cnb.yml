@@ -1,40 +1,72 @@
 master:
   push:
-    - name: "同步代码到 GitHub"
+    - name: "SSH 部署到服务器"
       imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
       env:
-        GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
+        APP_DIR: "/opt/Automation_Platform"
+        APP_NAME: "autotest-platform"
+        CNB_REPO: "https://cnb.cool/ImAcaiy/Automation_Platform.git"
+        # 以下敏感变量请在 CNB 仓库「设置 → CI/CD 变量」中配置：
+        #   SERVER_HOST    : 服务器 IP
+        #   SERVER_USER    : SSH 登录用户名
+        #   SERVER_PORT    : SSH 端口（默认 22）
+        #   SERVER_SSH_KEY : SSH 私钥（base64 编码）
       stages:
-        - name: "推送到 GitHub"
-          script:
-            - echo "========== 开始同步到 GitHub =========="
-            - git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
-            - cd /tmp/Automation_Platform
-            - git remote add github "$GITHUB_REPO"
-            - git config user.name "CNB Sync Bot"
-            - git config user.email "noreply@cnb.cool"
-            - echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
-            - git config credential.helper "store --file=.git/credentials"
-            - git push github master --force
-            - rm -f .git/credentials
-            - echo "✅ 同步到 GitHub 成功！"
+        - name: "SSH 连接并部署"
+          script: |
+            set -e
+            echo "========== 开始自动部署到服务器 =========="
 
-  "crontab: 0 */4 * * *":
-    - name: "定时同步代码到 GitHub"
-      imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
-      env:
-        GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
-      stages:
-        - name: "推送到 GitHub"
-          script:
-            - echo "========== 开始同步到 GitHub =========="
-            - git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
-            - cd /tmp/Automation_Platform
-            - git remote add github "$GITHUB_REPO"
-            - git config user.name "CNB Sync Bot"
-            - git config user.email "noreply@cnb.cool"
-            - echo "https://oauth2:${GITHUB_TOKEN}@github.com" > .git/credentials
-            - git config credential.helper "store --file=.git/credentials"
-            - git push github master --force
-            - rm -f .git/credentials
-            - echo "✅ 同步到 GitHub 成功！"
+            # 配置 SSH 免密登录
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            echo "$SERVER_SSH_KEY" | base64 -d > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            echo "StrictHostKeyChecking no" >> ~/.ssh/config
+
+            # 构造 SSH 基础命令
+            _PORT="${SERVER_PORT:-22}"
+            _SSH="ssh -i ~/.ssh/deploy_key -p $_PORT $SERVER_USER@$SERVER_HOST"
+
+            # 验证连接
+            echo "正在连接服务器 $SERVER_HOST:$_PORT ..."
+            $_SSH "echo '✅ SSH 连接成功'"
+
+            # 初始化或更新项目（从 CNB 拉取，速度快）
+            $_SSH "
+              set -e
+              if [ -d '$APP_DIR/.git' ]; then
+                echo '⬇️  拉取最新代码（CNB）...'
+                cd $APP_DIR
+                git remote set-url origin $CNB_REPO
+                git pull origin master
+              else
+                echo '📦 首次克隆项目（CNB）...'
+                mkdir -p $APP_DIR
+                git clone $CNB_REPO $APP_DIR
+                cd $APP_DIR
+              fi
+            "
+
+            # 安装依赖
+            echo "安装依赖..."
+            $_SSH "cd $APP_DIR && npm install --production=false"
+
+            # 构建前端
+            echo "构建前端..."
+            $_SSH "cd $APP_DIR && npm run build"
+
+            # 编译后端
+            echo "编译后端..."
+            $_SSH "cd $APP_DIR && npm run server:build"
+
+            # 热重载应用
+            echo "热重载应用..."
+            $_SSH "cd $APP_DIR && (pm2 reload $APP_NAME --update-env 2>/dev/null || pm2 start ecosystem.config.js --env production)"
+            $_SSH "pm2 save"
+
+            # 清理临时密钥
+            rm -f ~/.ssh/deploy_key
+
+            echo "========================================"
+            echo "✅ 部署完成！"
+            echo "========================================"
