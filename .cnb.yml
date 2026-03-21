@@ -41,6 +41,13 @@ master:
             chmod 600 ~/.ssh/deploy_key
             echo "StrictHostKeyChecking no" >> ~/.ssh/config
 
+            # ===== 调试：验证密钥格式 =====
+            echo "[DEBUG] 密钥文件大小: $(wc -c < ~/.ssh/deploy_key) bytes"
+            echo "[DEBUG] 密钥头部: $(head -1 ~/.ssh/deploy_key)"
+            echo "[DEBUG] 密钥尾部: $(tail -1 ~/.ssh/deploy_key)"
+            ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null && echo "[DEBUG] ✅ 密钥格式验证通过" || echo "[DEBUG] ❌ 密钥格式无效"
+            # ===== 调试结束 =====
+
             # 构造 SSH 基础命令
             _PORT="${SERVER_PORT:-22}"
             _SSH="ssh -i ~/.ssh/deploy_key -p $_PORT $SERVER_USER@$SERVER_HOST"
