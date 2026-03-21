@@ -1,10 +1,7 @@
 name: Deploy to Production
 
 on:
-  push:
-    branches:
-      - master
-  workflow_dispatch:  # 同时保留手动触发
+  workflow_dispatch:  # 仅保留手动触发（自动部署已由 CNB 流水线负责）
 
 jobs:
   deploy:
