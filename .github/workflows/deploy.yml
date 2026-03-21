@@ -1,14 +1,12 @@
 name: Deploy to Production
 
 on:
-  push:
-    branches: [ "master" ]
-  workflow_dispatch:  # 支持手动触发
+  workflow_dispatch:  # 仅支持手动触发（自动部署已迁移至 CNB：.cnb.deploy.yml）
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # 避免并发部署冲突
+    # 避免并发部署冲突（排队等待，不取消）
     concurrency:
       group: production-deploy
       cancel-in-progress: false
@@ -21,22 +19,34 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
-          script_stop: true   # 任意命令失败立即终止
+          script_stop: true      # 任意命令失败立即终止
           timeout: 120s
-          command_timeout: 10m
+          command_timeout: 15m
           script: |
             set -e
 
-            echo "📦 切换到项目目录..."
+            echo "========== 开始自动部署 =========="
+
+            echo "📂 切换到项目目录..."
             cd /opt/Automation_Platform
 
             echo "⬇️  拉取最新代码..."
             git pull origin master
 
-            echo "🔨 构建服务端..."
+            echo "📦 安装依赖..."
+            npm install --production=false
+
+            echo "🎨 构建前端..."
+            npm run build
+
+            echo "🔨 编译后端..."
             npm run server:build
 
-            echo "♻️  重载 PM2 进程..."
-            pm2 reload autotest-platform --update-env
+            echo "♻️  热重载应用（零停机）..."
+            pm2 reload autotest-platform --update-env || pm2 start ecosystem.config.js --env production
+            pm2 save
 
+            echo "========================================"
             echo "✅ 部署完成！"
+            pm2 status autotest-platform
+            echo "========================================"
