@@ -11,7 +11,7 @@ module.exports = {
       // 所以编译产物实际路径是 dist/server/server/index.js
       script: 'node',
       args: '-r tsconfig-paths/register dist/server/server/index.js',
-      cwd: '/www/wwwroot/autotest.wiac.xyz',
+      cwd: '/opt/autotest/platform',
 
       // ─── 运行模式 ─────────────────────────────────────────────
       // cluster 模式利用多核 CPU，fork 模式更简单稳定
@@ -28,8 +28,8 @@ module.exports = {
       },
 
       // ─── 日志配置 ─────────────────────────────────────────────
-      output: '/www/wwwroot/autotest.wiac.xyz/logs/pm2-out.log',
-      error: '/www/wwwroot/autotest.wiac.xyz/logs/pm2-err.log',
+      output: '/opt/autotest/platform/logs/pm2-out.log',
+      error: '/opt/autotest/platform/logs/pm2-err.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       // 日志单文件最大 50MB，超出自动轮转
       max_size: '50M',
