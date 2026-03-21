@@ -19,7 +19,7 @@ pipeline {
     }
 
     environment {
-        DEPLOY_DIR = '/opt/autotest/platform'
+        DEPLOY_DIR = '/opt/Automation_Platform'
         APP_NAME   = 'autotest-platform'
         APP_URL    = 'http://127.0.0.1:3000'
     }

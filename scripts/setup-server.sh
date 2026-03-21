@@ -20,7 +20,7 @@ log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()    { echo -e "${BLUE}[STEP]${NC}  $1"; }
 
 # ─── 配置 ──────────────────────────────────────────────────
-APP_DIR="/www/wwwroot/autotest.wiac.xyz"
+APP_DIR="/opt/Automation_Platform"
 APP_NAME="autotest-platform"
 LOG_DIR="${APP_DIR}/logs"
 ENV_FILE="${APP_DIR}/.env"

@@ -28,7 +28,7 @@ jobs:
             set -e
 
             echo "📦 切换到项目目录..."
-            cd /www/wwwroot/autotest.wiac.xyz
+            cd /opt/Automation_Platform
 
             echo "⬇️  拉取最新代码..."
             git pull origin master
