@@ -203,12 +203,52 @@ pipeline {
 
                         echo "✅ 镜像构建和推送成功: ${fullImageName}"
 
-                        // 5. 推送到GitHub（强制推送）
-                        echo "推送代码到GitHub..."
+                        // 5. 推送到GitHub（完整同步脚本，自动处理冲突）
+                        echo "========== 开始同步到 GitHub =========="
                         withCredentials([usernamePassword(credentialsId: 'git-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
                             sh """
-                                git push https://${GIT_USER}:${GIT_PASS}@github.com/ImAcaiy/Automation_Platform.git HEAD:master --force
-                                echo "✅ GitHub推送成功"
+                                echo "正在克隆 CNB 仓库..."
+                                rm -rf /tmp/Automation_Platform
+                                git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
+                                cd /tmp/Automation_Platform
+
+                                echo "正在添加 GitHub 远程仓库..."
+                                git remote add github https://${GIT_USER}:${GIT_PASS}@github.com/ImAcaiy/Automation_Platform.git
+
+                                echo "正在配置 Git 凭证..."
+                                git config user.name "CNB Sync Bot"
+                                git config user.email "noreply@cnb.cool"
+                                echo "https://oauth2:\${GIT_PASS}@github.com" > .git/credentials
+                                git config credential.helper "store --file=.git/credentials"
+
+                                echo "正在先拉取 GitHub 上的最新改动..."
+                                if git fetch github master; then
+                                    echo "✓ GitHub 远程分支获取成功"
+                                    if git rebase github/master 2>&1 || git pull github master --allow-unrelated-histories 2>&1; then
+                                        echo "✓ GitHub 改动已成功合并"
+                                    else
+                                        echo "⚠️ 合并失败，放弃远程改动，使用本地版本"
+                                        git rebase --abort 2>/dev/null || true
+                                        git reset --hard HEAD@{1} 2>/dev/null || true
+                                    fi
+                                else
+                                    echo "⚠️ 获取 GitHub 远程分支失败，跳过合并步骤"
+                                fi
+
+                                echo "正在推送到 GitHub..."
+                                if git push github master --force-with-lease; then
+                                    echo "========================================"
+                                    echo "✅ 同步到 GitHub 成功！"
+                                    echo "========================================"
+                                else
+                                    echo "========================================"
+                                    echo "❌ 推送到 GitHub 失败，尝试强制推送..."
+                                    git push github master --force
+                                    echo "✅ 强制推送成功"
+                                    echo "========================================"
+                                fi
+
+                                rm -f .git/credentials
                             """
                         }
                     } catch (Exception e) {
