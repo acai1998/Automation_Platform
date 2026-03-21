@@ -1,6 +1,7 @@
 master:
   push:
-    - imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
+    - name: "同步 GitHub & 部署服务器"
+      imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
       env:
         GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
         APP_DIR: "/opt/Automation_Platform"
@@ -11,7 +12,7 @@ master:
         #   SERVER_PORT    : SSH 端口（默认 22）
         #   SERVER_SSH_KEY : SSH 私钥全文
       stages:
-        - name: sync_to_github
+        - name: "同步代码到 GitHub"
           script:
             - echo "========== 开始同步到 GitHub =========="
             - echo "正在克隆 CNB 仓库..."
@@ -29,7 +30,7 @@ master:
             - echo "✅ 同步到 GitHub 成功！"
             - echo "========================================"
 
-        - name: deploy_to_server
+        - name: "SSH 部署到服务器"
           script: |
             set -e
             echo "========== 开始自动部署到服务器 =========="
@@ -81,11 +82,12 @@ master:
             echo "========================================"
 
   "crontab: 0 */4 * * *":
-    - imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
+    - name: "定时同步代码到 GitHub"
+      imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
       env:
         GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
       stages:
-        - name: sync_to_github
+        - name: "同步代码到 GitHub"
           script:
             - echo "========== 开始同步到 GitHub =========="
             - echo "正在克隆 CNB 仓库..."
