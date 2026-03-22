@@ -161,105 +161,6 @@ pipeline {
             }
         }
 
-        stage('构建镜像') {
-            when {
-                expression { return currentBuild.result == 'SUCCESS' }
-            }
-            steps {
-                script {
-                    echo "构建Docker镜像并推送到阿里云容器镜像服务..."
-
-                    def dockerRegistry = "crpi-dytkl1o45qyeksph.cn-hangzhou.personal.cr.aliyuncs.com"
-                    def imageRepo = "caijinwei/auto_test"
-                    def imageTag = "${BUILD_NUMBER}"
-                    def fullImageName = "${dockerRegistry}/${imageRepo}:${imageTag}"
-
-                    try {
-                        // 1. 登录阿里云容器镜像服务
-                        withCredentials([usernamePassword(credentialsId: 'aliyun-docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-                            sh """
-                                echo "登录阿里云容器镜像服务..."
-                                docker login --username=${DOCKER_USERNAME} --password=${DOCKER_PASSWORD} ${dockerRegistry}
-                            """
-                        }
-
-                        // 2. 构建Docker镜像
-                        echo "构建Docker镜像..."
-                        sh """
-                            docker build -t ${imageRepo}:${imageTag} .
-                        """
-
-                        // 3. 标签镜像
-                        echo "为阿里云仓库标签镜像..."
-                        sh """
-                            docker tag ${imageRepo}:${imageTag} ${fullImageName}
-                        """
-
-                        // 4. 推送镜像到阿里云
-                        echo "推送镜像到阿里云容器镜像服务..."
-                        sh """
-                            docker push ${fullImageName}
-                        """
-
-                        echo "✅ 镜像构建和推送成功: ${fullImageName}"
-
-                        // 5. 推送到GitHub（完整同步脚本，自动处理冲突）
-                        echo "========== 开始同步到 GitHub =========="
-                        withCredentials([usernamePassword(credentialsId: 'git-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-                            sh """
-                                echo "正在克隆 CNB 仓库..."
-                                rm -rf /tmp/Automation_Platform
-                                git clone https://cnb.cool/ImAcaiy/Automation_Platform.git /tmp/Automation_Platform
-                                cd /tmp/Automation_Platform
-
-                                echo "正在添加 GitHub 远程仓库..."
-                                git remote add github https://${GIT_USER}:${GIT_PASS}@github.com/ImAcaiy/Automation_Platform.git
-
-                                echo "正在配置 Git 凭证..."
-                                git config user.name "CNB Sync Bot"
-                                git config user.email "noreply@cnb.cool"
-                                echo "https://oauth2:\${GIT_PASS}@github.com" > .git/credentials
-                                git config credential.helper "store --file=.git/credentials"
-
-                                echo "正在先拉取 GitHub 上的最新改动..."
-                                if git fetch github master; then
-                                    echo "✓ GitHub 远程分支获取成功"
-                                    if git rebase github/master 2>&1 || git pull github master --allow-unrelated-histories 2>&1; then
-                                        echo "✓ GitHub 改动已成功合并"
-                                    else
-                                        echo "⚠️ 合并失败，放弃远程改动，使用本地版本"
-                                        git rebase --abort 2>/dev/null || true
-                                        git reset --hard HEAD@{1} 2>/dev/null || true
-                                    fi
-                                else
-                                    echo "⚠️ 获取 GitHub 远程分支失败，跳过合并步骤"
-                                fi
-
-                                echo "正在推送到 GitHub..."
-                                if git push github master --force-with-lease; then
-                                    echo "========================================"
-                                    echo "✅ 同步到 GitHub 成功！"
-                                    echo "========================================"
-                                else
-                                    echo "========================================"
-                                    echo "❌ 推送到 GitHub 失败，尝试强制推送..."
-                                    git push github master --force
-                                    echo "✅ 强制推送成功"
-                                    echo "========================================"
-                                fi
-
-                                rm -f .git/credentials
-                            """
-                        }
-                    } catch (Exception e) {
-                        echo "❌ 镜像构建或推送失败: ${e.message}"
-                        currentBuild.result = 'FAILURE'
-                        throw e
-                    }
-                }
-            }
-        }
-
     }
     
     post {
@@ -448,18 +349,17 @@ pipeline {
                 echo "❌ Pipeline执行失败"
 
                 // 回调平台，标记为失败
+                // 注意：当 agent 未能分配时（如 git 未安装），WORKSPACE 可能为空，使用 /tmp 作为降级目录
                 if (params.RUN_ID && params.CALLBACK_URL) {
                     def duration = currentBuild.duration ?: 0
-                    // CALLBACK_URL 由服务端构造，已包含完整路径（含 /api/jenkins/callback）
+                    def workDir = env.WORKSPACE ?: '/tmp'
                     def failureCallbackExit = sh(
                         script: """
                             set +e
                             echo "正在回调失败状态到平台..."
-                            payload_file="${WORKSPACE}/callback_failure_payload_${BUILD_NUMBER}.json"
-                            cat > "${payload_file}" <<'JSON_PAYLOAD'
-{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}, "buildUrl": "${env.BUILD_URL}"}
-JSON_PAYLOAD
-                            response_file="${WORKSPACE}/callback_failure_response_${BUILD_NUMBER}.txt"
+                            payload_file="${workDir}/callback_failure_payload_${BUILD_NUMBER}.json"
+                            echo '{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}}' > "\${payload_file}"
+                            response_file="${workDir}/callback_failure_response_${BUILD_NUMBER}.txt"
                             http_code=\$(curl -sS -o "\${response_file}" -w '%{http_code}' -X POST '${params.CALLBACK_URL}' \\
                                 -H 'Content-Type: application/json' \\
                                 --connect-timeout 10 \\
@@ -469,7 +369,7 @@ JSON_PAYLOAD
                                 --post302 \\
                                 --post303 \\
                                 -k \\
-                                --data-binary @${payload_file})
+                                --data-binary @\${payload_file})
                             curl_exit=\$?
 
                             echo "[failure-callback] curl_exit=\${curl_exit}, http_code=\${http_code}"
