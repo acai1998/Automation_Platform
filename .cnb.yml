@@ -1,5 +1,55 @@
 master:
   push:
+    # ========================================
+    # 流水线 1: 构建并推送 Docker 镜像到 CNB 制品库
+    # ========================================
+    - name: "构建 Docker 镜像 & 推送到制品库"
+      env:
+        IMAGE_NAME: "automation-platform"
+        # CNB 制品库地址：https://cnb.cool/-/registry
+        # 镜像地址格式：cr.cnb.cool/ImAcaiy/automation-platform:latest
+      docker:
+        image: docker:24
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+      stages:
+        - name: "构建镜像"
+          script: |
+            set -e
+            echo "========================================"
+            echo "🔨 开始构建 Docker 镜像"
+            echo "========================================"
+            
+            # 构建镜像
+            docker build -t cr.cnb.cool/imacaiy/$IMAGE_NAME:latest .
+            docker build -t cr.cnb.cool/imacaiy/$IMAGE_NAME:$CNB_COMMIT_SHA .
+            
+            echo "✅ 镜像构建完成"
+
+        - name: "推送镜像到 CNB 制品库"
+          script: |
+            set -e
+            echo "========================================"
+            echo "🚀 推送镜像到 CNB 制品库"
+            echo "========================================"
+            
+            # 登录 CNB 制品库（使用 CNB_TOKEN 自动认证）
+            echo "$CNB_TOKEN" | docker login cr.cnb.cool -u cnb --password-stdin
+            
+            # 推送镜像
+            docker push cr.cnb.cool/imacaiy/$IMAGE_NAME:latest
+            docker push cr.cnb.cool/imacaiy/$IMAGE_NAME:$CNB_COMMIT_SHA
+            
+            echo "========================================"
+            echo "✅ 镜像推送成功！"
+            echo "📦 镜像地址："
+            echo "   - cr.cnb.cool/imacaiy/$IMAGE_NAME:latest"
+            echo "   - cr.cnb.cool/imacaiy/$IMAGE_NAME:$CNB_COMMIT_SHA"
+            echo "========================================"
+
+    # ========================================
+    # 流水线 2: 部署到服务器（保留原有 SSH 部署方式）
+    # ========================================
     - name: "编译构建 & 部署到服务器"
       env:
         APP_DIR: "/opt/Automation_Platform"
