@@ -14,8 +14,8 @@ pipeline {
             steps {
                 script {
                     echo "========== 登录 CNB 制品库并拉取最新镜像 =========="
-                    // Jenkins 凭据中配置类型为 Secret text，ID 为 cnb-token
-                    withCredentials([string(credentialsId: 'cnb-token', variable: 'CNB_TOKEN')]) {
+                    // Jenkins 凭据中配置类型为 Secret text，ID 为 cnb
+                    withCredentials([string(credentialsId: 'cnb', variable: 'CNB_TOKEN')]) {
                         sh """
                             echo "\${CNB_TOKEN}" | docker login docker.cnb.cool -u cnb --password-stdin
                             docker pull ${IMAGE_NAME}
