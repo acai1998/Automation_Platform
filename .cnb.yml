@@ -28,9 +28,8 @@ master:
     # 流水线 2: 同步代码到 GitHub 仓库
     # ========================================
     - name: "同步代码到 GitHub"
-      env:
-        GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
-        GITHUB_TOKEN: "${GITHUB_TOKEN}"  # 需要在 CNB 设置中配置
+      # 从环境配置仓库导入 GITHUB_TOKEN
+      imports: https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml
       stages:
         - name: "配置 Git"
           script: |
@@ -38,14 +37,14 @@ master:
             echo "========================================"
             echo "🔄 开始同步到 GitHub"
             echo "========================================"
-            
+
             # 配置 Git 用户信息
             git config --global user.name "CNB Bot"
-            git config --global user.email "cnb-bot@example.com"
-            
-            # 添加 GitHub remote
-            git remote add github ${GITHUB_REPO} || git remote set-url github ${GITHUB_REPO}
-            
+            git config --global user.email "imacaiy@outlook.com"
+
+            # 添加 GitHub remote（URL 会在推送时更新）
+            git remote add github https://github.com/acai1998/Automation_Platform.git || git remote set-url github https://github.com/acai1998/Automation_Platform.git
+
             echo "✅ Git 配置完成"
 
         - name: "推送到 GitHub"
@@ -53,19 +52,22 @@ master:
             set -e
 
             # 检查 GITHUB_TOKEN 是否设置
-            if [ -z "${GITHUB_TOKEN}" ]; then
+            if [ -z "$GITHUB_TOKEN" ]; then
               echo "❌ 错误: GITHUB_TOKEN 环境变量未设置"
-              echo "请在 CNB 项目设置中配置 GITHUB_TOKEN"
+              echo "请检查以下配置："
+              echo "1. envs.yml 中是否已定义 GITHUB_TOKEN"
+              echo "2. Token 是否有 repo 权限"
+              echo "3. envs.yml 路径是否正确：https://cnb.cool/ImAcaiy/envs/-/blob/main/envs.yml"
               exit 1
             fi
 
             # 使用 token 推送到 GitHub
-            GIT_TOKEN=${GITHUB_TOKEN}
-            GITHUB_URL="https://x-access-token:${GIT_TOKEN}@github.com/acai1998/Automation_Platform.git"
+            GITHUB_URL="https://x-access-token:$GITHUB_TOKEN@github.com/acai1998/Automation_Platform.git"
 
             echo "📤 推送代码到 GitHub..."
             echo "提交: ${CNB_COMMIT_SHA}"
             echo "分支: ${CNB_BRANCH}"
+            echo "Token 长度: ${#GITHUB_TOKEN}"
 
             # 更新 GitHub remote URL 以包含 token
             git remote set-url github ${GITHUB_URL}
