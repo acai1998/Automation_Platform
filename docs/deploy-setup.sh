@@ -42,10 +42,37 @@ install_dependencies() {
         apt update
         apt install -y curl wget git nginx certbot python3-certbot-nginx ufw
     elif command -v yum &> /dev/null; then
-        # CentOS/RHEL 7
-        yum install -y curl wget git nginx certbot python3-certbot-nginx firewalld
+        # CentOS/RHEL 7/8/9（yum 在 RHEL 8+ 是 dnf 的别名）
+        yum install -y curl wget git certbot python3-certbot-nginx firewalld || true
+        # nginx 单独处理，避免因已安装或源过滤导致脚本中止
+        if ! command -v nginx &> /dev/null; then
+            cat > /etc/yum.repos.d/nginx.repo << 'NGINXREPO'
+[nginx-stable]
+name=nginx stable repo
+baseurl=http://nginx.org/packages/centos/$releasever/$basearch/
+gpgcheck=1
+enabled=1
+gpgkey=https://nginx.org/keys/nginx_signing.key
+module_hotfixes=true
+NGINXREPO
+            yum install -y nginx
+        else
+            print_info "nginx 已安装: $(nginx -v 2>&1)"
+        fi
     elif command -v dnf &> /dev/null; then
         # CentOS/RHEL 8+
+        # 添加 nginx 官方仓库（解决 RHEL 9 默认源中 nginx 被过滤的问题）
+        if ! rpm -q nginx &> /dev/null; then
+            cat > /etc/yum.repos.d/nginx.repo << 'NGINXREPO'
+[nginx-stable]
+name=nginx stable repo
+baseurl=http://nginx.org/packages/centos/$releasever/$basearch/
+gpgcheck=1
+enabled=1
+gpgkey=https://nginx.org/keys/nginx_signing.key
+module_hotfixes=true
+NGINXREPO
+        fi
         dnf install -y curl wget git nginx certbot python3-certbot-nginx firewalld
     else
         print_error "无法识别包管理器，请手动安装依赖: curl, wget, git, nginx, certbot"
