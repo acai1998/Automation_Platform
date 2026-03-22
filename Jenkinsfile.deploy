@@ -1,73 +1,298 @@
 pipeline {
-    agent { label 'test-runner' }
-
+    agent any
+    
     environment {
-        // CNB Docker 制品库地址，镜像路径规则: docker.cnb.cool/<org>/<repo>
-        IMAGE_NAME    = "docker.cnb.cool/imacaiy/automation_platform:latest"
-        CONTAINER_NAME = "autotest-platform"
-        ENV_FILE      = "/opt/Automation_Platform/.env.docker"
-        APP_PORT      = "3000"
+        IMAGE_NAME = "cr.cnb.cool/imacaiy/automation-platform"
+        PROJECT_DIR = "/opt/automation-platform"
+        CNB_DOCKER_TOKEN = credentials('CNB_DOCKER_TOKEN')
     }
-
+    
+    parameters {
+        choice(
+            name: 'DEPLOY_ENV',
+            choices: ['production'],
+            description: '部署环境'
+        )
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: 'latest',
+            description: '镜像标签（留空使用 latest，或输入 CNB_COMMIT_SHORT）'
+        )
+        booleanParam(
+            name: 'FORCE_PULL',
+            defaultValue: true,
+            description: '强制拉取最新镜像'
+        )
+        booleanParam(
+            name: 'BACKUP',
+            defaultValue: true,
+            description: '部署前备份当前版本'
+        )
+    }
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '5'))
+        timeout(time: 15, unit: 'MINUTES')
+        disableConcurrentBuilds()
+    }
+    
     stages {
-        stage('拉取镜像') {
+        stage('准备') {
             steps {
                 script {
-                    echo "========== 登录 CNB 制品库并拉取最新镜像 =========="
-                    // Jenkins 凭据中配置类型为 Secret text，ID 为 cnb
-                    withCredentials([string(credentialsId: 'cnb', variable: 'CNB_TOKEN')]) {
-                        sh """
-                            echo "\${CNB_TOKEN}" | docker login docker.cnb.cool -u cnb --password-stdin
-                            docker pull ${IMAGE_NAME}
-                            echo "✅ 镜像拉取成功: ${IMAGE_NAME}"
-                        """
+                    echo "========================================"
+                    echo "部署信息"
+                    echo "========================================"
+                    echo "环境: ${params.DEPLOY_ENV}"
+                    echo "镜像: ${IMAGE_NAME}:${params.IMAGE_TAG}"
+                    echo "强制拉取: ${params.FORCE_PULL}"
+                    echo "备份: ${params.BACKUP}"
+                    echo "========================================"
+                    echo ""
+                    
+                    // 如果 IMAGE_TAG 为空，使用 latest
+                    if (!params.IMAGE_TAG?.trim()) {
+                        env.IMAGE_TAG = 'latest'
+                    } else {
+                        env.IMAGE_TAG = params.IMAGE_TAG
                     }
                 }
             }
         }
-
-        stage('部署容器') {
+        
+        stage('检查环境') {
             steps {
                 script {
-                    echo "========== 停止旧容器，启动新容器 =========="
+                    echo "检查服务器环境..."
+                    
+                    // 检查 Docker
+                    sh '''
+                        docker --version
+                        docker-compose --version
+                    '''
+                    
+                    // 检查项目目录
                     sh """
-                        echo "停止并删除旧容器..."
-                        docker stop ${CONTAINER_NAME} || true
-                        docker rm   ${CONTAINER_NAME} || true
-
-                        echo "启动新容器..."
-                        docker run -d \
-                            --name ${CONTAINER_NAME} \
-                            -p ${APP_PORT}:${APP_PORT} \
-                            --env-file ${ENV_FILE} \
-                            --restart unless-stopped \
-                            ${IMAGE_NAME}
-
-                        echo "========================================"
-                        echo "✅ 部署完成！"
-                        docker ps | grep ${CONTAINER_NAME}
-                        echo "========================================"
+                        if [ ! -d "${PROJECT_DIR}" ]; then
+                            echo "错误: 项目目录不存在: ${PROJECT_DIR}"
+                            echo "请先运行初始安装脚本"
+                            exit 1
+                        fi
+                    """
+                    
+                    echo "环境检查完成"
+                }
+            }
+        }
+        
+        stage('登录 CNB 制品库') {
+            steps {
+                script {
+                    echo "登录 CNB Docker 制品库..."
+                    sh """
+                        echo '${CNB_DOCKER_TOKEN}' | docker login cr.cnb.cool -u cnb --password-stdin
+                    """
+                    echo "登录成功"
+                }
+            }
+        }
+        
+        stage('拉取镜像') {
+            steps {
+                script {
+                    def pullCmd = params.FORCE_PULL ? 
+                        "docker pull ${IMAGE_NAME}:${env.IMAGE_TAG}" : 
+                        "docker pull ${IMAGE_NAME}:${env.IMAGE_TAG} || echo '镜像已存在，跳过拉取'"
+                    
+                    echo "拉取镜像: ${IMAGE_NAME}:${env.IMAGE_TAG}"
+                    sh "${pullCmd}"
+                    
+                    // 显示镜像信息
+                    sh """
+                        docker images ${IMAGE_NAME}:${env.IMAGE_TAG}
                     """
                 }
             }
         }
-
-        stage('清理旧镜像') {
+        
+        stage('备份当前版本') {
+            when {
+                expression { params.BACKUP == true }
+            }
             steps {
                 script {
-                    echo "清理 7 天前的旧镜像..."
-                    sh "docker image prune -af --filter 'until=168h' || true"
+                    echo "备份当前版本..."
+                    sh """
+                        BACKUP_TAG="backup-\$(date +%Y%m%d-%H%M%S)"
+                        docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:\$BACKUP_TAG || true
+                        echo "备份标签: \$BACKUP_TAG"
+                    """
+                }
+            }
+        }
+        
+        stage('停止旧容器') {
+            steps {
+                script {
+                    echo "停止旧容器..."
+                    sh """
+                        cd ${PROJECT_DIR}
+                        docker-compose down || true
+                    """
+                }
+            }
+        }
+        
+        stage('更新配置') {
+            steps {
+                script {
+                    echo "更新 docker-compose.yml 镜像标签..."
+                    
+                    def targetImage = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG : 'latest'
+                    
+                    sh """
+                        cd ${PROJECT_DIR}
+                        
+                        # 备份原配置
+                        cp docker-compose.yml docker-compose.yml.backup
+                        
+                        # 更新镜像标签
+                        sed -i "s|${IMAGE_NAME}:latest|${IMAGE_NAME}:${targetImage}|g" docker-compose.yml
+                        
+                        # 验证配置
+                        docker-compose config > /dev/null
+                        
+                        echo "配置更新完成"
+                    """
+                }
+            }
+        }
+        
+        stage('启动新容器') {
+            steps {
+                script {
+                    echo "启动新容器..."
+                    sh """
+                        cd ${PROJECT_DIR}
+                        docker-compose up -d
+                        
+                        # 显示容器状态
+                        docker-compose ps
+                    """
+                }
+            }
+        }
+        
+        stage('健康检查') {
+            steps {
+                script {
+                    echo "执行健康检查..."
+                    
+                    retry(10) {
+                        sleep 5
+                        sh """
+                            curl -f http://localhost:3000/api/health || exit 1
+                        """
+                    }
+                    
+                    echo "健康检查通过"
+                }
+            }
+        }
+        
+        stage('验证部署') {
+            steps {
+                script {
+                    echo "验证部署..."
+                    sh """
+                        # 检查容器状态
+                        docker ps --filter "name=automation-platform"
+                        
+                        # 检查应用日志（最近 20 行）
+                        docker logs --tail=20 automation-platform
+                    """
+                }
+            }
+        }
+        
+        stage('清理') {
+            steps {
+                script {
+                    echo "清理未使用的资源..."
+                    sh """
+                        # 清理未使用的镜像
+                        docker image prune -f
+                        
+                        # 清理未使用的容器
+                        docker container prune -f
+                        
+                        echo "清理完成"
+                    """
                 }
             }
         }
     }
-
+    
     post {
         success {
-            echo "✅ 部署成功！应用已运行在端口 ${APP_PORT}"
+            script {
+                echo ""
+                echo "========================================"
+                echo "✅ 部署成功！"
+                echo "========================================"
+                echo ""
+                echo "访问地址: https://your-domain.com"
+                echo "容器状态: docker ps | grep automation-platform"
+                echo "查看日志: cd ${PROJECT_DIR} && docker-compose logs -f"
+                echo ""
+                echo "========================================"
+            }
         }
+        
         failure {
-            echo "❌ 部署失败，请检查上方日志"
+            script {
+                echo ""
+                echo "========================================"
+                echo "❌ 部署失败"
+                echo "========================================"
+                echo ""
+                
+                // 显示容器日志
+                sh """
+                    cd ${PROJECT_DIR}
+                    docker-compose logs --tail=100
+                """
+                
+                // 尝试回滚
+                echo ""
+                echo "尝试回滚到之前的版本..."
+                sh """
+                    cd ${PROJECT_DIR}
+                    
+                    # 恢复备份的配置
+                    if [ -f docker-compose.yml.backup ]; then
+                        mv docker-compose.yml.backup docker-compose.yml
+                        docker-compose down
+                        docker-compose up -d
+                        echo "回滚完成"
+                    else
+                        echo "未找到备份配置，跳过回滚"
+                    fi
+                """
+            }
+        }
+        
+        always {
+            script {
+                // 清理临时文件
+                sh """
+                    cd ${PROJECT_DIR}
+                    rm -f docker-compose.yml.backup
+                """
+                
+                // 登出 Docker
+                sh 'docker logout cr.cnb.cool || true'
+            }
         }
     }
 }
