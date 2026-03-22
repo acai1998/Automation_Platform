@@ -171,58 +171,13 @@ configure_firewall() {
     print_info "防火墙配置完成"
 }
 
-# 配置 Nginx（HTTP only，不含 SSL）
+# 启动 Nginx
 configure_nginx() {
-    print_info "配置 Nginx（HTTP 模式）..."
-
-    # 启动 Nginx
+    print_info "启动 Nginx 服务..."
     systemctl start nginx
     systemctl enable nginx
-
-    # 写入 HTTP-only 反代配置（不含 SSL，部署后可正常访问 http://域名）
-    mkdir -p /opt/automation-platform/nginx/conf.d
-    cat > /opt/automation-platform/nginx/conf.d/automation-platform-http.conf << 'NGINXHTTP'
-server {
-    listen 80;
-    listen [::]:80;
-    server_name _;
-
-    # Let's Encrypt ACME 验证（后续申请 SSL 用）
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-}
-NGINXHTTP
-
-    mkdir -p /var/www/html
-
-    # 部署 HTTP 配置
-    if [ -d /etc/nginx/conf.d ]; then
-        ln -sf /opt/automation-platform/nginx/conf.d/automation-platform-http.conf /etc/nginx/conf.d/automation-platform.conf
-        rm -f /etc/nginx/conf.d/default.conf
-    elif [ -d /etc/nginx/sites-available ]; then
-        ln -sf /opt/automation-platform/nginx/conf.d/automation-platform-http.conf /etc/nginx/sites-available/automation-platform.conf
-        ln -sf /etc/nginx/sites-available/automation-platform.conf /etc/nginx/sites-enabled/
-        rm -f /etc/nginx/sites-enabled/default
-    fi
-
-    nginx -t && systemctl reload nginx
-    print_info "Nginx HTTP 配置完成"
+    print_info "Nginx 已启动，请手动配置反代规则"
+    print_warn "Nginx 配置目录: /etc/nginx/conf.d/"
 }
 
 # 提示用户输入信息
@@ -274,7 +229,7 @@ create_docker_compose() {
     cat > /opt/automation-platform/docker-compose.yml << 'EOF'
 services:
   automation-platform:
-    image: cr.cnb.cool/imacaiy/automation-platform:latest
+    image: docker.cnb.cool/imacaiy/automation_platform:latest
     container_name: automation-platform
     restart: unless-stopped
     ports:
@@ -480,7 +435,7 @@ deploy_application() {
     
     # 拉取镜像
     print_info "拉取 Docker 镜像..."
-    docker pull cr.cnb.cool/imacaiy/automation-platform:latest
+    docker pull docker.cnb.cool/imacaiy/automation_platform:latest
     
     # 启动容器
     print_info "启动容器..."
@@ -497,8 +452,7 @@ show_completion_info() {
     print_info "  部署完成！"
     print_info "=================================="
     echo ""
-    print_info "当前访问地址（HTTP）:"
-    echo "   http://$DOMAIN"
+    print_info "应用访问地址:"
     echo "   http://$(curl -s ifconfig.me 2>/dev/null || echo '<服务器IP>'):3000"
     echo ""
     print_info "常用命令:"
@@ -506,8 +460,7 @@ show_completion_info() {
     echo "   查看应用日志: cd /opt/automation-platform && docker-compose logs -f"
     echo "   重启应用:     cd /opt/automation-platform && docker-compose restart"
     echo ""
-    print_info "后续申请 SSL（可选）:"
-    echo "   certbot --nginx -d $DOMAIN -d www.$DOMAIN"
+    print_warn "Nginx 反代尚未配置，请手动配置 /etc/nginx/conf.d/ 下的规则"
     echo ""
 }
 
@@ -526,7 +479,6 @@ main() {
     prompt_user_info
     generate_env_file
     create_docker_compose
-    create_nginx_config
     login_cnb_registry
 
     # 直接部署应用（跳过 SSL，先让服务跑起来）

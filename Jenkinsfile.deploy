@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     environment {
-        IMAGE_NAME = "cr.cnb.cool/imacaiy/automation-platform"
+        IMAGE_NAME = "docker.cnb.cool/imacaiy/automation_platform"
         PROJECT_DIR = "/opt/automation-platform"
         ENV_FILE    = "/opt/automation-platform/.env"
     }
