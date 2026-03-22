@@ -23,3 +23,54 @@ master:
             echo "镜像地址: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT_SHORT}"
             echo "最新镜像: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"
             echo "========================================"
+
+    # ========================================
+    # 流水线 2: 同步代码到 GitHub 仓库
+    # ========================================
+    - name: "同步代码到 GitHub"
+      env:
+        GITHUB_REPO: "https://github.com/acai1998/Automation_Platform.git"
+        GITHUB_TOKEN: "${GITHUB_TOKEN}"  # 需要在 CNB 设置中配置
+      stages:
+        - name: "配置 Git"
+          script: |
+            set -e
+            echo "========================================"
+            echo "🔄 开始同步到 GitHub"
+            echo "========================================"
+            
+            # 配置 Git 用户信息
+            git config --global user.name "CNB Bot"
+            git config --global user.email "cnb-bot@example.com"
+            
+            # 添加 GitHub remote
+            git remote add github ${GITHUB_REPO} || git remote set-url github ${GITHUB_REPO}
+            
+            echo "✅ Git 配置完成"
+
+        - name: "推送到 GitHub"
+          script: |
+            set -e
+            
+            # 检查 GITHUB_TOKEN 是否设置
+            if [ -z "${GITHUB_TOKEN}" ]; then
+              echo "❌ 错误: GITHUB_TOKEN 环境变量未设置"
+              echo "请在 CNB 项目设置中配置 GITHUB_TOKEN"
+              exit 1
+            fi
+            
+            # 使用 token 推送到 GitHub
+            GIT_TOKEN=${GITHUB_TOKEN}
+            GITHUB_URL="https://x-access-token:${GIT_TOKEN}@github.com/acai1998/Automation_Platform.git"
+            
+            echo "📤 推送代码到 GitHub..."
+            echo "提交: ${CNB_COMMIT_SHA}"
+            echo "分支: ${CNB_BRANCH}"
+            
+            # 强制推送以保持一致（如果 CNB 和 GitHub 有历史分歧）
+            git push github ${CNB_BRANCH} --force
+            
+            echo "========================================"
+            echo "✅ 同步成功！"
+            echo "🔗 GitHub 仓库: https://github.com/acai1998/Automation_Platform"
+            echo "========================================"
