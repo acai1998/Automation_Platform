@@ -4,7 +4,7 @@ pipeline {
     environment {
         IMAGE_NAME = "cr.cnb.cool/imacaiy/automation-platform"
         PROJECT_DIR = "/opt/automation-platform"
-        CNB_DOCKER_TOKEN = credentials('CNB_DOCKER_TOKEN')
+        ENV_FILE    = "/opt/automation-platform/.env"
     }
     
     parameters {
@@ -90,7 +90,18 @@ pipeline {
                 script {
                     echo "登录 CNB Docker 制品库..."
                     sh """
-                        echo '${CNB_DOCKER_TOKEN}' | docker login cr.cnb.cool -u cnb --password-stdin
+                        # 从服务器 .env 文件读取 CNB_DOCKER_TOKEN
+                        if [ ! -f "${ENV_FILE}" ]; then
+                            echo "[ERROR] 未找到环境变量文件: ${ENV_FILE}"
+                            echo "[ERROR] 请先运行 deploy-setup.sh 完成初始化"
+                            exit 1
+                        fi
+                        CNB_TOKEN=\$(grep '^CNB_DOCKER_TOKEN=' "${ENV_FILE}" | cut -d'=' -f2-)
+                        if [ -z "\$CNB_TOKEN" ]; then
+                            echo "[ERROR] ${ENV_FILE} 中未找到 CNB_DOCKER_TOKEN"
+                            exit 1
+                        fi
+                        echo "\$CNB_TOKEN" | docker login cr.cnb.cool -u cnb --password-stdin
                     """
                     echo "登录成功"
                 }
@@ -236,12 +247,19 @@ pipeline {
     post {
         success {
             script {
+                // 从 .env 读取域名展示访问地址
+                def domain = sh(
+                    script: "grep '^DOMAIN=' ${ENV_FILE} | cut -d'=' -f2- || echo ''",
+                    returnStdout: true
+                ).trim()
+                def accessUrl = domain ? "http://${domain}" : "http://服务器IP:3000"
+
                 echo ""
                 echo "========================================"
                 echo "✅ 部署成功！"
                 echo "========================================"
                 echo ""
-                echo "访问地址: https://your-domain.com"
+                echo "访问地址: ${accessUrl}"
                 echo "容器状态: docker ps | grep automation-platform"
                 echo "查看日志: cd ${PROJECT_DIR} && docker-compose logs -f"
                 echo ""
