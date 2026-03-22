@@ -35,13 +35,23 @@ check_root() {
 # 安装依赖
 install_dependencies() {
     print_info "安装系统依赖..."
-    
-    # 更新包列表
-    apt update
-    
-    # 安装必要工具
-    apt install -y curl wget git nginx certbot python3-certbot-nginx ufw
-    
+
+    # 检测包管理器
+    if command -v apt &> /dev/null; then
+        # Debian/Ubuntu
+        apt update
+        apt install -y curl wget git nginx certbot python3-certbot-nginx ufw
+    elif command -v yum &> /dev/null; then
+        # CentOS/RHEL 7
+        yum install -y curl wget git nginx certbot python3-certbot-nginx firewalld
+    elif command -v dnf &> /dev/null; then
+        # CentOS/RHEL 8+
+        dnf install -y curl wget git nginx certbot python3-certbot-nginx firewalld
+    else
+        print_error "无法识别包管理器，请手动安装依赖: curl, wget, git, nginx, certbot"
+        exit 1
+    fi
+
     print_info "系统依赖安装完成"
 }
 
@@ -107,18 +117,30 @@ create_project_structure() {
 # 配置防火墙
 configure_firewall() {
     print_info "配置防火墙..."
-    
-    # 开放必要端口
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    ufw allow 3000/tcp
-    ufw allow 8080/tcp
-    
-    # 启用防火墙（如果未启用）
-    if ! ufw status | grep -q "Status: active"; then
-        print_warn "请手动运行: sudo ufw enable"
+
+    if command -v ufw &> /dev/null; then
+        # 使用 ufw (Debian/Ubuntu)
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        ufw allow 3000/tcp
+        ufw allow 8080/tcp
+
+        if ! ufw status | grep -q "Status: active"; then
+            print_warn "请手动运行: sudo ufw enable"
+        fi
+    elif command -v firewall-cmd &> /dev/null; then
+        # 使用 firewalld (CentOS/RHEL)
+        firewall-cmd --permanent --add-port=80/tcp
+        firewall-cmd --permanent --add-port=443/tcp
+        firewall-cmd --permanent --add-port=3000/tcp
+        firewall-cmd --permanent --add-port=8080/tcp
+        firewall-cmd --reload
+
+        print_info "Firewalld 配置完成"
+    else
+        print_warn "未找到防火墙配置工具，请手动开放端口: 80, 443, 3000, 8080"
     fi
-    
+
     print_info "防火墙配置完成"
 }
 
@@ -346,22 +368,29 @@ EOF
 # 安装 SSL 证书
 install_ssl_certificate() {
     print_info "准备安装 SSL 证书..."
-    
+
     source /opt/automation-platform/.env
-    
+
     # 替换 Nginx 配置中的域名占位符
     sed -i "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" /opt/automation-platform/nginx/conf.d/automation-platform.conf
-    
-    # 创建软链接
-    ln -sf /opt/automation-platform/nginx/conf.d/automation-platform.conf /etc/nginx/sites-available/automation-platform.conf
-    ln -sf /etc/nginx/sites-available/automation-platform.conf /etc/nginx/sites-enabled/
-    
-    # 删除默认配置
-    rm -f /etc/nginx/sites-enabled/default
-    
+
+    # 根据系统配置 Nginx
+    if [ -d /etc/nginx/sites-available ]; then
+        # Debian/Ubuntu 风格
+        ln -sf /opt/automation-platform/nginx/conf.d/automation-platform.conf /etc/nginx/sites-available/automation-platform.conf
+        ln -sf /etc/nginx/sites-available/automation-platform.conf /etc/nginx/sites-enabled/
+        rm -f /etc/nginx/sites-enabled/default
+    elif [ -d /etc/nginx/conf.d ]; then
+        # CentOS/RHEL 风格
+        ln -sf /opt/automation-platform/nginx/conf.d/automation-platform.conf /etc/nginx/conf.d/automation-platform.conf
+        rm -f /etc/nginx/conf.d/default.conf
+    else
+        print_warn "无法确定 Nginx 配置目录，请手动配置"
+    fi
+
     # 测试 Nginx 配置
     nginx -t
-    
+
     print_info "现在运行以下命令安装 SSL 证书:"
     echo ""
     echo "sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN"
