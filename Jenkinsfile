@@ -85,8 +85,8 @@ pipeline {
                             python3 -m venv ${PYTHON_ENV}
                         fi
 
-                        # 激活虚拟环境并安装依赖
-                        source ${PYTHON_ENV}/bin/activate
+                        # 激活虚拟环境并安装依赖（用 . 代替 source，兼容 /bin/sh）
+                        . ${PYTHON_ENV}/bin/activate
                         pip install -q pytest pytest-json-report
 
                         # 列出可用的用例
@@ -109,7 +109,7 @@ pipeline {
                     def testDir = params.REPO_URL ? 'test-cases' : '.'
                     def scriptPaths = params.SCRIPT_PATHS
                     def marker = params.MARKER
-                    def testCommand = "source ${PYTHON_ENV}/bin/activate && "
+                    def testCommand = ". ${PYTHON_ENV}/bin/activate && "
                     
                     if (scriptPaths) {
                         def paths = scriptPaths.split(',')
