@@ -101,7 +101,7 @@ pipeline {
                             echo "[ERROR] ${ENV_FILE} 中未找到 CNB_DOCKER_TOKEN"
                             exit 1
                         fi
-                        echo "\$CNB_TOKEN" | docker login cr.cnb.cool -u cnb --password-stdin
+                        echo "\$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin
                     """
                     echo "登录成功"
                 }
@@ -249,7 +249,7 @@ pipeline {
             script {
                 // 从 .env 读取域名展示访问地址
                 def domain = sh(
-                    script: "grep '^DOMAIN=' ${ENV_FILE} | cut -d'=' -f2- || echo ''",
+                    script: "grep '^DOMAIN=' /opt/automation-platform/.env | cut -d'=' -f2- || echo ''",
                     returnStdout: true
                 ).trim()
                 def accessUrl = domain ? "http://${domain}" : "http://服务器IP:3000"
@@ -261,7 +261,7 @@ pipeline {
                 echo ""
                 echo "访问地址: ${accessUrl}"
                 echo "容器状态: docker ps | grep automation-platform"
-                echo "查看日志: cd ${PROJECT_DIR} && docker-compose logs -f"
+                echo "查看日志: cd /opt/automation-platform && docker-compose logs -f"
                 echo ""
                 echo "========================================"
             }
@@ -277,15 +277,15 @@ pipeline {
                 
                 // 显示容器日志
                 sh """
-                    cd ${PROJECT_DIR}
-                    docker-compose logs --tail=100
+                    cd /opt/automation-platform
+                    docker-compose logs --tail=100 || true
                 """
                 
                 // 尝试回滚
                 echo ""
                 echo "尝试回滚到之前的版本..."
                 sh """
-                    cd ${PROJECT_DIR}
+                    cd /opt/automation-platform
                     
                     # 恢复备份的配置
                     if [ -f docker-compose.yml.backup ]; then
@@ -304,12 +304,12 @@ pipeline {
             script {
                 // 清理临时文件
                 sh """
-                    cd ${PROJECT_DIR}
-                    rm -f docker-compose.yml.backup
+                    cd /opt/automation-platform
+                    rm -f docker-compose.yml.backup || true
                 """
                 
                 // 登出 Docker
-                sh 'docker logout cr.cnb.cool || true'
+                sh 'docker logout docker.cnb.cool || true'
             }
         }
     }
