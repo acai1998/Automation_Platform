@@ -4,11 +4,11 @@
 
 ### 快速参考
 - **[快速配置指南](./JENKINS_QUICK_SETUP.md)** - 5分钟内完成 Jenkins 集成
-- **[故障排查指南](./JENKINS_CALLBACK_TROUBLESHOOTING.md)** - 完整的诊断和配置指南
+- **[故障排查指南](./JENKINS_TROUBLESHOOTING.md)** - 完整的诊断和配置指南
 
 ### 配置与集成
 - [完整 API 文档](../API_DOCUMENTATION.md)
-- [部署指南](../QUICK_START.md)
+- [部署指南](../DOCKER_DEPLOYMENT_GUIDE.md)
 
 ---
 
@@ -97,8 +97,7 @@ curl -X POST http://localhost:3000/api/jenkins/callback/test \
    - 设置监控告警
 
 详细步骤请参考:
-- [快速修复指南](./QUICK_FIX_GUIDE.md)
-- [故障排查指南](./JENKINS_CALLBACK_TROUBLESHOOTING.md)
+- [故障排查指南](./JENKINS_TROUBLESHOOTING.md)
 
 ---
 
@@ -270,7 +269,7 @@ post {
 
 ### Q: 如何配置 Jenkins 回调?
 
-**A:** 参考 [故障排查指南](./JENKINS_CALLBACK_TROUBLESHOOTING.md) 中的"配置 Jenkins Job 回调"章节。
+**A:** 参考 [故障排查指南](./JENKINS_TROUBLESHOOTING.md) 中的"配置 Jenkins Job 回调"章节。
 
 ### Q: 如何批量修复多个卡住的执行?
 

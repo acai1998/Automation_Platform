@@ -41,22 +41,22 @@ load_env() {
 # 登录 CNB 制品库
 login_registry() {
     print_info "登录 CNB Docker 制品库..."
-    echo "$CNB_DOCKER_TOKEN" | docker login cr.cnb.cool -u cnb --password-stdin
+    echo "$CNB_DOCKER_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin
 }
 
 # 拉取镜像
 pull_image() {
     IMAGE_TAG=${1:-latest}
-    print_info "拉取镜像: cr.cnb.cool/imacaiy/automation-platform:$IMAGE_TAG"
-    docker pull cr.cnb.cool/imacaiy/automation-platform:$IMAGE_TAG
+    print_info "拉取镜像: docker.cnb.cool/imacaiy/automation_platform:$IMAGE_TAG"
+    docker pull docker.cnb.cool/imacaiy/automation_platform:$IMAGE_TAG
 }
 
 # 备份当前版本
 backup_current() {
     print_info "备份当前版本..."
     BACKUP_TAG="backup-$(date +%Y%m%d-%H%M%S)"
-    docker tag cr.cnb.cool/imacaiy/automation-platform:latest \
-        cr.cnb.cool/imacaiy/automation-platform:$BACKUP_TAG || true
+    docker tag docker.cnb.cool/imacaiy/automation_platform:latest \
+        docker.cnb.cool/imacaiy/automation_platform:$BACKUP_TAG || true
     print_info "备份标签: $BACKUP_TAG"
 }
 
@@ -71,7 +71,7 @@ stop_container() {
 update_image_tag() {
     if [ -n "$1" ] && [ "$1" != "latest" ]; then
         print_info "更新镜像标签为: $1"
-        sed -i "s|cr.cnb.cool/imacaiy/automation-platform:latest|cr.cnb.cool/imacaiy/automation-platform:$1|g" \
+        sed -i "s|docker.cnb.cool/imacaiy/automation_platform:latest|docker.cnb.cool/imacaiy/automation_platform:$1|g" \
             "$PROJECT_DIR/docker-compose.yml"
     fi
 }

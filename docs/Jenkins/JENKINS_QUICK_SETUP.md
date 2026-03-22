@@ -235,4 +235,4 @@ curl -X POST http://localhost:3000/api/jenkins/callback/diagnose \
 
 - [完整 API 文档](./API_DOCUMENTATION.md)
 - [故障排查指南](./JENKINS_TROUBLESHOOTING.md)
-- [部署指南](../QUICK_START.md)
+- [部署指南](../DOCKER_DEPLOYMENT_GUIDE.md)

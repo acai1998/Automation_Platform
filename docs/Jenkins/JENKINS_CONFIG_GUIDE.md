@@ -410,7 +410,7 @@ grep "\[AUTH\]\|\[CALLBACK\]\|\[IP-DETECTION\]" app.log
 
 | 文档 | 说明 |
 |------|------|
-| [JENKINS_AUTH_QUICK_START.md](./JENKINS_AUTH_QUICK_START.md) | 5 分钟快速开始 |
+| [JENKINS_QUICK_SETUP.md](./JENKINS_QUICK_SETUP.md) | 5 分钟快速开始 |
 | [JENKINS_TROUBLESHOOTING.md](./JENKINS_TROUBLESHOOTING.md) | 详细故障排查 |
 | [JENKINS_INTEGRATION.md](./JENKINS_INTEGRATION.md) | 集成指南 |
 | [.env.example](../.env.example) | 配置文件模板 |

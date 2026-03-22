@@ -3,135 +3,143 @@
 ## 📋 部署架构概述
 
 ```
-开发者推送到 CNB → CNB 构建 Docker 镜像 → 推送到 CNB 制品库 
-→ Jenkins 从 CNB 拉取镜像 → Docker Compose 启动容器 → Nginx 反向代理 → 域名访问
+开发者推送代码到 CNB
+        ↓
+.cnb.yml 触发：构建 Docker 镜像 → 推送到 CNB 制品库（docker.cnb.cool）
+        ↓
+Jenkins 检测到触发 → 运行 Jenkinsfile.deploy
+        ↓
+从服务器 /opt/automation-platform/.env 读取 CNB_DOCKER_TOKEN
+        ↓
+docker login docker.cnb.cool → 拉取新镜像
+        ↓
+docker-compose down → docker-compose up -d（使用新镜像）
+        ↓
+健康检查通过 → 部署完成 ✅
 ```
 
 ## 🔧 前置要求
 
 - ✅ 服务器已安装 Docker
-- ✅ 服务器已安装 Jenkins
-- ✅ 拥有一个域名（已完成 DNS 解析到服务器 IP）
-- ✅ CNB 仓库配置完成
-- ✅ 拥有服务器 sudo 权限
+- ✅ 服务器已安装 Docker Compose
+- ✅ 服务器已安装 Nginx
+- ✅ 域名 DNS 已解析到服务器 IP
+- ✅ CNB 仓库已配置（ImAcaiy/Automation_Platform）
+- ✅ 拥有服务器 root/sudo 权限
 
-## 📝 第一步：服务器环境准备
+---
 
-### 1.1 安装 Docker Compose
+## 📝 第一步：一次性初始化（首次部署）
+
+### 1.1 运行自动化安装脚本
 
 ```bash
-# 检查 Docker 版本
-docker --version
-
-# 安装 Docker Compose（如果未安装）
-sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
-docker-compose --version
+# 上传 deploy-setup.sh 到服务器后执行
+sudo bash deploy-setup.sh
 ```
 
-### 1.2 安装 Nginx
+脚本会自动完成：
+- 安装系统依赖（Docker、Docker Compose、Nginx、Certbot、Firewalld）
+- 创建项目目录 `/opt/automation-platform/`
+- 提示输入配置信息并生成 `.env` 文件
+- 生成 `docker-compose.yml`
+- 登录 CNB 制品库并启动容器
+
+### 1.2 脚本交互输入说明
+
+| 提示项 | 说明 | 示例 |
+|--------|------|------|
+| 域名 | 你的访问域名 | `autotest.wiac.xyz` |
+| CNB Docker Token | 从 https://cnb.cool → 个人设置 → Access Tokens 获取 | `28h3170c4d...` |
+| 数据库主机 | 外部数据库 IP | `1*7.*2.1*2.23` |
+| 数据库密码 | MySQL 密码 | - |
+| 数据库名称 | 默认 `automation_platform` | `autotest` |
+| Jenkins URL | Jenkins 访问地址 | `http://jenkins.***.***:8080` |
+| Jenkins 用户名 | Jenkins 登录用户 | `root` |
+| Jenkins API Token | Jenkins → 用户 → 配置 → API Token | - |
+
+### 1.3 手动配置 Nginx 反代
+
+脚本启动完成后，手动创建 Nginx 反代配置：
 
 ```bash
-# 安装 Nginx
-sudo apt update
-sudo apt install nginx -y
+cat > /etc/nginx/conf.d/autotest.conf << 'EOF'
+server {
+    listen 80;
+    server_name autotest.wiac.xyz;
 
-# 启动 Nginx
-sudo systemctl start nginx
-sudo systemctl enable nginx
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 50M;
+    }
+}
+EOF
 
-# 验证安装
-nginx -v
+nginx -t && systemctl reload nginx
 ```
 
-### 1.3 配置防火墙
+---
+
+## 🐳 第二步：手动部署（跳过脚本）
+
+如果不使用脚本，手动执行以下步骤：
+
+### 2.1 创建目录和配置文件
 
 ```bash
-# 开放必要端口
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw allow 3000/tcp  # 应用端口（可选，Nginx 代理后可以不开放）
-sudo ufw allow 8080/tcp  # Jenkins 端口
-sudo ufw reload
-```
-
-### 1.4 创建项目目录
-
-```bash
-# 创建项目目录
-sudo mkdir -p /opt/automation-platform
+mkdir -p /opt/automation-platform/{logs,data}
 cd /opt/automation-platform
-
-# 创建子目录
-sudo mkdir -p {logs,nginx/conf.d,data}
-
-# 设置权限
-sudo chown -R $USER:$USER /opt/automation-platform
 ```
 
-## 🔐 第二步：配置 CNB Docker 登录
-
-### 2.1 获取 CNB Token
-
-1. 访问 CNB 控制台：https://cnb.cool
-2. 进入你的项目：ImAcaiy/Automation_Platform
-3. 点击"设置" → "访问令牌"
-4. 创建新的访问令牌（选择"读取仓库"权限）
-5. 复制生成的 Token
-
-### 2.2 登录 CNB Docker 制品库
+### 2.2 创建 .env 文件
 
 ```bash
-# 登录 CNB Docker 制品库
-docker login cr.cnb.cool -u cnb -p YOUR_TOKEN_HERE
+cat > /opt/automation-platform/.env << 'EOF'
+# 数据库配置
+DB_HOST=117.72.182.23
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=autotest
 
-# 验证登录
-docker info | grep cr.cnb.cool
+# Jenkins 配置
+JENKINS_URL=http://jenkins.****.***:8080
+JENKINS_USER=root
+JENKINS_TOKEN=your_jenkins_token
+JENKINS_JOB_NAME=AutoTest
+JENKINS_JOB_API=SeleniumBaseCi-AutoTest
+
+# 应用配置
+NODE_ENV=production
+PORT=3000
+
+# CNB 配置
+CNB_DOCKER_TOKEN=your_cnb_token
+DOMAIN=autotest.wiac.xyz
+EOF
 ```
 
-### 2.3 测试拉取镜像
-
-```bash
-# 拉取最新镜像
-docker pull cr.cnb.cool/imacaiy/automation-platform:latest
-
-# 查看镜像列表
-docker images | grep automation-platform
-```
-
-## 🐳 第三步：创建 Docker Compose 配置
-
-### 3.1 创建 docker-compose.yml
-
-在 `/opt/automation-platform/docker-compose.yml` 创建文件：
+### 2.3 创建 docker-compose.yml
 
 ```yaml
-version: '3.8'
-
 services:
-  # 自动化测试平台
   automation-platform:
-    image: cr.cnb.cool/imacaiy/automation-platform:latest
+    image: docker.cnb.cool/imacaiy/automation_platform:latest
     container_name: automation-platform
     restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      # 数据库配置（根据实际情况修改）
-      - DB_HOST=host.docker.internal
-      - DB_PORT=3306
-      - DB_USER=your_db_user
-      - DB_PASSWORD=your_db_password
-      - DB_NAME=automation_platform
-      # Jenkins 配置
-      - JENKINS_URL=https://your-jenkins-domain.com
-      - JENKINS_USER=your_jenkins_user
-      - JENKINS_TOKEN=your_jenkins_token
+    env_file:
+      - .env
     volumes:
-      # 日志挂载
       - ./logs:/app/logs
-      # 数据持久化（如果有需要）
       - ./data:/app/data
     networks:
       - app-network
@@ -147,586 +155,159 @@ networks:
     driver: bridge
 ```
 
-### 3.2 创建环境变量文件
-
-创建 `.env` 文件（注意：不要提交到版本控制）：
+### 2.4 登录 CNB 并启动容器
 
 ```bash
-# 数据库配置
-DB_HOST=host.docker.internal
-DB_PORT=3306
-DB_USER=your_db_user
-DB_PASSWORD=your_db_password
-DB_NAME=automation_platform
+# 登录 CNB 制品库
+source /opt/automation-platform/.env
+echo "$CNB_DOCKER_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin
 
-# Jenkins 配置
-JENKINS_URL=https://your-jenkins-domain.com
-JENKINS_USER=your_jenkins_user
-JENKINS_TOKEN=your_jenkins_token
-JENKINS_JOB_API=SeleniumBaseCi-AutoTest
-
-# 应用配置
-NODE_ENV=production
-PORT=3000
-
-# CNB 配置
-CNB_DOCKER_REGISTRY=cr.cnb.cool
-CNB_REPO_SLUG_LOWERCASE=imacaiy/automation-platform
-```
-
-### 3.3 启动容器
-
-```bash
-# 拉取并启动容器
+# 拉取镜像并启动
 cd /opt/automation-platform
 docker-compose pull
 docker-compose up -d
 
-# 查看容器状态
+# 验证状态
 docker-compose ps
-docker-compose logs -f automation-platform
-```
-
-## 🌐 第四步：配置 Nginx 反向代理
-
-### 4.1 创建 Nginx 配置文件
-
-在 `/opt/automation-platform/nginx/conf.d/automation-platform.conf` 创建：
-
-```nginx
-# HTTP 重定向到 HTTPS
-server {
-    listen 80;
-    listen [::]:80;
-    server_name your-domain.com www.your-domain.com;
-
-    # Let's Encrypt 验证路径
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    # 其他请求重定向到 HTTPS
-    location / {
-        return 301 https://$server_name$request_uri;
-    }
-}
-
-# HTTPS 配置
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name your-domain.com www.your-domain.com;
-
-    # SSL 证书配置
-    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-
-    # 日志配置
-    access_log /opt/automation-platform/logs/nginx-access.log;
-    error_log /opt/automation-platform/logs/nginx-error.log;
-
-    # Gzip 压缩
-    gzip on;
-    gzip_vary on;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml text/javascript 
-               application/x-javascript application/xml+rss 
-               application/javascript application/json;
-
-    # 客户端上传大小限制
-    client_max_body_size 50M;
-
-    # 反向代理到应用容器
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-        
-        # 超时配置
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-
-    # 静态资源缓存
-    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # 健康检查端点（可选）
-    location /health {
-        proxy_pass http://127.0.0.1:3000/api/health;
-        access_log off;
-    }
-}
-```
-
-### 4.2 软链接配置文件到 Nginx
-
-```bash
-# 创建软链接
-sudo ln -sf /opt/automation-platform/nginx/conf.d/automation-platform.conf /etc/nginx/sites-available/automation-platform.conf
-sudo ln -sf /etc/nginx/sites-available/automation-platform.conf /etc/nginx/sites-enabled/
-
-# 删除默认配置（可选）
-sudo rm -f /etc/nginx/sites-enabled/default
-
-# 测试 Nginx 配置
-sudo nginx -t
-```
-
-### 4.3 安装 SSL 证书（Let's Encrypt）
-
-```bash
-# 安装 Certbot
-sudo apt install certbot python3-certbot-nginx -y
-
-# 获取 SSL 证书
-sudo certbot --nginx -d your-domain.com -d www.your-domain.com
-
-# 配置自动续期
-sudo certbot renew --dry-run
-sudo systemctl enable certbot.timer
-```
-
-### 4.4 重启 Nginx
-
-```bash
-# 重新加载 Nginx 配置
-sudo systemctl reload nginx
-
-# 验证 Nginx 状态
-sudo systemctl status nginx
-```
-
-## 🔧 第五步：配置 Jenkins Pipeline
-
-### 5.1 安装 Jenkins 插件
-
-在 Jenkins 中安装以下插件：
-- Docker Pipeline
-- Docker
-- Git
-
-### 5.2 创建 Jenkins 凭据
-
-1. 进入 Jenkins → Manage Jenkins → Credentials
-2. 添加以下凭据：
-   - `CNB_DOCKER_TOKEN`: CNB Docker 登录 Token
-   - `CNB_TOKEN`: CNB API Token（用于触发构建）
-   - `SSH_SERVER_KEY`: 服务器 SSH 密钥（可选）
-
-### 5.3 创建部署 Pipeline
-
-创建新的 Pipeline Job，配置如下：
-
-**Jenkinsfile 示例**：
-
-```groovy
-pipeline {
-    agent any
-    
-    environment {
-        IMAGE_NAME = "cr.cnb.cool/imacaiy/automation-platform"
-        CNB_TOKEN = credentials('CNB_TOKEN')
-        CNB_DOCKER_TOKEN = credentials('CNB_DOCKER_TOKEN')
-    }
-    
-    parameters {
-        choice(
-            name: 'DEPLOY_ENV',
-            choices: ['production', 'staging'],
-            description: '部署环境'
-        )
-        string(
-            name: 'IMAGE_TAG',
-            defaultValue: 'latest',
-            description: '镜像标签'
-        )
-        booleanParam(
-            name: 'FORCE_PULL',
-            defaultValue: true,
-            description: '强制拉取最新镜像'
-        )
-    }
-    
-    stages {
-        stage('准备') {
-            steps {
-                echo "部署环境: ${params.DEPLOY_ENV}"
-                echo "镜像标签: ${params.IMAGE_TAG}"
-                echo "强制拉取: ${params.FORCE_PULL}"
-            }
-        }
-        
-        stage('登录 CNB 制品库') {
-            steps {
-                script {
-                    sh """
-                        echo ${CNB_DOCKER_TOKEN} | docker login cr.cnb.cool -u cnb --password-stdin
-                    """
-                }
-            }
-        }
-        
-        stage('拉取镜像') {
-            steps {
-                script {
-                    def pullCommand = params.FORCE_PULL ? 'docker pull ${IMAGE_NAME}:${params.IMAGE_TAG}' : 'docker pull ${IMAGE_NAME}:${params.IMAGE_TAG} || true'
-                    sh """
-                        ${pullCommand}
-                    """
-                }
-            }
-        }
-        
-        stage('停止旧容器') {
-            steps {
-                sh """
-                    cd /opt/automation-platform
-                    docker-compose down
-                """
-            }
-        }
-        
-        stage('启动新容器') {
-            steps {
-                sh """
-                    cd /opt/automation-platform
-                    
-                    # 更新镜像标签
-                    if [ "${params.IMAGE_TAG}" != "latest" ]; then
-                        sed -i "s|cr.cnb.cool/imacaiy/automation-platform:latest|cr.cnb.cool/imacaiy/automation-platform:${params.IMAGE_TAG}|g" docker-compose.yml
-                    fi
-                    
-                    # 启动容器
-                    docker-compose up -d
-                    
-                    # 等待服务启动
-                    sleep 10
-                """
-            }
-        }
-        
-        stage('健康检查') {
-            steps {
-                retry(5) {
-                    sh """
-                        curl -f http://localhost:3000/api/health || exit 1
-                    """
-                }
-            }
-        }
-        
-        stage('清理') {
-            steps {
-                sh """
-                    # 清理未使用的镜像
-                    docker image prune -f
-                """
-            }
-        }
-    }
-    
-    post {
-        success {
-            echo "✅ 部署成功！"
-            echo "访问地址: https://your-domain.com"
-        }
-        
-        failure {
-            echo "❌ 部署失败，请检查日志"
-            sh """
-                cd /opt/automation-platform
-                docker-compose logs --tail=100 automation-platform
-            """
-        }
-    }
-}
-```
-
-## 🔄 第六步：自动化部署流程
-
-### 6.1 CNB 自动触发 Jenkins（可选）
-
-如果需要在 CNB 构建完成后自动触发 Jenkins 部署，可以在 `.cnb.yml` 中添加 webhook：
-
-```yaml
-master:
-  push:
-    - name: "构建 Docker 镜像 & 推送到 CNB 制品库"
-      services:
-        - docker
-      stages:
-        - name: "构建镜像"
-          script: |
-            docker build \
-              -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT_SHORT} \
-              -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest \
-              .
-
-        - name: "推送镜像到 CNB 制品库"
-          script: |
-            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT_SHORT}
-            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest
-
-        - name: "触发 Jenkins 部署"
-          script: |
-            curl -X POST "https://your-jenkins-domain.com/job/deploy-automation-platform/buildWithParameters" \
-              --user "JENKINS_USER:JENKINS_TOKEN" \
-              --data-urlencode "IMAGE_TAG=${CNB_COMMIT_SHORT}" \
-              --data-urlencode "DEPLOY_ENV=production" \
-              --data-urlencode "FORCE_PULL=true"
-```
-
-### 6.2 手动部署
-
-**方式一：通过 Jenkins UI**
-1. 访问 Jenkins: https://your-jenkins-domain.com
-2. 进入部署 Job
-3. 点击"Build with Parameters"
-4. 选择镜像标签和环境
-5. 点击"Build"
-
-**方式二：通过 Jenkins API**
-```bash
-curl -X POST "https://your-jenkins-domain.com/job/deploy-automation-platform/buildWithParameters" \
-  --user "username:api_token" \
-  --data-urlencode "IMAGE_TAG=latest" \
-  --data-urlencode "DEPLOY_ENV=production"
-```
-
-**方式三：直接在服务器执行**
-```bash
-cd /opt/automation-platform
-
-# 拉取最新镜像
-docker pull cr.cnb.cool/imacaiy/automation-platform:latest
-
-# 重启容器
-docker-compose down
-docker-compose up -d
-
-# 查看日志
-docker-compose logs -f
-```
-
-## 📊 第七步：监控和维护
-
-### 7.1 查看应用日志
-
-```bash
-# Docker 容器日志
-docker logs -f automation-platform
-
-# 通过 docker-compose
-cd /opt/automation-platform
-docker-compose logs -f automation-platform
-
-# Nginx 日志
-sudo tail -f /opt/automation-platform/logs/nginx-access.log
-sudo tail -f /opt/automation-platform/logs/nginx-error.log
-```
-
-### 7.2 监控容器状态
-
-```bash
-# 查看容器状态
-docker ps -a
-
-# 查看容器资源使用
-docker stats
-
-# 查看容器详细信息
-docker inspect automation-platform
-```
-
-### 7.3 数据备份
-
-```bash
-# 备份应用数据
-tar -czf automation-platform-backup-$(date +%Y%m%d).tar.gz \
-  /opt/automation-platform/data \
-  /opt/automation-platform/logs
-
-# 备份数据库（根据实际数据库配置）
-mysqldump -u username -p automation_platform > backup-$(date +%Y%m%d).sql
-```
-
-### 7.4 更新部署
-
-```bash
-cd /opt/automation-platform
-
-# 1. 拉取新镜像
-docker pull cr.cnb.cool/imacaiy/automation-platform:latest
-
-# 2. 备份当前版本（可选）
-docker tag cr.cnb.cool/imacaiy/automation-platform:latest \
-  cr.cnb.cool/imacaiy/automation-platform:backup-$(date +%Y%m%d)
-
-# 3. 重启容器
-docker-compose down
-docker-compose up -d
-
-# 4. 健康检查
 curl http://localhost:3000/api/health
 ```
 
-## 🛠️ 第八步：故障排查
+---
 
-### 8.1 容器无法启动
+## 🔄 第三步：配置 Jenkins 自动部署
 
-```bash
-# 查看容器日志
-docker logs automation-platform
+### 3.1 在 Jenkins 中创建 Pipeline Job
 
-# 检查容器配置
-docker-compose config
+1. 进入 Jenkins → 新建任务 → Pipeline
+2. 任务名称：`automation-platform-deploy`
+3. Pipeline → Definition 选择 **Pipeline script from SCM**
+4. SCM 选择 Git，填入仓库地址
+5. Script Path 填写：`Jenkinsfile.deploy`
 
-# 手动启动测试
-docker run --rm -p 3000:3000 cr.cnb.cool/imacaiy/automation-platform:latest
+### 3.2 Jenkinsfile.deploy 说明
+
+项目根目录已有 `Jenkinsfile.deploy`，核心逻辑：
+
+- **登录 CNB**：从服务器 `/opt/automation-platform/.env` 读取 `CNB_DOCKER_TOKEN`，无需在 Jenkins 中配置凭据
+- **拉取镜像**：`docker pull docker.cnb.cool/imacaiy/automation_platform:latest`
+- **滚动更新**：停止旧容器 → 启动新容器 → 健康检查
+- **自动回滚**：部署失败时恢复 `docker-compose.yml.backup` 并重启
+
+### 3.3 CNB 推送后自动触发 Jenkins（可选）
+
+在 `.cnb.yml` 中追加触发步骤：
+
+```yaml
+- name: "触发 Jenkins 部署"
+  script: |
+    curl -X POST "http://jenkins.wiac.xyz:8080/job/automation-platform-deploy/build" \
+      --user "root:your_jenkins_token"
 ```
 
-### 8.2 Nginx 502 错误
+---
+
+## 🌐 第四步：SSL 证书（可选）
+
+服务已通过 HTTP 正常运行后，可按需配置 HTTPS：
 
 ```bash
-# 检查应用容器是否运行
-docker ps | grep automation-platform
+# 申请证书（需确保域名已解析且 80 端口可访问）
+certbot --nginx -d autotest.wiac.xyz
 
-# 检查端口是否正常监听
-docker exec automation-platform netstat -tlnp
-
-# 检查 Nginx 配置
-sudo nginx -t
-
-# 查看 Nginx 错误日志
-sudo tail -f /opt/automation-platform/logs/nginx-error.log
+# 配置自动续期
+systemctl enable certbot.timer
 ```
 
-### 8.3 域名无法访问
+certbot 会自动修改 nginx 配置并添加 HTTPS。
+
+---
+
+## 📊 日常运维
+
+### 查看状态
 
 ```bash
-# 检查 DNS 解析
-nslookup your-domain.com
+cd /opt/automation-platform
 
-# 检查防火墙
-sudo ufw status
+# 容器状态
+docker-compose ps
 
-# 检查 Nginx 是否运行
-sudo systemctl status nginx
+# 实时日志
+docker-compose logs -f
 
-# 检查 SSL 证书
-sudo certbot certificates
+# 健康检查
+curl http://localhost:3000/api/health
 ```
 
-### 8.4 镜像拉取失败
+### 手动更新镜像
 
 ```bash
-# 重新登录 CNB 制品库
-docker logout cr.cnb.cool
-docker login cr.cnb.cool -u cnb -p YOUR_TOKEN
+cd /opt/automation-platform
 
-# 检查网络连接
-ping cr.cnb.cool
+source .env
+echo "$CNB_DOCKER_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin
 
-# 清理 Docker 缓存
-docker system prune -a
+docker-compose pull
+docker-compose up -d
+
+docker-compose ps
 ```
 
-## 📚 附录
+### 回滚到上一版本
 
-### A. 完整的项目目录结构
+```bash
+cd /opt/automation-platform
+
+# 查看备份镜像
+docker images docker.cnb.cool/imacaiy/automation_platform
+
+# 修改 docker-compose.yml 中的镜像 tag 为备份版本，然后重启
+docker-compose up -d
+```
+
+---
+
+## 🛠️ 故障排查
+
+| 症状 | 排查命令 | 常见原因 |
+|------|---------|---------|
+| 容器无法启动 | `docker-compose logs` | .env 配置错误、数据库无法连接 |
+| 镜像拉取失败 `invalid character '<'` | `echo "$CNB_DOCKER_TOKEN" \| docker login docker.cnb.cool -u cnb --password-stdin` | CNB Token 失效或未登录 |
+| Nginx 502 | `docker-compose ps` | 容器未运行或 3000 端口未监听 |
+| 域名无法访问 | `nginx -t && systemctl status nginx` | Nginx 配置错误或未 reload |
+| 健康检查失败 | `curl http://localhost:3000/api/health` | 应用启动中或数据库连接失败 |
+
+---
+
+## 📁 服务器目录结构
 
 ```
 /opt/automation-platform/
-├── docker-compose.yml
-├── .env
-├── logs/
-│   ├── nginx-access.log
-│   ├── nginx-error.log
-│   └── app.log
-├── nginx/
-│   └── conf.d/
-│       └── automation-platform.conf
-└── data/
-    └── (应用数据)
+├── docker-compose.yml        # 容器编排配置
+├── .env                      # 环境变量（含 CNB Token、数据库、Jenkins 配置）
+├── logs/                     # 应用日志（容器挂载）
+└── data/                     # 应用数据（容器挂载）
+
+/etc/nginx/conf.d/
+└── autotest.conf             # Nginx 反代配置（手动创建）
 ```
 
-### B. 常用命令速查
+---
 
-```bash
-# 容器管理
-docker-compose up -d          # 启动容器
-docker-compose down          # 停止容器
-docker-compose restart       # 重启容器
-docker-compose logs -f       # 查看日志
-docker-compose ps            # 查看状态
-
-# 镜像管理
-docker pull IMAGE:TAG        # 拉取镜像
-docker images                # 查看镜像
-docker rmi IMAGE:TAG         # 删除镜像
-
-# Nginx 管理
-sudo nginx -t                # 测试配置
-sudo systemctl reload nginx  # 重新加载配置
-sudo systemctl restart nginx # 重启 Nginx
-
-# 日志查看
-docker logs -f CONTAINER     # 容器日志
-sudo tail -f LOG_FILE        # 文件日志
-```
-
-### C. 环境变量说明
+## ⚙️ 环境变量说明
 
 | 变量名 | 说明 | 示例 |
 |--------|------|------|
-| `NODE_ENV` | 运行环境 | `production` |
-| `DB_HOST` | 数据库主机 | `localhost` |
+| `DB_HOST` | 数据库主机 IP | `***.72.***.23` |
 | `DB_PORT` | 数据库端口 | `3306` |
 | `DB_USER` | 数据库用户名 | `root` |
-| `DB_PASSWORD` | 数据库密码 | `password` |
-| `DB_NAME` | 数据库名称 | `automation_platform` |
-| `JENKINS_URL` | Jenkins 地址 | `https://jenkins.example.com` |
-| `JENKINS_USER` | Jenkins 用户名 | `admin` |
-| `JENKINS_TOKEN` | Jenkins Token | `xxx` |
-
-## ✅ 部署检查清单
-
-完成部署后，请检查以下项目：
-
-- [ ] Docker 容器正常运行
-- [ ] 应用可以通过 http://localhost:3000 访问
-- [ ] Nginx 配置已生效
-- [ ] SSL 证书已安装且有效
-- [ ] 域名可以正常访问（HTTPS）
-- [ ] Jenkins 可以触发部署
-- [ ] 日志正常记录
-- [ ] 数据库连接正常
-- [ ] 健康检查端点正常
-- [ ] 备份策略已配置
-
-## 🆘 获取帮助
-
-如遇到问题，请：
-1. 查看相关日志文件
-2. 检查 Docker 容器状态
-3. 验证 Nginx 配置
-4. 测试网络连接
-5. 参考 CNB 文档：https://cnb.cool/docs
+| `DB_PASSWORD` | 数据库密码 | - |
+| `DB_NAME` | 数据库名称 | `***` |
+| `JENKINS_URL` | Jenkins 访问地址 | `http://jenkins.wiac.xyz:8080` |
+| `JENKINS_USER` | Jenkins 用户名 | `root` |
+| `JENKINS_TOKEN` | Jenkins API Token | - |
+| `JENKINS_JOB_API` | 自动化测试 Job 名 | `SeleniumBaseCi-AutoTest` |
+| `CNB_DOCKER_TOKEN` | CNB Docker 登录 Token | - |
+| `DOMAIN` | 服务域名 | `autotest.wiac.xyz` |
+| `NODE_ENV` | 运行环境 | `production` |
+| `PORT` | 应用监听端口 | `3000` |
