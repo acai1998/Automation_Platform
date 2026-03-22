@@ -1,0 +1,73 @@
+pipeline {
+    agent { label 'test-runner' }
+
+    environment {
+        // CNB Docker 制品库地址，镜像路径规则: docker.cnb.cool/<org>/<repo>
+        IMAGE_NAME    = "docker.cnb.cool/imacaiy/automation_platform:latest"
+        CONTAINER_NAME = "autotest-platform"
+        ENV_FILE      = "/opt/Automation_Platform/.env.docker"
+        APP_PORT      = "3000"
+    }
+
+    stages {
+        stage('拉取镜像') {
+            steps {
+                script {
+                    echo "========== 登录 CNB 制品库并拉取最新镜像 =========="
+                    // Jenkins 凭据中配置类型为 Secret text，ID 为 cnb-token
+                    withCredentials([string(credentialsId: 'cnb-token', variable: 'CNB_TOKEN')]) {
+                        sh """
+                            echo "\${CNB_TOKEN}" | docker login docker.cnb.cool -u cnb --password-stdin
+                            docker pull ${IMAGE_NAME}
+                            echo "✅ 镜像拉取成功: ${IMAGE_NAME}"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('部署容器') {
+            steps {
+                script {
+                    echo "========== 停止旧容器，启动新容器 =========="
+                    sh """
+                        echo "停止并删除旧容器..."
+                        docker stop ${CONTAINER_NAME} || true
+                        docker rm   ${CONTAINER_NAME} || true
+
+                        echo "启动新容器..."
+                        docker run -d \
+                            --name ${CONTAINER_NAME} \
+                            -p ${APP_PORT}:${APP_PORT} \
+                            --env-file ${ENV_FILE} \
+                            --restart unless-stopped \
+                            ${IMAGE_NAME}
+
+                        echo "========================================"
+                        echo "✅ 部署完成！"
+                        docker ps | grep ${CONTAINER_NAME}
+                        echo "========================================"
+                    """
+                }
+            }
+        }
+
+        stage('清理旧镜像') {
+            steps {
+                script {
+                    echo "清理 7 天前的旧镜像..."
+                    sh "docker image prune -af --filter 'until=168h' || true"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ 部署成功！应用已运行在端口 ${APP_PORT}"
+        }
+        failure {
+            echo "❌ 部署失败，请检查上方日志"
+        }
+    }
+}
