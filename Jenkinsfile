@@ -13,7 +13,8 @@ pipeline {
     
     environment {
         PLATFORM_API_URL = 'https://autotest.wiac.xyz'
-        PYTHON_ENV = "${WORKSPACE}/venv"
+        // 使用固定路径存放 venv，避免 Jenkins 并发分配 @2/@3 workspace 时重复创建
+        PYTHON_ENV = "/home/jenkins/shared-venv/SeleniumBaseCi"
     }
 
     options {
