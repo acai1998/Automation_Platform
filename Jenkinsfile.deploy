@@ -35,6 +35,11 @@ pipeline {
         timeout(time: 15, unit: 'MINUTES')
         disableConcurrentBuilds()
     }
+
+    triggers {
+        // 每 5 分钟轮询一次 CNB 仓库，有新 push 就自动触发部署
+        pollSCM('H/5 * * * *')
+    }
     
     stages {
         stage('准备') {
