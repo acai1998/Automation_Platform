@@ -1,68 +1,10 @@
-# Git
-.git
-.gitignore
-.gitattributes
-
-# Node
 node_modules
-npm-debug.log
-yarn-error.log
-pnpm-debug.log
-
-# Build outputs
 dist
-build
-.next
-
-# Development
-.env.local
-.env.*.local
-.vscode
-.idea
-*.swp
-*.swo
-*~
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Testing
-coverage
-.nyc_output
-.jest
-.mocha
-
-# Logs
-logs
-*.log
-
-# Package managers
-package-lock.json.bak
-
-# Docker
-Dockerfile.dev
-docker-compose.dev.yml
-
-# CI/CD
+.git
 .github
-.gitlab-ci.yml
-.circleci
-.travis.yml
-
-# Documentation
-*.md
+.cnb.yml
+.env*
+*.log
+test_case
 docs
-docs/
-
-# Archives
-archive
-tmp
-.tmp
-
-# IDE configs
-*.code-workspace
-.editorconfig
-
-# OS files
-.DS_Store
-Thumbs.db
+scripts
