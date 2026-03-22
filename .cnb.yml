@@ -28,6 +28,8 @@ master:
     # 流水线 2: 部署到服务器（SSH 部署方式）
     # ========================================
     - name: "编译构建 & 部署到服务器"
+      docker:
+        image: node:20-alpine  # 使用 Node.js 镜像以支持 npm 命令
       env:
         APP_DIR: "/opt/Automation_Platform"
         APP_NAME: "autotest-platform"
