@@ -231,8 +231,7 @@ pipeline {
                         try {
                             def reportFile = "${testDir}/test-report.json"
                             if (fileExists(reportFile)) {
-                                def reportText = readFile(file: reportFile)
-                                def report = new groovy.json.JsonSlurperClassic().parseText(reportText)
+                                def report = readJSON(file: reportFile)
                                 def summary = report?.summary
                                 if (summary) {
                                     passedCount = (summary.passed ?: 0) as int
@@ -254,8 +253,7 @@ pipeline {
                         try {
                             def reportFile = "${testDir}/test-report.json"
                             if (fileExists(reportFile)) {
-                                def reportText = readFile(file: reportFile)
-                                def report = new groovy.json.JsonSlurperClassic().parseText(reportText)
+                                def report = readJSON(file: reportFile)
                                 def tests = report?.tests
                                 if (tests) {
                                     def resultsList = []
