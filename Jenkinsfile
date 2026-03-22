@@ -8,11 +8,18 @@ pipeline {
         string(name: 'CALLBACK_URL', description: '回调URL', defaultValue: '')
         string(name: 'MARKER', description: 'Pytest marker标记', defaultValue: '')
         string(name: 'REPO_URL', description: '测试用例仓库URL', defaultValue: '')
+        string(name: 'REPO_BRANCH', description: '测试用例仓库分支', defaultValue: 'main')
     }
     
     environment {
         PLATFORM_API_URL = 'https://autotest.wiac.xyz'
         PYTHON_ENV = "${WORKSPACE}/venv"
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 60, unit: 'MINUTES')
+        disableConcurrentBuilds()
     }
     
     stages {
@@ -26,7 +33,7 @@ pipeline {
                     echo "回调地址: ${params.CALLBACK_URL}"
                     echo "==============================="
                     
-                    // 标记执行开始（可选）
+                    // 标记执行开始
                     if (params.RUN_ID) {
                         sh """
                             curl -X POST "${PLATFORM_API_URL}/api/executions/${params.RUN_ID}/start" \\
@@ -46,16 +53,17 @@ pipeline {
                     echo "正在克隆/更新测试用例仓库..."
                     
                     if (params.REPO_URL) {
+                        def branch = params.REPO_BRANCH ?: 'main'
                         if (fileExists('test-cases')) {
                             dir('test-cases') {
-                                sh 'git pull origin main'
+                                sh "git pull origin ${branch}"
                             }
                         } else {
-                            sh "git clone ${params.REPO_URL} test-cases"
+                            // 使用 --single-branch 加快克隆速度
+                            sh "git clone --single-branch --branch '${branch}' '${params.REPO_URL}' test-cases"
                         }
                     } else {
-                        echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出"
-                        echo "使用默认的测试用例目录"
+                        echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出，使用当前 workspace 目录"
                     }
                 }
             }
@@ -79,40 +87,33 @@ pipeline {
                             echo "❌ 测试目录 '${testDir}' 不存在，请确认 REPO_URL 或代码检出是否成功"
                             exit 1
                         fi
-                        cd ${testDir}
 
                         # 检查 python3 是否可用
                         if ! command -v python3 >/dev/null 2>&1; then
                             echo "❌ python3 未安装，请在 Agent 节点上安装 python3"
-                            echo "   Ubuntu/Debian: sudo apt-get install -y python3 python3-venv"
-                            echo "   CentOS/RHEL:   sudo yum install -y python3"
+                            echo "   Ubuntu/Debian: apt-get install -y python3 python3-venv"
+                            echo "   CentOS/RHEL:   yum install -y python3"
                             exit 1
                         fi
 
-                        # 创建虚拟环境（如果不存在）
-                        if [ ! -d "${PYTHON_ENV}" ]; then
+                        # 若 venv 不完整则删除重建
+                        if [ ! -f "${PYTHON_ENV}/bin/activate" ]; then
                             echo "创建虚拟环境: ${PYTHON_ENV}"
+                            rm -rf ${PYTHON_ENV}
                             python3 -m venv ${PYTHON_ENV} || {
                                 echo "❌ 创建虚拟环境失败，可能缺少 python3-venv 模块"
-                                echo "   Ubuntu/Debian: sudo apt-get install -y python3-venv"
+                                echo "   Ubuntu/Debian: apt-get install -y python3-venv"
                                 exit 1
                             }
-                        fi
-
-                        # 验证 activate 文件存在
-                        if [ ! -f "${PYTHON_ENV}/bin/activate" ]; then
-                            echo "❌ 虚拟环境不完整，activate 文件不存在，删除后重建..."
-                            rm -rf ${PYTHON_ENV}
-                            python3 -m venv ${PYTHON_ENV}
                         fi
 
                         # 激活虚拟环境并安装依赖（用 . 代替 source，兼容 /bin/sh）
                         . ${PYTHON_ENV}/bin/activate
                         pip install -q pytest pytest-json-report
 
-                        # 列出可用的用例
+                        # 列出可用的测试文件（排除 venv 目录）
                         echo "可用的测试文件:"
-                        find . -name "test_*.py" -o -name "*_test.py" | head -20
+                        find ${testDir} -path ${PYTHON_ENV} -prune -o -name "test_*.py" -print -o -name "*_test.py" -print | head -20
                     """
                 }
             }
@@ -133,10 +134,10 @@ pipeline {
                     def testCommand = ". ${PYTHON_ENV}/bin/activate && "
                     
                     if (scriptPaths) {
-                        def paths = scriptPaths.split(',')
+                        def paths = scriptPaths.split(',').collect { it.trim() }
                         testCommand += "pytest ${paths.join(' ')}"
                     } else if (marker) {
-                        testCommand += "pytest -m ${marker}"
+                        testCommand += "pytest -m '${marker}'"
                     } else {
                         testCommand += "pytest"
                     }
@@ -172,189 +173,168 @@ pipeline {
                 }
             }
         }
-        
-        stage('回调平台') {
-            steps {
-                script {
-                    // 回调由 post { always } 统一处理，此阶段仅做日志记录
-                    echo "✅ 测试执行完成，回调将在 post 阶段统一处理"
-                }
-            }
-        }
-
     }
     
     post {
         always {
             script {
-                    echo "清理环境..."
+                echo "清理环境..."
 
-                    def testDir = params.REPO_URL ? 'test-cases' : '.'
-                    def reportArtifactPath = testDir == 'test-cases' ? 'test-cases/test-report.json' : 'test-report.json'
-                    def junitPattern = testDir == 'test-cases'
-                        ? '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
-                        : '**/junit.xml,**/.pytest_cache/**/junit.xml'
+                def testDir = params.REPO_URL ? 'test-cases' : '.'
+                def reportArtifactPath = testDir == 'test-cases' ? 'test-cases/test-report.json' : 'test-report.json'
+                def junitPattern = testDir == 'test-cases'
+                    ? '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
+                    : '**/junit.xml,**/.pytest_cache/**/junit.xml'
 
-                    try {
-                        archiveArtifacts artifacts: reportArtifactPath, allowEmptyArchive: true, fingerprint: true
-                        echo "测试报告已归档"
-                    } catch (Exception e) {
-                        echo "归档测试报告失败: ${e.message}"
-                    }
-
-                    try {
-                        junit allowEmptyResults: true, testResults: junitPattern
-                    } catch (Throwable t) {
-                        // 兼容未安装 JUnit 插件的 Jenkins 实例，避免 post 阶段直接失败
-                        echo "JUnit报告处理失败: ${t.message}"
-                    }
-
-                    // 最终回调 - 确保状态同步
-                    if (params.RUN_ID) {
-                        echo "========== 最终回调 =========="
-                        // CALLBACK_URL 由服务端构造，已包含完整路径（含 /api/jenkins/callback）
-                        // 若未传入则使用平台默认回调地址
-                        def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
-                        def finalStatus = currentBuild.result == 'SUCCESS' ? 'success' : 'failed'
-                        def duration = currentBuild.duration ?: 0
-
-                        echo "回调地址: ${callbackUrl}"
-                        echo "运行ID: ${params.RUN_ID}"
-                        echo "最终状态: ${finalStatus}"
-                        echo "执行时长: ${duration}ms"
-
-                        // 解析 test-report.json 获取真实的通过/失败/跳过数量
-                        def passedCount = 0
-                        def failedCount = 0
-                        def skippedCount = 0
-
-                        try {
-                            def reportFile = "${testDir}/test-report.json"
-                            if (fileExists(reportFile)) {
-                                def report = readJSON(file: reportFile)
-                                def summary = report?.summary
-                                if (summary) {
-                                    passedCount = (summary.passed ?: 0) as int
-                                    failedCount = ((summary.failed ?: 0) + (summary.error ?: 0)) as int
-                                    skippedCount = ((summary.skipped ?: 0) + (summary.deselected ?: 0)) as int
-                                    echo "test result: passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount}"
-                                } else {
-                                    failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
-                                }
-                            } else {
-                                failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
-                            }
-                        } catch (Exception parseErr) {
-                            failedCount = (currentBuild.result == 'SUCCESS') ? 0 : 1
-                        }
-
-                        // 构建每条用例的详细结果列表（从 test-report.json 解析）
-                        def resultsJson = "[]"
-                        try {
-                            def reportFile = "${testDir}/test-report.json"
-                            if (fileExists(reportFile)) {
-                                def report = readJSON(file: reportFile)
-                                def tests = report?.tests
-                                if (tests) {
-                                    def resultsList = []
-                                    tests.each { t ->
-                                        def testStatus = t.outcome ?: 'failed'
-                                        // pytest outcome: passed/failed/error/skipped
-                                        if (testStatus == 'error') testStatus = 'failed'
-                                        def durationMs = t.call?.duration != null ? (t.call.duration * 1000).toLong() : 0
-                                        // pytest-json-report 时间字段为 Unix 秒（浮点），乘以 1000 得毫秒
-                                        def startSec = t.setup?.start ?: t.call?.start
-                                        def stopSec  = t.teardown?.stop ?: t.call?.stop
-                                        def startMs  = startSec != null ? (startSec * 1000).toLong() : null
-                                        def endMs    = stopSec  != null ? (stopSec  * 1000).toLong() : null
-                                        // 提取 case_name（去掉模块路径，只保留函数名）
-                                        def caseName = t.nodeid ?: 'unknown'
-                                        if (caseName.contains('::')) {
-                                            caseName = caseName.split('::').last()
-                                        }
-                                        // 提取错误信息
-                                        def errMsg = ''
-                                        if (t.call?.longrepr) {
-                                            errMsg = t.call.longrepr.toString().take(500).replace('"', '\\"').replace('\n', '\\n').replace('\r', '')
-                                        }
-                                        resultsList << """{
-                                            "caseName": "${caseName}",
-                                            "status": "${testStatus}",
-                                            "duration": ${durationMs},
-                                            "startTime": ${startMs},
-                                            "endTime": ${endMs},
-                                            "errorMessage": "${errMsg}"
-                                        }"""
-                                    }
-                                    if (resultsList) {
-                                        resultsJson = "[${resultsList.join(',')}]"
-                                    }
-                                }
-                            }
-                        } catch (Exception parseErr) {
-                            echo "⚠️ Failed to parse test results: ${parseErr.message}"
-                        }
-
-                        // use curl to send callback（含每条用例详情）
-                        try {
-                            // 写入临时文件避免 shell 参数过长
-                            def payloadFile = "${WORKSPACE}/callback_payload.json"
-                            writeFile file: payloadFile, text: """{"runId": ${params.RUN_ID}, "status": "${finalStatus}", "passedCases": ${passedCount}, "failedCases": ${failedCount}, "skippedCases": ${skippedCount}, "durationMs": ${duration}, "results": ${resultsJson}}"""
-
-                            def callbackExitCode = sh(
-                                script: """
-                                    set +e
-                                    callback_ok=0
-                                    attempt=1
-                                    while [ "\$attempt" -le 3 ]; do
-                                        response_file="${WORKSPACE}/callback_response_${BUILD_NUMBER}_\${attempt}.txt"
-                                        http_code=\$(curl -sS -o "\${response_file}" -w '%{http_code}' -X POST '${callbackUrl}' \\
-                                            -H 'Content-Type: application/json' \\
-                                            --connect-timeout 10 \\
-                                            --max-time 30 \\
-                                            -L \\
-                                            --post301 \\
-                                            --post302 \\
-                                            --post303 \\
-                                            -k \\
-                                            --data-binary @${payloadFile})
-                                        curl_exit=\$?
-
-                                        echo "[callback] attempt=\${attempt}, curl_exit=\${curl_exit}, http_code=\${http_code}"
-                                        if [ -f "\${response_file}" ]; then
-                                            echo "[callback] response body:"
-                                            cat "\${response_file}"
-                                            echo ""
-                                        fi
-
-                                        if [ "\${curl_exit}" -eq 0 ] && { [ "\${http_code}" = "202" ] || [ "\${http_code}" = "200" ]; }; then
-                                            callback_ok=1
-                                            break
-                                        fi
-
-                                        sleep \$((attempt * 2))
-                                        attempt=\$((attempt + 1))
-                                    done
-
-                                    if [ "\${callback_ok}" -ne 1 ]; then
-                                        echo "❌ callback request failed after retries"
-                                        exit 1
-                                    fi
-                                """,
-                                returnStatus: true
-                            )
-
-                            if (callbackExitCode == 0) {
-                                echo "✅ Callback sent (passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount}, results=${resultsJson.size()}chars)"
-                            } else {
-                                echo "❌ Callback failed after retries, exitCode=${callbackExitCode}"
-                            }
-                        } catch (Exception e) {
-                            echo "⚠️ Callback failed: ${e.message}"
-                        }
-                        echo "==============================="
-                    }
+                try {
+                    archiveArtifacts artifacts: reportArtifactPath, allowEmptyArchive: true, fingerprint: true
+                    echo "测试报告已归档"
+                } catch (Exception e) {
+                    echo "归档测试报告失败: ${e.message}"
                 }
+
+                try {
+                    junit allowEmptyResults: true, testResults: junitPattern
+                } catch (Throwable t) {
+                    // 兼容未安装 JUnit 插件的 Jenkins 实例
+                    echo "JUnit报告处理失败: ${t.message}"
+                }
+
+                // 最终回调 - 统一在 always 中处理，避免 failure 块重复回调
+                if (params.RUN_ID) {
+                    echo "========== 最终回调 =========="
+                    def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
+                    // 使用 currentResult 而非 result，避免 always 执行时 result 为 null
+                    def finalStatus = currentBuild.currentResult == 'SUCCESS' ? 'success' : 'failed'
+                    def duration = currentBuild.duration ?: 0
+
+                    echo "回调地址: ${callbackUrl}"
+                    echo "运行ID: ${params.RUN_ID}"
+                    echo "最终状态: ${finalStatus}"
+                    echo "执行时长: ${duration}ms"
+
+                    // 一次性读取 test-report.json，同时解析 summary 和 tests
+                    def passedCount = 0
+                    def failedCount = 0
+                    def skippedCount = 0
+                    def resultsJson = "[]"
+
+                    try {
+                        def reportFile = "${testDir}/test-report.json"
+                        if (fileExists(reportFile)) {
+                            def report = readJSON(file: reportFile)
+
+                            // 解析 summary
+                            def summary = report?.summary
+                            if (summary) {
+                                passedCount = (summary.passed ?: 0) as int
+                                failedCount = ((summary.failed ?: 0) + (summary.error ?: 0)) as int
+                                skippedCount = ((summary.skipped ?: 0) + (summary.deselected ?: 0)) as int
+                                echo "test result: passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount}"
+                            } else {
+                                failedCount = (finalStatus == 'failed') ? 1 : 0
+                            }
+
+                            // 解析每条用例详情
+                            def tests = report?.tests
+                            if (tests) {
+                                def resultsList = []
+                                tests.each { t ->
+                                    def testStatus = t.outcome ?: 'failed'
+                                    if (testStatus == 'error') testStatus = 'failed'
+                                    def durationMs = t.call?.duration != null ? (t.call.duration * 1000).toLong() : 0
+                                    def startSec = t.setup?.start ?: t.call?.start
+                                    def stopSec  = t.teardown?.stop ?: t.call?.stop
+                                    def startMs  = startSec != null ? (startSec * 1000).toLong() : 'null'
+                                    def endMs    = stopSec  != null ? (stopSec  * 1000).toLong() : 'null'
+                                    // 提取用例名（去掉模块路径，只保留函数名）
+                                    def caseName = t.nodeid ?: 'unknown'
+                                    if (caseName.contains('::')) {
+                                        caseName = caseName.split('::').last()
+                                    }
+                                    // 安全转义错误信息，防止 JSON 注入
+                                    def errMsg = ''
+                                    if (t.call?.longrepr) {
+                                        errMsg = t.call.longrepr.toString()
+                                            .take(500)
+                                            .replace('\\', '\\\\')
+                                            .replace('"', '\\"')
+                                            .replace('\n', '\\n')
+                                            .replace('\r', '')
+                                            .replace('\t', '\\t')
+                                    }
+                                    resultsList << """{"caseName":"${caseName}","status":"${testStatus}","duration":${durationMs},"startTime":${startMs},"endTime":${endMs},"errorMessage":"${errMsg}"}"""
+                                }
+                                if (resultsList) {
+                                    resultsJson = "[${resultsList.join(',')}]"
+                                }
+                            }
+                        } else {
+                            failedCount = (finalStatus == 'failed') ? 1 : 0
+                        }
+                    } catch (Exception parseErr) {
+                        echo "⚠️ Failed to parse test results: ${parseErr.message}"
+                        failedCount = (finalStatus == 'failed') ? 1 : 0
+                    }
+
+                    // 发送回调（写入临时文件避免 shell 参数过长）
+                    try {
+                        def payloadFile = "${WORKSPACE}/callback_payload.json"
+                        writeFile file: payloadFile, text: """{"runId":${params.RUN_ID},"status":"${finalStatus}","passedCases":${passedCount},"failedCases":${failedCount},"skippedCases":${skippedCount},"durationMs":${duration},"results":${resultsJson}}"""
+
+                        def callbackExitCode = sh(
+                            script: """
+                                set +e
+                                callback_ok=0
+                                attempt=1
+                                while [ "\$attempt" -le 3 ]; do
+                                    response_file="${WORKSPACE}/callback_response_${BUILD_NUMBER}_\${attempt}.txt"
+                                    http_code=\$(curl -sS -o "\${response_file}" -w '%{http_code}' -X POST '${callbackUrl}' \\
+                                        -H 'Content-Type: application/json' \\
+                                        --connect-timeout 10 \\
+                                        --max-time 30 \\
+                                        -L --post301 --post302 --post303 -k \\
+                                        --data-binary @${payloadFile})
+                                    curl_exit=\$?
+
+                                    echo "[callback] attempt=\${attempt}, curl_exit=\${curl_exit}, http_code=\${http_code}"
+                                    if [ -f "\${response_file}" ]; then
+                                        echo "[callback] response body:"
+                                        cat "\${response_file}"
+                                        echo ""
+                                    fi
+
+                                    if [ "\${curl_exit}" -eq 0 ] && { [ "\${http_code}" = "202" ] || [ "\${http_code}" = "200" ]; }; then
+                                        callback_ok=1
+                                        break
+                                    fi
+
+                                    sleep \$((attempt * 2))
+                                    attempt=\$((attempt + 1))
+                                done
+
+                                if [ "\${callback_ok}" -ne 1 ]; then
+                                    echo "❌ callback request failed after retries"
+                                    exit 1
+                                fi
+                            """,
+                            returnStatus: true
+                        )
+
+                        if (callbackExitCode == 0) {
+                            echo "✅ Callback sent (passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount})"
+                        } else {
+                            echo "❌ Callback failed after retries, exitCode=${callbackExitCode}"
+                        }
+                    } catch (Exception e) {
+                        echo "⚠️ Callback failed: ${e.message}"
+                    } finally {
+                        // 清理临时回调文件
+                        sh "rm -f ${WORKSPACE}/callback_payload.json ${WORKSPACE}/callback_response_${BUILD_NUMBER}_*.txt || true"
+                    }
+                    echo "==============================="
+                }
+            }
         }
 
         success {
@@ -366,49 +346,7 @@ pipeline {
         failure {
             script {
                 echo "❌ Pipeline执行失败"
-
-                // 回调平台，标记为失败
-                // 注意：当 agent 未能分配时（如 git 未安装），WORKSPACE 可能为空，使用 /tmp 作为降级目录
-                if (params.RUN_ID && params.CALLBACK_URL) {
-                    def duration = currentBuild.duration ?: 0
-                    def workDir = env.WORKSPACE ?: '/tmp'
-                    def failureCallbackExit = sh(
-                        script: """
-                            set +e
-                            echo "正在回调失败状态到平台..."
-                            payload_file="${workDir}/callback_failure_payload_${BUILD_NUMBER}.json"
-                            echo '{"runId": ${params.RUN_ID}, "status": "failed", "passedCases": 0, "failedCases": 0, "skippedCases": 0, "durationMs": ${duration}}' > "\${payload_file}"
-                            response_file="${workDir}/callback_failure_response_${BUILD_NUMBER}.txt"
-                            http_code=\$(curl -sS -o "\${response_file}" -w '%{http_code}' -X POST '${params.CALLBACK_URL}' \\
-                                -H 'Content-Type: application/json' \\
-                                --connect-timeout 10 \\
-                                --max-time 30 \\
-                                -L \\
-                                --post301 \\
-                                --post302 \\
-                                --post303 \\
-                                -k \\
-                                --data-binary @\${payload_file})
-                            curl_exit=\$?
-
-                            echo "[failure-callback] curl_exit=\${curl_exit}, http_code=\${http_code}"
-                            if [ -f "\${response_file}" ]; then
-                                echo "[failure-callback] response body:"
-                                cat "\${response_file}"
-                                echo ""
-                            fi
-
-                            if [ "\${curl_exit}" -ne 0 ] || { [ "\${http_code}" != "202" ] && [ "\${http_code}" != "200" ]; }; then
-                                exit 1
-                            fi
-                        """,
-                        returnStatus: true
-                    )
-
-                    if (failureCallbackExit != 0) {
-                        echo "⚠️ 失败回调请求失败，exitCode=${failureCallbackExit}"
-                    }
-                }
+                // 回调已由 post.always 统一处理，此处不重复发送
             }
         }
     }
