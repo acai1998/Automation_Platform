@@ -74,14 +74,35 @@ pipeline {
 
                     def testDir = params.REPO_URL ? 'test-cases' : '.'
                     sh """
+                        set -e
                         if [ ! -d "${testDir}" ]; then
                             echo "❌ 测试目录 '${testDir}' 不存在，请确认 REPO_URL 或代码检出是否成功"
                             exit 1
                         fi
                         cd ${testDir}
 
+                        # 检查 python3 是否可用
+                        if ! command -v python3 >/dev/null 2>&1; then
+                            echo "❌ python3 未安装，请在 Agent 节点上安装 python3"
+                            echo "   Ubuntu/Debian: sudo apt-get install -y python3 python3-venv"
+                            echo "   CentOS/RHEL:   sudo yum install -y python3"
+                            exit 1
+                        fi
+
                         # 创建虚拟环境（如果不存在）
                         if [ ! -d "${PYTHON_ENV}" ]; then
+                            echo "创建虚拟环境: ${PYTHON_ENV}"
+                            python3 -m venv ${PYTHON_ENV} || {
+                                echo "❌ 创建虚拟环境失败，可能缺少 python3-venv 模块"
+                                echo "   Ubuntu/Debian: sudo apt-get install -y python3-venv"
+                                exit 1
+                            }
+                        fi
+
+                        # 验证 activate 文件存在
+                        if [ ! -f "${PYTHON_ENV}/bin/activate" ]; then
+                            echo "❌ 虚拟环境不完整，activate 文件不存在，删除后重建..."
+                            rm -rf ${PYTHON_ENV}
                             python3 -m venv ${PYTHON_ENV}
                         fi
 
