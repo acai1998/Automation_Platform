@@ -1,8 +1,5 @@
 master:
   push:
-    # ========================================
-    # 流水线 1: 构建 Docker 镜像并推送到 CNB 制品库
-    # ========================================
     - name: "构建 Docker 镜像 & 推送到 CNB 制品库"
       services:
         - docker  # 声明后，流水线内可以直接使用 docker 命令，且自动登录 CNB 制品库
@@ -10,17 +7,17 @@ master:
         - name: "构建 Docker 镜像"
           script: |
             docker build \
-              -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_BUILD_NUMBER} \
+              -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT_SHORT} \
               -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest \
               .
 
         - name: "推送镜像到 CNB 制品库"
           script: |
-            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_BUILD_NUMBER}
+            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT_SHORT}
             docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest
             echo "========================================"
             echo "✅ 镜像推送成功！"
-            echo "镜像地址: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_BUILD_NUMBER}"
+            echo "镜像地址: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT_SHORT}"
             echo "最新镜像: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"
             echo "========================================"
 
