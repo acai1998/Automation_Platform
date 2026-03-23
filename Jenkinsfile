@@ -135,18 +135,21 @@ pipeline {
                         return
                     }
 
-                    // testDir = 'examples'，即仓库整体 clone 到 examples/ 目录
-                    // SCRIPT_PATHS 传入的路径（如 B/test_xxx.py）是仓库内部 examples/ 子目录下的相对路径
-                    // 因此需要在路径前加上 examples/ 前缀再传给 pytest
+                    // testDir = 'examples'，即仓库整体 clone 到 examples/ 目录（仓库根目录）
+                    // SCRIPT_PATHS 从数据库读取，格式为 examples/X/test_xxx.py
+                    // cd 进入 examples/ 后，需要去掉 examples/ 前缀，用剩余相对路径传给 pytest
                     def testDir = params.REPO_URL ? 'examples' : '.'
                     def scriptPaths = params.SCRIPT_PATHS
                     def marker = params.MARKER
                     def testCommand = ". ${PYTHON_ENV}/bin/activate && "
 
                     if (scriptPaths) {
-                        // SCRIPT_PATHS 是相对于仓库内部 examples/ 子目录的路径（如 B/test_xxx.py）
-                        // 实际文件在 examples/examples/B/test_xxx.py，需加前缀
-                        def paths = scriptPaths.split(',').collect { "examples/${it.trim()}" }
+                        // SCRIPT_PATHS 从数据库读取的 scriptPath，格式为 examples/X/test_xxx.py
+                        // 执行时已 cd 进入仓库根目录（testDir = examples/），
+                        // 所以需要去掉开头的 examples/ 前缀，直接用相对路径
+                        def paths = scriptPaths.split(',').collect {
+                            it.trim().replaceFirst(/^examples\//, '')
+                        }
                         testCommand += "pytest ${paths.join(' ')}"
                     } else if (marker) {
                         testCommand += "pytest -m '${marker}'"
