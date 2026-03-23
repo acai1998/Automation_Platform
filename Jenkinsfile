@@ -55,13 +55,13 @@ pipeline {
                     
                     if (params.REPO_URL) {
                         def branch = params.REPO_BRANCH ?: 'master'
-                        if (fileExists('test-cases')) {
-                            dir('test-cases') {
+                        if (fileExists('examples')) {
+                            dir('examples') {
                                 sh "git pull origin ${branch}"
                             }
                         } else {
-                            // clone 到 test-cases/，仓库内部的 examples/ 结构保持不变
-                            sh "git clone --single-branch --branch '${branch}' '${params.REPO_URL}' test-cases"
+                            // clone 到 examples/，仓库根目录即测试用例目录
+                            sh "git clone --single-branch --branch '${branch}' '${params.REPO_URL}' examples"
                         }
                     } else {
                         echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出，使用当前 workspace 目录"
@@ -81,7 +81,7 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    def testDir = params.REPO_URL ? 'examples' : '.'
                     sh """
                         set -e
                         if [ ! -d "${testDir}" ]; then
@@ -135,14 +135,18 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    // testDir = 'examples'，即仓库整体 clone 到 examples/ 目录
+                    // SCRIPT_PATHS 传入的路径（如 B/test_xxx.py）是仓库内部 examples/ 子目录下的相对路径
+                    // 因此需要在路径前加上 examples/ 前缀再传给 pytest
+                    def testDir = params.REPO_URL ? 'examples' : '.'
                     def scriptPaths = params.SCRIPT_PATHS
                     def marker = params.MARKER
                     def testCommand = ". ${PYTHON_ENV}/bin/activate && "
 
                     if (scriptPaths) {
-                        // 脚本路径相对于 testDir，直接传给 pytest 即可
-                        def paths = scriptPaths.split(',').collect { it.trim() }
+                        // SCRIPT_PATHS 是相对于仓库内部 examples/ 子目录的路径（如 B/test_xxx.py）
+                        // 实际文件在 examples/examples/B/test_xxx.py，需加前缀
+                        def paths = scriptPaths.split(',').collect { "examples/${it.trim()}" }
                         testCommand += "pytest ${paths.join(' ')}"
                     } else if (marker) {
                         testCommand += "pytest -m '${marker}'"
@@ -169,7 +173,7 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    def testDir = params.REPO_URL ? 'examples' : '.'
                     sh """
                         cd ${testDir}
                         if [ -f "test-report.json" ]; then
@@ -188,10 +192,10 @@ pipeline {
             script {
                 echo "清理环境..."
 
-                def testDir = params.REPO_URL ? 'test-cases' : '.'
-                def reportArtifactPath = testDir == 'test-cases' ? 'test-cases/test-report.json' : 'test-report.json'
-                def junitPattern = testDir == 'test-cases'
-                    ? '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
+                def testDir = params.REPO_URL ? 'examples' : '.'
+                def reportArtifactPath = testDir == 'examples' ? 'examples/test-report.json' : 'test-report.json'
+                def junitPattern = testDir == 'examples'
+                    ? '**/examples/junit.xml,**/examples/.pytest_cache/**/junit.xml'
                     : '**/junit.xml,**/.pytest_cache/**/junit.xml'
 
                 try {
@@ -228,7 +232,7 @@ pipeline {
                     def resultsJson = "[]"
 
                     try {
-                        def reportFile = "${testDir}/test-report.json"
+                        def reportFile = "${testDir}/test-report.json"  // examples/test-report.json
                         if (fileExists(reportFile)) {
                             // 使用 readFile + JsonSlurper 替代 readJSON（无需 Pipeline Utility Steps 插件）
                             def reportText = readFile(file: reportFile)
