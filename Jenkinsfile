@@ -81,11 +81,14 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'examples' : '.'
+                    // repoDir：仓库根目录（requirements.txt 在此）
+                    // testFilesDir：实际测试文件目录（examples/examples/）
+                    def repoDir = params.REPO_URL ? 'examples' : '.'
+                    def testFilesDir = params.REPO_URL ? 'examples/examples' : '.'
                     sh """
                         set -e
-                        if [ ! -d "${testDir}" ]; then
-                            echo "❌ 测试目录 '${testDir}' 不存在，请确认 REPO_URL 或代码检出是否成功"
+                        if [ ! -d "${repoDir}" ]; then
+                            echo "❌ 仓库目录 '${repoDir}' 不存在，请确认 REPO_URL 或代码检出是否成功"
                             exit 1
                         fi
 
@@ -112,15 +115,15 @@ pipeline {
                         . ${PYTHON_ENV}/bin/activate
                         pip install -q pytest pytest-json-report
 
-                        # 安装测试仓库自身的依赖
-                        if [ -f "${testDir}/requirements.txt" ]; then
-                            echo "安装测试仓库依赖: ${testDir}/requirements.txt"
-                            pip install -q -r ${testDir}/requirements.txt
+                        # 安装测试仓库自身的依赖（requirements.txt 在仓库根目录）
+                        if [ -f "${repoDir}/requirements.txt" ]; then
+                            echo "安装测试仓库依赖: ${repoDir}/requirements.txt"
+                            pip install -q -r ${repoDir}/requirements.txt
                         fi
 
-                        # 列出可用的测试文件（排除 venv 目录）
+                        # 列出可用的测试文件
                         echo "可用的测试文件:"
-                        find ${testDir} -path ${PYTHON_ENV} -prune -o -name "test_*.py" -print -o -name "*_test.py" -print | head -20
+                        find ${testFilesDir} -name "test_*.py" -o -name "*_test.py" | head -20
                     """
                 }
             }
@@ -135,18 +138,19 @@ pipeline {
                         return
                     }
 
-                    // testDir = 'examples'，即仓库整体 clone 到 examples/ 目录（仓库根目录）
-                    // SCRIPT_PATHS 从数据库读取，格式为 examples/X/test_xxx.py
-                    // cd 进入 examples/ 后，需要去掉 examples/ 前缀，用剩余相对路径传给 pytest
-                    def testDir = params.REPO_URL ? 'examples' : '.'
+                    // 仓库结构： git clone 到 examples/ （仓库根），实际测试文件在 examples/examples/
+                    // 数据库 scriptPath 格式：examples/E/test_xxx.py（相对于仓库内 examples/ 子目录）
+                    // 最终路径：workspace/examples/examples/E/test_xxx.py
+                    // 正确做法：进入 examples/examples/（即实际测试目录），传去掉 examples/ 前缀的路径
+                    def repoDir = params.REPO_URL ? 'examples' : '.'       // 仓库根目录
+                    def testDir = params.REPO_URL ? 'examples/examples' : '.'  // 实际测试文件目录
                     def scriptPaths = params.SCRIPT_PATHS
                     def marker = params.MARKER
                     def testCommand = ". ${PYTHON_ENV}/bin/activate && "
 
                     if (scriptPaths) {
-                        // SCRIPT_PATHS 从数据库读取的 scriptPath，格式为 examples/X/test_xxx.py
-                        // 执行时已 cd 进入仓库根目录（testDir = examples/），
-                        // 所以需要去掉开头的 examples/ 前缀，直接用相对路径
+                        // scriptPath 格式：examples/E/test_xxx.py
+                        // cd 到 examples/examples/ 后，去掉 examples/ 前缀就是实际相对路径 E/test_xxx.py
                         def paths = scriptPaths.split(',').collect {
                             it.trim().replaceFirst(/^examples\//, '')
                         }
@@ -176,7 +180,8 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'examples' : '.'
+                    // test-report.json 在实际测试目录 examples/examples/ 下生成
+                    def testDir = params.REPO_URL ? 'examples/examples' : '.'
                     sh """
                         cd ${testDir}
                         if [ -f "test-report.json" ]; then
@@ -195,10 +200,11 @@ pipeline {
             script {
                 echo "清理环境..."
 
-                def testDir = params.REPO_URL ? 'examples' : '.'
-                def reportArtifactPath = testDir == 'examples' ? 'examples/test-report.json' : 'test-report.json'
-                def junitPattern = testDir == 'examples'
-                    ? '**/examples/junit.xml,**/examples/.pytest_cache/**/junit.xml'
+                // test-report.json 和 junit.xml 在 examples/examples/ 下生成
+                def testDir = params.REPO_URL ? 'examples/examples' : '.'
+                def reportArtifactPath = params.REPO_URL ? 'examples/examples/test-report.json' : 'test-report.json'
+                def junitPattern = params.REPO_URL
+                    ? '**/examples/examples/junit.xml,**/examples/examples/.pytest_cache/**/junit.xml'
                     : '**/junit.xml,**/.pytest_cache/**/junit.xml'
 
                 try {
