@@ -125,20 +125,37 @@ pipeline {
 
                         # ─── 预缓存 chromedriver，避免每次测试时临时下载 ───
                         mkdir -p ${DRIVER_CACHE}
-                        # SeleniumBase 读取 SB_DRIVER_CACHE_PATH 或 ~/.local/share/SeleniumBase/drivers
                         export SB_DRIVER_CACHE_PATH=${DRIVER_CACHE}
-                        # 检查是否已有 chromedriver，没有才下载
                         if [ ! -f "${DRIVER_CACHE}/chromedriver" ]; then
-                            echo "📥 首次下载 chromedriver 到缓存目录: ${DRIVER_CACHE}"
-                            seleniumbase get chromedriver latest || true
-                            # 把下载好的 driver 复制到共享缓存
-                            found=\$(find ~/.local/share/SeleniumBase/drivers/ -name "chromedriver" 2>/dev/null | head -1)
-                            if [ -n "\$found" ]; then cp "\$found" ${DRIVER_CACHE}/chromedriver; fi
+                            echo "📥 下载 chromedriver 到缓存目录: ${DRIVER_CACHE}"
+                            # 获取本机 Chrome 版本号（主版本）
+                            CHROME_VER=\$(google-chrome --version 2>/dev/null | grep -oP '[0-9]+' | head -1 || echo "146")
+                            echo "Chrome 主版本: \$CHROME_VER"
+                            # 查询对应的 chromedriver 版本
+                            DRIVER_VER=\$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_\${CHROME_VER}" 2>/dev/null || echo "")
+                            if [ -z "\$DRIVER_VER" ]; then
+                                # 国内备用：直接使用已知版本
+                                DRIVER_VER="146.0.7680.153"
+                            fi
+                            echo "下载 chromedriver 版本: \$DRIVER_VER"
+                            # 下载并解压到缓存目录
+                            cd /tmp
+                            curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 120 "https://storage.googleapis.com/chrome-for-testing-public/\${DRIVER_VER}/linux64/chromedriver-linux64.zip" -o chromedriver.zip || true
+                            if [ -f chromedriver.zip ]; then
+                                unzip -o chromedriver.zip
+                                cp chromedriver-linux64/chromedriver ${DRIVER_CACHE}/chromedriver
+                                chmod +x ${DRIVER_CACHE}/chromedriver
+                                rm -rf chromedriver.zip chromedriver-linux64
+                                echo "✅ chromedriver 下载并缓存成功"
+                            else
+                                echo "⚠️ chromedriver 下载失败，将由 SeleniumBase 运行时自动处理"
+                            fi
+                            cd -
                         else
-                            echo "✅ chromedriver 已缓存，跳过下载: ${DRIVER_CACHE}/chromedriver"
+                            echo "✅ chromedriver 已缓存，跳过下载: \$(${DRIVER_CACHE}/chromedriver --version 2>/dev/null || echo '版本未知')"
                         fi
                         # 将缓存目录加入 PATH，让 selenium 直接找到
-                        export PATH="${DRIVER_CACHE}:${PATH}"
+                        export PATH="${DRIVER_CACHE}:\${PATH}"
 
                         # 列出可用的测试文件
                         echo "可用的测试文件:"
