@@ -131,7 +131,7 @@ pipeline {
                         if [ ! -f "${DRIVER_CACHE}/chromedriver" ]; then
                             echo "📥 首次下载 chromedriver 到缓存目录: ${DRIVER_CACHE}"
                             seleniumbase get chromedriver latest || true
-                            # 把下载好的 driver 复制到共享缓存（避免 Groovy 解析 \; 报错，改用 xargs）
+                            # 把下载好的 driver 复制到共享缓存
                             found=\$(find ~/.local/share/SeleniumBase/drivers/ -name "chromedriver" 2>/dev/null | head -1)
                             if [ -n "\$found" ]; then cp "\$found" ${DRIVER_CACHE}/chromedriver; fi
                         else
