@@ -8,7 +8,7 @@ pipeline {
         string(name: 'CALLBACK_URL', description: '回调URL', defaultValue: '')
         string(name: 'MARKER', description: 'Pytest marker标记', defaultValue: '')
         string(name: 'REPO_URL', description: '测试用例仓库URL', defaultValue: '')
-        string(name: 'REPO_BRANCH', description: '测试用例仓库分支', defaultValue: 'main')
+        string(name: 'REPO_BRANCH', description: '测试用例仓库分支', defaultValue: 'master')
     }
     
     environment {
@@ -54,14 +54,14 @@ pipeline {
                     echo "正在克隆/更新测试用例仓库..."
                     
                     if (params.REPO_URL) {
-                        def branch = params.REPO_BRANCH ?: 'main'
-                        if (fileExists('test-cases')) {
-                            dir('test-cases') {
+                        def branch = params.REPO_BRANCH ?: 'master'
+                        if (fileExists('examples')) {
+                            dir('examples') {
                                 sh "git pull origin ${branch}"
                             }
                         } else {
                             // 使用 --single-branch 加快克隆速度
-                            sh "git clone --single-branch --branch '${branch}' '${params.REPO_URL}' test-cases"
+                            sh "git clone --single-branch --branch '${branch}' '${params.REPO_URL}' examples"
                         }
                     } else {
                         echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出，使用当前 workspace 目录"
@@ -81,7 +81,7 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    def testDir = params.REPO_URL ? 'examples' : '.'
                     sh """
                         set -e
                         if [ ! -d "${testDir}" ]; then
@@ -129,7 +129,7 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    def testDir = params.REPO_URL ? 'examples' : '.'
                     def scriptPaths = params.SCRIPT_PATHS
                     def marker = params.MARKER
                     def testCommand = ". ${PYTHON_ENV}/bin/activate && "
@@ -162,7 +162,7 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'test-cases' : '.'
+                    def testDir = params.REPO_URL ? 'examples' : '.'
                     sh """
                         cd ${testDir}
                         if [ -f "test-report.json" ]; then
@@ -181,10 +181,10 @@ pipeline {
             script {
                 echo "清理环境..."
 
-                def testDir = params.REPO_URL ? 'test-cases' : '.'
-                def reportArtifactPath = testDir == 'test-cases' ? 'test-cases/test-report.json' : 'test-report.json'
-                def junitPattern = testDir == 'test-cases'
-                    ? '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
+                def testDir = params.REPO_URL ? 'examples' : '.'
+                def reportArtifactPath = testDir == 'examples' ? 'examples/test-report.json' : 'test-report.json'
+                def junitPattern = testDir == 'examples'
+                    ? '**/examples/junit.xml,**/examples/.pytest_cache/**/junit.xml'
                     : '**/junit.xml,**/.pytest_cache/**/junit.xml'
 
                 try {
