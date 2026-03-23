@@ -11,6 +11,7 @@ export interface JenkinsConfig {
     performance: string;
   };
   testRepoUrl?: string;
+  testRepoBranch: string;
 }
 
 /**
@@ -153,6 +154,7 @@ export class JenkinsService {
         performance: process.env.JENKINS_JOB_PERF || 'performance-automation',
       },
       testRepoUrl: configuredTestRepoUrl || undefined,
+      testRepoBranch: (process.env.JENKINS_TEST_REPO_BRANCH || 'master').trim(),
     };
 
     logger.info('JenkinsService initialized', {
@@ -293,6 +295,7 @@ export class JenkinsService {
     }
     if (this.config.testRepoUrl) {
       params.append('REPO_URL', this.config.testRepoUrl);
+      params.append('REPO_BRANCH', this.config.testRepoBranch);
     }
 
     try {
