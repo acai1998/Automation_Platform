@@ -330,7 +330,7 @@ export function TodayExecution({ data }: TodayExecutionProps) {
                 className="text-xl font-bold"
                 style={{ color: stat.value > 0 ? stat.color : "#94a3b8" }}
               >
-                {stat.percentage.toFixed(2)}
+                {stat.percentage.toFixed(2)}%
               </span>
             </div>
           ))}
