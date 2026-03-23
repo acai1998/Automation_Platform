@@ -55,13 +55,13 @@ pipeline {
                     
                     if (params.REPO_URL) {
                         def branch = params.REPO_BRANCH ?: 'master'
-                        if (fileExists('examples')) {
-                            dir('examples') {
+                        if (fileExists('test-cases')) {
+                            dir('test-cases') {
                                 sh "git pull origin ${branch}"
                             }
                         } else {
-                            // 使用 --single-branch 加快克隆速度
-                            sh "git clone --single-branch --branch '${branch}' '${params.REPO_URL}' examples"
+                            // clone 到 test-cases/，仓库内部的 examples/ 结构保持不变
+                            sh "git clone --single-branch --branch '${branch}' '${params.REPO_URL}' test-cases"
                         }
                     } else {
                         echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出，使用当前 workspace 目录"
@@ -81,7 +81,7 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'examples' : '.'
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
                     sh """
                         set -e
                         if [ ! -d "${testDir}" ]; then
@@ -112,6 +112,12 @@ pipeline {
                         . ${PYTHON_ENV}/bin/activate
                         pip install -q pytest pytest-json-report
 
+                        # 安装测试仓库自身的依赖
+                        if [ -f "${testDir}/requirements.txt" ]; then
+                            echo "安装测试仓库依赖: ${testDir}/requirements.txt"
+                            pip install -q -r ${testDir}/requirements.txt
+                        fi
+
                         # 列出可用的测试文件（排除 venv 目录）
                         echo "可用的测试文件:"
                         find ${testDir} -path ${PYTHON_ENV} -prune -o -name "test_*.py" -print -o -name "*_test.py" -print | head -20
@@ -129,12 +135,13 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'examples' : '.'
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
                     def scriptPaths = params.SCRIPT_PATHS
                     def marker = params.MARKER
                     def testCommand = ". ${PYTHON_ENV}/bin/activate && "
-                    
+
                     if (scriptPaths) {
+                        // 脚本路径相对于 testDir，直接传给 pytest 即可
                         def paths = scriptPaths.split(',').collect { it.trim() }
                         testCommand += "pytest ${paths.join(' ')}"
                     } else if (marker) {
@@ -143,7 +150,7 @@ pipeline {
                         testCommand += "pytest"
                     }
                     testCommand += " --json-report --json-report-file=test-report.json --junitxml=junit.xml -v"
-                    
+
                     sh """
                         cd ${testDir}
                         ${testCommand} || true
@@ -162,7 +169,7 @@ pipeline {
                         return
                     }
 
-                    def testDir = params.REPO_URL ? 'examples' : '.'
+                    def testDir = params.REPO_URL ? 'test-cases' : '.'
                     sh """
                         cd ${testDir}
                         if [ -f "test-report.json" ]; then
@@ -181,10 +188,10 @@ pipeline {
             script {
                 echo "清理环境..."
 
-                def testDir = params.REPO_URL ? 'examples' : '.'
-                def reportArtifactPath = testDir == 'examples' ? 'examples/test-report.json' : 'test-report.json'
-                def junitPattern = testDir == 'examples'
-                    ? '**/examples/junit.xml,**/examples/.pytest_cache/**/junit.xml'
+                def testDir = params.REPO_URL ? 'test-cases' : '.'
+                def reportArtifactPath = testDir == 'test-cases' ? 'test-cases/test-report.json' : 'test-report.json'
+                def junitPattern = testDir == 'test-cases'
+                    ? '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
                     : '**/junit.xml,**/.pytest_cache/**/junit.xml'
 
                 try {
@@ -223,7 +230,9 @@ pipeline {
                     try {
                         def reportFile = "${testDir}/test-report.json"
                         if (fileExists(reportFile)) {
-                            def report = readJSON(file: reportFile)
+                            // 使用 readFile + JsonSlurper 替代 readJSON（无需 Pipeline Utility Steps 插件）
+                            def reportText = readFile(file: reportFile)
+                            def report = new groovy.json.JsonSlurper().parseText(reportText)
 
                             // 解析 summary
                             def summary = report?.summary
