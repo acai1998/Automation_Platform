@@ -219,20 +219,15 @@ pipeline {
                 if (params.RUN_ID) {
                     echo "========== 最终回调 =========="
                     def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
-                    // 使用 currentResult 而非 result，避免 always 执行时 result 为 null
-                    def finalStatus = currentBuild.currentResult == 'SUCCESS' ? 'success' : 'failed'
                     def duration = currentBuild.duration ?: 0
-
-                    echo "回调地址: ${callbackUrl}"
-                    echo "运行ID: ${params.RUN_ID}"
-                    echo "最终状态: ${finalStatus}"
-                    echo "执行时长: ${duration}ms"
 
                     // 一次性读取 test-report.json，同时解析 summary 和 tests
                     def passedCount = 0
                     def failedCount = 0
                     def skippedCount = 0
                     def resultsJson = "[]"
+                    // ⚡ finalStatus 以用例实际结果为准，解析报告后覆盖；默认降级为 failed（保守策略）
+                    def finalStatus = 'failed'
 
                     try {
                         def reportFile = "${testDir}/test-report.json"  // examples/test-report.json
@@ -248,8 +243,12 @@ pipeline {
                                 failedCount = ((summary.failed ?: 0) + (summary.error ?: 0)) as int
                                 skippedCount = ((summary.skipped ?: 0) + (summary.deselected ?: 0)) as int
                                 echo "test result: passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount}"
+                                // ⚡ 用用例实际失败数决定状态，而非 Job 构建结果
+                                finalStatus = (failedCount > 0) ? 'failed' : 'success'
                             } else {
-                                failedCount = (finalStatus == 'failed') ? 1 : 0
+                                // 无 summary 说明报告异常，保守标记为 failed
+                                finalStatus = 'failed'
+                                failedCount = 1
                             }
 
                             // 解析每条用例详情
@@ -287,12 +286,22 @@ pipeline {
                                 }
                             }
                         } else {
-                            failedCount = (finalStatus == 'failed') ? 1 : 0
+                            // 报告文件不存在：无结果视为失败
+                            finalStatus = 'failed'
+                            failedCount = 1
+                            echo "⚠️ test-report.json 不存在，标记为 failed"
                         }
                     } catch (Exception parseErr) {
                         echo "⚠️ Failed to parse test results: ${parseErr.message}"
-                        failedCount = (finalStatus == 'failed') ? 1 : 0
+                        // 解析异常时保守标记为 failed
+                        finalStatus = 'failed'
+                        failedCount = 1
                     }
+
+                    echo "回调地址: ${callbackUrl}"
+                    echo "运行ID: ${params.RUN_ID}"
+                    echo "最终状态（用例结果）: ${finalStatus}"
+                    echo "执行时长: ${duration}ms"
 
                     // 发送回调（写入临时文件避免 shell 参数过长）
                     try {
