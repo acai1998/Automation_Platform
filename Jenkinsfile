@@ -15,6 +15,8 @@ pipeline {
         PLATFORM_API_URL = 'https://autotest.wiac.xyz'
         // 使用固定路径存放 venv，避免 Jenkins 并发分配 @2/@3 workspace 时重复创建
         PYTHON_ENV = "/home/jenkins/shared-venv/SeleniumBaseCi"
+        // chromedriver 固定缓存目录，避免每次重复下载
+        DRIVER_CACHE = "/home/jenkins/shared-drivers"
     }
 
     options {
@@ -121,6 +123,22 @@ pipeline {
                             pip install -q -r ${repoDir}/requirements.txt
                         fi
 
+                        # ─── 预缓存 chromedriver，避免每次测试时临时下载 ───
+                        mkdir -p ${DRIVER_CACHE}
+                        # SeleniumBase 读取 SB_DRIVER_CACHE_PATH 或 ~/.local/share/SeleniumBase/drivers
+                        export SB_DRIVER_CACHE_PATH=${DRIVER_CACHE}
+                        # 检查是否已有 chromedriver，没有才下载
+                        if [ ! -f "${DRIVER_CACHE}/chromedriver" ]; then
+                            echo "📥 首次下载 chromedriver 到缓存目录: ${DRIVER_CACHE}"
+                            seleniumbase get chromedriver latest || true
+                            # 把下载好的 driver 复制到共享缓存
+                            find ~/.local/share/SeleniumBase/drivers/ -name "chromedriver" -exec cp {} ${DRIVER_CACHE}/chromedriver \; 2>/dev/null || true
+                        else
+                            echo "✅ chromedriver 已缓存，跳过下载: ${DRIVER_CACHE}/chromedriver"
+                        fi
+                        # 将缓存目录加入 PATH，让 selenium 直接找到
+                        export PATH="${DRIVER_CACHE}:${PATH}"
+
                         # 列出可用的测试文件
                         echo "可用的测试文件:"
                         find ${testFilesDir} -name "test_*.py" -o -name "*_test.py" | head -20
@@ -163,6 +181,9 @@ pipeline {
                     testCommand += " --json-report --json-report-file=test-report.json --junitxml=junit.xml -v"
 
                     sh """
+                        # 将缓存的 chromedriver 加入 PATH，避免测试时重新下载
+                        export PATH="${DRIVER_CACHE}:\${PATH}"
+                        export SB_DRIVER_CACHE_PATH=${DRIVER_CACHE}
                         cd ${testDir}
                         ${testCommand} || true
                     """
