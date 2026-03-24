@@ -1,7 +1,8 @@
 pipeline {
-    agent { label 'test-runner' }
+    agent none
     
     parameters {
+
         string(name: 'RUN_ID', description: '执行批次ID', defaultValue: '')
         string(name: 'CASE_IDS', description: '用例ID列表(JSON)', defaultValue: '[]')
         string(name: 'SCRIPT_PATHS', description: '脚本路径(逗号分隔)', defaultValue: '')
@@ -17,6 +18,10 @@ pipeline {
         PYTHON_ENV = "/home/jenkins/shared-venv/SeleniumBaseCi"
         // chromedriver 固定缓存目录，避免每次重复下载
         DRIVER_CACHE = "/home/jenkins/shared-drivers"
+        // 运行时动态选择的执行节点（默认 master）
+        EXEC_NODE = 'master'
+        // master 等待超时时间（秒），超时后自动切换到 Agent-node-2
+        NODE_SWITCH_TIMEOUT_SECONDS = '20'
     }
 
     options {
@@ -26,7 +31,32 @@ pipeline {
     }
     
     stages {
+        stage('选择执行节点') {
+            steps {
+                script {
+                    def preferredNode = 'master'
+                    def fallbackNode = 'Agent-node-2'
+                    def timeoutSeconds = (env.NODE_SWITCH_TIMEOUT_SECONDS ?: '20') as Integer
+
+                    env.EXEC_NODE = preferredNode
+                    try {
+                        timeout(time: timeoutSeconds, unit: 'SECONDS') {
+                            node(preferredNode) {
+                                echo "✅ master 节点可用，将优先在 master 执行"
+                            }
+                        }
+                    } catch (Throwable t) {
+                        echo "⚠️ master 在 ${timeoutSeconds}s 内不可用，切换到 ${fallbackNode}: ${t.message}"
+                        env.EXEC_NODE = fallbackNode
+                    }
+
+                    echo "本次流水线执行节点: ${env.EXEC_NODE}"
+                }
+            }
+        }
+
         stage('准备') {
+            agent { label "${env.EXEC_NODE}" }
             steps {
                 script {
                     echo "========== 执行信息 =========="
@@ -51,6 +81,7 @@ pipeline {
         }
         
         stage('检出代码') {
+            agent { label "${env.EXEC_NODE}" }
             steps {
                 script {
                     echo "正在克隆/更新测试用例仓库..."
@@ -73,6 +104,7 @@ pipeline {
         }
         
         stage('准备环境') {
+            agent { label "${env.EXEC_NODE}" }
             steps {
                 script {
                     echo "准备Python环境..."
@@ -166,6 +198,7 @@ pipeline {
         }
         
         stage('执行测试') {
+            agent { label "${env.EXEC_NODE}" }
             steps {
                 script {
                     // 无参数时跳过
@@ -210,6 +243,7 @@ pipeline {
         }
         
         stage('收集结果') {
+            agent { label "${env.EXEC_NODE}" }
             steps {
                 script {
                     echo "收集测试结果..."
@@ -237,7 +271,8 @@ pipeline {
     post {
         always {
             script {
-                echo "清理环境..."
+                node(env.EXEC_NODE ?: 'master') {
+                    echo "清理环境..."
 
                 // test-report.json 和 junit.xml 在 examples/examples/ 下生成
                 def testDir = params.REPO_URL ? 'examples/examples' : '.'
@@ -404,6 +439,7 @@ pipeline {
                         sh "rm -f ${WORKSPACE}/callback_payload.json ${WORKSPACE}/callback_response_${BUILD_NUMBER}_*.txt || true"
                     }
                     echo "==============================="
+                }
                 }
             }
         }
