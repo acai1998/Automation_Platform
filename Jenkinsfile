@@ -295,98 +295,29 @@ pipeline {
                     echo "JUnit报告处理失败: ${t.message}"
                 }
 
-                // 最终回调 - 统一在 always 中处理，避免 failure 块重复回调
+                // ────────────────────────────────────────────────────────────────────
+                // 轻量化回调：仅发送 runId + buildNumber，服务端主动解析结果
+                // 移除了 Groovy 解析 test-report.json 的复杂逻辑（约 80 行）
+                // ────────────────────────────────────────────────────────────────────
                 if (params.RUN_ID) {
-                    echo "========== 最终回调 =========="
+                    echo "========== 轻量化回调 =========="
                     def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
+                    def buildNumber = currentBuild.number ?: env.BUILD_NUMBER
                     def duration = currentBuild.duration ?: 0
 
-                    // 一次性读取 test-report.json，同时解析 summary 和 tests
-                    def passedCount = 0
-                    def failedCount = 0
-                    def skippedCount = 0
-                    def resultsJson = "[]"
-                    // ⚡ finalStatus 以用例实际结果为准，解析报告后覆盖；默认降级为 failed（保守策略）
-                    def finalStatus = 'failed'
-
-                    try {
-                        def reportFile = "${testDir}/test-report.json"  // examples/test-report.json
-                        if (fileExists(reportFile)) {
-                            // 使用 readFile + JsonSlurper 替代 readJSON（无需 Pipeline Utility Steps 插件）
-                            def reportText = readFile(file: reportFile)
-                            def report = new groovy.json.JsonSlurper().parseText(reportText)
-
-                            // 解析 summary
-                            def summary = report?.summary
-                            if (summary) {
-                                passedCount = (summary.passed ?: 0) as int
-                                failedCount = ((summary.failed ?: 0) + (summary.error ?: 0)) as int
-                                skippedCount = ((summary.skipped ?: 0) + (summary.deselected ?: 0)) as int
-                                echo "test result: passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount}"
-                                // ⚡ 用用例实际失败数决定状态，而非 Job 构建结果
-                                finalStatus = (failedCount > 0) ? 'failed' : 'success'
-                            } else {
-                                // 无 summary 说明报告异常，保守标记为 failed
-                                finalStatus = 'failed'
-                                failedCount = 1
-                            }
-
-                            // 解析每条用例详情
-                            def tests = report?.tests
-                            if (tests) {
-                                def resultsList = []
-                                tests.each { t ->
-                                    def testStatus = t.outcome ?: 'failed'
-                                    if (testStatus == 'error') testStatus = 'failed'
-                                    def durationMs = t.call?.duration != null ? (t.call.duration * 1000).toLong() : 0
-                                    def startSec = t.setup?.start ?: t.call?.start
-                                    def stopSec  = t.teardown?.stop ?: t.call?.stop
-                                    def startMs  = startSec != null ? (startSec * 1000).toLong() : 'null'
-                                    def endMs    = stopSec  != null ? (stopSec  * 1000).toLong() : 'null'
-                                    // 提取用例名（去掉模块路径，只保留函数名）
-                                    def caseName = t.nodeid ?: 'unknown'
-                                    if (caseName.contains('::')) {
-                                        caseName = caseName.split('::').last()
-                                    }
-                                    // 安全转义错误信息，防止 JSON 注入
-                                    def errMsg = ''
-                                    if (t.call?.longrepr) {
-                                        errMsg = t.call.longrepr.toString()
-                                            .take(500)
-                                            .replace('\\', '\\\\')
-                                            .replace('"', '\\"')
-                                            .replace('\n', '\\n')
-                                            .replace('\r', '')
-                                            .replace('\t', '\\t')
-                                    }
-                                    resultsList << """{"caseName":"${caseName}","status":"${testStatus}","duration":${durationMs},"startTime":${startMs},"endTime":${endMs},"errorMessage":"${errMsg}"}"""
-                                }
-                                if (resultsList) {
-                                    resultsJson = "[${resultsList.join(',')}]"
-                                }
-                            }
-                        } else {
-                            // 报告文件不存在：无结果视为失败
-                            finalStatus = 'failed'
-                            failedCount = 1
-                            echo "⚠️ test-report.json 不存在，标记为 failed"
-                        }
-                    } catch (Exception parseErr) {
-                        echo "⚠️ Failed to parse test results: ${parseErr.message}"
-                        // 解析异常时保守标记为 failed
-                        finalStatus = 'failed'
-                        failedCount = 1
-                    }
+                    // 仅发送基础信息，服务端会根据 buildNumber 主动抓取解析结果
+                    def buildStatus = (currentBuild.currentResult == 'SUCCESS') ? 'success' : 'failed'
 
                     echo "回调地址: ${callbackUrl}"
                     echo "运行ID: ${params.RUN_ID}"
-                    echo "最终状态（用例结果）: ${finalStatus}"
+                    echo "构建号: ${buildNumber}"
+                    echo "构建状态: ${buildStatus}"
                     echo "执行时长: ${duration}ms"
 
-                    // 发送回调（写入临时文件避免 shell 参数过长）
                     try {
+                        def payload = """{"runId":${params.RUN_ID},"buildNumber":${buildNumber},"status":"${buildStatus}","durationMs":${duration}}"""
                         def payloadFile = "${WORKSPACE}/callback_payload.json"
-                        writeFile file: payloadFile, text: """{"runId":${params.RUN_ID},"status":"${finalStatus}","passedCases":${passedCount},"failedCases":${failedCount},"skippedCases":${skippedCount},"durationMs":${duration},"results":${resultsJson}}"""
+                        writeFile file: payloadFile, text: payload
 
                         def callbackExitCode = sh(
                             script: """
@@ -428,12 +359,12 @@ pipeline {
                         )
 
                         if (callbackExitCode == 0) {
-                            echo "✅ Callback sent (passed=${passedCount}, failed=${failedCount}, skipped=${skippedCount})"
+                            echo "✅ 轻量化回调已发送，服务端将主动解析结果"
                         } else {
-                            echo "❌ Callback failed after retries, exitCode=${callbackExitCode}"
+                            echo "❌ 回调发送失败，exitCode=${callbackExitCode}"
                         }
                     } catch (Exception e) {
-                        echo "⚠️ Callback failed: ${e.message}"
+                        echo "⚠️ 回调发送异常: ${e.message}"
                     } finally {
                         // 清理临时回调文件
                         sh "rm -f ${WORKSPACE}/callback_payload.json ${WORKSPACE}/callback_response_${BUILD_NUMBER}_*.txt || true"

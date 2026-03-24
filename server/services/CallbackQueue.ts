@@ -32,6 +32,10 @@ export interface CallbackPayload {
   skippedCases: number;
   durationMs: number;
   results: unknown[];
+  /** 轻量化回调模式：Jenkins 仅发送 buildNumber，服务端主动解析结果 */
+  buildNumber?: number;
+  /** 是否需要服务端主动解析（轻量化回调时为 true） */
+  needsServerParsing?: boolean;
 }
 
 /** 队列统计指标（内存，进程重启后重置） */

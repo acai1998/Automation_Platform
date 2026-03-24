@@ -46,17 +46,92 @@ const TRIGGER_PRECHECK_ENABLED = (process.env.JENKINS_TRIGGER_PRECHECK_ENABLED ?
  * [P2-B] 注册 CallbackQueue 消费者
  * 将 completeBatchExecution + releaseSlot 的整个处理流程注入队列 worker
  * 在路由模块初始化时立即注册，确保消费者在第一个请求到来之前已就绪
+ * 
+ * 支持两种模式：
+ * 1. 全量回调：Jenkins 解析结果后发送完整数据（兼容旧模式）
+ * 2. 轻量化回调：Jenkins 仅发送 buildNumber，服务端主动解析结果
  */
 callbackQueue.register(async (payload: CallbackPayload) => {
   let shouldReleaseSlot = false;
   try {
-    await executionService.completeBatchExecution(payload.runId, {
-      status: payload.status,
-      passedCases: payload.passedCases,
-      failedCases: payload.failedCases,
-      skippedCases: payload.skippedCases,
-      durationMs: payload.durationMs,
-      results: payload.results as Parameters<typeof executionService.completeBatchExecution>[1]['results'],
+    let finalPayload = payload;
+
+    // ─── 轻量化回调：服务端主动解析结果 ─────────────────────────────
+    if (payload.needsServerParsing && payload.buildNumber) {
+      logger.info('[CallbackQueue] Lightweight callback detected, parsing results from Jenkins', {
+        runId: payload.runId,
+        buildNumber: payload.buildNumber,
+      }, LOG_CONTEXTS.JENKINS);
+
+      try {
+        // 从数据库获取执行记录，提取 jenkinsJob 名称
+        const batch = await executionService.getBatchExecution(payload.runId);
+        const execution = batch?.execution;
+
+        if (execution?.jenkinsJob) {
+          const { jenkinsStatusService } = await import('../services/JenkinsStatusService');
+          const testResults = await jenkinsStatusService.parseBuildResults(
+            execution.jenkinsJob as string,
+            String(payload.buildNumber)
+          );
+
+          if (testResults) {
+            // 使用解析结果覆盖 payload
+            finalPayload = {
+              runId: payload.runId,
+              status: testResults.failedCases > 0 ? 'failed' : 'success',
+              passedCases: testResults.passedCases,
+              failedCases: testResults.failedCases,
+              skippedCases: testResults.skippedCases,
+              durationMs: testResults.duration || payload.durationMs,
+              results: testResults.results.map(r => ({
+                caseId: r.caseId,
+                caseName: r.caseName,
+                status: r.status,
+                duration: r.duration,
+                errorMessage: r.errorMessage,
+                stackTrace: r.stackTrace,
+              })),
+            };
+
+            logger.info('[CallbackQueue] Successfully parsed results from Jenkins', {
+              runId: payload.runId,
+              buildNumber: payload.buildNumber,
+              passedCases: finalPayload.passedCases,
+              failedCases: finalPayload.failedCases,
+              skippedCases: finalPayload.skippedCases,
+            }, LOG_CONTEXTS.JENKINS);
+          } else {
+            // 解析失败，降级为使用构建状态
+            logger.warn('[CallbackQueue] Failed to parse results from Jenkins, falling back to build status', {
+              runId: payload.runId,
+              buildNumber: payload.buildNumber,
+              fallbackStatus: payload.status,
+            }, LOG_CONTEXTS.JENKINS);
+          }
+        } else {
+          logger.warn('[CallbackQueue] No jenkinsJob found for execution, cannot parse results', {
+            runId: payload.runId,
+            buildNumber: payload.buildNumber,
+          }, LOG_CONTEXTS.JENKINS);
+        }
+      } catch (parseError) {
+        logger.error('Failed to parse build results in lightweight callback', {
+          runId: payload.runId,
+          buildNumber: payload.buildNumber,
+          error: parseError instanceof Error ? parseError.message : String(parseError),
+        }, LOG_CONTEXTS.JENKINS);
+        // 解析异常，继续使用原始 payload（降级处理）
+      }
+    }
+
+    await executionService.completeBatchExecution(finalPayload.runId, {
+      status: finalPayload.status,
+      passedCases: finalPayload.passedCases,
+      failedCases: finalPayload.failedCases,
+      skippedCases: finalPayload.skippedCases,
+      durationMs: finalPayload.durationMs,
+      results: finalPayload.results as Parameters<typeof executionService.completeBatchExecution>[1]['results'],
     });
     // 只在成功完成后标记需要释放槽位
     shouldReleaseSlot = true;
@@ -983,7 +1058,12 @@ router.post('/callback', [
     skippedCases: reportedSkippedCases = 0,
     durationMs = 0,
     results = [],
+    // 轻量化回调模式：仅发送 buildNumber
+    buildNumber,
   } = req.body;
+
+  // 判断是否为轻量化回调（有 buildNumber 但无 results）
+  const isLightweightCallback = !!buildNumber && (!Array.isArray(results) || results.length === 0);
 
   const rawResults = Array.isArray(results) ? results : [];
   const normalizedResults = normalizeCallbackResults(rawResults);
@@ -1049,6 +1129,8 @@ router.post('/callback', [
     clientIP,
     userAgent: req.get('User-Agent'),
     receiveTimeMs,
+    isLightweightCallback,
+    buildNumber,
   }, LOG_CONTEXTS.JENKINS);
 
   // 入队（非阻塞）
@@ -1060,6 +1142,9 @@ router.post('/callback', [
     skippedCases,
     durationMs,
     results: normalizedResults,
+    // 轻量化回调参数
+    buildNumber: isLightweightCallback ? buildNumber : undefined,
+    needsServerParsing: isLightweightCallback,
   });
 
   if (!enqueued) {
