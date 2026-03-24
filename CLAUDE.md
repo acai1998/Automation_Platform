@@ -826,7 +826,26 @@ bash deployment/scripts/verify-env.sh
 4. 清除浏览器缓存和 localStorage
 5. 检查数据库查询逻辑是否正确
 
-#### 7. 统计数据不准确
+#### 7. 服务器重启后 Jenkins 和自动化平台无法访问
+**症状**：重启服务器后，`https://autotest.wiac.xyz` 和 `https://jenkins.wiac.xyz` 均无法访问
+**根本原因**：`/etc/nginx/conf.d/` 下存在软链接 `automation-platform.conf`，指向 Docker 部署时生成的配置文件（`/opt/automation-platform/nginx/conf.d/automation-platform.conf`），该文件中 SSL 证书路径为标准 Let's Encrypt 格式（`fullchain.pem` / `privkey.pem`），但服务器上实际证书文件是腾讯云格式（`_bundle.pem` / `.key`），导致 Nginx 启动失败，两个域名的 HTTPS 代理全部挂掉。
+**排查步骤**：
+1. 检查 Nginx 状态：`systemctl status nginx`，确认是否因 SSL 证书加载失败而崩溃
+2. 确认实际证书文件名：`ls /etc/letsencrypt/live/autotest.wiac.xyz/`
+3. 找出引用了不存在证书路径的配置文件：`grep -rl "fullchain.pem" /etc/nginx/conf.d/`
+4. 检查是否存在重复冲突的配置软链接：`ls -la /etc/nginx/conf.d/`
+**修复方法**：删除有问题的软链接，保留正确的配置文件
+```bash
+rm /etc/nginx/conf.d/automation-platform.conf
+nginx -t
+systemctl start nginx
+```
+**预防措施**：
+- 确保 Nginx 开机自启：`systemctl enable nginx`
+- 确保 Docker 容器自动重启：`docker update --restart=unless-stopped automation-platform`
+- 不要在 `/etc/nginx/conf.d/` 下创建指向 Docker 挂载目录的软链接，避免证书路径不一致问题
+
+#### 8. 统计数据不准确
 **症状**：用例统计数量与实际不符
 **排查步骤**：
 1. 检查 Jenkins 回调数据格式是否正确
