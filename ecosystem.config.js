@@ -7,7 +7,7 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      env_file: '/opt/.env',
+      env_file: '/opt/Automation_Platform/.env',
       env_production: {
         NODE_ENV: 'production',
       },
