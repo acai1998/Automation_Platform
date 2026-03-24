@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: 'autotest-platform',
-      script: './dist/server/server/index.js',
+      script: './dist/server/index.js',
       cwd: '/opt/Automation_Platform',
       instances: 1,
       exec_mode: 'fork',
