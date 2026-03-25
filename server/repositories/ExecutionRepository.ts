@@ -1224,15 +1224,15 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     results: BatchResults,
     executionId?: number
   ): Promise<void> {
-    return this.executeInTransaction(async (queryRunner) => {
       // 0. 二次校验：防止并发回调导致正确结果被错误数据覆盖
-      // 并发安全修复：使用悲观锁（SELECT ... FOR UPDATE）确保检查和更新的原子性
-      // 这可以防止两个并发回调同时通过检查然后相互覆盖的情况
-      const lockResult = await queryRunner.query(`
+      // 注意：这里不能使用 FOR UPDATE + 事务外 Repository 混用，
+      // 否则会出现“当前事务持锁、另一个连接更新同一行”导致 lock wait timeout。
+      // 改为轻量读取 + 幂等防回退，避免锁竞争。
+      const lockResult = await this.testRunRepository.query(`
         SELECT id, status, passed_cases, failed_cases, skipped_cases
         FROM Auto_TestRun
         WHERE id = ?
-        FOR UPDATE
+        LIMIT 1
       `, [runId]) as Array<{
         id: number;
         status: string;
@@ -1362,8 +1362,44 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       // 防止在特殊场景（既无详细结果也无汇总统计）下 ERROR 占位符残留
       if (resolvedExecutionId) {
         await this.performFinalErrorCleanup(resolvedExecutionId, results);
+
+        // 最终一致性校正：以结果表为准回填批次汇总，避免“汇总 success 但明细仍 error”
+        const finalCounts = await this.countResultsByStatus(resolvedExecutionId);
+        if (finalCounts.total > 0) {
+          let reconciledRunStatus = mappedStatus;
+          if (finalCounts.failed > 0) {
+            reconciledRunStatus = 'failed';
+          } else if (finalCounts.passed > 0) {
+            reconciledRunStatus = 'success';
+          }
+
+          await this.testRunRepository.update(runId, {
+            status: reconciledRunStatus,
+            passedCases: finalCounts.passed,
+            failedCases: finalCounts.failed,
+            skippedCases: finalCounts.skipped,
+          });
+
+          const reconciledTaskStatus: 'success' | 'failed' | 'cancelled' =
+            reconciledRunStatus === 'aborted' ? 'cancelled'
+              : reconciledRunStatus === 'success' ? 'success'
+              : 'failed';
+
+          await this.repository.update(resolvedExecutionId, {
+            status: reconciledTaskStatus,
+            passedCases: finalCounts.passed,
+            failedCases: finalCounts.failed,
+            skippedCases: finalCounts.skipped,
+          });
+
+          logger.info('Reconciled batch summary from result rows', {
+            runId,
+            executionId: resolvedExecutionId,
+            reconciledRunStatus,
+            finalCounts,
+          }, LOG_CONTEXTS.REPOSITORY);
+        }
       }
-    });
   }
 
   /**

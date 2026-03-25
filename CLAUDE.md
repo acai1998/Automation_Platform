@@ -228,6 +228,9 @@ npx tsc --noEmit -p tsconfig.server.json
 - `Auto_TestCaseTaskExecutions` — 测试任务执行记录表
 - `Auto_TestCaseDailySummaries` — 每日统计汇总表
 - `Auto_TaskAuditLogs` — **任务操作审计日志表**（v1.3.0 新增，记录10种操作行为）
+- `Auto_AiCaseWorkspaces` — **AI 用例工作台主表**（v1.5.0 新增）
+- `Auto_AiCaseNodeExecutions` — **AI 用例节点状态流水表**（v1.5.0 新增）
+- `Auto_AiCaseNodeAttachments` — **AI 用例节点附件表**（v1.5.0 新增）
 - `Auto_RepositoryConfigs` — Git 仓库配置表
 - `Auto_RepositoryScriptMappings` — 仓库脚本映射表
 - `Auto_SyncLogs` — 仓库同步日志表
@@ -249,6 +252,19 @@ npx tsc --noEmit -p tsconfig.server.json
   - 记录10种操作：`created / updated / deleted / status_changed / manually_triggered / execution_cancelled / compensated / triggered / retry_scheduled / permanently_failed`
 - 新增性能索引：`Auto_TestCaseTaskExecutions`（task+start/status/created）、`Auto_TestCaseTasks`（trigger+status/updated）、`Auto_TestRunResults`（status+execution_id）
 - 迁移脚本：`scripts/migrate-v1.3.0.sql`（可通过 `node scripts/run-migration.js` 或 mysql 客户端直接执行）
+
+### 重要表结构更新（2026-03，v1.5.0）
+- 新增 `Auto_AiCaseWorkspaces` 表：
+  - 存储 AI 用例工作台主快照（`map_data` JSON）与版本号（`version`）
+  - 内置节点进度聚合字段（`todo/doing/blocked/passed/failed/skipped`）用于报表快速查询
+- 新增 `Auto_AiCaseNodeExecutions` 表：
+  - 记录节点状态流转（`previous_status -> current_status`）与操作人
+  - 支持按 `workspace_id + node_id + created_at` 时间线回放
+- 新增 `Auto_AiCaseNodeAttachments` 表：
+  - 存储节点截图/证据元数据（对象存储地址、校验和、上传人）
+  - 通过 `execution_log_id` 可选关联到一次具体状态变更
+- 迁移脚本：`scripts/migrate-v1.5.0.sql`
+- 表结构文档：`docs/Table/Auto_AiCaseWorkspaces`、`docs/Table/Auto_AiCaseNodeExecutions`、`docs/Table/Auto_AiCaseNodeAttachments`
 
 ## 路径别名配置
 

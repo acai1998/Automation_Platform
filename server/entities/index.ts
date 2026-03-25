@@ -4,3 +4,6 @@ export { TestRun } from './TestRun';
 export { TestRunResult } from './TestRunResult';
 export { TaskExecution } from './TaskExecution';
 export { DailySummary } from './DailySummary';
+export { AiCaseWorkspace } from './AiCaseWorkspace';
+export { AiCaseNodeExecution } from './AiCaseNodeExecution';
+export { AiCaseNodeAttachment } from './AiCaseNodeAttachment';

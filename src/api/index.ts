@@ -1,3 +1,5 @@
+import type { AiCaseMindData, AiCaseNodeStatus, AiCaseWorkspaceStatus } from '@/types/aiCases';
+
 const API_BASE = '/api';
 
 interface ApiResponse<T> {
@@ -283,4 +285,226 @@ export const tasksApi = {
 
   getExecutions: (id: number, limit: number = 20) =>
     request<any[]>(`/tasks/${id}/executions?limit=${limit}`),
+};
+
+// ==================== AI Cases API ====================
+
+export interface AiCaseWorkspaceSummary {
+  id: number;
+  workspaceKey: string;
+  name: string;
+  projectId: number | null;
+  requirementText: string | null;
+  status: AiCaseWorkspaceStatus;
+  syncSource: 'local_import' | 'remote_direct' | 'mixed';
+  version: number;
+  counters: {
+    totalCases: number;
+    todoCases: number;
+    doingCases: number;
+    blockedCases: number;
+    passedCases: number;
+    failedCases: number;
+    skippedCases: number;
+  };
+  lastSyncedAt: string | null;
+  createdBy: number | null;
+  createdByName: string | null;
+  updatedBy: number | null;
+  updatedByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AiCaseWorkspaceDetail extends AiCaseWorkspaceSummary {
+  mapData: AiCaseMindData;
+}
+
+export interface AiCaseGenerationResult {
+  source: 'llm' | 'fallback';
+  provider: string;
+  model: string;
+  workspaceName: string;
+  mapData: AiCaseMindData;
+  counters: {
+    totalCases: number;
+    todoCases: number;
+    doingCases: number;
+    blockedCases: number;
+    passedCases: number;
+    failedCases: number;
+    skippedCases: number;
+  };
+  message: string;
+}
+
+export interface AiCaseNodeExecutionItem {
+  id: number;
+  workspaceId: number;
+  workspaceVersion: number;
+  nodeId: string;
+  nodeTopic: string;
+  nodePath: string | null;
+  previousStatus: AiCaseNodeStatus | null;
+  currentStatus: AiCaseNodeStatus;
+  operatorId: number | null;
+  operatorName: string | null;
+  comment: string | null;
+  meta: unknown;
+  createdAt: string;
+}
+
+export interface AiCaseAttachmentItem {
+  id: number;
+  workspaceId: number;
+  nodeId: string;
+  executionLogId: number | null;
+  fileName: string;
+  mimeType: string | null;
+  fileSize: number;
+  storageProvider: 'local' | 'oss' | 's3' | 'cos' | 'minio';
+  storageBucket: string | null;
+  storageKey: string;
+  accessUrl: string | null;
+  checksumSha256: string | null;
+  uploadedBy: number | null;
+  uploaderName: string | null;
+  createdAt: string;
+  isDeleted: boolean;
+  deletedAt: string | null;
+}
+
+export const aiCasesApi = {
+  generate: (data: {
+    requirementText: string;
+    workspaceName?: string;
+    projectId?: number;
+    persist?: boolean;
+  }) => request<AiCaseGenerationResult | { generated: AiCaseGenerationResult; workspace: AiCaseWorkspaceDetail }>('/ai-cases/generate', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+
+  listWorkspaces: (params?: {
+    projectId?: number;
+    status?: AiCaseWorkspaceStatus;
+    keyword?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          query.append(key, String(value));
+        }
+      });
+    }
+    return request<AiCaseWorkspaceSummary[]>(`/ai-cases/workspaces?${query.toString()}`);
+  },
+
+  getWorkspace: (id: number) => request<AiCaseWorkspaceDetail>(`/ai-cases/workspaces/${id}`),
+
+  createWorkspace: (data: {
+    workspaceKey?: string;
+    name: string;
+    projectId?: number | null;
+    requirementText?: string | null;
+    mapData: AiCaseMindData;
+    status?: AiCaseWorkspaceStatus;
+    syncSource?: 'local_import' | 'remote_direct' | 'mixed';
+  }) => request<AiCaseWorkspaceDetail>('/ai-cases/workspaces', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+
+  updateWorkspace: (
+    id: number,
+    data: {
+      name?: string;
+      projectId?: number | null;
+      requirementText?: string | null;
+      mapData?: AiCaseMindData;
+      status?: AiCaseWorkspaceStatus;
+      syncSource?: 'local_import' | 'remote_direct' | 'mixed';
+      expectedVersion?: number;
+    }
+  ) => request<AiCaseWorkspaceDetail>(`/ai-cases/workspaces/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+
+  updateNodeStatus: (
+    workspaceId: number,
+    data: {
+      nodeId: string;
+      status: AiCaseNodeStatus;
+      comment?: string;
+      meta?: Record<string, unknown>;
+    }
+  ) => request<{ executionId: number; workspace: AiCaseWorkspaceDetail }>(`/ai-cases/workspaces/${workspaceId}/node-status`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+
+  listNodeExecutions: (
+    workspaceId: number,
+    params?: {
+      nodeId?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ) => {
+    const query = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          query.append(key, String(value));
+        }
+      });
+    }
+    return request<AiCaseNodeExecutionItem[]>(`/ai-cases/workspaces/${workspaceId}/node-executions?${query.toString()}`);
+  },
+
+  createAttachment: (
+    workspaceId: number,
+    data: {
+      nodeId: string;
+      executionLogId?: number | null;
+      fileName: string;
+      mimeType?: string | null;
+      fileSize?: number;
+      storageProvider?: 'local' | 'oss' | 's3' | 'cos' | 'minio';
+      storageBucket?: string | null;
+      storageKey: string;
+      accessUrl?: string | null;
+      checksumSha256?: string | null;
+    }
+  ) => request<AiCaseAttachmentItem>(`/ai-cases/workspaces/${workspaceId}/attachments`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+
+  listAttachments: (
+    workspaceId: number,
+    params?: {
+      nodeId?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ) => {
+    const query = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          query.append(key, String(value));
+        }
+      });
+    }
+    return request<AiCaseAttachmentItem[]>(`/ai-cases/workspaces/${workspaceId}/attachments?${query.toString()}`);
+  },
+
+  deleteAttachment: (attachmentId: number) => request(`/ai-cases/attachments/${attachmentId}`, {
+    method: 'DELETE',
+  }),
 };
