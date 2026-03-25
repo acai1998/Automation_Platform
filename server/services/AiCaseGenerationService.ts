@@ -60,6 +60,13 @@ export interface AiCaseGenerationResult {
   message: string;
 }
 
+export interface AiCaseGenerationProgressEvent {
+  progress: number;
+  stage: string;
+  source: 'llm' | 'fallback' | 'system';
+  detail?: string;
+}
+
 function parsePositiveInt(value: string, fallback: number): number {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -87,6 +94,18 @@ function parsePriority(value: unknown): AiCaseNodePriority | undefined {
     return value;
   }
   return undefined;
+}
+
+function parseStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const next = value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item) => Boolean(item));
+
+  return next.length > 0 ? next : undefined;
 }
 
 function normalizePlan(raw: unknown, fallbackWorkspaceName: string): AiCaseGenerationPlan {
@@ -129,7 +148,14 @@ function normalizePlan(raw: unknown, fallbackWorkspaceName: string): AiCaseGener
               if (!item || typeof item !== 'object') {
                 return null;
               }
-              const testCase = item as { title?: unknown; priority?: unknown; note?: unknown };
+              const testCase = item as {
+                title?: unknown;
+                priority?: unknown;
+                note?: unknown;
+                preconditions?: unknown;
+                steps?: unknown;
+                expectedResults?: unknown;
+              };
               if (typeof testCase.title !== 'string' || !testCase.title.trim()) {
                 return null;
               }
@@ -138,6 +164,9 @@ function normalizePlan(raw: unknown, fallbackWorkspaceName: string): AiCaseGener
                 title: testCase.title.trim(),
                 priority: parsePriority(testCase.priority),
                 note: typeof testCase.note === 'string' ? testCase.note.trim() : undefined,
+                preconditions: parseStringList(testCase.preconditions),
+                steps: parseStringList(testCase.steps),
+                expectedResults: parseStringList(testCase.expectedResults),
               };
             })
             .filter((item): item is NonNullable<typeof item> => item !== null);
@@ -206,18 +235,60 @@ export class AiCaseGenerationService {
     }, LOG_CONTEXTS.CASES);
   }
 
-  async generate(request: AiCaseGenerationRequest): Promise<AiCaseGenerationResult> {
+  private pushProgress(
+    onProgress: ((event: AiCaseGenerationProgressEvent) => void) | undefined,
+    event: AiCaseGenerationProgressEvent
+  ): void {
+    if (!onProgress) {
+      return;
+    }
+
+    onProgress({
+      ...event,
+      progress: Math.max(0, Math.min(100, Math.round(event.progress))),
+    });
+  }
+
+  async generate(
+    request: AiCaseGenerationRequest,
+    onProgress?: (event: AiCaseGenerationProgressEvent) => void
+  ): Promise<AiCaseGenerationResult> {
     const requirementText = request.requirementText?.trim();
     const workspaceName = request.workspaceName?.trim() || 'AI Testcase Workspace';
+
+    this.pushProgress(onProgress, {
+      progress: 6,
+      stage: '后端已接收生成请求',
+      source: 'system',
+    });
 
     if (!requirementText) {
       throw new Error('requirementText 不能为空');
     }
 
+    this.pushProgress(onProgress, {
+      progress: 12,
+      stage: '正在解析需求文本',
+      source: 'system',
+    });
+
     if (!this.config.enabled) {
+      this.pushProgress(onProgress, {
+        progress: 35,
+        stage: '未配置大模型，切换规则模板生成',
+        source: 'fallback',
+      });
+
       const fallbackPlan = buildFallbackPlan(requirementText, workspaceName);
       const mapData = buildMapDataFromPlan(fallbackPlan);
       const counters = calculateWorkspaceCounters(mapData);
+
+      this.pushProgress(onProgress, {
+        progress: 95,
+        stage: '模板结果整理完成',
+        source: 'fallback',
+      });
+
       return {
         source: 'fallback',
         provider: this.config.provider,
@@ -230,9 +301,28 @@ export class AiCaseGenerationService {
     }
 
     try {
-      const plan = await this.generateViaLlm(requirementText, workspaceName);
+      this.pushProgress(onProgress, {
+        progress: 22,
+        stage: '开始调用大模型服务',
+        source: 'llm',
+      });
+
+      const plan = await this.generateViaLlm(requirementText, workspaceName, onProgress);
+
+      this.pushProgress(onProgress, {
+        progress: 88,
+        stage: '正在组装脑图节点结构',
+        source: 'llm',
+      });
+
       const mapData = buildMapDataFromPlan(plan);
       const counters = calculateWorkspaceCounters(mapData);
+
+      this.pushProgress(onProgress, {
+        progress: 98,
+        stage: '正在计算统计指标',
+        source: 'llm',
+      });
 
       return {
         source: 'llm',
@@ -249,9 +339,22 @@ export class AiCaseGenerationService {
         model: this.config.model,
       });
 
+      this.pushProgress(onProgress, {
+        progress: 66,
+        stage: '大模型调用失败，切换规则模板',
+        source: 'fallback',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+
       const fallbackPlan = buildFallbackPlan(requirementText, workspaceName);
       const mapData = buildMapDataFromPlan(fallbackPlan);
       const counters = calculateWorkspaceCounters(mapData);
+
+      this.pushProgress(onProgress, {
+        progress: 95,
+        stage: '模板结果整理完成',
+        source: 'fallback',
+      });
 
       return {
         source: 'fallback',
@@ -265,7 +368,11 @@ export class AiCaseGenerationService {
     }
   }
 
-  private async generateViaLlm(requirementText: string, workspaceName: string): Promise<AiCaseGenerationPlan> {
+  private async generateViaLlm(
+    requirementText: string,
+    workspaceName: string,
+    onProgress?: (event: AiCaseGenerationProgressEvent) => void
+  ): Promise<AiCaseGenerationPlan> {
     const endpoint = this.resolveCompletionEndpoint(this.config.baseUrl);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
@@ -287,7 +394,9 @@ export class AiCaseGenerationService {
         '            {',
         '              "title": "string",',
         '              "priority": "P0|P1|P2|P3",',
-        '              "note": "string"',
+        '              "preconditions": ["string"],',
+        '              "steps": ["string"],',
+        '              "expectedResults": ["string"]',
         '            }',
         '          ]',
         '        }',
@@ -300,7 +409,14 @@ export class AiCaseGenerationService {
         '2) 每个 scenario 至少 2 个测试点。',
         '3) 覆盖主流程、边界、异常、权限与兼容性。',
         '4) 标题使用中文，简洁可执行。',
+        '5) 每个测试点都必须输出 preconditions / steps / expectedResults，且 steps 至少 2 条。',
       ].join('\n');
+
+      this.pushProgress(onProgress, {
+        progress: 30,
+        stage: '已发送模型请求，等待响应',
+        source: 'llm',
+      });
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -324,6 +440,12 @@ export class AiCaseGenerationService {
         signal: controller.signal,
       });
 
+      this.pushProgress(onProgress, {
+        progress: 58,
+        stage: '模型已返回响应，正在解析内容',
+        source: 'llm',
+      });
+
       const payload = (await response.json()) as OpenAiChatResponse & {
         error?: { message?: string };
       };
@@ -337,8 +459,21 @@ export class AiCaseGenerationService {
         throw new Error('LLM 返回内容为空');
       }
 
+      this.pushProgress(onProgress, {
+        progress: 74,
+        stage: '正在校验模型输出结构',
+        source: 'llm',
+      });
+
       const jsonText = trimCodeFence(content);
       const rawPlan = JSON.parse(jsonText) as unknown;
+
+      this.pushProgress(onProgress, {
+        progress: 82,
+        stage: '模型输出解析成功',
+        source: 'llm',
+      });
+
       return normalizePlan(rawPlan, workspaceName);
     } finally {
       clearTimeout(timer);

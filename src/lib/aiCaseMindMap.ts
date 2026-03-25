@@ -9,23 +9,36 @@ import type {
 } from '@/types/aiCases';
 import { createAiCaseNodeId, isAiCaseNodeStatus } from '@/types/aiCases';
 
-const STATUS_TAG_TEXT: Record<AiCaseNodeStatus, string> = {
-  todo: 'TODO',
-  doing: 'DOING',
-  blocked: 'BLOCKED',
-  passed: 'PASSED',
-  failed: 'FAILED',
-  skipped: 'SKIPPED',
+const NODE_KIND_TAG_TEXT: Record<Exclude<AiCaseNodeKind, 'root'>, string> = {
+  module: '功能模块',
+  scenario: '测试场景',
+  testcase: '测试点',
 };
 
-const STATUS_TAG_STYLE: Record<AiCaseNodeStatus, Record<string, string>> = {
-  todo: { background: '#CBD5E1', color: '#0F172A', borderRadius: '8px', padding: '2px 6px' },
-  doing: { background: '#93C5FD', color: '#1E3A8A', borderRadius: '8px', padding: '2px 6px' },
-  blocked: { background: '#FDE68A', color: '#92400E', borderRadius: '8px', padding: '2px 6px' },
-  passed: { background: '#86EFAC', color: '#065F46', borderRadius: '8px', padding: '2px 6px' },
-  failed: { background: '#FCA5A5', color: '#7F1D1D', borderRadius: '8px', padding: '2px 6px' },
-  skipped: { background: '#D8B4FE', color: '#6B21A8', borderRadius: '8px', padding: '2px 6px' },
+const NODE_KIND_TAG_STYLE: Record<Exclude<AiCaseNodeKind, 'root'>, Record<string, string>> = {
+  module: {
+    background: '#E0E7FF',
+    color: '#3730A3',
+    borderRadius: '8px',
+    padding: '2px 6px',
+  },
+  scenario: {
+    background: '#DBEAFE',
+    color: '#1D4ED8',
+    borderRadius: '8px',
+    padding: '2px 6px',
+  },
+  testcase: {
+    background: '#DCFCE7',
+    color: '#166534',
+    borderRadius: '8px',
+    padding: '2px 6px',
+  },
 };
+
+interface NormalizeMindDataOptions {
+  showNodeKindTags?: boolean;
+}
 
 function cloneData(data: AiCaseMindData): AiCaseMindData {
   if (typeof structuredClone === 'function') {
@@ -56,7 +69,22 @@ function createDefaultMetadata(kind: AiCaseNodeKind): AiCaseNodeMetadata {
   };
 }
 
-function normalizeNode(node: AiCaseNode, depth: number): AiCaseNode {
+function resolveNodeKindTags(kind: AiCaseNodeKind, showNodeKindTags: boolean): AiCaseNode['tags'] | undefined {
+  if (!showNodeKindTags || kind === 'root') {
+    return undefined;
+  }
+
+  return [{
+    text: NODE_KIND_TAG_TEXT[kind],
+    style: NODE_KIND_TAG_STYLE[kind],
+  }];
+}
+
+function normalizeNode(
+  node: AiCaseNode,
+  depth: number,
+  options: Required<NormalizeMindDataOptions>
+): AiCaseNode {
   const children = Array.isArray(node.children) ? (node.children as AiCaseNode[]) : [];
   const inferredKind = inferNodeKind(depth, children.length);
   const base = createDefaultMetadata(inferredKind);
@@ -85,13 +113,16 @@ function normalizeNode(node: AiCaseNode, depth: number): AiCaseNode {
   node.expanded = node.expanded ?? true;
 
   if (children.length > 0) {
-    node.children = children.map((child) => normalizeNode(child, depth + 1));
+    node.children = children.map((child) => normalizeNode(child, depth + 1, options));
   } else {
     delete node.children;
   }
 
-  if (merged.kind === 'testcase') {
-    node.tags = [{ text: STATUS_TAG_TEXT[merged.status], style: STATUS_TAG_STYLE[merged.status] }];
+  const tags = resolveNodeKindTags(merged.kind, options.showNodeKindTags);
+  if (tags) {
+    node.tags = tags;
+  } else {
+    delete node.tags;
   }
 
   return node;
@@ -133,83 +164,181 @@ function createNode(
   };
 }
 
+function toChecklist(lines: string[]): string[] {
+  return lines.map((line) => line.trim()).filter((line) => Boolean(line));
+}
+
+function formatCaseNote(
+  preconditions: string[],
+  steps: string[],
+  expectedResults: string[]
+): string {
+  const normalizedPreconditions = toChecklist(preconditions);
+  const normalizedSteps = toChecklist(steps);
+  const normalizedExpectedResults = toChecklist(expectedResults);
+
+  const noteLines: string[] = ['前置条件:'];
+
+  normalizedPreconditions.forEach((item, index) => {
+    noteLines.push(`${index + 1}. ${item}`);
+  });
+
+  noteLines.push('', '测试步骤:');
+  normalizedSteps.forEach((item, index) => {
+    noteLines.push(`${index + 1}. ${item}`);
+  });
+
+  noteLines.push('', '预期结果:');
+  normalizedExpectedResults.forEach((item, index) => {
+    noteLines.push(`${index + 1}. ${item}`);
+  });
+
+  return noteLines.join('\n');
+}
+
 function buildSmokeCases(anchor: string): AiCaseNode[] {
   return [
     createNode(`${anchor} 主流程可以顺利完成`, 'testcase', {
       priority: 'P0',
       aiGenerated: true,
-      note: '前置条件:\n- 账号可登录\n\n步骤:\n1. 进入核心流程\n2. 执行关键操作\n\n预期:\n- 页面或接口返回成功\n- 关键结果可见',
+      note: formatCaseNote(
+        ['已有可登录测试账号，且目标环境可访问'],
+        ['进入登录页面并输入有效账号密码', '点击登录并等待页面跳转'],
+        ['登录成功并跳转到用户主页', '页面展示当前用户信息且会话状态有效']
+      ),
     }),
     createNode(`${anchor} 关键参数校验与提示正确`, 'testcase', {
       priority: 'P1',
       aiGenerated: true,
-      note: '前置条件:\n- 准备非法与合法参数\n\n步骤:\n1. 提交非法参数\n2. 再提交合法参数\n\n预期:\n- 非法参数有明确提示\n- 合法参数执行成功',
+      note: formatCaseNote(
+        ['已准备非法与合法输入组合'],
+        ['输入非法参数并提交', '根据错误提示修正后再次提交'],
+        ['非法参数有明确错误提示', '修正后可正常完成流程']
+      ),
     }),
   ];
 }
 
-function buildCoverageScenarios(anchor: string): AiCaseNode[] {
-  const blocks: Array<{ module: string; scenario: string; points: string[] }> = [
+function buildCoverageModules(anchor: string): AiCaseNode[] {
+  const blocks: Array<{
+    module: string;
+    points: Array<{
+      title: string;
+      preconditions: string[];
+      steps: string[];
+      expectedResults: string[];
+      priority?: AiCaseNodePriority;
+    }>;
+  }> = [
     {
       module: '功能正确性',
-      scenario: '核心流程验证',
       points: [
-        `${anchor} 正常路径验证`,
-        `${anchor} 回退再提交验证`,
+        {
+          title: `${anchor} 正常路径验证`,
+          priority: 'P1',
+          preconditions: ['核心依赖服务可用，测试数据准备完整'],
+          steps: ['执行主流程关键操作', '检查流程关键节点输出'],
+          expectedResults: ['主流程执行成功', '流程结果与需求一致'],
+        },
+        {
+          title: `${anchor} 回退再提交验证`,
+          priority: 'P1',
+          preconditions: ['可重复提交，且支持回退操作'],
+          steps: ['执行一次完整流程后回退', '再次提交并观察状态变化'],
+          expectedResults: ['回退后状态正确恢复', '再次提交仍可成功完成'],
+        },
       ],
     },
     {
       module: '边界与等价类',
-      scenario: '输入边界验证',
       points: [
-        `${anchor} 最小边界输入`,
-        `${anchor} 最大边界输入`,
+        {
+          title: `${anchor} 最小边界输入`,
+          priority: 'P1',
+          preconditions: ['已定义字段最小边界值'],
+          steps: ['输入最小边界值并提交', '记录系统返回结果'],
+          expectedResults: ['边界值输入被正确处理', '提示信息与规则一致'],
+        },
+        {
+          title: `${anchor} 最大边界输入`,
+          priority: 'P1',
+          preconditions: ['已定义字段最大边界值'],
+          steps: ['输入最大边界值并提交', '检查处理耗时与结果'],
+          expectedResults: ['系统可稳定处理最大边界值', '返回结果满足预期'],
+        },
       ],
     },
     {
       module: '异常与容错',
-      scenario: '失败与恢复验证',
       points: [
-        `${anchor} 依赖服务异常时提示`,
-        `${anchor} 重试与恢复机制验证`,
+        {
+          title: `${anchor} 依赖服务异常时提示`,
+          priority: 'P1',
+          preconditions: ['可模拟依赖服务超时或异常'],
+          steps: ['触发依赖服务异常场景', '检查界面与日志提示'],
+          expectedResults: ['用户收到明确的失败提示', '系统日志记录可追踪原因'],
+        },
+        {
+          title: `${anchor} 重试与恢复机制验证`,
+          priority: 'P2',
+          preconditions: ['系统已开启自动重试或手动重试机制'],
+          steps: ['首次请求失败后触发重试', '观察恢复后的最终状态'],
+          expectedResults: ['重试机制按策略执行', '恢复后流程可继续完成'],
+        },
       ],
     },
     {
       module: '权限与安全',
-      scenario: '鉴权与数据保护',
       points: [
-        `${anchor} 无权限访问拦截`,
-        `${anchor} 敏感参数校验与脱敏`,
+        {
+          title: `${anchor} 无权限访问拦截`,
+          priority: 'P1',
+          preconditions: ['准备无权限账号并登录系统'],
+          steps: ['使用无权限账号访问目标功能', '记录返回码和页面提示'],
+          expectedResults: ['访问请求被拒绝', '错误提示符合权限策略'],
+        },
+        {
+          title: `${anchor} 敏感参数校验与脱敏`,
+          priority: 'P1',
+          preconditions: ['已准备包含敏感参数的测试请求'],
+          steps: ['提交含敏感信息的请求', '检查响应与日志输出'],
+          expectedResults: ['敏感字段在日志中被脱敏', '接口返回不泄露敏感信息'],
+        },
       ],
     },
     {
       module: '兼容性',
-      scenario: '多端体验验证',
       points: [
-        `${anchor} Chrome 最新版验证`,
-        `${anchor} Safari 与移动端验证`,
+        {
+          title: `${anchor} Chrome 最新版验证`,
+          priority: 'P2',
+          preconditions: ['使用 Chrome 最新稳定版浏览器'],
+          steps: ['执行关键业务路径', '检查交互、样式与数据一致性'],
+          expectedResults: ['功能与展示均正常', '无明显兼容性问题'],
+        },
+        {
+          title: `${anchor} Safari 与移动端验证`,
+          priority: 'P2',
+          preconditions: ['准备 Safari 浏览器与移动端设备/模拟器'],
+          steps: ['执行核心流程并触发关键交互', '检查布局和输入行为'],
+          expectedResults: ['移动端与 Safari 下功能可用', '布局与交互符合预期'],
+        },
       ],
     },
   ];
 
-  return blocks.map((item) => {
-    const scenarioChildren = item.points.map((point) =>
-      createNode(point, 'testcase', {
-        aiGenerated: true,
-        priority: 'P1',
-      })
-    );
-
-    return createNode(item.module, 'module', {
+  return blocks.map((item) =>
+    createNode(item.module, 'module', {
       aiGenerated: true,
-      children: [
-        createNode(item.scenario, 'scenario', {
+      children: item.points.map((point) =>
+        createNode(point.title, 'testcase', {
           aiGenerated: true,
-          children: scenarioChildren,
-        }),
-      ],
-    });
-  });
+          priority: point.priority ?? 'P1',
+          note: formatCaseNote(point.preconditions, point.steps, point.expectedResults),
+        })
+      ),
+    })
+  );
 }
 
 function extractAnchor(requirement: string): string {
@@ -229,15 +358,9 @@ export function createInitialMindData(title = 'AI Testcase Workspace'): AiCaseMi
   const root = createNode(title, 'root', {
     children: [
       createNode('Smoke Cases', 'module', {
-        children: [
-          createNode('Core Path', 'scenario', {
-            children: buildSmokeCases('目标功能'),
-          }),
-        ],
+        children: buildSmokeCases('目标功能'),
       }),
-      createNode('Coverage Matrix', 'module', {
-        children: buildCoverageScenarios('目标功能'),
-      }),
+      ...buildCoverageModules('目标功能'),
     ],
   });
 
@@ -255,14 +378,9 @@ export function generateMindDataFromRequirement(requirement: string, title?: str
     children: [
       createNode('Smoke Cases', 'module', {
         aiGenerated: true,
-        children: [
-          createNode('Priority P0', 'scenario', {
-            aiGenerated: true,
-            children: buildSmokeCases(anchor),
-          }),
-        ],
+        children: buildSmokeCases(anchor),
       }),
-      ...buildCoverageScenarios(anchor),
+      ...buildCoverageModules(anchor),
     ],
   });
 
@@ -271,9 +389,11 @@ export function generateMindDataFromRequirement(requirement: string, title?: str
   });
 }
 
-export function normalizeMindData(data: AiCaseMindData): AiCaseMindData {
+export function normalizeMindData(data: AiCaseMindData, options?: NormalizeMindDataOptions): AiCaseMindData {
   const next = cloneData(data);
-  next.nodeData = normalizeNode(next.nodeData, 0);
+  next.nodeData = normalizeNode(next.nodeData, 0, {
+    showNodeKindTags: options?.showNodeKindTags ?? true,
+  });
   return next;
 }
 

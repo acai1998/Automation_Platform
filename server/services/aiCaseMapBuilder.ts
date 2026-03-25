@@ -53,6 +53,9 @@ export interface AiCaseGenerationPlanCase {
   title: string;
   priority?: AiCaseNodePriority;
   note?: string;
+  preconditions?: string[];
+  steps?: string[];
+  expectedResults?: string[];
 }
 
 export interface AiCaseGenerationPlanScenario {
@@ -191,6 +194,56 @@ function createNode(
   };
 }
 
+function sanitizeChecklist(lines: string[] | undefined, fallback: string[]): string[] {
+  if (!Array.isArray(lines)) {
+    return fallback;
+  }
+
+  const next = lines
+    .map((line) => (typeof line === 'string' ? line.trim() : ''))
+    .filter((line) => Boolean(line));
+
+  return next.length > 0 ? next : fallback;
+}
+
+function composeCaseNote(testCase: AiCaseGenerationPlanCase): string {
+  const hint = typeof testCase.note === 'string' ? testCase.note.trim() : '';
+
+  const preconditions = sanitizeChecklist(testCase.preconditions, [
+    '测试环境可用，账号与基础数据已准备完成',
+  ]);
+
+  const steps = sanitizeChecklist(testCase.steps, [
+    '进入目标功能页面或接口入口',
+    hint || `执行测试点：${testCase.title}`,
+    '记录执行结果并保存关键截图',
+  ]);
+
+  const expectedResults = sanitizeChecklist(testCase.expectedResults, [
+    '系统返回成功状态或页面展示正确反馈',
+    '业务数据与页面状态符合需求描述',
+  ]);
+
+  const lines: string[] = [];
+
+  lines.push('前置条件:');
+  preconditions.forEach((item, index) => {
+    lines.push(`${index + 1}. ${item}`);
+  });
+
+  lines.push('', '测试步骤:');
+  steps.forEach((item, index) => {
+    lines.push(`${index + 1}. ${item}`);
+  });
+
+  lines.push('', '预期结果:');
+  expectedResults.forEach((item, index) => {
+    lines.push(`${index + 1}. ${item}`);
+  });
+
+  return lines.join('\n');
+}
+
 export function createAiCaseNodeId(): string {
   return `node-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
 }
@@ -303,17 +356,14 @@ export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData 
     children: plan.modules.map((module) =>
       createNode(module.name, 'module', {
         aiGenerated: true,
-        children: module.scenarios.map((scenario) =>
-          createNode(scenario.name, 'scenario', {
-            aiGenerated: true,
-            children: scenario.cases.map((testCase) =>
-              createNode(testCase.title, 'testcase', {
-                aiGenerated: true,
-                priority: parsePriority(testCase.priority, 'P1'),
-                note: testCase.note,
-              })
-            ),
-          })
+        children: module.scenarios.flatMap((scenario) =>
+          scenario.cases.map((testCase) =>
+            createNode(testCase.title, 'testcase', {
+              aiGenerated: true,
+              priority: parsePriority(testCase.priority, 'P1'),
+              note: composeCaseNote(testCase),
+            })
+          )
         ),
       })
     ),

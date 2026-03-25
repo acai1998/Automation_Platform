@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AICases from '@/pages/cases/AICases';
 import { createInitialMindData } from '@/lib/aiCaseMindMap';
 import * as aiCaseStorage from '@/lib/aiCaseStorage';
+import { aiCasesApi } from '@/api';
 import {
   AI_CASE_WORKSPACE_ID,
   type AiCaseAttachmentRecord,
+  type AiCaseNode,
   type AiCaseWorkspaceDocument,
 } from '@/types/aiCases';
 import { toast } from 'sonner';
@@ -26,6 +28,8 @@ interface MockMindInstance {
   destroy: ReturnType<typeof vi.fn>;
   bus: MockMindBus;
 }
+
+let latestMindInstance: MockMindInstance | null = null;
 
 function createMockMindInstance(): MockMindInstance {
   let currentData: unknown = null;
@@ -52,7 +56,8 @@ function createMockMindInstance(): MockMindInstance {
 
 vi.mock('mind-elixir', () => {
   function MindElixirMock() {
-    return createMockMindInstance();
+    latestMindInstance = createMockMindInstance();
+    return latestMindInstance;
   }
 
   (MindElixirMock as unknown as { SIDE: string }).SIDE = 'SIDE';
@@ -75,15 +80,48 @@ vi.mock('@/lib/aiCaseStorage', () => ({
   deleteStaleWorkspaceAttachments: vi.fn(),
 }));
 
+vi.mock('@/api', () => ({
+  aiCasesApi: {
+    generate: vi.fn(),
+    createWorkspace: vi.fn(),
+    updateWorkspace: vi.fn(),
+    getWorkspace: vi.fn(),
+    updateNodeStatus: vi.fn(),
+  },
+}));
+
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
+    warning: vi.fn(),
   },
 }));
 
-function createStoredDoc(): AiCaseWorkspaceDocument {
+function findFirstTestcaseNodeId(root: AiCaseNode): string | null {
+  const stack: AiCaseNode[] = [root];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+
+    if (current.metadata?.kind === 'testcase') {
+      return current.id;
+    }
+
+    for (const child of current.children ?? []) {
+      stack.push(child as AiCaseNode);
+    }
+  }
+
+  return null;
+}
+
+function createStoredDoc(options?: { selectTestcase?: boolean }): AiCaseWorkspaceDocument {
   const mapData = createInitialMindData('已保存工作台');
+  const testcaseNodeId = findFirstTestcaseNodeId(mapData.nodeData);
 
   return {
     id: AI_CASE_WORKSPACE_ID,
@@ -93,13 +131,14 @@ function createStoredDoc(): AiCaseWorkspaceDocument {
     version: 3,
     createdAt: Date.now() - 10_000,
     updatedAt: Date.now() - 5_000,
-    lastSelectedNodeId: mapData.nodeData.id,
+    lastSelectedNodeId: options?.selectTestcase ? testcaseNodeId ?? mapData.nodeData.id : mapData.nodeData.id,
   };
 }
 
 describe('AICases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    latestMindInstance = null;
 
     Object.defineProperty(URL, 'createObjectURL', {
       writable: true,
@@ -112,6 +151,15 @@ describe('AICases', () => {
       configurable: true,
       value: vi.fn(),
     });
+
+    vi.mocked(aiCasesApi.generate).mockResolvedValue({
+      data: {
+        generated: {
+          mapData: createInitialMindData('远端生成结果'),
+          source: 'llm',
+        },
+      },
+    } as any);
 
     vi.mocked(aiCaseStorage.saveWorkspaceDocument).mockResolvedValue();
     vi.mocked(aiCaseStorage.listNodeAttachments).mockResolvedValue([]);
@@ -195,5 +243,74 @@ describe('AICases', () => {
       },
       { timeout: 1500 }
     );
+  });
+
+  it('节点删除后应即时清理附件并展示清理数量', async () => {
+    vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
+    vi.mocked(aiCaseStorage.deleteStaleWorkspaceAttachments).mockResolvedValue(3);
+
+    render(<AICases />);
+
+    await waitFor(() => {
+      expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
+    });
+
+    const operationHandler = latestMindInstance?.bus.addListener.mock.calls.find((call) => call[0] === 'operation')?.[1] as
+      | (() => void)
+      | undefined;
+
+    expect(operationHandler).toBeDefined();
+
+    const reducedData = createInitialMindData('节点删除后');
+    reducedData.nodeData.children = [];
+    latestMindInstance?.getData.mockReturnValue(reducedData);
+
+    await act(async () => {
+      operationHandler?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(aiCaseStorage.deleteStaleWorkspaceAttachments).toHaveBeenCalled();
+    });
+
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('检测到节点删除，已清理 3 条附件');
+  });
+
+  it('复制截图后可直接粘贴上传到当前测试节点', async () => {
+    vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc({ selectTestcase: true }));
+
+    render(<AICases />);
+
+    await waitFor(() => {
+      expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
+    });
+
+    const imageFile = new File(['image-binary'], 'clipboard.png', { type: 'image/png' });
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: {
+        items: [
+          {
+            kind: 'file',
+            type: 'image/png',
+            getAsFile: () => imageFile,
+          },
+        ],
+      },
+      configurable: true,
+    });
+
+    await act(async () => {
+      window.dispatchEvent(pasteEvent);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(aiCaseStorage.saveNodeAttachment).toHaveBeenCalledTimes(1);
+    });
+
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('已粘贴 1 张截图');
   });
 });

@@ -1,8 +1,11 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import { authenticate } from '../middleware/auth';
 import { aiCaseService } from '../services/AiCaseService';
-import { aiCaseGenerationService } from '../services/AiCaseGenerationService';
+import {
+  aiCaseGenerationService,
+  type AiCaseGenerationProgressEvent,
+} from '../services/AiCaseGenerationService';
 import type { AiCaseNodeStatus } from '../services/aiCaseMapBuilder';
 import type {
   AiCaseStorageProvider,
@@ -68,6 +71,15 @@ function resolveErrorStatus(message: string): number {
   return 500;
 }
 
+function writeSseEvent(res: Response, event: string, payload: unknown): void {
+  if (res.writableEnded) {
+    return;
+  }
+
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
 router.use(generalAuthRateLimiter);
 router.use(authenticate);
 
@@ -123,6 +135,124 @@ router.post('/generate', async (req, res) => {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '生成失败';
     res.status(resolveErrorStatus(message)).json({ success: false, message });
+  }
+});
+
+/**
+ * POST /api/ai-cases/generate/stream
+ * 流式返回 AI 生成进度（SSE）
+ */
+router.post('/generate/stream', async (req, res) => {
+  let heartbeat: NodeJS.Timeout | null = null;
+  let clientClosed = false;
+
+  try {
+    const requirementText = typeof req.body?.requirementText === 'string' ? req.body.requirementText.trim() : '';
+    const workspaceName = typeof req.body?.workspaceName === 'string' ? req.body.workspaceName.trim() : undefined;
+    const persist = req.body?.persist === true;
+
+    if (!requirementText) {
+      return res.status(400).json({
+        success: false,
+        message: 'requirementText 不能为空',
+      });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
+
+    req.on('close', () => {
+      clientClosed = true;
+      if (heartbeat) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+    });
+
+    heartbeat = setInterval(() => {
+      if (res.writableEnded || clientClosed) {
+        return;
+      }
+      res.write(': keep-alive\n\n');
+    }, 15000);
+
+    const emitProgress = (event: AiCaseGenerationProgressEvent): void => {
+      if (clientClosed || res.writableEnded) {
+        return;
+      }
+      writeSseEvent(res, 'progress', event);
+    };
+
+    writeSseEvent(res, 'progress', {
+      progress: 2,
+      stage: '连接已建立，开始处理请求',
+      source: 'system',
+    });
+
+    const generated = await aiCaseGenerationService.generate(
+      {
+        requirementText,
+        workspaceName,
+      },
+      emitProgress
+    );
+
+    if (persist) {
+      const operatorId = getOperatorId(req);
+      const created = await aiCaseService.createWorkspace(
+        {
+          name: generated.workspaceName,
+          projectId: toNumberOrUndefined(req.body?.projectId) ?? null,
+          requirementText,
+          mapData: generated.mapData,
+          status: 'draft',
+          syncSource: 'remote_direct',
+        },
+        operatorId
+      );
+
+      writeSseEvent(res, 'result', {
+        success: true,
+        data: {
+          generated,
+          workspace: created,
+        },
+      });
+    } else {
+      writeSseEvent(res, 'result', {
+        success: true,
+        data: generated,
+      });
+    }
+
+    writeSseEvent(res, 'done', { success: true });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '生成失败';
+
+    if (!res.headersSent) {
+      res.status(resolveErrorStatus(message)).json({ success: false, message });
+      return;
+    }
+
+    writeSseEvent(res, 'error', {
+      success: false,
+      message,
+    });
+    writeSseEvent(res, 'done', { success: false });
+  } finally {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
+
+    if (res.headersSent && !res.writableEnded) {
+      res.end();
+    }
   }
 });
 
