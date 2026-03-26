@@ -233,11 +233,14 @@ function mergeRemoteWorkspaceToDoc(
   doc: AiCaseWorkspaceDocument,
   workspace: AiCaseWorkspaceDetail
 ): AiCaseWorkspaceDocument {
+  const normalizedMapData = normalizeMindData(workspace.mapData);
+  const expanded = expandImportedCaseNodesFromNote(normalizedMapData);
+
   return {
     ...doc,
     name: workspace.name,
     requirement: workspace.requirementText ?? doc.requirement,
-    mapData: normalizeMindData(workspace.mapData),
+    mapData: expanded.data,
     lastSelectedNodeId: workspace.mapData.nodeData?.id ?? doc.lastSelectedNodeId,
     syncMode: 'hybrid',
     remoteWorkspaceId: workspace.id,
@@ -479,23 +482,38 @@ function AiCasesInner() {
           const normalized = normalizeMindData(storedDoc.mapData, {
             showNodeKindTags: showNodeKindTagsRef.current,
           });
+          const expanded = expandImportedCaseNodesFromNote(normalized, {
+            showNodeKindTags: showNodeKindTagsRef.current,
+          });
           const remoteMeta = resolveRemoteSyncMeta(storedDoc);
           remoteSyncMetaRef.current = remoteMeta;
           setRemoteSyncMeta(remoteMeta);
 
-          docRef.current = {
+          let hydratedDoc: AiCaseWorkspaceDocument = {
             ...storedDoc,
-            mapData: normalized,
+            mapData: expanded.data,
             syncMode: remoteMeta.syncMode,
             remoteWorkspaceId: remoteMeta.remoteWorkspaceId,
             remoteVersion: remoteMeta.remoteVersion,
             remoteStatus: remoteMeta.remoteStatus,
             lastRemoteSyncedAt: remoteMeta.lastRemoteSyncedAt,
           };
+
+          if (expanded.expandedCount > 0) {
+            hydratedDoc = {
+              ...hydratedDoc,
+              version: (storedDoc.version ?? 0) + 1,
+              updatedAt: Date.now(),
+            };
+            await saveWorkspaceDocument(hydratedDoc);
+            if (!active) return;
+          }
+
+          docRef.current = hydratedDoc;
           setWorkspaceName(storedDoc.name || 'AI Testcase Workspace');
           setRequirementText(storedDoc.requirement || '');
-          setMindData(normalized);
-          setSelectedNodeId(storedDoc.lastSelectedNodeId ?? normalized.nodeData.id);
+          setMindData(hydratedDoc.mapData);
+          setSelectedNodeId(storedDoc.lastSelectedNodeId ?? hydratedDoc.mapData.nodeData.id);
           setSaveState('saved');
         } else {
           const initialData = normalizeMindData(createInitialMindData('AI Testcase Workspace'), {
@@ -591,7 +609,7 @@ function AiCasesInner() {
       toolBar: false,
       keypress: true,
       allowUndo: true,
-      locale: 'en',
+      locale: 'zh_CN',
       overflowHidden: false,
     });
 
@@ -1301,12 +1319,16 @@ function AiCasesInner() {
       const normalized = normalizeMindData(generated.mapData, {
         showNodeKindTags: showNodeKindTagsRef.current,
       });
-      setDataAndSync(normalized, {
-        selectedId: normalized.nodeData.id,
+      const expanded = expandImportedCaseNodesFromNote(normalized, {
+        showNodeKindTags: showNodeKindTagsRef.current,
+      });
+
+      setDataAndSync(expanded.data, {
+        selectedId: expanded.data.nodeData.id,
         refreshMind: true,
       });
 
-      await cleanupStaleAttachments(normalized);
+      await cleanupStaleAttachments(expanded.data);
       setAttachmentReloadSeed((value) => value + 1);
       finishGenerateProgress(generated.source === 'llm' ? 'AI 生成完成' : '模板生成完成');
       toast.success(`AI 用例脑图生成完成（${generated.source === 'llm' ? '大模型' : '回退模板'}）`);
@@ -1316,11 +1338,15 @@ function AiCasesInner() {
       setGenerationStageText('远端流式生成失败，正在切换本地模板...');
 
       const generated = generateMindDataFromRequirement(requirementText, workspaceName);
-      setDataAndSync(generated, {
-        selectedId: generated.nodeData.id,
+      const expanded = expandImportedCaseNodesFromNote(generated, {
+        showNodeKindTags: showNodeKindTagsRef.current,
+      });
+
+      setDataAndSync(expanded.data, {
+        selectedId: expanded.data.nodeData.id,
         refreshMind: true,
       });
-      await cleanupStaleAttachments(generated);
+      await cleanupStaleAttachments(expanded.data);
       setAttachmentReloadSeed((value) => value + 1);
       finishGenerateProgress('本地模板生成完成');
       toast.warning('远端流式 AI 生成失败，已使用本地模板生成');
@@ -1868,14 +1894,14 @@ function AiCasesInner() {
           </div>
         </div>
 
-        <div className="flex-1 min-h-[620px] [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900">
+        <div className="flex-1 min-h-[620px] [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none">
           <div ref={mapContainerRef} className="h-full w-full" />
         </div>
       </section>
 
       <div className="text-[11px] text-slate-500 px-1 flex items-center gap-1.5">
         <CircleDashed className="h-3.5 w-3.5" />
-        节点编辑、拖拽和快捷键由 Mind-Elixir 提供，节点状态和截图证据由工作台扩展。
+        右键可新增/删除节点，双击可编辑标题，Enter 保存 Esc 取消；节点状态和截图证据由工作台扩展。
       </div>
     </div>
   );
