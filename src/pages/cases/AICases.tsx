@@ -23,6 +23,8 @@ import {
   Tags,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { toast } from 'sonner';
 import {
@@ -34,6 +36,7 @@ import {
   appendNodeAttachmentId,
   computeProgress,
   createInitialMindData,
+  expandImportedCaseNodesFromNote,
   findNodeById,
   generateMindDataFromRequirement,
   normalizeMindData,
@@ -51,6 +54,7 @@ import {
 import {
   AI_CASE_WORKSPACE_ID,
   createAiCaseAttachmentId,
+  createAiCaseNodeId,
   type AiCaseAttachmentPreview,
   type AiCaseMindData,
   type AiCaseNode,
@@ -123,6 +127,7 @@ interface CleanupStaleAttachmentOptions {
 }
 
 type TopPanelSection = 'requirement' | 'progress' | 'node' | 'attachment' | 'mode';
+type TopPanelViewportMode = 'desktop' | 'tablet' | 'mobile';
 type StreamGenerateResultPayload =
   | AiCaseGenerationResult
   | { generated: AiCaseGenerationResult; workspace: AiCaseWorkspaceDetail };
@@ -139,6 +144,7 @@ const MIN_CANVAS_SCALE = 0.6;
 const MAX_CANVAS_SCALE = 1.8;
 const CANVAS_SCALE_STEP = 0.1;
 const NODE_TAG_VISIBILITY_STORAGE_KEY = 'ai-case-node-tags-visible';
+const WAIT_COPY_MAGIC = 'MIND-ELIXIR-WAIT-COPY';
 
 function readNodeTagVisibilityPreference(): boolean {
   if (typeof window === 'undefined') {
@@ -166,6 +172,47 @@ function collectNodeIds(root: AiCaseNode): string[] {
   }
 
   return nodeIds;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function cloneImportedNode(rawNode: unknown): AiCaseNode | null {
+  if (!isRecord(rawNode)) {
+    return null;
+  }
+
+  const node = rawNode as unknown as AiCaseNode;
+  const topic = typeof node.topic === 'string' && node.topic.trim() ? node.topic.trim() : '未命名节点';
+  const cloned: AiCaseNode = {
+    ...node,
+    id: createAiCaseNodeId(),
+    topic,
+    expanded: node.expanded ?? true,
+  };
+
+  if (Array.isArray(node.children) && node.children.length > 0) {
+    const clonedChildren = node.children
+      .map((child) => cloneImportedNode(child))
+      .filter((child): child is AiCaseNode => Boolean(child));
+
+    if (clonedChildren.length > 0) {
+      cloned.children = clonedChildren;
+    } else {
+      delete cloned.children;
+    }
+  } else {
+    delete cloned.children;
+  }
+
+  return cloned;
+}
+
+function sanitizeImportedNodes(rawNodes: unknown[]): AiCaseNode[] {
+  return rawNodes
+    .map((rawNode) => cloneImportedNode(rawNode))
+    .filter((node): node is AiCaseNode => Boolean(node));
 }
 
 function resolveRemoteSyncMeta(doc: AiCaseWorkspaceDocument | null | undefined): RemoteSyncMeta {
@@ -239,6 +286,9 @@ function AiCasesInner() {
   const [activePanelSection, setActivePanelSection] = useState<TopPanelSection | null>('requirement');
   const [canvasScalePercent, setCanvasScalePercent] = useState(100);
   const [showNodeKindTags, setShowNodeKindTags] = useState<boolean>(() => readNodeTagVisibilityPreference());
+  const [topPanelViewportMode, setTopPanelViewportMode] = useState<TopPanelViewportMode>('desktop');
+  const [isImportingMindNodes, setIsImportingMindNodes] = useState(false);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
@@ -254,6 +304,39 @@ function AiCasesInner() {
       window.localStorage.setItem(NODE_TAG_VISIBILITY_STORAGE_KEY, showNodeKindTags ? 'true' : 'false');
     }
   }, [showNodeKindTags]);
+
+  useEffect(() => {
+    const resolveViewportMode = () => {
+      const width = window.innerWidth;
+      if (width >= 1440) {
+        setTopPanelViewportMode('desktop');
+        return;
+      }
+
+      if (width >= 1024) {
+        setTopPanelViewportMode('tablet');
+        return;
+      }
+
+      setTopPanelViewportMode('mobile');
+    };
+
+    resolveViewportMode();
+    window.addEventListener('resize', resolveViewportMode);
+    return () => {
+      window.removeEventListener('resize', resolveViewportMode);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (topPanelViewportMode !== 'mobile') {
+      setIsMobileDrawerOpen(false);
+    }
+
+    if (topPanelViewportMode !== 'desktop') {
+      setActivePanelSection(null);
+    }
+  }, [topPanelViewportMode]);
 
   const clearGenerateProgressTimers = useCallback(() => {
     if (generateProgressResetTimerRef.current) {
@@ -645,9 +728,22 @@ function AiCasesInner() {
     return `远端#${remoteSyncMeta.remoteWorkspaceId} · v${remoteSyncMeta.remoteVersion ?? '-'} · ${remoteSyncMeta.remoteStatus ?? 'draft'}`;
   }, [isRemoteLinked, remoteSyncMeta.remoteStatus, remoteSyncMeta.remoteVersion, remoteSyncMeta.remoteWorkspaceId]);
 
-  const togglePanelSection = useCallback((section: TopPanelSection) => {
-    setActivePanelSection((prev) => (prev === section ? null : section));
-  }, []);
+  const isDesktopTopPanel = topPanelViewportMode === 'desktop';
+  const isTabletTopPanel = topPanelViewportMode === 'tablet';
+  const isMobileTopPanel = topPanelViewportMode === 'mobile';
+
+  const handleTopPanelTabClick = useCallback(
+    (section: TopPanelSection) => {
+      if (topPanelViewportMode === 'mobile') {
+        setActivePanelSection(section);
+        setIsMobileDrawerOpen(true);
+        return;
+      }
+
+      setActivePanelSection((prev) => (prev === section ? null : section));
+    },
+    [topPanelViewportMode]
+  );
 
   const handleCanvasScale = useCallback((scale: number) => {
     if (!mindRef.current) {
@@ -724,7 +820,12 @@ function AiCasesInner() {
   const streamGenerateFromBackend = useCallback(async (): Promise<StreamGenerateResultPayload> => {
     const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
 
-    const response = await fetch('/api/ai-cases/generate/stream', {
+    const streamEndpoint =
+      typeof window !== 'undefined'
+        ? new URL('/api/ai-cases/generate/stream', window.location.origin).toString()
+        : 'http://localhost:3000/api/ai-cases/generate/stream';
+
+    const response = await fetch(streamEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1075,6 +1176,79 @@ function AiCasesInner() {
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
+      if (isImportingMindNodes) {
+        return;
+      }
+
+      const clipboardText = event.clipboardData?.getData('text/plain')?.trim();
+      if (clipboardText) {
+        try {
+          const parsed = JSON.parse(clipboardText) as { magic?: unknown; data?: unknown };
+          if (parsed.magic === WAIT_COPY_MAGIC && Array.isArray(parsed.data) && parsed.data.length > 0) {
+            event.preventDefault();
+            setIsImportingMindNodes(true);
+
+            try {
+              const currentData = mindDataRef.current;
+              if (!currentData) {
+                toast.error('当前脑图未初始化，无法导入复制节点');
+                return;
+              }
+
+              const currentSelectedNodeId = selectedNodeIdRef.current;
+              const selectedNode = currentSelectedNodeId
+                ? findNodeById(currentData.nodeData, currentSelectedNodeId)
+                : null;
+              const parentNodeId = selectedNode?.metadata?.kind && selectedNode.metadata.kind !== 'testcase'
+                ? selectedNode.id
+                : currentData.nodeData.id;
+
+              const nextData = normalizeMindData(currentData, {
+                showNodeKindTags: showNodeKindTagsRef.current,
+              });
+              const parentNode = findNodeById(nextData.nodeData, parentNodeId);
+              if (!parentNode) {
+                toast.error('未找到目标父节点，导入失败');
+                return;
+              }
+
+              const importedNodes = sanitizeImportedNodes(parsed.data);
+              if (importedNodes.length === 0) {
+                toast.error('复制数据格式不正确，导入失败');
+                return;
+              }
+
+              parentNode.children = [
+                ...((parentNode.children ?? []) as AiCaseNode[]),
+                ...importedNodes,
+              ];
+              parentNode.expanded = true;
+
+              const expanded = expandImportedCaseNodesFromNote(nextData, {
+                candidateNodeIds: importedNodes.map((node) => node.id),
+                showNodeKindTags: showNodeKindTagsRef.current,
+              });
+
+              setDataAndSync(expanded.data, {
+                selectedId: importedNodes[0]?.id ?? currentSelectedNodeId,
+                refreshMind: true,
+              });
+
+              const expandedHint = expanded.expandedCount > 0
+                ? `，已自动拆分 ${expanded.expandedCount} 个节点的步骤/预期`
+                : '';
+              toast.success(`已导入 ${importedNodes.length} 个节点${expandedHint}`);
+            } finally {
+              setIsImportingMindNodes(false);
+            }
+
+            return;
+          }
+        } catch {
+          // ignore json parse error, continue image paste flow
+        }
+      }
+
       const items = event.clipboardData?.items;
       if (!items || items.length === 0) {
         return;
@@ -1102,7 +1276,7 @@ function AiCasesInner() {
     return () => {
       window.removeEventListener('paste', onPaste);
     };
-  }, [uploadImageFiles]);
+  }, [isImportingMindNodes, setDataAndSync, uploadImageFiles]);
 
   const handleGenerate = async () => {
     if (!requirementText.trim()) {
@@ -1307,6 +1481,150 @@ function AiCasesInner() {
   const hasSelectedNode = Boolean(selectedNodeId);
   const selectedNodeLabel = selectedNode?.topic || '未选中节点';
 
+  const renderPanelSectionContent = (section: TopPanelSection, compact = false) => {
+    if (section === 'requirement') {
+      return (
+        <div className="space-y-2">
+          <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold">需求输入</label>
+          <textarea
+            value={requirementText}
+            onChange={(event) => setRequirementText(event.target.value)}
+            className="w-full min-h-[120px] rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm leading-6"
+            placeholder="粘贴 PRD、需求描述或技术方案，点击 AI 生成脑图"
+          />
+        </div>
+      );
+    }
+
+    if (section === 'progress') {
+      return (
+        <div className={`grid grid-cols-2 gap-2 text-xs ${compact ? '' : 'xl:grid-cols-4'}`}>
+          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">总测试点: <span className="font-semibold">{progress.total}</span></div>
+          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">待执行: <span className="font-semibold text-slate-700 dark:text-slate-100">{progress.todo}</span></div>
+          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">执行中: <span className="font-semibold text-blue-600">{progress.doing}</span></div>
+          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">阻塞: <span className="font-semibold text-amber-600">{progress.blocked}</span></div>
+          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">通过: <span className="font-semibold text-emerald-600">{progress.passed}</span></div>
+          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">失败: <span className="font-semibold text-rose-600">{progress.failed}</span></div>
+          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">跳过: <span className="font-semibold text-purple-600">{progress.skipped}</span></div>
+          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">完成率: <span className="font-semibold">{progress.completionRate}%</span></div>
+        </div>
+      );
+    }
+
+    if (section === 'node') {
+      return (
+        <div className="space-y-3">
+          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-3">
+            <div className="text-[11px] text-slate-500 mb-1">当前节点</div>
+            <div className="text-sm font-medium text-slate-900 dark:text-white break-words">{selectedNodeLabel}</div>
+            {hasSelectedNode ? (
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-300">
+                状态：<span className="font-medium">{selectedNodeStatus}</span>
+              </div>
+            ) : null}
+          </div>
+          <div className={`grid grid-cols-2 gap-2 ${compact ? '' : 'lg:grid-cols-3 xl:grid-cols-6'}`}>
+            {STATUS_ACTIONS.map((item) => (
+              <button
+                key={item.status}
+                type="button"
+                onClick={() => void handleStatusChange(item.status)}
+                disabled={!canEditSelectedNode || isUpdatingNodeStatus}
+                className={`h-9 rounded-md border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40 ${item.className} ${
+                  selectedNodeStatus === item.status ? 'ring-2 ring-offset-1 ring-indigo-400' : ''
+                }`}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (section === 'attachment') {
+      return (
+        <div className="space-y-3">
+          <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+            <span className="inline-flex h-8 px-3 items-center rounded-md border border-dashed border-slate-300 hover:border-indigo-400 hover:text-indigo-600 transition-colors">
+              {isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1" />}
+              上传截图
+            </span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={handleUploadAttachment}
+              disabled={!canEditSelectedNode || isUploading}
+            />
+          </label>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400">支持复制截图后按 Ctrl/Cmd + V 直接粘贴上传</div>
+          <div className={`grid grid-cols-1 gap-2 overflow-y-auto pr-1 ${compact ? 'max-h-[52vh]' : 'md:grid-cols-2 xl:grid-cols-3 max-h-44'}`}>
+            {attachments.length === 0 ? (
+              <div className="text-xs text-slate-500">当前节点暂无截图证据</div>
+            ) : (
+              attachments.map((attachment) => (
+                <div key={attachment.id} className="rounded border border-slate-200 dark:border-slate-700 p-2 bg-slate-50/70 dark:bg-slate-800/40">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium truncate">{attachment.name}</div>
+                      <div className="text-[11px] text-slate-500">{Math.round(attachment.size / 1024)} KB</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-slate-400 hover:text-rose-500 transition-colors"
+                      onClick={() => handleDeleteAttachment(attachment.id)}
+                      aria-label="删除截图"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <a
+                    href={attachment.previewUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:underline"
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    预览截图
+                  </a>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="rounded-md border border-indigo-100 dark:border-indigo-500/30 bg-indigo-50/70 dark:bg-indigo-500/10 p-3 text-xs text-indigo-900 dark:text-indigo-200 leading-5 space-y-2">
+        <div className="font-semibold flex items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5" />
+          Phase 2 双模式（本地草稿 + 远端同步）
+        </div>
+        <div>
+          当前模式：{remoteSyncMeta.syncMode === 'hybrid' ? 'Hybrid（已接入远端）' : 'Local（仅本地草稿）'}。
+          {isRemoteLinked ? ' 节点状态点击将直接调用远端接口并回写本地草稿。' : ' 发布到远端后可启用节点状态实时远端更新。'}
+        </div>
+        <div className="flex items-center justify-between rounded-md border border-indigo-200/80 dark:border-indigo-400/30 bg-white/70 dark:bg-slate-900/40 px-2.5 py-2 text-[11px]">
+          <span className="inline-flex items-center gap-1.5">
+            <Tags className="h-3.5 w-3.5" />
+            节点标签：{showNodeKindTags ? '全局显示中' : '全局隐藏中'}
+          </span>
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:opacity-80"
+            onClick={handleToggleNodeKindTags}
+          >
+            {showNodeKindTags ? '隐藏标签' : '显示标签'}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   if (isBootstrapping || !mindData) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -1410,173 +1728,125 @@ function AiCasesInner() {
         ) : null}
 
         <div className="px-4 py-2 border-b border-slate-200/80 dark:border-slate-700/60">
-          <div className="flex flex-wrap items-center gap-2">
-            {TOP_PANEL_TABS.map((tab) => {
-              const isActive = activePanelSection === tab.key;
-              const isNodeLinked = hasSelectedNode && (tab.key === 'node' || tab.key === 'attachment');
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => togglePanelSection(tab.key)}
-                  className={`h-8 px-3 rounded-md border text-xs font-medium transition-colors ${
-                    isActive
-                      ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/70 dark:bg-indigo-500/15 dark:text-indigo-200'
-                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
-                  } ${isNodeLinked ? 'ring-1 ring-indigo-300 dark:ring-indigo-500/60' : ''}`}
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    {tab.label}
-                    <span className="text-[10px]">{isActive ? '▾' : '▸'}</span>
-                  </span>
-                </button>
-              );
-            })}
-            <div className="ml-auto rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-3 py-1 text-[11px] text-slate-600 dark:text-slate-300 max-w-full">
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex w-max min-w-full items-center gap-2">
+                {TOP_PANEL_TABS.map((tab) => {
+                  const isActive = activePanelSection === tab.key;
+                  const isNodeLinked = hasSelectedNode && (tab.key === 'node' || tab.key === 'attachment');
+                  const tabButton = (
+                    <button
+                      type="button"
+                      className={`h-8 px-3 rounded-md border text-xs font-medium transition-colors whitespace-nowrap ${
+                        isActive
+                          ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/70 dark:bg-indigo-500/15 dark:text-indigo-200'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
+                      } ${isNodeLinked ? 'ring-1 ring-indigo-300 dark:ring-indigo-500/60' : ''}`}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        {tab.label}
+                        <span className="text-[10px]">{isActive ? '▾' : '▸'}</span>
+                      </span>
+                    </button>
+                  );
+
+                  if (isTabletTopPanel) {
+                    return (
+                      <Popover
+                        key={tab.key}
+                        open={activePanelSection === tab.key}
+                        onOpenChange={(open) => {
+                          setActivePanelSection((prev) => (open ? tab.key : prev === tab.key ? null : prev));
+                        }}
+                      >
+                        <PopoverTrigger asChild>{tabButton}</PopoverTrigger>
+                        <PopoverContent align="start" sideOffset={8} className="w-[min(680px,calc(100vw-96px))] p-3">
+                          {renderPanelSectionContent(tab.key, true)}
+                        </PopoverContent>
+                      </Popover>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => handleTopPanelTabClick(tab.key)}
+                      className={`h-8 px-3 rounded-md border text-xs font-medium transition-colors whitespace-nowrap ${
+                        isActive
+                          ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/70 dark:bg-indigo-500/15 dark:text-indigo-200'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
+                      } ${isNodeLinked ? 'ring-1 ring-indigo-300 dark:ring-indigo-500/60' : ''}`}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        {tab.label}
+                        <span className="text-[10px]">{isActive ? '▾' : '▸'}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {!isMobileTopPanel ? (
+              <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-3 py-1 text-[11px] text-slate-600 dark:text-slate-300 max-w-full">
+                当前节点：<span className="font-medium text-slate-900 dark:text-white">{selectedNodeLabel}</span>
+                {hasSelectedNode ? <span className="ml-2">状态：{selectedNodeStatus}</span> : null}
+              </div>
+            ) : null}
+          </div>
+
+          {isMobileTopPanel ? (
+            <div className="mt-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1 text-[11px] text-slate-600 dark:text-slate-300">
               当前节点：<span className="font-medium text-slate-900 dark:text-white">{selectedNodeLabel}</span>
               {hasSelectedNode ? <span className="ml-2">状态：{selectedNodeStatus}</span> : null}
             </div>
-          </div>
+          ) : null}
         </div>
 
-        {activePanelSection ? (
+        {isDesktopTopPanel && activePanelSection ? (
           <div className="px-4 pb-4 pt-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-            {activePanelSection === 'requirement' ? (
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold">需求输入</label>
-                <textarea
-                  value={requirementText}
-                  onChange={(event) => setRequirementText(event.target.value)}
-                  className="w-full min-h-[120px] rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm leading-6"
-                  placeholder="粘贴 PRD、需求描述或技术方案，点击 AI 生成脑图"
-                />
-              </div>
-            ) : null}
-
-            {activePanelSection === 'progress' ? (
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 text-xs">
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">总测试点: <span className="font-semibold">{progress.total}</span></div>
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">待执行: <span className="font-semibold text-slate-700 dark:text-slate-100">{progress.todo}</span></div>
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">执行中: <span className="font-semibold text-blue-600">{progress.doing}</span></div>
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">阻塞: <span className="font-semibold text-amber-600">{progress.blocked}</span></div>
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">通过: <span className="font-semibold text-emerald-600">{progress.passed}</span></div>
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">失败: <span className="font-semibold text-rose-600">{progress.failed}</span></div>
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">跳过: <span className="font-semibold text-purple-600">{progress.skipped}</span></div>
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">完成率: <span className="font-semibold">{progress.completionRate}%</span></div>
-              </div>
-            ) : null}
-
-            {activePanelSection === 'node' ? (
-              <div className="space-y-3">
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-3">
-                  <div className="text-[11px] text-slate-500 mb-1">当前节点</div>
-                  <div className="text-sm font-medium text-slate-900 dark:text-white break-words">{selectedNodeLabel}</div>
-                  {hasSelectedNode ? (
-                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-300">
-                      状态：<span className="font-medium">{selectedNodeStatus}</span>
-                    </div>
-                  ) : null}
-                </div>
-                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2">
-                  {STATUS_ACTIONS.map((item) => (
-                    <button
-                      key={item.status}
-                      type="button"
-                      onClick={() => void handleStatusChange(item.status)}
-                      disabled={!canEditSelectedNode || isUpdatingNodeStatus}
-                      className={`h-9 rounded-md border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40 ${item.className} ${
-                        selectedNodeStatus === item.status ? 'ring-2 ring-offset-1 ring-indigo-400' : ''
-                      }`}
-                    >
-                      {item.icon}
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {activePanelSection === 'attachment' ? (
-              <div className="space-y-3">
-                <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
-                  <span className="inline-flex h-8 px-3 items-center rounded-md border border-dashed border-slate-300 hover:border-indigo-400 hover:text-indigo-600 transition-colors">
-                    {isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1" />}
-                    上传截图
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={handleUploadAttachment}
-                    disabled={!canEditSelectedNode || isUploading}
-                  />
-                </label>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">支持复制截图后按 Ctrl/Cmd + V 直接粘贴上传</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-1">
-                  {attachments.length === 0 ? (
-                    <div className="text-xs text-slate-500">当前节点暂无截图证据</div>
-                  ) : (
-                    attachments.map((attachment) => (
-                      <div key={attachment.id} className="rounded border border-slate-200 dark:border-slate-700 p-2 bg-slate-50/70 dark:bg-slate-800/40">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-xs font-medium truncate">{attachment.name}</div>
-                            <div className="text-[11px] text-slate-500">{Math.round(attachment.size / 1024)} KB</div>
-                          </div>
-                          <button
-                            type="button"
-                            className="text-slate-400 hover:text-rose-500 transition-colors"
-                            onClick={() => handleDeleteAttachment(attachment.id)}
-                            aria-label="删除截图"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                        <a
-                          href={attachment.previewUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:underline"
-                        >
-                          <ImageIcon className="h-3.5 w-3.5" />
-                          预览截图
-                        </a>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-
-            {activePanelSection === 'mode' ? (
-              <div className="rounded-md border border-indigo-100 dark:border-indigo-500/30 bg-indigo-50/70 dark:bg-indigo-500/10 p-3 text-xs text-indigo-900 dark:text-indigo-200 leading-5 space-y-2">
-                <div className="font-semibold flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Phase 2 双模式（本地草稿 + 远端同步）
-                </div>
-                <div>
-                  当前模式：{remoteSyncMeta.syncMode === 'hybrid' ? 'Hybrid（已接入远端）' : 'Local（仅本地草稿）'}。
-                  {isRemoteLinked ? ' 节点状态点击将直接调用远端接口并回写本地草稿。' : ' 发布到远端后可启用节点状态实时远端更新。'}
-                </div>
-                <div className="flex items-center justify-between rounded-md border border-indigo-200/80 dark:border-indigo-400/30 bg-white/70 dark:bg-slate-900/40 px-2.5 py-2 text-[11px]">
-                  <span className="inline-flex items-center gap-1.5">
-                    <Tags className="h-3.5 w-3.5" />
-                    节点标签：{showNodeKindTags ? '全局显示中' : '全局隐藏中'}
-                  </span>
-                  <button
-                    type="button"
-                    className="underline underline-offset-2 hover:opacity-80"
-                    onClick={handleToggleNodeKindTags}
-                  >
-                    {showNodeKindTags ? '隐藏标签' : '显示标签'}
-                  </button>
-                </div>
-              </div>
-            ) : null}
+            {renderPanelSectionContent(activePanelSection)}
           </div>
         ) : null}
       </section>
+
+      {isMobileTopPanel ? (
+        <Dialog
+          open={isMobileDrawerOpen && Boolean(activePanelSection)}
+          onOpenChange={(open) => {
+            setIsMobileDrawerOpen(open);
+            if (!open) {
+              setActivePanelSection(null);
+            }
+          }}
+        >
+          <DialogContent className="left-auto right-0 top-0 h-[100dvh] w-[min(94vw,420px)] max-w-none translate-x-0 translate-y-0 rounded-none sm:rounded-none p-0 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-right-full data-[state=closed]:zoom-out-100 data-[state=open]:zoom-in-100">
+            <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-3 flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-sm font-semibold">
+                  {activePanelSection ? TOP_PANEL_TABS.find((item) => item.key === activePanelSection)?.label ?? '模块详情' : '模块详情'}
+                </DialogTitle>
+                <DialogDescription className="sr-only">移动端顶部模块抽屉内容</DialogDescription>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setIsMobileDrawerOpen(false);
+                  setActivePanelSection(null);
+                }}
+              >
+                关闭
+              </Button>
+            </div>
+            <div className="px-4 py-3 overflow-y-auto">
+              {activePanelSection ? renderPanelSectionContent(activePanelSection, true) : null}
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       <section className="flex-1 min-h-0 rounded-xl border border-slate-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900 shadow-sm overflow-hidden flex flex-col">
         <div className="h-11 px-3 border-b border-slate-200/80 dark:border-slate-700/60 flex items-center justify-between bg-slate-50/70 dark:bg-slate-800/40">

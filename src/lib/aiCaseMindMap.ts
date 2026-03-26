@@ -196,6 +196,161 @@ function formatCaseNote(
   return noteLines.join('\n');
 }
 
+interface ParsedCaseNoteSections {
+  preconditions: string[];
+  steps: string[];
+  expectedResults: string[];
+}
+
+type CaseNoteSectionKey = keyof ParsedCaseNoteSections;
+
+const CASE_NOTE_SECTION_KEY_MAP: Record<'前置条件' | '测试步骤' | '预期结果', CaseNoteSectionKey> = {
+  前置条件: 'preconditions',
+  测试步骤: 'steps',
+  预期结果: 'expectedResults',
+};
+
+const CASE_NOTE_SECTION_TITLE_MAP: Record<CaseNoteSectionKey, string> = {
+  preconditions: '前置条件',
+  steps: '测试步骤',
+  expectedResults: '预期结果',
+};
+
+function normalizeChecklistItem(line: string): string {
+  return line
+    .replace(/^[-*•]\s*/, '')
+    .replace(/^\d+[\.\)、]\s*/, '')
+    .trim();
+}
+
+function parseCaseNoteSections(note: string): ParsedCaseNoteSections {
+  const sections: ParsedCaseNoteSections = {
+    preconditions: [],
+    steps: [],
+    expectedResults: [],
+  };
+
+  let activeSection: CaseNoteSectionKey | null = null;
+
+  for (const rawLine of note.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    const withColon = line.match(/^(前置条件|测试步骤|预期结果)\s*[:：]\s*(.*)$/);
+    if (withColon) {
+      activeSection = CASE_NOTE_SECTION_KEY_MAP[withColon[1] as keyof typeof CASE_NOTE_SECTION_KEY_MAP];
+      const inlineItem = normalizeChecklistItem(withColon[2]);
+      if (inlineItem) {
+        sections[activeSection].push(inlineItem);
+      }
+      continue;
+    }
+
+    const pureHeader = line.match(/^(前置条件|测试步骤|预期结果)$/);
+    if (pureHeader) {
+      activeSection = CASE_NOTE_SECTION_KEY_MAP[pureHeader[1] as keyof typeof CASE_NOTE_SECTION_KEY_MAP];
+      continue;
+    }
+
+    if (!activeSection) {
+      continue;
+    }
+
+    const normalizedItem = normalizeChecklistItem(line);
+    if (normalizedItem) {
+      sections[activeSection].push(normalizedItem);
+    }
+  }
+
+  return sections;
+}
+
+function buildCaseNoteChildren(
+  sections: ParsedCaseNoteSections,
+  aiGenerated: boolean
+): AiCaseNode[] {
+  const orderedSections: CaseNoteSectionKey[] = ['preconditions', 'steps', 'expectedResults'];
+
+  return orderedSections
+    .map((key) => ({ key, items: toChecklist(sections[key]) }))
+    .filter((section) => section.items.length > 0)
+    .map((section) => createNode(CASE_NOTE_SECTION_TITLE_MAP[section.key], 'scenario', {
+      aiGenerated,
+      children: section.items.map((item) => createNode(item, 'scenario', {
+        aiGenerated,
+      })),
+    }));
+}
+
+export function expandImportedCaseNodesFromNote(
+  data: AiCaseMindData,
+  options?: {
+    candidateNodeIds?: string[];
+    showNodeKindTags?: boolean;
+  }
+): { data: AiCaseMindData; expandedCount: number } {
+  const candidateSet = options?.candidateNodeIds && options.candidateNodeIds.length > 0
+    ? new Set(options.candidateNodeIds)
+    : null;
+
+  const next = cloneData(data);
+  let expandedCount = 0;
+
+  const walk = (node: AiCaseNode): void => {
+    for (const child of node.children ?? []) {
+      walk(child as AiCaseNode);
+    }
+
+    if (candidateSet && !candidateSet.has(node.id)) {
+      return;
+    }
+
+    if ((node.children?.length ?? 0) > 0) {
+      return;
+    }
+
+    const metadata = node.metadata ?? createDefaultMetadata('testcase');
+    if (metadata.kind !== 'testcase') {
+      return;
+    }
+
+    const note = typeof node.note === 'string' ? node.note.trim() : '';
+    if (!note) {
+      return;
+    }
+
+    const sections = parseCaseNoteSections(note);
+    const children = buildCaseNoteChildren(sections, metadata.aiGenerated);
+    if (children.length === 0) {
+      return;
+    }
+
+    node.children = children;
+    node.expanded = true;
+    node.metadata = {
+      ...metadata,
+      nodeVersion: metadata.nodeVersion + 1,
+      updatedAt: Date.now(),
+    };
+    expandedCount += 1;
+  };
+
+  walk(next.nodeData);
+
+  if (expandedCount === 0) {
+    return { data, expandedCount: 0 };
+  }
+
+  return {
+    data: normalizeMindData(next, {
+      showNodeKindTags: options?.showNodeKindTags ?? true,
+    }),
+    expandedCount,
+  };
+}
+
 function buildSmokeCases(anchor: string): AiCaseNode[] {
   return [
     createNode(`${anchor} 主流程可以顺利完成`, 'testcase', {
