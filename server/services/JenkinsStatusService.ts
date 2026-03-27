@@ -430,6 +430,7 @@ export class JenkinsStatusService {
 
   /**
    * 获取构建artifacts中的结果文件
+   * 优先匹配 pytest-json-report 生成的 test-report.json
    */
   private async getArtifactResults(jobName: string, buildId: string): Promise<TestResults | null> {
     try {
@@ -450,11 +451,18 @@ export class JenkinsStatusService {
 
       const data = await response.json();
 
-      // 查找测试结果文件
-      const resultFile = data.artifacts?.find((artifact: any) =>
-        artifact.fileName?.includes('test-results') ||
-        artifact.fileName?.includes('results.json')
-      );
+      // 优先级：test-report.json > junit.xml > test-results > results.json
+      const ARTIFACT_PRIORITY = [
+        (name: string) => name === 'test-report.json',
+        (name: string) => name === 'junit.xml',
+        (name: string) => name.includes('test-results') || name.includes('results.json'),
+      ];
+
+      let resultFile: any = null;
+      for (const matcher of ARTIFACT_PRIORITY) {
+        resultFile = data.artifacts?.find((artifact: any) => matcher(artifact.fileName ?? ''));
+        if (resultFile) break;
+      }
 
       if (!resultFile) {
         return null;
@@ -485,6 +493,7 @@ export class JenkinsStatusService {
 
   /**
    * 解析构建日志获取测试结果
+   * 支持 pytest、JUnit 及自定义格式的日志输出
    */
   private async parseLogResults(jobName: string, buildId: string): Promise<TestResults | null> {
     try {
@@ -495,54 +504,99 @@ export class JenkinsStatusService {
 
       const log = logData.text;
 
-      // 使用正则表达式提取测试结果
-      const patterns = {
-        // 匹配 "Tests run: 10, Failures: 2, Errors: 0, Skipped: 1"
-        junit: /Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)/i,
+      // ─── 优先级由高到低的匹配模式 ───────────────────────────────────
+      const patterns: Array<{
+        name: string;
+        pattern: RegExp;
+        extract: (match: RegExpMatchArray) => { passed: number; failed: number; skipped: number; total?: number };
+      }> = [
+        {
+          // pytest 标准摘要行（最后一行）:
+          // "5 passed, 2 failed, 1 error, 1 skipped in 12.34s"
+          // "3 passed in 5.12s"
+          // "1 failed in 1.01s"
+          name: 'pytest-summary',
+          pattern: /(\d+)\s+passed(?:,\s*(\d+)\s+failed)?(?:,\s*(\d+)\s+error)?(?:,\s*(\d+)\s+skipped)?\s+in\s+[\d.]+s/i,
+          extract: (m) => ({
+            passed: parseInt(m[1] ?? '0', 10),
+            failed: (parseInt(m[2] ?? '0', 10)) + (parseInt(m[3] ?? '0', 10)),
+            skipped: parseInt(m[4] ?? '0', 10),
+          }),
+        },
+        {
+          // pytest 仅有失败的情况: "2 failed in 3.45s" (无 passed 关键字)
+          name: 'pytest-failed-only',
+          pattern: /(\d+)\s+failed(?:,\s*(\d+)\s+error)?(?:,\s*(\d+)\s+skipped)?\s+in\s+[\d.]+s/i,
+          extract: (m) => ({
+            passed: 0,
+            failed: (parseInt(m[1] ?? '0', 10)) + (parseInt(m[2] ?? '0', 10)),
+            skipped: parseInt(m[3] ?? '0', 10),
+          }),
+        },
+        {
+          // pytest short test summary (=== short test summary info ===) 末尾行
+          // "= 1 failed, 3 passed, 1 skipped in 8.00s ="
+          name: 'pytest-equals-summary',
+          pattern: /=+\s+(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+passed,\s*)?(?:(\d+)\s+skipped,?\s*)?\d+.*in\s+[\d.]+s\s*=+/i,
+          extract: (m) => ({
+            failed: parseInt(m[1] ?? '0', 10),
+            passed: parseInt(m[2] ?? '0', 10),
+            skipped: parseInt(m[3] ?? '0', 10),
+          }),
+        },
+        {
+          // JUnit: "Tests run: 10, Failures: 2, Errors: 0, Skipped: 1"
+          name: 'junit',
+          pattern: /Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)/i,
+          extract: (m) => {
+            const total = parseInt(m[1], 10);
+            const failed = parseInt(m[2], 10) + parseInt(m[3], 10);
+            const skipped = parseInt(m[4], 10);
+            return { passed: total - failed - skipped, failed, skipped, total };
+          },
+        },
+        {
+          // 自定义: "PASSED: 8, FAILED: 2, SKIPPED: 1"
+          name: 'custom',
+          pattern: /PASSED:\s*(\d+),\s*FAILED:\s*(\d+),\s*SKIPPED:\s*(\d+)/i,
+          extract: (m) => ({
+            passed: parseInt(m[1], 10),
+            failed: parseInt(m[2], 10),
+            skipped: parseInt(m[3], 10),
+          }),
+        },
+        {
+          // 总数格式: "Total: 10, Pass: 8, Fail: 2, Skip: 0"
+          name: 'total',
+          pattern: /Total:\s*(\d+),\s*Pass:\s*(\d+),\s*Fail:\s*(\d+),\s*Skip:\s*(\d+)/i,
+          extract: (m) => ({
+            total: parseInt(m[1], 10),
+            passed: parseInt(m[2], 10),
+            failed: parseInt(m[3], 10),
+            skipped: parseInt(m[4], 10),
+          }),
+        },
+      ];
 
-        // 匹配 "PASSED: 8, FAILED: 2, SKIPPED: 1"
-        custom: /PASSED:\s*(\d+),\s*FAILED:\s*(\d+),\s*SKIPPED:\s*(\d+)/i,
-
-        // 匹配总数格式
-        total: /Total:\s*(\d+),\s*Pass:\s*(\d+),\s*Fail:\s*(\d+),\s*Skip:\s*(\d+)/i
-      };
-
-      for (const [name, pattern] of Object.entries(patterns)) {
+      for (const { name, pattern, extract } of patterns) {
         const match = log.match(pattern);
         if (match) {
-          console.log(`Found test results using ${name} pattern:`, match);
+          const { passed, failed, skipped, total } = extract(match);
+          const passedCases = isNaN(passed) ? 0 : passed;
+          const failedCases = isNaN(failed) ? 0 : failed;
+          const skippedCases = isNaN(skipped) ? 0 : skipped;
+          const totalCases = total != null && !isNaN(total) ? total : passedCases + failedCases + skippedCases;
 
-          if (name === 'junit') {
-            const [, total, failures, errors, skipped] = match;
-            const totalCases = parseInt(total, 10);
-            const failedCases = parseInt(failures, 10) + parseInt(errors, 10);
-            const skippedCases = parseInt(skipped, 10);
-            const passedCases = totalCases - failedCases - skippedCases;
+          console.log(`Found test results using [${name}] pattern:`, { totalCases, passedCases, failedCases, skippedCases });
 
-            return {
-              totalCases,
-              passedCases,
-              failedCases,
-              skippedCases,
-              duration: 0,
-              results: []
-            };
-          } else {
-            const [, passed, failed, skipped] = match;
-            const passedCases = parseInt(passed, 10);
-            const failedCases = parseInt(failed, 10);
-            const skippedCases = parseInt(skipped, 10);
-            const totalCases = passedCases + failedCases + skippedCases;
-
-            return {
-              totalCases,
-              passedCases,
-              failedCases,
-              skippedCases,
-              duration: 0,
-              results: []
-            };
-          }
+          return {
+            totalCases,
+            passedCases,
+            failedCases,
+            skippedCases,
+            duration: 0,
+            results: [],
+          };
         }
       }
 
@@ -578,12 +632,64 @@ export class JenkinsStatusService {
 
   /**
    * 解析结果文件
+   * 支持 pytest-json-report 格式（test-report.json）和自定义格式
+   *
+   * pytest-json-report 的 test-report.json 结构示例：
+   * {
+   *   "created": 1234567890,
+   *   "duration": 12.34,
+   *   "exitcode": 0,
+   *   "root": "/path/to/tests",
+   *   "environment": {},
+   *   "summary": { "passed": 3, "failed": 1, "total": 4 },
+   *   "tests": [
+   *     {
+   *       "nodeid": "D/test_xxx.py::TestClass::test_method",
+   *       "outcome": "passed",  // "passed" | "failed" | "error" | "skipped"
+   *       "duration": 1.23,
+   *       "longrepr": "AssertionError: ..."  // 失败时存在
+   *     }
+   *   ]
+   * }
    */
   private parseResultFile(data: any): TestResults | null {
     try {
-      // 支持多种结果文件格式
+      // ─── 格式1: pytest-json-report（test-report.json）─────────────
+      if (data.summary && Array.isArray(data.tests)) {
+        const summary = data.summary as Record<string, number>;
+        const passedCases = summary['passed'] ?? 0;
+        const failedCases = (summary['failed'] ?? 0) + (summary['error'] ?? 0);
+        const skippedCases = summary['skipped'] ?? 0;
+        const totalCases = summary['total'] ?? (passedCases + failedCases + skippedCases);
+        const duration = typeof data.duration === 'number' ? Math.round(data.duration * 1000) : 0;
+
+        const results: TestCaseResult[] = (data.tests as any[]).map((t) => {
+          const outcome: string = String(t.outcome ?? '').toLowerCase();
+          const status = this.mapPytestOutcome(outcome);
+          const nodeId: string = String(t.nodeid ?? '');
+          const caseName = nodeId || 'unknown';
+          // pytest-json-report 不携带 caseId，用 0 作占位，
+          // completeBatchExecution 会按 caseName 做二次匹配
+          const caseId = this.extractCaseId(caseName) ?? 0;
+
+          const errorMessage = typeof t.longrepr === 'string' && t.longrepr.trim()
+            ? t.longrepr.trim().slice(0, 2000)
+            : undefined;
+
+          return {
+            caseId,
+            caseName,
+            status,
+            duration: typeof t.duration === 'number' ? Math.round(t.duration * 1000) : 0,
+            errorMessage,
+          };
+        });
+
+        return { totalCases, passedCases, failedCases, skippedCases, duration, results };
+      }
+
+      // ─── 格式2: 自定义格式 ────────────────────────────────────────
       if (data.testResults) {
-        // 自定义格式
         return {
           totalCases: data.totalCases || 0,
           passedCases: data.passedCases || 0,
@@ -598,6 +704,24 @@ export class JenkinsStatusService {
     } catch (error) {
       console.error('Failed to parse result file:', error);
       return null;
+    }
+  }
+
+  /**
+   * 映射 pytest 的 outcome 到内部状态
+   */
+  private mapPytestOutcome(outcome: string): 'passed' | 'failed' | 'skipped' | 'error' {
+    switch (outcome) {
+      case 'passed':
+        return 'passed';
+      case 'failed':
+        return 'failed';
+      case 'skipped':
+        return 'skipped';
+      case 'error':
+        return 'error';
+      default:
+        return 'error';
     }
   }
 

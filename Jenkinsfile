@@ -22,6 +22,13 @@ pipeline {
         EXEC_NODE = 'master'
         // master 等待超时时间（秒），超时后自动切换到 Agent-node-2
         NODE_SWITCH_TIMEOUT_SECONDS = '20'
+        // ─── ChromeDriver 下载源（国内镜像，优先级由高到低）────────────────
+        // 华为云镜像（速度最稳定，推荐首选）
+        CHROMEDRIVER_MIRROR_HUAWEI = 'https://mirrors.huaweicloud.com/chromedriver'
+        // npmmirror 阿里云镜像（备用）
+        CHROMEDRIVER_MIRROR_NPM    = 'https://registry.npmmirror.com/-/binary/chromedriver'
+        // 原始 Google 源（最后兜底，国内可能超时）
+        CHROMEDRIVER_MIRROR_GOOGLE = 'https://storage.googleapis.com/chrome-for-testing-public'
     }
 
     options {
@@ -102,6 +109,160 @@ pipeline {
                 }
             }
         }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // 安装 ChromeDriver（国内镜像一条龙）
+        //
+        // 执行逻辑：
+        //   1. 若缓存目录已有 chromedriver 且版本匹配当前 Chrome，直接跳过
+        //   2. 读取本机 Chrome 主版本号
+        //   3. 依次尝试国内镜像（华为云 → npmmirror → Google 原站），任一成功即停止
+        //   4. 解压、移动到缓存目录、赋可执行权限
+        //   5. 打印版本确认安装成功
+        // ──────────────────────────────────────────────────────────────────────
+        stage('安装 ChromeDriver') {
+            agent { label "${env.EXEC_NODE}" }
+            steps {
+                sh '''
+                    set -e
+                    DRIVER_CACHE="''' + env.DRIVER_CACHE + '''"
+                    mkdir -p "${DRIVER_CACHE}"
+
+                    # ── 1. 获取本机 Chrome 主版本 ─────────────────────────────
+                    CHROME_BIN=""
+                    for candidate in google-chrome google-chrome-stable chromium-browser chromium; do
+                        if command -v "$candidate" >/dev/null 2>&1; then
+                            CHROME_BIN="$candidate"
+                            break
+                        fi
+                    done
+
+                    if [ -z "$CHROME_BIN" ]; then
+                        echo "⚠️  未找到 Chrome/Chromium，跳过 chromedriver 安装"
+                        exit 0
+                    fi
+
+                    CHROME_FULL_VER=$("$CHROME_BIN" --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || echo "")
+                    CHROME_MAJOR=$(echo "$CHROME_FULL_VER" | cut -d. -f1)
+                    echo "🔍 Chrome 版本: ${CHROME_FULL_VER:-未知}  主版本: ${CHROME_MAJOR:-未知}"
+
+                    # ── 2. 检查缓存是否命中（版本号前缀匹配）──────────────────
+                    if [ -f "${DRIVER_CACHE}/chromedriver" ]; then
+                        CACHED_VER=$("${DRIVER_CACHE}/chromedriver" --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || echo "")
+                        CACHED_MAJOR=$(echo "$CACHED_VER" | cut -d. -f1)
+                        if [ -n "$CHROME_MAJOR" ] && [ "$CACHED_MAJOR" = "$CHROME_MAJOR" ]; then
+                            echo "✅ chromedriver 缓存命中（${CACHED_VER}），跳过下载"
+                            exit 0
+                        else
+                            echo "♻️  chromedriver 版本不匹配（缓存: ${CACHED_VER}，Chrome: ${CHROME_FULL_VER}），重新下载"
+                            rm -f "${DRIVER_CACHE}/chromedriver"
+                        fi
+                    fi
+
+                    # ── 3. 确定需要下载的 chromedriver 版本号 ─────────────────
+                    # Chrome 115+ 使用 chrome-for-testing，旧版用 LATEST_RELEASE 接口
+                    DRIVER_VER=""
+
+                    if [ -n "$CHROME_MAJOR" ] && [ "$CHROME_MAJOR" -ge 115 ] 2>/dev/null; then
+                        # 新版：先用华为云 JSON API 查询精确版本，再用 npmmirror 备用
+                        echo "📡 查询 Chrome ${CHROME_MAJOR} 对应的 chromedriver 版本..."
+
+                        # 华为云不提供版本 API，直接用 Chrome 完整版本号作为 driver 版本（Chrome for Testing 规则）
+                        # 尝试从 npmmirror 获取版本列表
+                        DRIVER_VER=$(curl -fsSL --connect-timeout 8 --max-time 15 \
+                            "https://registry.npmmirror.com/-/binary/chromedriver/index.json" 2>/dev/null \
+                            | grep -oE '"[0-9]+\\.'"$CHROME_MAJOR"'\\.[0-9]+\\.[0-9]+"' \
+                            | tr -d '"' | sort -V | tail -1 || echo "")
+
+                        if [ -z "$DRIVER_VER" ] && [ -n "$CHROME_FULL_VER" ]; then
+                            # 直接用 Chrome 完整版本（Chrome for Testing 版本一一对应）
+                            DRIVER_VER="$CHROME_FULL_VER"
+                        fi
+                    else
+                        # 旧版（<115）：从 npmmirror LATEST_RELEASE 接口获取
+                        if [ -n "$CHROME_MAJOR" ]; then
+                            DRIVER_VER=$(curl -fsSL --connect-timeout 8 --max-time 15 \
+                                "https://registry.npmmirror.com/-/binary/chromedriver/LATEST_RELEASE_${CHROME_MAJOR}" \
+                                2>/dev/null || echo "")
+                        fi
+                    fi
+
+                    # 最终兜底：使用 Chrome 完整版本号，或硬编码已知稳定版
+                    if [ -z "$DRIVER_VER" ]; then
+                        DRIVER_VER="${CHROME_FULL_VER:-147.0.7727.24}"
+                        echo "⚠️  无法查询版本，使用兜底版本: ${DRIVER_VER}"
+                    fi
+                    echo "📦 目标 chromedriver 版本: ${DRIVER_VER}"
+
+                    # ── 4. 依次尝试各镜像源下载 ──────────────────────────────
+                    DOWNLOAD_OK=0
+                    TMP_ZIP="/tmp/chromedriver_${DRIVER_VER}.zip"
+                    rm -f "$TMP_ZIP"
+
+                    # 构建各镜像的下载 URL
+                    # 华为云：https://mirrors.huaweicloud.com/chromedriver/<ver>/chromedriver_linux64.zip
+                    # npmmirror：https://registry.npmmirror.com/-/binary/chromedriver/<ver>/chromedriver_linux64.zip
+                    # Google（115+）：https://storage.googleapis.com/chrome-for-testing-public/<ver>/linux64/chromedriver-linux64.zip
+                    # Google（<115）：https://chromedriver.storage.googleapis.com/<ver>/chromedriver_linux64.zip
+
+                    CHROME_MAJOR_NUM=$(echo "$CHROME_MAJOR" | tr -d '[:space:]')
+                    if [ -n "$CHROME_MAJOR_NUM" ] && [ "$CHROME_MAJOR_NUM" -ge 115 ] 2>/dev/null; then
+                        URL_HUAWEI="https://mirrors.huaweicloud.com/chromedriver/${DRIVER_VER}/chromedriver-linux64.zip"
+                        URL_NPM="https://registry.npmmirror.com/-/binary/chromedriver/${DRIVER_VER}/chromedriver-linux64.zip"
+                        URL_GOOGLE="https://storage.googleapis.com/chrome-for-testing-public/${DRIVER_VER}/linux64/chromedriver-linux64.zip"
+                        INNER_DIR="chromedriver-linux64"
+                        INNER_BIN="chromedriver-linux64/chromedriver"
+                    else
+                        URL_HUAWEI="https://mirrors.huaweicloud.com/chromedriver/${DRIVER_VER}/chromedriver_linux64.zip"
+                        URL_NPM="https://registry.npmmirror.com/-/binary/chromedriver/${DRIVER_VER}/chromedriver_linux64.zip"
+                        URL_GOOGLE="https://chromedriver.storage.googleapis.com/${DRIVER_VER}/chromedriver_linux64.zip"
+                        INNER_DIR=""
+                        INNER_BIN="chromedriver"
+                    fi
+
+                    for MIRROR_NAME in "华为云" "npmmirror(阿里)" "Google原站"; do
+                        case "$MIRROR_NAME" in
+                            "华为云")       DL_URL="$URL_HUAWEI" ;;
+                            "npmmirror(阿里)") DL_URL="$URL_NPM" ;;
+                            "Google原站")   DL_URL="$URL_GOOGLE" ;;
+                        esac
+
+                        echo "⬇️  尝试 [${MIRROR_NAME}]: ${DL_URL}"
+                        curl -fL --retry 2 --retry-delay 2 \
+                             --connect-timeout 15 --max-time 90 \
+                             "$DL_URL" -o "$TMP_ZIP" 2>&1 && \
+                        [ -f "$TMP_ZIP" ] && [ -s "$TMP_ZIP" ] && {
+                            DOWNLOAD_OK=1
+                            echo "✅ 下载成功 [${MIRROR_NAME}]"
+                            break
+                        }
+                        echo "⚠️  [${MIRROR_NAME}] 下载失败，尝试下一个..."
+                        rm -f "$TMP_ZIP"
+                    done
+
+                    if [ "$DOWNLOAD_OK" -ne 1 ]; then
+                        echo "❌ 所有镜像源均下载失败，chromedriver 将由 SeleniumBase 运行时自动处理"
+                        exit 0
+                    fi
+
+                    # ── 5. 解压、安装到缓存目录 ───────────────────────────────
+                    cd /tmp
+                    unzip -o "$TMP_ZIP" -d chromedriver_extract_$$ >/dev/null 2>&1
+                    if [ -n "$INNER_DIR" ]; then
+                        cp "chromedriver_extract_$$/${INNER_BIN}" "${DRIVER_CACHE}/chromedriver"
+                    else
+                        cp "chromedriver_extract_$$/${INNER_BIN}" "${DRIVER_CACHE}/chromedriver"
+                    fi
+                    chmod +x "${DRIVER_CACHE}/chromedriver"
+                    rm -rf "$TMP_ZIP" "chromedriver_extract_$$"
+
+                    # ── 6. 验证安装 ───────────────────────────────────────────
+                    INSTALLED_VER=$("${DRIVER_CACHE}/chromedriver" --version 2>/dev/null || echo "unknown")
+                    echo "🎉 chromedriver 安装完成: ${INSTALLED_VER}"
+                    echo "   缓存路径: ${DRIVER_CACHE}/chromedriver"
+                '''
+            }
+        }
         
         stage('准备环境') {
             agent { label "${env.EXEC_NODE}" }
@@ -147,47 +308,18 @@ pipeline {
 
                         # 激活虚拟环境并安装依赖（用 . 代替 source，兼容 /bin/sh）
                         . ${PYTHON_ENV}/bin/activate
-                        pip install -q pytest pytest-json-report
+                        # 使用国内 pip 镜像（阿里云）加速依赖安装
+                        pip install -q -i https://mirrors.aliyun.com/pypi/simple/ \
+                            --trusted-host mirrors.aliyun.com \
+                            pytest pytest-json-report
 
                         # 安装测试仓库自身的依赖（requirements.txt 在仓库根目录）
                         if [ -f "${repoDir}/requirements.txt" ]; then
                             echo "安装测试仓库依赖: ${repoDir}/requirements.txt"
-                            pip install -q -r ${repoDir}/requirements.txt
+                            pip install -q -i https://mirrors.aliyun.com/pypi/simple/ \
+                                --trusted-host mirrors.aliyun.com \
+                                -r ${repoDir}/requirements.txt
                         fi
-
-                        # ─── 预缓存 chromedriver，避免每次测试时临时下载 ───
-                        mkdir -p ${DRIVER_CACHE}
-                        export SB_DRIVER_CACHE_PATH=${DRIVER_CACHE}
-                        if [ ! -f "${DRIVER_CACHE}/chromedriver" ]; then
-                            echo "📥 下载 chromedriver 到缓存目录: ${DRIVER_CACHE}"
-                            # 获取本机 Chrome 版本号（主版本）
-                            CHROME_VER=\$(google-chrome --version 2>/dev/null | grep -oP '[0-9]+' | head -1 || echo "146")
-                            echo "Chrome 主版本: \$CHROME_VER"
-                            # 查询对应的 chromedriver 版本
-                            DRIVER_VER=\$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_\${CHROME_VER}" 2>/dev/null || echo "")
-                            if [ -z "\$DRIVER_VER" ]; then
-                                # 国内备用：直接使用已知版本
-                                DRIVER_VER="146.0.7680.153"
-                            fi
-                            echo "下载 chromedriver 版本: \$DRIVER_VER"
-                            # 下载并解压到缓存目录
-                            cd /tmp
-                            curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 120 "https://storage.googleapis.com/chrome-for-testing-public/\${DRIVER_VER}/linux64/chromedriver-linux64.zip" -o chromedriver.zip || true
-                            if [ -f chromedriver.zip ]; then
-                                unzip -o chromedriver.zip
-                                cp chromedriver-linux64/chromedriver ${DRIVER_CACHE}/chromedriver
-                                chmod +x ${DRIVER_CACHE}/chromedriver
-                                rm -rf chromedriver.zip chromedriver-linux64
-                                echo "✅ chromedriver 下载并缓存成功"
-                            else
-                                echo "⚠️ chromedriver 下载失败，将由 SeleniumBase 运行时自动处理"
-                            fi
-                            cd -
-                        else
-                            echo "✅ chromedriver 已缓存，跳过下载: \$(${DRIVER_CACHE}/chromedriver --version 2>/dev/null || echo '版本未知')"
-                        fi
-                        # 将缓存目录加入 PATH，让 selenium 直接找到
-                        export PATH="${DRIVER_CACHE}:\${PATH}"
 
                         # 列出可用的测试文件
                         echo "可用的测试文件:"

@@ -3,6 +3,7 @@ import { useLocation } from 'wouter';
 import {
   Boxes,
   Play,
+  Pause,
   AlertCircle,
   Loader2,
   MoreVertical,
@@ -33,6 +34,14 @@ import {
   CheckSquare,
   ListChecks,
   ChevronDown,
+  LayoutGrid,
+  List,
+  SlidersHorizontal,
+  Save,
+  Download,
+  ShieldAlert,
+  Columns3,
+  ArrowUpDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -84,8 +93,8 @@ import {
 } from '@/hooks/useTasks';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { CheckedState } from '@radix-ui/react-checkbox';
-import { BatchActionBar } from '@/components/tasks/BatchActionBar';
 import { BatchConfirmDialog } from '@/components/tasks/BatchConfirmDialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useAllCasesForSelect, type TestCase as CaseItem, type CaseType } from '@/hooks/useCases';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -143,10 +152,82 @@ const AUDIT_ACTION_LABELS: Record<string, { label: string; color: string }> = {
   permanently_failed: { label: '彻底失败', color: 'bg-red-200 text-red-800 dark:bg-red-900/50 dark:text-red-200' },
 };
 
+type TaskViewMode = 'cards' | 'table';
+type TaskTagFilter = '' | 'has_cases' | 'scheduled' | 'failed' | 'healthy';
+type TaskSortKey = 'name' | 'status' | 'trigger' | 'owner' | 'latestRun' | 'successRate';
+type SortDirection = 'asc' | 'desc';
+
+const TASK_FILTER_PRESET_KEY = 'task-management.common-filters';
+
+const TASK_TAG_FILTER_OPTIONS: ReadonlyArray<{ value: TaskTagFilter; label: string }> = [
+  { value: '', label: '全部标签' },
+  { value: 'has_cases', label: '已关联用例' },
+  { value: 'scheduled', label: '定时任务' },
+  { value: 'failed', label: '失败预警' },
+  { value: 'healthy', label: '稳定任务' },
+];
+
+const TABLE_COLUMN_OPTIONS: ReadonlyArray<{ key: TaskSortKey; label: string }> = [
+  { key: 'name', label: '任务名' },
+  { key: 'status', label: '状态' },
+  { key: 'trigger', label: '触发方式' },
+  { key: 'owner', label: '负责人' },
+  { key: 'latestRun', label: '最近运行' },
+  { key: 'successRate', label: '成功率' },
+];
+
+const TASK_STATUS_SEMANTIC = {
+  success: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  running: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+  paused: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  draft: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+} as const;
+
+type TaskSemanticStatus = keyof typeof TASK_STATUS_SEMANTIC;
+
 const isCheckedState = (checked: CheckedState): boolean => checked === true;
 
 const getErrorMessage = (error: unknown, fallback: string = TASK_MESSAGES.GENERIC_ERROR): string =>
   error instanceof Error ? error.message : fallback;
+
+const parseCaseCount = (task: Task): number => {
+  if (!task.case_ids) return 0;
+  try {
+    const ids = JSON.parse(task.case_ids);
+    return Array.isArray(ids) ? ids.length : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const getTaskSuccessRate = (task: Task): number | null => {
+  const latest = task.recentExecutions?.[0];
+  if (!latest?.total_cases) return null;
+  return Math.round((latest.passed_cases / latest.total_cases) * 100);
+};
+
+const getTaskSemanticStatus = (task: Task): { key: TaskSemanticStatus; label: string } => {
+  if (task.status === 'archived') return { key: 'draft', label: '草稿' };
+
+  const latest = task.recentExecutions?.[0];
+  if (latest?.status === 'running' || latest?.status === 'pending') {
+    return { key: 'running', label: '运行中' };
+  }
+  if (task.status === 'paused') return { key: 'paused', label: '暂停' };
+  if (latest?.status === 'failed') return { key: 'failed', label: '失败' };
+  return { key: 'success', label: '成功' };
+};
+
+const formatTime = (value?: string): string => {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
 
 /* ─── 主页面 ─────────────────────────────────────────── */
 
@@ -154,9 +235,120 @@ export default function Tasks() {
   // ── 筛选 & 分页状态 ──────────────────────────────────
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [triggerFilter, setTriggerFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>('');
+  const [triggerFilter, setTriggerFilter] = useState<TaskTriggerFilter>('');
+  const [tagFilter, setTagFilter] = useState<TaskTagFilter>('');
   const [page, setPage] = useState(1);
+  const [viewMode, setViewMode] = useState<TaskViewMode>('cards');
+  const [sortKey, setSortKey] = useState<TaskSortKey>('latestRun');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [viewportWidth, setViewportWidth] = useState<number>(typeof window === 'undefined' ? 1440 : window.innerWidth);
+  const [savedFilters, setSavedFilters] = useState<Array<{
+    name: string;
+    keyword: string;
+    statusFilter: TaskStatusFilter;
+    triggerFilter: TaskTriggerFilter;
+    tagFilter: TaskTagFilter;
+  }>>(() => {
+    try {
+      const raw = localStorage.getItem(TASK_FILTER_PRESET_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.slice(0, 6) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [columnVisibility, setColumnVisibility] = useState<Record<TaskSortKey, boolean>>({
+    name: true,
+    status: true,
+    trigger: true,
+    owner: true,
+    latestRun: true,
+    successRate: true,
+  });
+
+  const isWideDesktop = viewportWidth >= 1440;
+  const isFilterPopoverMode = viewportWidth >= 1024 && viewportWidth < 1440;
+  const isTablet = viewportWidth >= 768 && viewportWidth < 1024;
+  const isMobile = viewportWidth < 768;
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    if (viewportWidth < 1024) {
+      setViewMode('cards');
+    }
+  }, [viewportWidth]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TASK_FILTER_PRESET_KEY, JSON.stringify(savedFilters));
+    } catch {
+      // ignore storage failure
+    }
+  }, [savedFilters]);
+
+  const saveCurrentFilter = useCallback(() => {
+    const name = window.prompt('请输入常用筛选名称');
+    if (!name?.trim()) return;
+
+    const preset = {
+      name: name.trim(),
+      keyword,
+      statusFilter,
+      triggerFilter,
+      tagFilter,
+    };
+
+    setSavedFilters((prev) => {
+      const withoutDuplicate = prev.filter((item) => item.name !== preset.name);
+      return [preset, ...withoutDuplicate].slice(0, 6);
+    });
+    toast.success(`已保存常用筛选：${preset.name}`);
+  }, [keyword, statusFilter, triggerFilter, tagFilter]);
+
+  const applySavedFilter = useCallback((name: string) => {
+    const target = savedFilters.find((item) => item.name === name);
+    if (!target) return;
+    setKeyword(target.keyword);
+    setDebouncedKeyword(target.keyword);
+    setStatusFilter(target.statusFilter);
+    setTriggerFilter(target.triggerFilter);
+    setTagFilter(target.tagFilter);
+    setPage(1);
+  }, [savedFilters]);
+
+  const removeSavedFilter = useCallback((name: string) => {
+    setSavedFilters((prev) => prev.filter((item) => item.name !== name));
+  }, []);
+
+  const toggleSort = useCallback((key: TaskSortKey) => {
+    setSortKey((prev) => {
+      if (prev === key) {
+        setSortDirection((dir) => (dir === 'asc' ? 'desc' : 'asc'));
+        return prev;
+      }
+      setSortDirection('asc');
+      return key;
+    });
+  }, []);
+
+  const toggleColumn = useCallback((key: TaskSortKey, checked: CheckedState) => {
+    const shouldShow = isCheckedState(checked);
+    setColumnVisibility((prev) => {
+      const visibleCount = Object.values(prev).filter(Boolean).length;
+      if (!shouldShow && visibleCount <= 1 && prev[key]) {
+        toast.error('至少保留一列显示');
+        return prev;
+      }
+      return { ...prev, [key]: shouldShow };
+    });
+  }, []);
 
   // 防抖 keyword
   useEffect(() => {
@@ -343,10 +535,55 @@ export default function Tasks() {
     setDebouncedKeyword('');
     setStatusFilter('');
     setTriggerFilter('');
+    setTagFilter('');
     setPage(1);
   }, []);
 
-  const hasActiveFilters = keyword || statusFilter || triggerFilter;
+  const filteredTasks = useMemo(() => {
+    return tasks.filter((task) => {
+      if (tagFilter === 'has_cases' && parseCaseCount(task) === 0) return false;
+      if (tagFilter === 'scheduled' && task.trigger_type !== 'scheduled') return false;
+      if (tagFilter === 'failed' && task.recentExecutions?.[0]?.status !== 'failed') return false;
+      if (tagFilter === 'healthy') {
+        const successRate = getTaskSuccessRate(task);
+        if (successRate == null || successRate < SUCCESS_RATE_THRESHOLDS.HIGH) return false;
+      }
+      return true;
+    });
+  }, [tasks, tagFilter]);
+
+  const sortedTasks = useMemo(() => {
+    const list = [...filteredTasks];
+    const direction = sortDirection === 'asc' ? 1 : -1;
+
+    list.sort((a, b) => {
+      switch (sortKey) {
+        case 'name':
+          return direction * a.name.localeCompare(b.name, 'zh-CN');
+        case 'status':
+          return direction * getTaskSemanticStatus(a).label.localeCompare(getTaskSemanticStatus(b).label, 'zh-CN');
+        case 'trigger':
+          return direction * (TRIGGER_TYPE_LABELS[a.trigger_type] ?? a.trigger_type).localeCompare(
+            TRIGGER_TYPE_LABELS[b.trigger_type] ?? b.trigger_type,
+            'zh-CN'
+          );
+        case 'owner':
+          return direction * (a.created_by_name ?? '').localeCompare(b.created_by_name ?? '', 'zh-CN');
+        case 'successRate':
+          return direction * ((getTaskSuccessRate(a) ?? -1) - (getTaskSuccessRate(b) ?? -1));
+        case 'latestRun':
+        default: {
+          const aTime = a.recentExecutions?.[0]?.start_time ?? a.updated_at ?? '';
+          const bTime = b.recentExecutions?.[0]?.start_time ?? b.updated_at ?? '';
+          return direction * (new Date(aTime).getTime() - new Date(bTime).getTime());
+        }
+      }
+    });
+
+    return list;
+  }, [filteredTasks, sortDirection, sortKey]);
+
+  const hasActiveFilters = Boolean(keyword || statusFilter || triggerFilter || tagFilter);
 
   // ── 批量操作辅助函数 ──────────────────────────────────────
   const handleSelectTask = useCallback((taskId: number, checked: CheckedState) => {
@@ -364,11 +601,11 @@ export default function Tasks() {
 
   const handleSelectAll = useCallback((checked: CheckedState) => {
     if (isCheckedState(checked)) {
-      setSelectedTasks(new Set(tasks.map((t) => t.id)));
+      setSelectedTasks(new Set(sortedTasks.map((t) => t.id)));
     } else {
       setSelectedTasks(new Set());
     }
-  }, [tasks]);
+  }, [sortedTasks]);
 
   const clearSelection = useCallback(() => {
     setSelectedTasks(new Set());
@@ -377,14 +614,18 @@ export default function Tasks() {
 
   // 计算选择状态
   const selectedCount = selectedTasks.size;
-  const isAllSelected = tasks.length > 0 && selectedCount === tasks.length;
-  const isPartiallySelected = selectedCount > 0 && selectedCount < tasks.length;
+  const isAllSelected = sortedTasks.length > 0 && selectedCount === sortedTasks.length;
+  const isPartiallySelected = selectedCount > 0 && selectedCount < sortedTasks.length;
   const selectAllState: CheckedState = isAllSelected
     ? true
     : isPartiallySelected
       ? 'indeterminate'
       : false;
-  const selectedTasksList = tasks.filter((t) => selectedTasks.has(t.id));
+  const selectedTasksList = sortedTasks.filter((t) => selectedTasks.has(t.id));
+
+  const failedAlerts = useMemo(() =>
+    tasks.filter((task) => task.recentExecutions?.[0]?.status === 'failed').length,
+  [tasks]);
 
   // 批量操作处理函数
   const handleBatchActivate = useCallback(() => {
@@ -471,6 +712,9 @@ export default function Tasks() {
     batchRunMutation,
     clearSelection,
   ]);
+
+  const errorMessage = error ? getErrorMessage(error) : '';
+  const isPermissionDenied = /403|forbidden|权限/.test(errorMessage.toLowerCase());
 
   // ── 渲染 ──────────────────────────────────────────
   return (
