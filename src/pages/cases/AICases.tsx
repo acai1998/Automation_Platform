@@ -18,13 +18,12 @@ import {
   ImageIcon,
   Sparkles,
   Link,
-  Eye,
-  EyeOff,
   Tags,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { toast } from 'sonner';
 import {
@@ -127,7 +126,6 @@ interface CleanupStaleAttachmentOptions {
 }
 
 type TopPanelSection = 'requirement' | 'progress' | 'node' | 'attachment' | 'mode';
-type TopPanelViewportMode = 'desktop' | 'tablet' | 'mobile';
 type StreamGenerateResultPayload =
   | AiCaseGenerationResult
   | { generated: AiCaseGenerationResult; workspace: AiCaseWorkspaceDetail };
@@ -253,6 +251,7 @@ function mergeRemoteWorkspaceToDoc(
 
 function AiCasesInner() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const canvasSectionRef = useRef<HTMLElement | null>(null);
   const mindRef = useRef<MindElixirInstance | null>(null);
   const docRef = useRef<AiCaseWorkspaceDocument | null>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -277,8 +276,8 @@ function AiCasesInner() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generationProgress, setGenerationProgress] = useState(0);
-  const [generationStageText, setGenerationStageText] = useState('');
+  const [, setGenerationProgress] = useState(0);
+  const [, setGenerationStageText] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isPublishingRemote, setIsPublishingRemote] = useState(false);
   const [isSyncingRemote, setIsSyncingRemote] = useState(false);
@@ -286,12 +285,12 @@ function AiCasesInner() {
   const [attachmentReloadSeed, setAttachmentReloadSeed] = useState(0);
   const [attachments, setAttachments] = useState<AiCaseAttachmentPreview[]>([]);
   const [remoteSyncMeta, setRemoteSyncMeta] = useState<RemoteSyncMeta>(DEFAULT_REMOTE_SYNC_META);
-  const [activePanelSection, setActivePanelSection] = useState<TopPanelSection | null>('requirement');
+  const [activePanelSection, setActivePanelSection] = useState<TopPanelSection | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
   const [canvasScalePercent, setCanvasScalePercent] = useState(100);
+  const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
   const [showNodeKindTags, setShowNodeKindTags] = useState<boolean>(() => readNodeTagVisibilityPreference());
-  const [topPanelViewportMode, setTopPanelViewportMode] = useState<TopPanelViewportMode>('desktop');
   const [isImportingMindNodes, setIsImportingMindNodes] = useState(false);
-  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
@@ -309,37 +308,31 @@ function AiCasesInner() {
   }, [showNodeKindTags]);
 
   useEffect(() => {
-    const resolveViewportMode = () => {
-      const width = window.innerWidth;
-      if (width >= 1440) {
-        setTopPanelViewportMode('desktop');
-        return;
-      }
+    if (typeof window === 'undefined') {
+      return;
+    }
 
-      if (width >= 1024) {
-        setTopPanelViewportMode('tablet');
-        return;
-      }
-
-      setTopPanelViewportMode('mobile');
+    const handleResize = () => {
+      setViewportWidth(window.innerWidth);
     };
 
-    resolveViewportMode();
-    window.addEventListener('resize', resolveViewportMode);
+    handleResize();
+    window.addEventListener('resize', handleResize);
     return () => {
-      window.removeEventListener('resize', resolveViewportMode);
+      window.removeEventListener('resize', handleResize);
     };
   }, []);
 
   useEffect(() => {
-    if (topPanelViewportMode !== 'mobile') {
-      setIsMobileDrawerOpen(false);
-    }
+    const onFullscreenChange = () => {
+      setIsCanvasFullscreen(document.fullscreenElement === canvasSectionRef.current);
+    };
 
-    if (topPanelViewportMode !== 'desktop') {
-      setActivePanelSection(null);
-    }
-  }, [topPanelViewportMode]);
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+    };
+  }, []);
 
   const clearGenerateProgressTimers = useCallback(() => {
     if (generateProgressResetTimerRef.current) {
@@ -706,6 +699,8 @@ function AiCasesInner() {
 
   const selectedNodeStatus = selectedNode?.metadata?.status ?? 'todo';
   const canEditSelectedNode = selectedNode?.metadata?.kind === 'testcase';
+  const shouldHighlightNodePanel = Boolean(selectedNode);
+  const shouldHighlightAttachmentPanel = Boolean(selectedNode);
 
   const progress = useMemo(() => {
     if (!mindData) {
@@ -746,23 +741,6 @@ function AiCasesInner() {
     return `远端#${remoteSyncMeta.remoteWorkspaceId} · v${remoteSyncMeta.remoteVersion ?? '-'} · ${remoteSyncMeta.remoteStatus ?? 'draft'}`;
   }, [isRemoteLinked, remoteSyncMeta.remoteStatus, remoteSyncMeta.remoteVersion, remoteSyncMeta.remoteWorkspaceId]);
 
-  const isDesktopTopPanel = topPanelViewportMode === 'desktop';
-  const isTabletTopPanel = topPanelViewportMode === 'tablet';
-  const isMobileTopPanel = topPanelViewportMode === 'mobile';
-
-  const handleTopPanelTabClick = useCallback(
-    (section: TopPanelSection) => {
-      if (topPanelViewportMode === 'mobile') {
-        setActivePanelSection(section);
-        setIsMobileDrawerOpen(true);
-        return;
-      }
-
-      setActivePanelSection((prev) => (prev === section ? null : section));
-    },
-    [topPanelViewportMode]
-  );
-
   const handleCanvasScale = useCallback((scale: number) => {
     if (!mindRef.current) {
       return;
@@ -800,6 +778,44 @@ function AiCasesInner() {
     mindRef.current.scaleFit();
     setCanvasScalePercent(Math.round((mindRef.current.scaleVal ?? 1) * 100));
   }, []);
+
+  const handleToggleCanvasFullscreen = useCallback(async () => {
+    const section = canvasSectionRef.current;
+    if (!section) {
+      return;
+    }
+
+    try {
+      if (document.fullscreenElement === section) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      await section.requestFullscreen();
+    } catch (error) {
+      console.error('[AICases] toggle fullscreen failed', error);
+      toast.error('切换全屏失败，请检查浏览器权限');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!mindRef.current) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (!mindRef.current) {
+        return;
+      }
+
+      mindRef.current.scaleFit();
+      setCanvasScalePercent(Math.round((mindRef.current.scaleVal ?? 1) * 100));
+    }, 80);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isCanvasFullscreen]);
 
   const startGenerateProgress = useCallback(
     (initialStage: string = '正在连接后端流式通道...') => {
@@ -1198,7 +1214,10 @@ function AiCasesInner() {
         return;
       }
 
-      const clipboardText = event.clipboardData?.getData('text/plain')?.trim();
+      const clipboardText =
+        typeof event.clipboardData?.getData === 'function'
+          ? event.clipboardData.getData('text/plain')?.trim()
+          : '';
       if (clipboardText) {
         try {
           const parsed = JSON.parse(clipboardText) as { magic?: unknown; data?: unknown };
@@ -1506,6 +1525,7 @@ function AiCasesInner() {
 
   const hasSelectedNode = Boolean(selectedNodeId);
   const selectedNodeLabel = selectedNode?.topic || '未选中节点';
+  const isTopPanelPopoverMode = viewportWidth >= 1024 && viewportWidth < 1440;
 
   const renderPanelSectionContent = (section: TopPanelSection, compact = false) => {
     if (section === 'requirement') {
@@ -1663,19 +1683,23 @@ function AiCasesInner() {
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3 p-3 sm:p-4 bg-slate-50/50 dark:bg-slate-950/30">
-      <section className="sticky top-0 z-20 rounded-xl border border-slate-200/80 dark:border-slate-700/60 bg-white/95 dark:bg-slate-900/95 backdrop-blur shadow-sm">
-        <div className="border-b border-slate-200/80 dark:border-slate-700/60 px-4 py-3">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="min-w-0 flex items-center gap-3">
-              <div className="shrink-0 p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
-                <BrainCircuit className="h-5 w-5" />
+    <div className="h-full min-h-0 flex flex-col gap-3 p-3 sm:p-4 bg-slate-100/40 dark:bg-slate-950/30">
+      {!isCanvasFullscreen ? (
+        <section className="sticky top-0 z-30 rounded-xl border border-slate-200/80 dark:border-slate-700/60 bg-white/95 dark:bg-slate-900/95 shadow-sm backdrop-blur">
+          <div className="px-4 py-3 border-b border-slate-200/80 dark:border-slate-700/60">
+            <div className="min-[1440px]:grid min-[1440px]:grid-cols-[220px_minmax(300px,1fr)_220px_auto] min-[1440px]:items-center min-[1440px]:gap-3 flex flex-col gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-300">
+                  <BrainCircuit className="h-4 w-4" />
+                </div>
+                <div>
+                  <h1 className="text-base font-semibold text-slate-900 dark:text-white">AI 用例工作台</h1>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">desktop-first 布局（顶部操作区 + 全宽画布）</p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-white">AI 用例工作台</h1>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Phase 1 Desktop 布局 · 画布优先</p>
-              </div>
-              <div className="min-w-[220px] flex-1 max-w-[420px]">
+
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">工作台名称</label>
                 <input
                   value={workspaceName}
                   onChange={(event) => setWorkspaceName(event.target.value)}
@@ -1683,226 +1707,125 @@ function AiCasesInner() {
                   placeholder="输入脑图标题"
                 />
               </div>
-            </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-1.5 text-right">
-                <div className="text-xs font-medium text-slate-600 dark:text-slate-300">{saveStateText}</div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">{remoteStatusText}</div>
+              <div className="space-y-1 text-xs text-slate-500">
+                <div className="font-medium">{saveStateText}</div>
+                <div>{remoteStatusText}</div>
+                <div className="truncate">当前节点：{selectedNodeLabel} · {selectedNodeStatus}</div>
               </div>
-              <Button className="gap-1.5" onClick={handleGenerate} disabled={isGenerating || isPublishingRemote || isSyncingRemote}>
-                {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                AI 生成
-              </Button>
-              <Button
-                variant="outline"
-                className="gap-1.5"
-                onClick={handleResetTemplate}
-                disabled={isGenerating || isPublishingRemote || isSyncingRemote}
-              >
-                <RotateCcw className="h-4 w-4" />
-                重置模板
-              </Button>
-              <Button
-                variant="outline"
-                className="gap-1.5"
-                onClick={handlePublishRemote}
-                disabled={isPublishingRemote || isGenerating || isSyncingRemote}
-              >
-                {isPublishingRemote ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                {isRemoteLinked ? '同步远端' : '发布远端'}
-              </Button>
-              <Button
-                variant="outline"
-                className="gap-1.5"
-                onClick={handleSyncFromRemote}
-                disabled={!isRemoteLinked || isSyncingRemote || isPublishingRemote}
-              >
-                {isSyncingRemote ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link className="h-4 w-4" />}
-                拉取远端
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="gap-1.5"
-                onClick={handleToggleNodeKindTags}
-                disabled={isGenerating}
-              >
-                {showNodeKindTags ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                {showNodeKindTags ? '隐藏标签' : '显示标签'}
-              </Button>
+
+              <div className="grid grid-cols-2 min-[1440px]:grid-cols-4 gap-2">
+                <Button className="gap-1.5" onClick={handleGenerate} disabled={isGenerating || isPublishingRemote || isSyncingRemote}>
+                  {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+                  AI生成
+                </Button>
+                <Button variant="outline" className="gap-1.5" onClick={handleResetTemplate} disabled={isGenerating || isPublishingRemote || isSyncingRemote}>
+                  <RotateCcw className="h-4 w-4" />
+                  重置模板
+                </Button>
+                <Button variant="outline" className="gap-1.5" onClick={handlePublishRemote} disabled={isPublishingRemote || isGenerating || isSyncingRemote}>
+                  {isPublishingRemote ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {isRemoteLinked ? '同步远端' : '发布远端'}
+                </Button>
+                <Button variant="outline" className="gap-1.5" onClick={handleSyncFromRemote} disabled={!isRemoteLinked || isSyncingRemote || isPublishingRemote}>
+                  {isSyncingRemote ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link className="h-4 w-4" />}
+                  拉取远端
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
 
-        {(isGenerating || generationProgress > 0) ? (
-          <div className="px-4 py-2 border-b border-slate-200/80 dark:border-slate-700/60 bg-indigo-50/70 dark:bg-indigo-500/10">
-            <div className="flex items-center justify-between text-xs text-indigo-700 dark:text-indigo-200 mb-1">
-              <span className="inline-flex items-center gap-1.5">
-                <Loader2 className={`h-3.5 w-3.5 ${isGenerating ? 'animate-spin' : ''}`} />
-                {generationStageText || '正在准备生成...'}
-              </span>
-              <span className="font-medium">{generationProgress}%</span>
-            </div>
-            <div className="h-2 rounded-full bg-indigo-100 dark:bg-indigo-500/20 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-indigo-500 transition-[width] duration-300"
-                style={{ width: `${generationProgress}%` }}
-              />
-            </div>
-          </div>
-        ) : null}
+          <div className="px-4 py-2 border-b border-slate-200/70 dark:border-slate-700/50 flex items-center gap-2 overflow-x-auto">
+            {TOP_PANEL_TABS.map((tab) => {
+              const autoHighlight =
+                (tab.key === 'node' && shouldHighlightNodePanel) ||
+                (tab.key === 'attachment' && shouldHighlightAttachmentPanel);
+              const isActive = activePanelSection === tab.key;
+              const triggerClassName = `h-8 shrink-0 px-3 rounded-md border text-xs font-medium transition-colors ${
+                isActive
+                  ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/70 dark:bg-indigo-500/15 dark:text-indigo-200'
+                  : autoHighlight
+                    ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/70 dark:bg-amber-500/15 dark:text-amber-200'
+                    : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'
+              }`;
 
-        <div className="px-4 py-2 border-b border-slate-200/80 dark:border-slate-700/60">
-          <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <div className="flex w-max min-w-full items-center gap-2">
-                {TOP_PANEL_TABS.map((tab) => {
-                  const isActive = activePanelSection === tab.key;
-                  const isNodeLinked = hasSelectedNode && (tab.key === 'node' || tab.key === 'attachment');
-                  const tabButton = (
-                    <button
-                      type="button"
-                      className={`h-8 px-3 rounded-md border text-xs font-medium transition-colors whitespace-nowrap ${
-                        isActive
-                          ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/70 dark:bg-indigo-500/15 dark:text-indigo-200'
-                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
-                      } ${isNodeLinked ? 'ring-1 ring-indigo-300 dark:ring-indigo-500/60' : ''}`}
-                    >
-                      <span className="inline-flex items-center gap-1.5">
+              if (isTopPanelPopoverMode) {
+                return (
+                  <Popover
+                    key={tab.key}
+                    open={isActive}
+                    onOpenChange={(open) => setActivePanelSection(open ? tab.key : null)}
+                  >
+                    <PopoverTrigger asChild>
+                      <button type="button" className={triggerClassName}>
                         {tab.label}
-                        <span className="text-[10px]">{isActive ? '▾' : '▸'}</span>
-                      </span>
-                    </button>
-                  );
-
-                  if (isTabletTopPanel) {
-                    return (
-                      <Popover
-                        key={tab.key}
-                        open={activePanelSection === tab.key}
-                        onOpenChange={(open) => {
-                          setActivePanelSection((prev) => (open ? tab.key : prev === tab.key ? null : prev));
-                        }}
-                      >
-                        <PopoverTrigger asChild>{tabButton}</PopoverTrigger>
-                        <PopoverContent align="start" sideOffset={8} className="w-[min(680px,calc(100vw-96px))] p-3">
-                          {renderPanelSectionContent(tab.key, true)}
-                        </PopoverContent>
-                      </Popover>
-                    );
-                  }
-
-                  return (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      onClick={() => handleTopPanelTabClick(tab.key)}
-                      className={`h-8 px-3 rounded-md border text-xs font-medium transition-colors whitespace-nowrap ${
-                        isActive
-                          ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/70 dark:bg-indigo-500/15 dark:text-indigo-200'
-                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
-                      } ${isNodeLinked ? 'ring-1 ring-indigo-300 dark:ring-indigo-500/60' : ''}`}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      side="bottom"
+                      sideOffset={8}
+                      className="w-[min(92vw,760px)] max-h-[68vh] overflow-y-auto p-3"
                     >
-                      <span className="inline-flex items-center gap-1.5">
-                        {tab.label}
-                        <span className="text-[10px]">{isActive ? '▾' : '▸'}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+                      {renderPanelSectionContent(tab.key, true)}
+                    </PopoverContent>
+                  </Popover>
+                );
+              }
 
-            {!isMobileTopPanel ? (
-              <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-3 py-1 text-[11px] text-slate-600 dark:text-slate-300 max-w-full">
-                当前节点：<span className="font-medium text-slate-900 dark:text-white">{selectedNodeLabel}</span>
-                {hasSelectedNode ? <span className="ml-2">状态：{selectedNodeStatus}</span> : null}
-              </div>
-            ) : null}
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActivePanelSection((prev) => (prev === tab.key ? null : tab.key))}
+                  className={triggerClassName}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
 
-          {isMobileTopPanel ? (
-            <div className="mt-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1 text-[11px] text-slate-600 dark:text-slate-300">
-              当前节点：<span className="font-medium text-slate-900 dark:text-white">{selectedNodeLabel}</span>
-              {hasSelectedNode ? <span className="ml-2">状态：{selectedNodeStatus}</span> : null}
+          {!isTopPanelPopoverMode && activePanelSection ? (
+            <div className="px-4 py-3 border-b border-slate-200/70 dark:border-slate-700/50 max-h-[260px] overflow-y-auto">
+              {renderPanelSectionContent(activePanelSection)}
             </div>
           ) : null}
-        </div>
-
-        {isDesktopTopPanel && activePanelSection ? (
-          <div className="px-4 pb-4 pt-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-            {renderPanelSectionContent(activePanelSection)}
-          </div>
-        ) : null}
-      </section>
-
-      {isMobileTopPanel ? (
-        <Dialog
-          open={isMobileDrawerOpen && Boolean(activePanelSection)}
-          onOpenChange={(open) => {
-            setIsMobileDrawerOpen(open);
-            if (!open) {
-              setActivePanelSection(null);
-            }
-          }}
-        >
-          <DialogContent className="left-auto right-0 top-0 h-[100dvh] w-[min(94vw,420px)] max-w-none translate-x-0 translate-y-0 rounded-none sm:rounded-none p-0 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-right-full data-[state=closed]:zoom-out-100 data-[state=open]:zoom-in-100">
-            <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-3 flex items-center justify-between">
-              <div>
-                <DialogTitle className="text-sm font-semibold">
-                  {activePanelSection ? TOP_PANEL_TABS.find((item) => item.key === activePanelSection)?.label ?? '模块详情' : '模块详情'}
-                </DialogTitle>
-                <DialogDescription className="sr-only">移动端顶部模块抽屉内容</DialogDescription>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setIsMobileDrawerOpen(false);
-                  setActivePanelSection(null);
-                }}
-              >
-                关闭
-              </Button>
-            </div>
-            <div className="px-4 py-3 overflow-y-auto">
-              {activePanelSection ? renderPanelSectionContent(activePanelSection, true) : null}
-            </div>
-          </DialogContent>
-        </Dialog>
+        </section>
       ) : null}
 
-      <section className="flex-1 min-h-0 rounded-xl border border-slate-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900 shadow-sm overflow-hidden flex flex-col">
-        <div className="h-11 px-3 border-b border-slate-200/80 dark:border-slate-700/60 flex items-center justify-between bg-slate-50/70 dark:bg-slate-800/40">
-          <div className="text-xs text-slate-500 dark:text-slate-400">画布工具</div>
+      <section
+        ref={canvasSectionRef}
+        className={`relative flex-1 min-h-0 rounded-xl border border-slate-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900 shadow-sm overflow-hidden flex flex-col ${
+          isCanvasFullscreen ? 'rounded-none border-0' : ''
+        }`}
+      >
+        <div className="h-11 px-3 border-b border-slate-200/80 dark:border-slate-700/60 flex items-center justify-between bg-slate-50/80 dark:bg-slate-800/40">
+          <div className="text-xs text-slate-500 dark:text-slate-400">{isCanvasFullscreen ? '沉浸看图模式' : '脑图画布'}</div>
           <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" size="sm" className="h-8 px-2.5" onClick={handleZoomOut}>
-              -
-            </Button>
+            <Button type="button" variant="outline" size="sm" className="h-8 px-2.5" onClick={handleZoomOut}>-</Button>
             <div className="w-14 text-center text-xs font-medium text-slate-600 dark:text-slate-300">{canvasScalePercent}%</div>
-            <Button type="button" variant="outline" size="sm" className="h-8 px-2.5" onClick={handleZoomIn}>
-              +
-            </Button>
-            <Button type="button" variant="outline" size="sm" className="h-8" onClick={handleCenterCanvas}>
-              居中
-            </Button>
-            <Button type="button" variant="outline" size="sm" className="h-8" onClick={handleFitCanvas}>
-              适配
+            <Button type="button" variant="outline" size="sm" className="h-8 px-2.5" onClick={handleZoomIn}>+</Button>
+            <Button type="button" variant="outline" size="sm" className="h-8" onClick={handleCenterCanvas}>居中</Button>
+            <Button type="button" variant="outline" size="sm" className="h-8" onClick={handleFitCanvas}>适配</Button>
+            <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void handleToggleCanvasFullscreen()}>
+              {isCanvasFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              {isCanvasFullscreen ? '退出全屏' : '全屏'}
             </Button>
           </div>
         </div>
 
-        <div className="flex-1 min-h-[620px] [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none">
+        <div className="flex-1 min-h-[720px] [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none">
           <div ref={mapContainerRef} className="h-full w-full" />
         </div>
       </section>
 
-      <div className="text-[11px] text-slate-500 px-1 flex items-center gap-1.5">
-        <CircleDashed className="h-3.5 w-3.5" />
-        右键可新增/删除节点，双击可编辑标题，Enter 保存 Esc 取消；节点状态和截图证据由工作台扩展。
-      </div>
+      {!isCanvasFullscreen ? (
+        <div className="text-[11px] text-slate-500 px-1 flex items-center gap-1.5">
+          <CircleDashed className="h-3.5 w-3.5" />
+          顶部工作台区支持分组展开，画布区域已最大化；节点状态切换与进度统计保持实时联动。
+        </div>
+      ) : null}
     </div>
   );
 }
