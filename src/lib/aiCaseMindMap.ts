@@ -169,6 +169,7 @@ function toChecklist(lines: string[]): string[] {
 }
 
 function formatCaseNote(
+  testPoint: string,
   preconditions: string[],
   steps: string[],
   expectedResults: string[]
@@ -177,7 +178,7 @@ function formatCaseNote(
   const normalizedSteps = toChecklist(steps);
   const normalizedExpectedResults = toChecklist(expectedResults);
 
-  const noteLines: string[] = ['前置条件:'];
+  const noteLines: string[] = ['测试点:', `1. ${testPoint.trim()}`, '', '前置条件:'];
 
   normalizedPreconditions.forEach((item, index) => {
     noteLines.push(`${index + 1}. ${item}`);
@@ -197,6 +198,7 @@ function formatCaseNote(
 }
 
 interface ParsedCaseNoteSections {
+  testPoint: string[];
   preconditions: string[];
   steps: string[];
   expectedResults: string[];
@@ -204,13 +206,15 @@ interface ParsedCaseNoteSections {
 
 type CaseNoteSectionKey = keyof ParsedCaseNoteSections;
 
-const CASE_NOTE_SECTION_KEY_MAP: Record<'前置条件' | '测试步骤' | '预期结果', CaseNoteSectionKey> = {
+const CASE_NOTE_SECTION_KEY_MAP: Record<'测试点' | '前置条件' | '测试步骤' | '预期结果', CaseNoteSectionKey> = {
+  测试点: 'testPoint',
   前置条件: 'preconditions',
   测试步骤: 'steps',
   预期结果: 'expectedResults',
 };
 
 const CASE_NOTE_SECTION_TITLE_MAP: Record<CaseNoteSectionKey, string> = {
+  testPoint: '测试点',
   preconditions: '前置条件',
   steps: '测试步骤',
   expectedResults: '预期结果',
@@ -225,6 +229,7 @@ function normalizeChecklistItem(line: string): string {
 
 function parseCaseNoteSections(note: string): ParsedCaseNoteSections {
   const sections: ParsedCaseNoteSections = {
+    testPoint: [],
     preconditions: [],
     steps: [],
     expectedResults: [],
@@ -238,7 +243,7 @@ function parseCaseNoteSections(note: string): ParsedCaseNoteSections {
       continue;
     }
 
-    const withColon = line.match(/^(前置条件|测试步骤|预期结果)\s*[:：]\s*(.*)$/);
+    const withColon = line.match(/^(测试点|前置条件|测试步骤|预期结果)\s*[:：]\s*(.*)$/);
     if (withColon) {
       activeSection = CASE_NOTE_SECTION_KEY_MAP[withColon[1] as keyof typeof CASE_NOTE_SECTION_KEY_MAP];
       const inlineItem = normalizeChecklistItem(withColon[2]);
@@ -248,7 +253,7 @@ function parseCaseNoteSections(note: string): ParsedCaseNoteSections {
       continue;
     }
 
-    const pureHeader = line.match(/^(前置条件|测试步骤|预期结果)$/);
+    const pureHeader = line.match(/^(测试点|前置条件|测试步骤|预期结果)$/);
     if (pureHeader) {
       activeSection = CASE_NOTE_SECTION_KEY_MAP[pureHeader[1] as keyof typeof CASE_NOTE_SECTION_KEY_MAP];
       continue;
@@ -269,12 +274,18 @@ function parseCaseNoteSections(note: string): ParsedCaseNoteSections {
 
 function buildCaseNoteChildren(
   sections: ParsedCaseNoteSections,
-  aiGenerated: boolean
+  aiGenerated: boolean,
+  fallbackTestPoint: string
 ): AiCaseNode[] {
-  const orderedSections: CaseNoteSectionKey[] = ['preconditions', 'steps', 'expectedResults'];
+  const orderedSections: CaseNoteSectionKey[] = ['testPoint', 'preconditions', 'steps', 'expectedResults'];
+
+  const withFallback: ParsedCaseNoteSections = {
+    ...sections,
+    testPoint: sections.testPoint.length > 0 ? sections.testPoint : [fallbackTestPoint],
+  };
 
   return orderedSections
-    .map((key) => ({ key, items: toChecklist(sections[key]) }))
+    .map((key) => ({ key, items: toChecklist(withFallback[key]) }))
     .filter((section) => section.items.length > 0)
     .map((section) => createNode(CASE_NOTE_SECTION_TITLE_MAP[section.key], 'scenario', {
       aiGenerated,
@@ -322,7 +333,7 @@ export function expandImportedCaseNodesFromNote(
     }
 
     const sections = parseCaseNoteSections(note);
-    const children = buildCaseNoteChildren(sections, metadata.aiGenerated);
+    const children = buildCaseNoteChildren(sections, metadata.aiGenerated, node.topic);
     if (children.length === 0) {
       return;
     }
@@ -357,6 +368,7 @@ function buildSmokeCases(anchor: string): AiCaseNode[] {
       priority: 'P0',
       aiGenerated: true,
       note: formatCaseNote(
+        `${anchor} 主流程可以顺利完成`,
         ['已有可登录测试账号，且目标环境可访问'],
         ['进入登录页面并输入有效账号密码', '点击登录并等待页面跳转'],
         ['登录成功并跳转到用户主页', '页面展示当前用户信息且会话状态有效']
@@ -366,6 +378,7 @@ function buildSmokeCases(anchor: string): AiCaseNode[] {
       priority: 'P1',
       aiGenerated: true,
       note: formatCaseNote(
+        `${anchor} 关键参数校验与提示正确`,
         ['已准备非法与合法输入组合'],
         ['输入非法参数并提交', '根据错误提示修正后再次提交'],
         ['非法参数有明确错误提示', '修正后可正常完成流程']
@@ -489,7 +502,7 @@ function buildCoverageModules(anchor: string): AiCaseNode[] {
         createNode(point.title, 'testcase', {
           aiGenerated: true,
           priority: point.priority ?? 'P1',
-          note: formatCaseNote(point.preconditions, point.steps, point.expectedResults),
+              note: formatCaseNote(point.title, point.preconditions, point.steps, point.expectedResults),
         })
       ),
     })

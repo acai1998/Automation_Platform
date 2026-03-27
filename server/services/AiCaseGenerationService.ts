@@ -410,6 +410,8 @@ export class AiCaseGenerationService {
         '3) 覆盖主流程、边界、异常、权限与兼容性。',
         '4) 标题使用中文，简洁可执行。',
         '5) 每个测试点都必须输出 preconditions / steps / expectedResults，且 steps 至少 2 条。',
+        '6) 每个测试点遵循固定顺序：测试点 -> 前置条件 -> 测试步骤 -> 预期结果。',
+        '7) 禁止输出“测试场景”作为测试点内部标签。',
       ].join('\n');
 
       this.pushProgress(onProgress, {

@@ -226,7 +226,10 @@ function composeCaseNote(testCase: AiCaseGenerationPlanCase): string {
 
   const lines: string[] = [];
 
-  lines.push('前置条件:');
+  lines.push('测试点:');
+  lines.push(`1. ${testCase.title}`);
+
+  lines.push('', '前置条件:');
   preconditions.forEach((item, index) => {
     lines.push(`${index + 1}. ${item}`);
   });
