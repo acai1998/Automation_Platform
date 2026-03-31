@@ -17,12 +17,17 @@ const THEME_BUTTONS: ThemeButtonConfig[] = [
   { theme: 'system', icon: Monitor, label: '跟随系统' },
 ];
 
+interface ThemeToggleProps {
+  /** 精简模式：仅显示单个图标按钮，点击后循环切换主题 */
+  iconOnly?: boolean;
+}
+
 /**
  * 主题切换组件
  * 提供浅色、深色和跟随系统三种主题模式切换，带有平滑的动画效果
  * @returns 主题切换按钮组
  */
-export const ThemeToggle = memo(function ThemeToggle(): JSX.Element {
+export const ThemeToggle = memo(function ThemeToggle({ iconOnly }: ThemeToggleProps): JSX.Element {
   const { theme, setTheme } = useTheme();
   const [isAnimating, setIsAnimating] = useState(false);
   const [lastTheme, setLastTheme] = useState(theme);
@@ -53,6 +58,33 @@ export const ThemeToggle = memo(function ThemeToggle(): JSX.Element {
     setTheme(newTheme);
   }, [setTheme]);
 
+  // ── Icon-only mode: single cycling button ──
+  if (iconOnly) {
+    const currentIndex = THEME_BUTTONS.findIndex((b) => b.theme === theme);
+    const { icon: CurrentIcon, label: currentLabel } = THEME_BUTTONS[currentIndex] ?? THEME_BUTTONS[0];
+    const nextTheme = THEME_BUTTONS[(currentIndex + 1) % THEME_BUTTONS.length].theme;
+
+    return (
+      <button
+        onClick={() => handleThemeChange(nextTheme)}
+        className={cn(
+          "p-2 rounded-lg transition-all duration-200",
+          "text-slate-500 dark:text-slate-400",
+          "hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white",
+          "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
+        )}
+        aria-label={`当前：${currentLabel}，点击切换主题`}
+        title={`当前：${currentLabel}，点击切换`}
+      >
+        <CurrentIcon
+          className={cn("h-5 w-5 transition-all duration-300", isAnimating && "animate-theme-switch")}
+          aria-hidden="true"
+        />
+      </button>
+    );
+  }
+
+  // ── Full mode: three-button group ──
   return (
     <div
       className="flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-white/5 transition-all duration-300"

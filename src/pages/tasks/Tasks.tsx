@@ -11,7 +11,6 @@ import {
   BarChart3,
   Plus,
   Search,
-  Filter,
   ChevronLeft,
   ChevronRight,
   Pencil,
@@ -40,7 +39,6 @@ import {
   Save,
   Download,
   ShieldAlert,
-  Columns3,
   ArrowUpDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -259,14 +257,14 @@ export default function Tasks() {
       return [];
     }
   });
-  const [columnVisibility, setColumnVisibility] = useState<Record<TaskSortKey, boolean>>({
+  const columnVisibility: Record<TaskSortKey, boolean> = {
     name: true,
     status: true,
     trigger: true,
     owner: true,
     latestRun: true,
     successRate: true,
-  });
+  };
 
   const isWideDesktop = viewportWidth >= 1440;
   const isFilterPopoverMode = viewportWidth >= 1024 && viewportWidth < 1440;
@@ -335,18 +333,6 @@ export default function Tasks() {
       }
       setSortDirection('asc');
       return key;
-    });
-  }, []);
-
-  const toggleColumn = useCallback((key: TaskSortKey, checked: CheckedState) => {
-    const shouldShow = isCheckedState(checked);
-    setColumnVisibility((prev) => {
-      const visibleCount = Object.values(prev).filter(Boolean).length;
-      if (!shouldShow && visibleCount <= 1 && prev[key]) {
-        toast.error('至少保留一列显示');
-        return prev;
-      }
-      return { ...prev, [key]: shouldShow };
     });
   }, []);
 
@@ -628,11 +614,6 @@ export default function Tasks() {
   [tasks]);
 
   // 批量操作处理函数
-  const handleBatchActivate = useCallback(() => {
-    if (selectedCount === 0) return;
-    setBatchDialog({ open: true, action: 'activate' });
-  }, [selectedCount]);
-
   const handleBatchPause = useCallback(() => {
     if (selectedCount === 0) return;
     setBatchDialog({ open: true, action: 'pause' });
