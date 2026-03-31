@@ -801,7 +801,7 @@ export default function Tasks() {
       </div>
 
       {selectedCount > 0 && (
-        <div className="sticky top-2 z-30 rounded-xl border border-emerald-200 bg-emerald-50/95 p-3 shadow-sm backdrop-blur dark:border-emerald-900/40 dark:bg-emerald-950/60">
+        <div className="sticky top-2 z-30 rounded-xl border border-emerald-200 bg-emerald-50/95 p-3 shadow-sm backdrop-blur transition-all duration-300 animate-in fade-in-0 slide-in-from-top-1 dark:border-emerald-900/40 dark:bg-emerald-950/60">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium text-slate-700 dark:text-slate-200">已选 {selectedCount} 个任务</p>
             <div className="flex flex-wrap items-center gap-2">
@@ -871,7 +871,7 @@ export default function Tasks() {
       </div>
 
       {/* 筛选栏 */}
-      <div className="sticky top-16 z-20 space-y-3 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
+      <div className="sticky top-16 z-20 space-y-3 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/95">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -1415,10 +1415,10 @@ const TaskCard = memo(function TaskCard({
 
   return (
     <Card className={cn(
-      "group hover:shadow-xl transition-all duration-300 border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col",
+      "group hover:shadow-xl transition-all duration-300 border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col hover:-translate-y-0.5",
       isSelected && "ring-2 ring-blue-500 border-blue-500"
     )}>
-      <CardHeader className="pb-4">
+      <CardHeader className="pb-3 sm:pb-4">
         <div className="flex items-start justify-between gap-2">
           {/* 批量模式下显示复选框 */}
           {isBatchMode && (
@@ -1429,7 +1429,7 @@ const TaskCard = memo(function TaskCard({
             />
           )}
           <div className="space-y-1 min-w-0 flex-1">
-            <CardTitle className="text-xl font-bold group-hover:text-blue-600 transition-colors truncate">
+            <CardTitle className="text-base sm:text-xl font-bold group-hover:text-blue-600 transition-colors truncate">
               {task.name}
             </CardTitle>
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -1493,13 +1493,13 @@ const TaskCard = memo(function TaskCard({
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 space-y-4">
-        <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-2 min-h-[2.5rem]">
+      <CardContent className="flex-1 space-y-3 sm:space-y-4">
+        <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-1 sm:line-clamp-2 min-h-[1.5rem] sm:min-h-[2.5rem]">
           {task.description || TASK_MESSAGES.NO_DESCRIPTION}
         </p>
 
         {/* 触发类型 & 成功率 */}
-        <div className="flex items-center justify-between text-sm">
+        <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 text-slate-500">
             <Calendar className="h-4 w-4" />
             <span>
@@ -1557,7 +1557,7 @@ const TaskCard = memo(function TaskCard({
         </div>
       </CardContent>
 
-      <CardFooter className="pt-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+      <CardFooter className="pt-3 sm:pt-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
         <Button
           onClick={handleRun}
           disabled={isRunning || isQueued || task.status === 'archived'}
@@ -1622,8 +1622,8 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col p-0 animate-in fade-in-0 zoom-in-95 duration-200">
+        <DialogHeader className="px-6 pt-6 pb-3 border-b border-slate-100 dark:border-slate-800">
           <DialogTitle className="flex items-center gap-2">
             <BarChart2 className="h-5 w-5 text-blue-500" />
             {task.name}
@@ -1634,7 +1634,7 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
         </DialogHeader>
 
         {/* 标签页切换 */}
-        <div className="flex border-b border-slate-200 dark:border-slate-700 shrink-0">
+        <div className="flex border-b border-slate-200 dark:border-slate-700 shrink-0 px-4">
           <button
             className={cn(
               'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors',
@@ -1666,10 +1666,10 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto px-6 py-4">
           {/* ─── 执行统计标签页 ─── */}
           {activeTab === 'stats' && (
-            <div className="py-4">
+            <div className="">
               {statsLoading ? (
                 <div className="flex justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
@@ -1775,7 +1775,7 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
 
           {/* ─── 审计日志标签页 ─── */}
           {activeTab === 'audit' && (
-            <div className="py-4">
+            <div className="">
               {auditLoading ? (
                 <div className="flex justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
@@ -1847,7 +1847,7 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
           )}
         </div>
 
-        <DialogFooter className="shrink-0 border-t border-slate-100 dark:border-slate-800 pt-3">
+        <DialogFooter className="shrink-0 border-t border-slate-100 dark:border-slate-800 px-6 py-3 bg-slate-50/80 dark:bg-slate-900/60">
           <Button variant="outline" onClick={onClose}>关闭</Button>
         </DialogFooter>
       </DialogContent>
@@ -1862,8 +1862,8 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
+      <DialogContent className="max-w-lg p-0 overflow-hidden animate-in fade-in-0 zoom-in-95 duration-200">
+        <DialogHeader className="px-6 pt-6 pb-3 border-b border-slate-100 dark:border-slate-800">
           <DialogTitle className="flex items-center gap-2">
             <Activity className="h-5 w-5 text-blue-500" />
             调度器实时状态
@@ -1873,6 +1873,7 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
           </DialogDescription>
         </DialogHeader>
 
+        <div className="px-6 py-4 max-h-[68vh] overflow-y-auto">
         {isLoading ? (
           <div className="flex justify-center py-8">
             <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
@@ -1883,7 +1884,7 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
             <span>加载失败：{getErrorMessage(error)}</span>
           </div>
         ) : status ? (
-          <div className="space-y-5 py-2">
+          <div className="space-y-5 animate-in fade-in-0 slide-in-from-bottom-1 duration-200">
             {/* 并发状态概览 */}
             <div className="grid grid-cols-3 gap-3">
               <div className="rounded-xl bg-blue-50 dark:bg-blue-900/20 p-3 text-center">
@@ -2031,8 +2032,9 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
             )}
           </div>
         ) : null}
+        </div>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="gap-2 px-6 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60">
           <Button variant="ghost" size="sm" onClick={() => refetch()} className="gap-1.5">
             <RefreshCw className="h-3.5 w-3.5" />
             刷新
@@ -2238,15 +2240,15 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-0 animate-in fade-in-0 zoom-in-95 duration-200">
+        <DialogHeader className="px-6 pt-6 pb-3 border-b border-slate-100 dark:border-slate-800">
           <DialogTitle>{task ? TASK_MESSAGES.FORM_EDIT_TITLE : TASK_MESSAGES.FORM_CREATE_TITLE}</DialogTitle>
           <DialogDescription>
             {task ? TASK_MESSAGES.FORM_EDIT_DESC : TASK_MESSAGES.FORM_CREATE_DESC}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5 py-2">
+        <div className="space-y-5 px-6 py-4">
           {/* 任务名称 */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -2451,7 +2453,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
 
             {/* 用例选择器面板 */}
             {casePickerOpen && (
-              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm animate-in fade-in-0 slide-in-from-top-1 duration-200">
                 {/* 搜索 + 类型过滤 */}
                 <div className="flex gap-2 p-2 border-b border-slate-100 dark:border-slate-800">
                   <div className="relative flex-1">
@@ -2541,7 +2543,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60">
           <Button variant="outline" onClick={onClose} disabled={isSaving}>
             {TASK_MESSAGES.BTN_CANCEL}
           </Button>
