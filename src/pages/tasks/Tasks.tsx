@@ -720,19 +720,19 @@ export default function Tasks() {
   return (
     <div className="space-y-8 p-6">
       {/* 顶部标题 */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
-            <Boxes className="h-8 w-8 text-blue-600" />
+            <Boxes className="h-8 w-8 text-emerald-600" />
             {TASK_PAGE.TITLE}
           </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
             {TASK_PAGE.SUBTITLE}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
-            variant={isBatchMode ? "default" : "outline"}
+            variant={isBatchMode ? 'default' : 'outline'}
             size="sm"
             className="gap-2"
             onClick={() => {
@@ -745,26 +745,50 @@ export default function Tasks() {
           </Button>
 
           {isBatchMode && (
-            <div className="flex items-center gap-2 px-2">
-              <Checkbox
-                checked={selectAllState}
-                onCheckedChange={handleSelectAll}
-              />
+            <div className="flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 dark:border-slate-700">
+              <Checkbox checked={selectAllState} onCheckedChange={handleSelectAll} />
               <span className="text-sm text-slate-600 dark:text-slate-400">全选</span>
             </div>
           )}
 
+          {!isMobile && (
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => setSchedulerOpen(true)}
+              title="查看调度器运行状态"
+            >
+              <Monitor className="h-4 w-4 text-blue-500" />
+              调度器监控
+            </Button>
+          )}
+
+          {!isMobile && (
+            <>
+              <Button
+                variant={viewMode === 'cards' ? 'default' : 'outline'}
+                size="sm"
+                className="gap-2"
+                onClick={() => setViewMode('cards')}
+              >
+                <LayoutGrid className="h-4 w-4" />
+                卡片
+              </Button>
+              <Button
+                variant={viewMode === 'table' ? 'default' : 'outline'}
+                size="sm"
+                className="gap-2"
+                onClick={() => setViewMode('table')}
+                disabled={isTablet}
+              >
+                <List className="h-4 w-4" />
+                表格
+              </Button>
+            </>
+          )}
+
           <Button
-            variant="outline"
-            className="gap-2"
-            onClick={() => setSchedulerOpen(true)}
-            title="查看调度器运行状态"
-          >
-            <Monitor className="h-4 w-4 text-blue-500" />
-            调度器监控
-          </Button>
-          <Button
-            className="gap-2 shadow-lg shadow-blue-500/20"
+            className="gap-2 bg-emerald-600 hover:bg-emerald-700"
             onClick={() => {
               setEditingTask(null);
               setFormOpen(true);
@@ -776,8 +800,34 @@ export default function Tasks() {
         </div>
       </div>
 
+      {selectedCount > 0 && (
+        <div className="sticky top-2 z-30 rounded-xl border border-emerald-200 bg-emerald-50/95 p-3 shadow-sm backdrop-blur dark:border-emerald-900/40 dark:bg-emerald-950/60">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-200">已选 {selectedCount} 个任务</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleBatchRun}>
+                <Play className="h-4 w-4" />
+                运行
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleBatchPause}>
+                <Pause className="h-4 w-4" />
+                暂停
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleBatchDelete}>
+                <Trash2 className="h-4 w-4" />
+                删除
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.success('导出任务列表成功')}>
+                <Download className="h-4 w-4" />
+                导出
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 统计卡片 */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-4">
         <Card className="bg-gradient-to-br from-blue-500/10 to-transparent border-blue-100 dark:border-blue-900/30">
           <CardHeader className="pb-2">
             <CardDescription className="text-blue-600 dark:text-blue-400 font-medium">
@@ -808,77 +858,139 @@ export default function Tasks() {
             </CardTitle>
           </CardHeader>
         </Card>
+        <Card className="bg-gradient-to-br from-red-500/10 to-transparent border-red-100 dark:border-red-900/30">
+          <CardHeader className="pb-2">
+            <CardDescription className="text-red-600 dark:text-red-400 font-medium">
+              失败告警
+            </CardDescription>
+            <CardTitle className="text-3xl font-bold">
+              {isLoading ? <Loader2 className="h-6 w-6 animate-spin" aria-label={TASK_MESSAGES.LOADING_TASKS} /> : failedAlerts}
+            </CardTitle>
+          </CardHeader>
+        </Card>
       </div>
 
       {/* 筛选栏 */}
-      <div className="flex flex-wrap gap-3 items-center">
-        {/* 关键字搜索 */}
-        <div className="relative flex-1 min-w-[200px] max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input
-            placeholder="搜索任务名称..."
-            className="pl-9"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-          />
-        </div>
+      <div className="sticky top-16 z-20 space-y-3 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input
+              placeholder="搜索任务名称..."
+              className="pl-9"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+            />
+          </div>
 
-        {/* 状态筛选 */}
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-slate-400" />
-          {TASK_STATUS_FILTER_OPTIONS.map((v) => (
-            <Button
-              key={v}
-              variant={statusFilter === v ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => {
-                setStatusFilter(v);
-                setPage(1);
-              }}
-              className="h-8"
-            >
-              {v === '' ? '全部状态' : STATUS_LABELS[v]}
-            </Button>
-          ))}
-        </div>
-
-        {/* 触发类型筛选 */}
-        <div className="flex items-center gap-2">
-          {TASK_TRIGGER_FILTER_OPTIONS.map((v) => (
-            <Button
-              key={v}
-              variant={triggerFilter === v ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => {
-                setTriggerFilter(v);
-                setPage(1);
-              }}
-              className="h-8"
-            >
-              {v === '' ? '全部触发' : TRIGGER_TYPE_LABELS[v]}
-            </Button>
-          ))}
-        </div>
-
-        {/* 清除筛选 */}
-        {hasActiveFilters && (
-          <Button variant="ghost" size="sm" onClick={clearFilters} className="h-8 gap-1 text-slate-500">
-            <X className="h-3.5 w-3.5" />
-            {TASK_MESSAGES.BTN_CLEAR_FILTER}
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => refetch()}>
+            <RefreshCw className="h-4 w-4" />
+            快速刷新
           </Button>
+
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={saveCurrentFilter}>
+            <Save className="h-4 w-4" />
+            常用筛选
+          </Button>
+
+          {hasActiveFilters && (
+            <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-1.5 text-slate-500">
+              <X className="h-4 w-4" />
+              清空
+            </Button>
+          )}
+        </div>
+
+        {isFilterPopoverMode ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <SlidersHorizontal className="h-4 w-4" />
+                筛选条件
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[420px] p-4">
+              <div className="space-y-3">
+                <FilterGroup
+                  label="状态"
+                  options={TASK_STATUS_FILTER_OPTIONS.map((v) => ({ value: v, label: v === '' ? '全部状态' : STATUS_LABELS[v] }))}
+                  value={statusFilter}
+                  onChange={(v) => {
+                    setStatusFilter(v as TaskStatusFilter);
+                    setPage(1);
+                  }}
+                />
+                <FilterGroup
+                  label="触发方式"
+                  options={TASK_TRIGGER_FILTER_OPTIONS.map((v) => ({ value: v, label: v === '' ? '全部触发' : TRIGGER_TYPE_LABELS[v] }))}
+                  value={triggerFilter}
+                  onChange={(v) => {
+                    setTriggerFilter(v as TaskTriggerFilter);
+                    setPage(1);
+                  }}
+                />
+                <FilterGroup
+                  label="标签"
+                  options={TASK_TAG_FILTER_OPTIONS}
+                  value={tagFilter}
+                  onChange={(v) => {
+                    setTagFilter(v as TaskTagFilter);
+                    setPage(1);
+                  }}
+                />
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <div className="space-y-2">
+            <FilterGroup
+              label="状态"
+              compact
+              options={TASK_STATUS_FILTER_OPTIONS.map((v) => ({ value: v, label: v === '' ? '全部状态' : STATUS_LABELS[v] }))}
+              value={statusFilter}
+              onChange={(v) => {
+                setStatusFilter(v as TaskStatusFilter);
+                setPage(1);
+              }}
+            />
+            <FilterGroup
+              label="触发方式"
+              compact
+              options={TASK_TRIGGER_FILTER_OPTIONS.map((v) => ({ value: v, label: v === '' ? '全部触发' : TRIGGER_TYPE_LABELS[v] }))}
+              value={triggerFilter}
+              onChange={(v) => {
+                setTriggerFilter(v as TaskTriggerFilter);
+                setPage(1);
+              }}
+            />
+            <FilterGroup
+              label="标签"
+              compact
+              options={TASK_TAG_FILTER_OPTIONS}
+              value={tagFilter}
+              onChange={(v) => {
+                setTagFilter(v as TaskTagFilter);
+                setPage(1);
+              }}
+            />
+          </div>
         )}
 
-        {/* 刷新按钮 */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 ml-auto"
-          onClick={() => refetch()}
-          title={TASK_MESSAGES.BTN_REFRESH}
-          aria-label={TASK_MESSAGES.BTN_REFRESH}
-        >
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        {savedFilters.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-slate-500">常用:</span>
+            {savedFilters.map((item) => (
+              <div key={item.name} className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 pl-2 pr-1 dark:border-slate-700 dark:bg-slate-800">
+                <button className="py-1 text-slate-700 dark:text-slate-300" onClick={() => applySavedFilter(item.name)}>
+                  {item.name}
+                </button>
+                <button className="ml-1 rounded-full p-0.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700" onClick={() => removeSavedFilter(item.name)}>
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 加载 / 错误 / 任务列表 */}
@@ -890,14 +1002,18 @@ export default function Tasks() {
       ) : error ? (
         <div className="flex flex-col items-center justify-center h-[40vh] gap-4">
           <div className="p-4 rounded-full bg-red-50 dark:bg-red-900/20">
-            <AlertCircle className="h-10 w-10 text-red-500" />
+            {isPermissionDenied ? <ShieldAlert className="h-10 w-10 text-amber-500" /> : <AlertCircle className="h-10 w-10 text-red-500" />}
           </div>
-          <p className="text-red-600 font-medium">{TASK_MESSAGES.LOAD_ERROR}: {getErrorMessage(error)}</p>
-          <Button variant="outline" onClick={() => refetch()}>
-            {TASK_MESSAGES.BTN_RETRY}
-          </Button>
+          <p className="text-red-600 font-medium">
+            {isPermissionDenied ? '暂无权限访问任务管理' : `${TASK_MESSAGES.LOAD_ERROR}: ${errorMessage}`}
+          </p>
+          {!isPermissionDenied && (
+            <Button variant="outline" onClick={() => refetch()}>
+              {TASK_MESSAGES.BTN_RETRY}
+            </Button>
+          )}
         </div>
-      ) : tasks.length === 0 ? (
+      ) : sortedTasks.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-[40vh] gap-4 text-slate-400">
           <Boxes className="h-16 w-16 opacity-30" />
           <p className="text-lg">
@@ -911,29 +1027,46 @@ export default function Tasks() {
         </div>
       ) : (
         <>
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {tasks.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                onRunTask={handleRunTask}
-                onEditTask={handleEditTask}
-                onToggleStatus={handleToggleStatus}
-                onDeleteTask={handleOpenDeleteDialog}
-                onStatsTask={handleOpenStatsDialog}
-                onCancelTask={handleCancelLatestExecution}
-                isRunning={
-                  runTaskMutation.isPending &&
-                  runTaskMutation.variables === task.id
-                }
-                isQueued={queueInfoByTaskId.get(task.id)?.isQueued ?? false}
-                queuePosition={queueInfoByTaskId.get(task.id)?.queuePosition}
-                isBatchMode={isBatchMode}
-                isSelected={selectedTasks.has(task.id)}
-                onSelectTask={handleSelectTask}
-              />
-            ))}
-          </div>
+          {viewMode === 'cards' ? (
+            <div className={cn(
+              'grid gap-6',
+              isWideDesktop ? '2xl:grid-cols-4 xl:grid-cols-4 lg:grid-cols-3 md:grid-cols-2' : 'xl:grid-cols-2 md:grid-cols-2',
+              (isTablet || isMobile) && 'grid-cols-1'
+            )}>
+              {sortedTasks.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  onRunTask={handleRunTask}
+                  onEditTask={handleEditTask}
+                  onToggleStatus={handleToggleStatus}
+                  onDeleteTask={handleOpenDeleteDialog}
+                  onStatsTask={handleOpenStatsDialog}
+                  onCancelTask={handleCancelLatestExecution}
+                  isRunning={runTaskMutation.isPending && runTaskMutation.variables === task.id}
+                  isQueued={queueInfoByTaskId.get(task.id)?.isQueued ?? false}
+                  queuePosition={queueInfoByTaskId.get(task.id)?.queuePosition}
+                  isBatchMode={isBatchMode}
+                  isSelected={selectedTasks.has(task.id)}
+                  onSelectTask={handleSelectTask}
+                />
+              ))}
+            </div>
+          ) : (
+            <TaskTableView
+              tasks={sortedTasks}
+              selectedTasks={selectedTasks}
+              columnVisibility={columnVisibility}
+              sortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={toggleSort}
+              onSelectTask={handleSelectTask}
+              onRunTask={handleRunTask}
+              onToggleStatus={handleToggleStatus}
+              onEditTask={handleEditTask}
+              onDeleteTask={handleOpenDeleteDialog}
+            />
+          )}
 
           {/* 分页 */}
           {totalPages > 1 && (
@@ -1051,23 +1184,6 @@ export default function Tasks() {
         <SchedulerMonitorDialog onClose={() => setSchedulerOpen(false)} />
       )}
 
-      {/* 批量操作浮动工具栏 */}
-      {isBatchMode && (
-        <BatchActionBar
-          selectedCount={selectedCount}
-          onActivate={handleBatchActivate}
-          onPause={handleBatchPause}
-          onDelete={handleBatchDelete}
-          onRun={handleBatchRun}
-          onClear={clearSelection}
-          isLoading={
-            batchUpdateStatusMutation.isPending ||
-            batchDeleteMutation.isPending ||
-            batchRunMutation.isPending
-          }
-        />
-      )}
-
       {/* 批量操作确认对话框 */}
       {batchDialog && (
         <BatchConfirmDialog
@@ -1078,6 +1194,127 @@ export default function Tasks() {
           onConfirm={handleBatchConfirm}
         />
       )}
+    </div>
+  );
+}
+
+interface FilterGroupProps {
+  label: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  value: string;
+  onChange: (value: string) => void;
+  compact?: boolean;
+}
+
+function FilterGroup({ label, options, value, onChange, compact = false }: FilterGroupProps) {
+  return (
+    <div className={cn('flex flex-wrap items-center gap-2', compact && 'gap-1.5')}>
+      <span className="text-xs font-medium text-slate-500">{label}</span>
+      {options.map((option) => (
+        <Button
+          key={option.value || 'all'}
+          type="button"
+          size="sm"
+          variant={value === option.value ? 'default' : 'outline'}
+          className={cn('h-8', compact && 'h-7 px-2 text-xs')}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+interface TaskTableViewProps {
+  tasks: Task[];
+  selectedTasks: Set<number>;
+  columnVisibility: Record<TaskSortKey, boolean>;
+  sortKey: TaskSortKey;
+  sortDirection: SortDirection;
+  onSort: (key: TaskSortKey) => void;
+  onSelectTask: (taskId: number, checked: CheckedState) => void;
+  onRunTask: (taskId: number, taskName: string) => void;
+  onToggleStatus: (task: Task) => void;
+  onEditTask: (task: Task) => void;
+  onDeleteTask: (task: Task) => void;
+}
+
+function TaskTableView({
+  tasks,
+  selectedTasks,
+  columnVisibility,
+  sortKey,
+  sortDirection,
+  onSort,
+  onSelectTask,
+  onRunTask,
+  onToggleStatus,
+  onEditTask,
+  onDeleteTask,
+}: TaskTableViewProps) {
+  const visibleColumns = TABLE_COLUMN_OPTIONS.filter((column) => columnVisibility[column.key]);
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50 dark:bg-slate-800/80">
+          <tr>
+            <th className="w-10 px-3 py-3 text-left">
+              <span className="sr-only">选择</span>
+            </th>
+            {visibleColumns.map((column) => (
+              <th key={column.key} className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <button className="inline-flex items-center gap-1 hover:text-slate-700 dark:hover:text-slate-300" onClick={() => onSort(column.key)}>
+                  {column.label}
+                  {sortKey === column.key && <ArrowUpDown className={cn('h-3.5 w-3.5', sortDirection === 'desc' && 'rotate-180')} />}
+                </button>
+              </th>
+            ))}
+            <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tasks.map((task) => {
+            const status = getTaskSemanticStatus(task);
+            const latest = task.recentExecutions?.[0];
+            const successRate = getTaskSuccessRate(task);
+            return (
+              <tr key={task.id} className="border-t border-slate-100 hover:bg-slate-50/80 dark:border-slate-800 dark:hover:bg-slate-800/40">
+                <td className="px-3 py-3">
+                  <Checkbox checked={selectedTasks.has(task.id)} onCheckedChange={(checked) => onSelectTask(task.id, checked)} />
+                </td>
+                {columnVisibility.name && <td className="px-3 py-3 font-medium text-slate-800 dark:text-slate-100">{task.name}</td>}
+                {columnVisibility.status && (
+                  <td className="px-3 py-3">
+                    <span className={cn('inline-flex rounded-full px-2 py-0.5 text-xs font-medium', TASK_STATUS_SEMANTIC[status.key])}>{status.label}</span>
+                  </td>
+                )}
+                {columnVisibility.trigger && <td className="px-3 py-3 text-slate-600 dark:text-slate-300">{TRIGGER_TYPE_LABELS[task.trigger_type] ?? task.trigger_type}</td>}
+                {columnVisibility.owner && <td className="px-3 py-3 text-slate-600 dark:text-slate-300">{task.created_by_name ?? '-'}</td>}
+                {columnVisibility.latestRun && <td className="px-3 py-3 text-slate-600 dark:text-slate-300">{formatTime(latest?.start_time)}</td>}
+                {columnVisibility.successRate && <td className="px-3 py-3 font-medium text-slate-700 dark:text-slate-200">{successRate == null ? '-' : `${successRate}%`}</td>}
+                <td className="px-3 py-3">
+                  <div className="flex items-center justify-end gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onRunTask(task.id, task.name)}>
+                      <Play className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onToggleStatus(task)}>
+                      <Pause className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onEditTask(task)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onDeleteTask(task)}>
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

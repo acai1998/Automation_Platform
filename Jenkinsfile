@@ -125,7 +125,6 @@ pipeline {
             steps {
                 sh '''
                     set -e
-                    DRIVER_CACHE="''' + env.DRIVER_CACHE + '''"
                     mkdir -p "${DRIVER_CACHE}"
 
                     # ── 1. 获取本机 Chrome 主版本 ─────────────────────────────
@@ -321,6 +320,26 @@ pipeline {
                                 -r ${repoDir}/requirements.txt
                         fi
 
+                        # 将缓存的 chromedriver 同步到 SeleniumBase 默认驱动目录，避免运行时再走外网下载
+                        if [ -x "${DRIVER_CACHE}/chromedriver" ]; then
+                            if python -c "import seleniumbase" >/dev/null 2>&1; then
+                                SB_DRIVER_DIR=$(python - <<'PY'
+import os
+import seleniumbase
+print(os.path.join(os.path.dirname(seleniumbase.__file__), 'drivers'))
+PY
+)
+                                mkdir -p "${SB_DRIVER_DIR}"
+                                cp -f "${DRIVER_CACHE}/chromedriver" "${SB_DRIVER_DIR}/chromedriver"
+                                chmod +x "${SB_DRIVER_DIR}/chromedriver"
+                                echo "✅ 已同步 chromedriver 到 SeleniumBase: ${SB_DRIVER_DIR}/chromedriver"
+                            else
+                                echo "ℹ️ 未检测到 seleniumbase 包，跳过驱动同步"
+                            fi
+                        else
+                            echo "⚠️ 缓存目录未发现 chromedriver: ${DRIVER_CACHE}/chromedriver"
+                        fi
+
                         # 列出可用的测试文件
                         echo "可用的测试文件:"
                         find ${testFilesDir} -name "test_*.py" -o -name "*_test.py" | head -20
@@ -363,13 +382,37 @@ pipeline {
                     }
                     testCommand += " --json-report --json-report-file=test-report.json --junitxml=junit.xml -v"
 
-                    sh """
-                        # 将缓存的 chromedriver 加入 PATH，避免测试时重新下载
-                        export PATH="${DRIVER_CACHE}:\${PATH}"
-                        export SB_DRIVER_CACHE_PATH=${DRIVER_CACHE}
-                        cd ${testDir}
-                        ${testCommand} || true
-                    """
+                    def testExitCode = sh(
+                        script: """
+                            # 将缓存的 chromedriver 加入 PATH，避免测试时重新下载
+                            export PATH="${DRIVER_CACHE}:\${PATH}"
+                            export SB_DRIVER_CACHE_PATH=${DRIVER_CACHE}
+                            export CHROMEDRIVER="${DRIVER_CACHE}/chromedriver"
+
+                            # 缺少 Chrome/Chromium 时直接失败，避免 pytest 被外部终止后误判成功
+                            CHROME_BIN=""
+                            for candidate in google-chrome google-chrome-stable chromium-browser chromium; do
+                                if command -v "$candidate" >/dev/null 2>&1; then
+                                    CHROME_BIN="$candidate"
+                                    break
+                                fi
+                            done
+                            if [ -z "$CHROME_BIN" ]; then
+                                echo "❌ 未检测到 Chrome/Chromium，请先在执行节点安装浏览器"
+                                exit 2
+                            fi
+
+                            cd ${testDir}
+                            ${testCommand}
+                        """,
+                        returnStatus: true
+                    )
+
+                    writeFile file: "${env.WORKSPACE}/pytest_exit_code.txt", text: "${testExitCode}\n"
+                    if (testExitCode != 0) {
+                        currentBuild.result = 'FAILURE'
+                        echo "❌ pytest 执行失败，exitCode=${testExitCode}"
+                    }
                 }
             }
         }
@@ -406,12 +449,9 @@ pipeline {
                 node(env.EXEC_NODE ?: 'master') {
                     echo "清理环境..."
 
-                // test-report.json 和 junit.xml 在 examples/examples/ 下生成
-                def testDir = params.REPO_URL ? 'examples/examples' : '.'
-                def reportArtifactPath = params.REPO_URL ? 'examples/examples/test-report.json' : 'test-report.json'
-                def junitPattern = params.REPO_URL
-                    ? '**/examples/examples/junit.xml,**/examples/examples/.pytest_cache/**/junit.xml'
-                    : '**/junit.xml,**/.pytest_cache/**/junit.xml'
+                // 使用通配符兼容 pytest 根目录自动回退（例如回退到 examples/）
+                def reportArtifactPath = '**/test-report.json'
+                def junitPattern = '**/junit.xml,**/.pytest_cache/**/junit.xml'
 
                 try {
                     archiveArtifacts artifacts: reportArtifactPath, allowEmptyArchive: true, fingerprint: true
@@ -475,6 +515,12 @@ pipeline {
 
                                     if [ "\${curl_exit}" -eq 0 ] && { [ "\${http_code}" = "202" ] || [ "\${http_code}" = "200" ]; }; then
                                         callback_ok=1
+                                        break
+                                    fi
+
+                                    # 4xx（除 429）通常为配置错误（如 IP 白名单），无需重试
+                                    if [ "\${curl_exit}" -eq 0 ] && echo "\${http_code}" | grep -q '^4' && [ "\${http_code}" != "429" ]; then
+                                        echo "[callback] non-retriable client error: \${http_code}"
                                         break
                                     fi
 
