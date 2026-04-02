@@ -323,7 +323,7 @@ pipeline {
                         # 将缓存的 chromedriver 同步到 SeleniumBase 默认驱动目录，避免运行时再走外网下载
                         if [ -x "${DRIVER_CACHE}/chromedriver" ]; then
                             if python -c "import seleniumbase" >/dev/null 2>&1; then
-                                SB_DRIVER_DIR=$(python - <<'PY'
+                                SB_DRIVER_DIR=\$(python - <<'PY'
 import os
 import seleniumbase
 print(os.path.join(os.path.dirname(seleniumbase.__file__), 'drivers'))
