@@ -70,7 +70,9 @@ function createDefaultMetadata(kind: AiCaseNodeKind): AiCaseNodeMetadata {
 }
 
 function resolveNodeKindTags(kind: AiCaseNodeKind, showNodeKindTags: boolean): AiCaseNode['tags'] | undefined {
-  if (!showNodeKindTags || kind === 'root') {
+  // scenario 节点现在用于 testcase 下的 section 标题（前置条件/测试步骤/预期结果）
+  // 这些节点本身已经是语义清晰的中文标题，不需要额外的"测试场景"标签
+  if (!showNodeKindTags || kind === 'root' || kind === 'scenario') {
     return undefined;
   }
 
@@ -169,7 +171,7 @@ function toChecklist(lines: string[]): string[] {
 }
 
 function formatCaseNote(
-  testPoint: string,
+  _testPoint: string,
   preconditions: string[],
   steps: string[],
   expectedResults: string[]
@@ -178,7 +180,7 @@ function formatCaseNote(
   const normalizedSteps = toChecklist(steps);
   const normalizedExpectedResults = toChecklist(expectedResults);
 
-  const noteLines: string[] = ['测试点:', `1. ${testPoint.trim()}`, '', '前置条件:'];
+  const noteLines: string[] = ['前置条件:'];
 
   normalizedPreconditions.forEach((item, index) => {
     noteLines.push(`${index + 1}. ${item}`);
@@ -275,17 +277,13 @@ function parseCaseNoteSections(note: string): ParsedCaseNoteSections {
 function buildCaseNoteChildren(
   sections: ParsedCaseNoteSections,
   aiGenerated: boolean,
-  fallbackTestPoint: string
+  _fallbackTestPoint: string
 ): AiCaseNode[] {
-  const orderedSections: CaseNoteSectionKey[] = ['testPoint', 'preconditions', 'steps', 'expectedResults'];
-
-  const withFallback: ParsedCaseNoteSections = {
-    ...sections,
-    testPoint: sections.testPoint.length > 0 ? sections.testPoint : [fallbackTestPoint],
-  };
+  // 只展开前置条件、测试步骤、预期结果三个 section，去掉多余的"测试点"中间节点
+  const orderedSections: CaseNoteSectionKey[] = ['preconditions', 'steps', 'expectedResults'];
 
   return orderedSections
-    .map((key) => ({ key, items: toChecklist(withFallback[key]) }))
+    .map((key) => ({ key, items: toChecklist(sections[key]) }))
     .filter((section) => section.items.length > 0)
     .map((section) => createNode(CASE_NOTE_SECTION_TITLE_MAP[section.key], 'scenario', {
       aiGenerated,

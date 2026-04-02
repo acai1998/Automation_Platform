@@ -2,9 +2,11 @@ pipeline {
     agent any
     
     environment {
-        IMAGE_NAME = "docker.cnb.cool/imacaiy/automation_platform"
+        IMAGE_NAME  = "docker.cnb.cool/imacaiy/automation_platform"
         PROJECT_DIR = "/opt/automation-platform"
-        ENV_FILE    = "/opt/automation-platform/.env"
+        ENV_FILE    = "/opt/.env"
+        // CNB Docker Token：在 Jenkins → 凭据 中添加 Secret text，ID 填 CNB_DOCKER_TOKEN
+        CNB_TOKEN   = credentials('CNB_DOCKER_TOKEN')
     }
     
     parameters {
@@ -90,24 +92,68 @@ pipeline {
             }
         }
         
+        stage('初始化部署目录') {
+            steps {
+                script {
+                    echo "确保部署目录和配置文件存在..."
+                    sh """
+                        mkdir -p ${PROJECT_DIR}/{logs,data}
+
+                        # 若 .env 不存在则从服务器已有文件或仓库示例生成
+                        if [ ! -f "${ENV_FILE}" ]; then
+                            echo "[INFO] ${ENV_FILE} 不存在，从仓库 .env.example 生成初始配置..."
+                            if [ -f "\$WORKSPACE/.env.example" ]; then
+                                cp "\$WORKSPACE/.env.example" "${ENV_FILE}"
+                                echo "[WARN] 已复制 .env.example → ${ENV_FILE}，请登录服务器补全真实配置后重新部署"
+                            else
+                                # 兜底：生成最小化占位 .env
+                                touch "${ENV_FILE}"
+                                echo "[WARN] 已创建空 ${ENV_FILE}，请登录服务器补全配置后重新部署"
+                            fi
+                        fi
+
+                        # 若 docker-compose.yml 不存在则从仓库内模板复制
+                        if [ ! -f "${PROJECT_DIR}/docker-compose.yml" ]; then
+                            echo "[INFO] docker-compose.yml 不存在，从仓库模板生成..."
+                            if [ -f "\$WORKSPACE/docker-compose.yml" ]; then
+                                cp "\$WORKSPACE/docker-compose.yml" "${PROJECT_DIR}/docker-compose.yml"
+                            else
+                                # 兜底：写入最小化 compose 配置
+                                cat > ${PROJECT_DIR}/docker-compose.yml << 'COMPOSE_EOF'
+services:
+  automation-platform:
+    image: docker.cnb.cool/imacaiy/automation_platform:latest
+    container_name: automation-platform
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - /opt/.env
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+COMPOSE_EOF
+                            fi
+                            echo "[INFO] docker-compose.yml 已生成"
+                        fi
+                    """
+                    echo "目录初始化完成"
+                }
+            }
+        }
+
         stage('登录 CNB 制品库') {
             steps {
                 script {
                     echo "登录 CNB Docker 制品库..."
-                    sh """
-                        # 从服务器 .env 文件读取 CNB_DOCKER_TOKEN
-                        if [ ! -f "${ENV_FILE}" ]; then
-                            echo "[ERROR] 未找到环境变量文件: ${ENV_FILE}"
-                            echo "[ERROR] 请先运行 deploy-setup.sh 完成初始化"
-                            exit 1
-                        fi
-                        CNB_TOKEN=\$(grep '^CNB_DOCKER_TOKEN=' "${ENV_FILE}" | cut -d'=' -f2-)
-                        if [ -z "\$CNB_TOKEN" ]; then
-                            echo "[ERROR] ${ENV_FILE} 中未找到 CNB_DOCKER_TOKEN"
-                            exit 1
-                        fi
-                        echo "\$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin
-                    """
+                    // CNB_TOKEN 由 Jenkins Credentials（ID: CNB_DOCKER_TOKEN）注入
+                    sh 'echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin'
                     echo "登录成功"
                 }
             }
@@ -254,7 +300,7 @@ pipeline {
             script {
                 // 从 .env 读取域名展示访问地址
                 def domain = sh(
-                    script: "grep '^DOMAIN=' /opt/automation-platform/.env | cut -d'=' -f2- || echo ''",
+                    script: "grep '^DOMAIN=' /opt/.env | cut -d'=' -f2- || echo ''",
                     returnStdout: true
                 ).trim()
                 def accessUrl = domain ? "http://${domain}" : "http://服务器IP:3000"

@@ -226,10 +226,8 @@ function composeCaseNote(testCase: AiCaseGenerationPlanCase): string {
 
   const lines: string[] = [];
 
-  lines.push('测试点:');
-  lines.push(`1. ${testCase.title}`);
-
-  lines.push('', '前置条件:');
+  // 去掉"测试点:"中间层级，直接从前置条件开始，与前端展开格式保持一致
+  lines.push('前置条件:');
   preconditions.forEach((item, index) => {
     lines.push(`${index + 1}. ${item}`);
   });
