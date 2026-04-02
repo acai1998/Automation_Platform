@@ -297,70 +297,76 @@ COMPOSE_EOF
     
     post {
         success {
-            script {
-                // 从 .env 读取域名展示访问地址
-                def domain = sh(
-                    script: "grep '^DOMAIN=' /opt/.env | cut -d'=' -f2- || echo ''",
-                    returnStdout: true
-                ).trim()
-                def accessUrl = domain ? "http://${domain}" : "http://服务器IP:3000"
+            node('') {
+                script {
+                    // 从 .env 读取域名展示访问地址
+                    def domain = sh(
+                        script: "grep '^DOMAIN=' /opt/.env | cut -d'=' -f2- || echo ''",
+                        returnStdout: true
+                    ).trim()
+                    def accessUrl = domain ? "http://${domain}" : "http://服务器IP:3000"
 
-                echo ""
-                echo "========================================"
-                echo "✅ 部署成功！"
-                echo "========================================"
-                echo ""
-                echo "访问地址: ${accessUrl}"
-                echo "容器状态: docker ps | grep automation-platform"
-                echo "查看日志: cd /opt/automation-platform && docker-compose logs -f"
-                echo ""
-                echo "========================================"
+                    echo ""
+                    echo "========================================"
+                    echo "✅ 部署成功！"
+                    echo "========================================"
+                    echo ""
+                    echo "访问地址: ${accessUrl}"
+                    echo "容器状态: docker ps | grep automation-platform"
+                    echo "查看日志: cd /opt/automation-platform && docker-compose logs -f"
+                    echo ""
+                    echo "========================================"
+                }
             }
         }
         
         failure {
-            script {
-                echo ""
-                echo "========================================"
-                echo "❌ 部署失败"
-                echo "========================================"
-                echo ""
-                
-                // 显示容器日志
-                sh """
-                    cd /opt/automation-platform
-                    docker-compose logs --tail=100 || true
-                """
-                
-                // 尝试回滚
-                echo ""
-                echo "尝试回滚到之前的版本..."
-                sh """
-                    cd /opt/automation-platform
+            node('') {
+                script {
+                    echo ""
+                    echo "========================================"
+                    echo "❌ 部署失败"
+                    echo "========================================"
+                    echo ""
                     
-                    # 恢复备份的配置
-                    if [ -f docker-compose.yml.backup ]; then
-                        mv docker-compose.yml.backup docker-compose.yml
-                        docker-compose down
-                        docker-compose up -d
-                        echo "回滚完成"
-                    else
-                        echo "未找到备份配置，跳过回滚"
-                    fi
-                """
+                    // 显示容器日志
+                    sh """
+                        cd /opt/automation-platform
+                        docker-compose logs --tail=100 || true
+                    """
+                    
+                    // 尝试回滚
+                    echo ""
+                    echo "尝试回滚到之前的版本..."
+                    sh """
+                        cd /opt/automation-platform
+                        
+                        # 恢复备份的配置
+                        if [ -f docker-compose.yml.backup ]; then
+                            mv docker-compose.yml.backup docker-compose.yml
+                            docker-compose down
+                            docker-compose up -d
+                            echo "回滚完成"
+                        else
+                            echo "未找到备份配置，跳过回滚"
+                        fi
+                    """
+                }
             }
         }
         
         always {
-            script {
-                // 清理临时文件
-                sh """
-                    cd /opt/automation-platform
-                    rm -f docker-compose.yml.backup || true
-                """
-                
-                // 登出 Docker
-                sh 'docker logout docker.cnb.cool || true'
+            node('') {
+                script {
+                    // 清理临时文件
+                    sh """
+                        cd /opt/automation-platform
+                        rm -f docker-compose.yml.backup || true
+                    """
+                    
+                    // 登出 Docker
+                    sh 'docker logout docker.cnb.cool || true'
+                }
             }
         }
     }
