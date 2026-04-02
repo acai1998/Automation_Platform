@@ -26,6 +26,8 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
         timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
+        // 每次构建前清理 workspace，确保拉取最新 Jenkinsfile
+        skipDefaultCheckout(false)
     }
 
     stages {
@@ -68,6 +70,9 @@ pipeline {
         stage('执行测试') {
             agent { label "${env.EXEC_NODE}" }
             steps {
+                // 清理旧 workspace，确保 checkout 到最新代码
+                cleanWs()
+                checkout scm
                 script {
                     if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
                         echo "⚠️ 未传入执行参数（可能是定时触发），跳过执行测试"
@@ -80,14 +85,25 @@ pipeline {
 
                     // 登录制品库（拉取私有镜像）
                     // CNB_DOCKER_TOKEN：Jenkins → Manage Jenkins → Credentials → 添加 Secret text，ID 填 CNB_DOCKER_TOKEN
-                    // 若尚未配置凭据，跳过 login（节点上已有 docker login 缓存时仍可拉取镜像）
+                    // 使用 binding plugin 检测凭据是否存在，避免 withCredentials 找不到凭据时直接终止 stage
+                    def hasDockerToken = false
                     try {
+                        // Jenkins 中判断凭据是否存在：尝试 lookup，失败则跳过
+                        def cred = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                            com.cloudbees.plugins.credentials.common.StandardCredentials,
+                            Jenkins.instance, null, null
+                        ).find { it.id == 'CNB_DOCKER_TOKEN' }
+                        hasDockerToken = (cred != null)
+                    } catch (Exception e) {
+                        echo "⚠️ 凭据检测异常，跳过: ${e.message}"
+                    }
+
+                    if (hasDockerToken) {
                         withCredentials([string(credentialsId: 'CNB_DOCKER_TOKEN', variable: 'CNB_TOKEN')]) {
                             sh 'echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin'
                         }
-                    } catch (Exception loginErr) {
-                        echo "⚠️ 制品库登录跳过（凭据未配置或登录失败）: ${loginErr.message}"
-                        echo "  如镜像为私有，请在 Jenkins → Credentials 添加 ID=CNB_DOCKER_TOKEN 的 Secret text"
+                    } else {
+                        echo "⚠️ 凭据 CNB_DOCKER_TOKEN 未配置，跳过制品库登录（如镜像为私有请先添加凭据）"
                     }
 
                     def testExitCode = sh(
