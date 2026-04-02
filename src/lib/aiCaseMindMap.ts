@@ -293,16 +293,32 @@ function buildCaseNoteChildren(
     }));
 }
 
+/**
+ * 判断一个 testcase 节点是否是旧格式（第一个子节点的 topic 是"测试点"）
+ * 旧格式：testcase -> 测试点 -> 前置条件 -> 测试步骤 -> 预期结果
+ * 新格式：testcase -> 前置条件 -> 测试步骤 -> 预期结果
+ */
+function isLegacyExpandedTestcase(node: AiCaseNode): boolean {
+  const children = node.children as AiCaseNode[] | undefined;
+  if (!children || children.length === 0) {
+    return false;
+  }
+  return children[0]?.topic === '测试点';
+}
+
 export function expandImportedCaseNodesFromNote(
   data: AiCaseMindData,
   options?: {
     candidateNodeIds?: string[];
     showNodeKindTags?: boolean;
+    /** 是否强制迁移旧格式节点（已有子节点但第一子节点 topic==="测试点"）*/
+    migrateLegacy?: boolean;
   }
 ): { data: AiCaseMindData; expandedCount: number } {
   const candidateSet = options?.candidateNodeIds && options.candidateNodeIds.length > 0
     ? new Set(options.candidateNodeIds)
     : null;
+  const migrateLegacy = options?.migrateLegacy ?? false;
 
   const next = cloneData(data);
   let expandedCount = 0;
@@ -316,13 +332,20 @@ export function expandImportedCaseNodesFromNote(
       return;
     }
 
-    if ((node.children?.length ?? 0) > 0) {
-      return;
-    }
-
     const metadata = node.metadata ?? createDefaultMetadata('testcase');
     if (metadata.kind !== 'testcase') {
       return;
+    }
+
+    const hasChildren = (node.children?.length ?? 0) > 0;
+
+    // 如果已有子节点：仅在 migrateLegacy=true 且是旧格式时才重建
+    if (hasChildren) {
+      if (!migrateLegacy || !isLegacyExpandedTestcase(node)) {
+        return;
+      }
+      // 旧格式迁移：清除旧 children，从 note 重新展开
+      delete node.children;
     }
 
     const note = typeof node.note === 'string' ? node.note.trim() : '';

@@ -477,6 +477,8 @@ function AiCasesInner() {
           });
           const expanded = expandImportedCaseNodesFromNote(normalized, {
             showNodeKindTags: showNodeKindTagsRef.current,
+            // 兼容旧格式数据迁移：如果节点已展开但使用旧的"测试点"父节点格式，自动重建为新格式
+            migrateLegacy: true,
           });
           const remoteMeta = resolveRemoteSyncMeta(storedDoc);
           remoteSyncMetaRef.current = remoteMeta;
