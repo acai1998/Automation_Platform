@@ -79,8 +79,15 @@ pipeline {
                     sh "mkdir -p ${reportDir}"
 
                     // 登录制品库（拉取私有镜像）
-                    withCredentials([string(credentialsId: 'CNB_DOCKER_TOKEN', variable: 'CNB_TOKEN')]) {
-                        sh 'echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin'
+                    // CNB_DOCKER_TOKEN：Jenkins → Manage Jenkins → Credentials → 添加 Secret text，ID 填 CNB_DOCKER_TOKEN
+                    // 若尚未配置凭据，跳过 login（节点上已有 docker login 缓存时仍可拉取镜像）
+                    try {
+                        withCredentials([string(credentialsId: 'CNB_DOCKER_TOKEN', variable: 'CNB_TOKEN')]) {
+                            sh 'echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin'
+                        }
+                    } catch (Exception loginErr) {
+                        echo "⚠️ 制品库登录跳过（凭据未配置或登录失败）: ${loginErr.message}"
+                        echo "  如镜像为私有，请在 Jenkins → Credentials 添加 ID=CNB_DOCKER_TOKEN 的 Secret text"
                     }
 
                     def testExitCode = sh(
@@ -147,9 +154,10 @@ pipeline {
     post {
         always {
             script {
-                // 登出制品库，清理凭据
-                sh 'docker logout docker.cnb.cool || true'
-
+                // post.always 在 agent none 下没有默认 node，需显式指定节点才能执行 sh
+                node(env.EXEC_NODE ?: 'master') {
+                    sh 'docker logout docker.cnb.cool || true'
+                }
                 // entrypoint.sh 已在容器内完成平台回调
                 // 若容器异常崩溃导致回调丢失，平台侧的 ExecutionMonitorService + fallback sync 会兜底
                 echo "Pipeline 执行完成，最终状态: ${currentBuild.currentResult}"
