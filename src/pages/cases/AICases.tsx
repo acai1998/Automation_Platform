@@ -1390,9 +1390,6 @@ function AiCasesInner() {
 
       // AI 生成后用 AI 给出的名称覆盖，标记为"已编辑"避免后续被自动推断再次覆盖
       isWorkspaceNameUserEditedRef.current = true;
-      if (aiWorkspaceName !== workspaceName) {
-        setWorkspaceName(aiWorkspaceName);
-      }
 
       // 始终确保 mapData 根节点 topic 与最终 workspaceName 一致（创建新对象，不直接修改）
       const finalMapData =
@@ -1411,10 +1408,17 @@ function AiCasesInner() {
         showNodeKindTags: showNodeKindTagsRef.current,
       });
 
+      // 先更新 mindDataRef.current，再更新 workspaceName，避免因 React 状态更新异步特性
+      // 导致 useEffect 在 mindDataRef.current 更新前触发，持久化旧数据覆盖新数据
       setDataAndSync(expanded.data, {
         selectedId: expanded.data.nodeData.id,
         refreshMind: true,
       });
+
+      // 在 setDataAndSync 之后更新 workspaceName，确保 mindDataRef.current 已是新数据
+      if (aiWorkspaceName !== workspaceName) {
+        setWorkspaceName(aiWorkspaceName);
+      }
 
       await cleanupStaleAttachments(expanded.data);
       setAttachmentReloadSeed((value) => value + 1);
