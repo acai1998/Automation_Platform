@@ -486,9 +486,10 @@ export function useBatchUpdateTaskStatus() {
       taskIds: number[];
       status: 'active' | 'paused' | 'archived'
     }): Promise<BatchOperationResult> => {
-      // 并行 API 调用以提高性能
-      const results = await Promise.allSettled(
-        taskIds.map(id =>
+      // 限制最大并发为 3，避免同时发出大量请求拥塞后端
+      const results = await runWithConcurrencyLimit(
+        taskIds,
+        (id) =>
           fetch(`/api/tasks/${id}/status`, {
             method: 'PATCH',
             headers: buildAuthHeaders(),
@@ -496,8 +497,8 @@ export function useBatchUpdateTaskStatus() {
           }).then(res => {
             if (!res.ok) throw new Error(`Task ${id} failed`);
             return res.json();
-          })
-        )
+          }),
+        3
       );
 
       const failedTaskIds = results
@@ -556,16 +557,18 @@ export function useBatchDeleteTask() {
 
   return useMutation({
     mutationFn: async (taskIds: number[]): Promise<BatchOperationResult> => {
-      const results = await Promise.allSettled(
-        taskIds.map(id =>
+      // 限制最大并发为 3，避免同时发出大量请求拥塞后端
+      const results = await runWithConcurrencyLimit(
+        taskIds,
+        (id) =>
           fetch(`/api/tasks/${id}`, {
             method: 'DELETE',
             headers: buildAuthHeaders(),
           }).then(res => {
             if (!res.ok) throw new Error(`Task ${id} failed`);
             return res.json();
-          })
-        )
+          }),
+        3
       );
 
       const failedTaskIds = results

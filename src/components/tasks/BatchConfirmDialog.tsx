@@ -8,8 +8,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { Task } from '@/hooks/useTasks';
 
 interface BatchConfirmDialogProps {
@@ -34,7 +33,6 @@ export function BatchConfirmDialog({
   onConfirm,
 }: BatchConfirmDialogProps) {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<{ successes: number; failures: number } | null>(null);
 
   const actionLabels = {
@@ -49,22 +47,12 @@ export function BatchConfirmDialog({
 
   const handleConfirm = async () => {
     setIsProcessing(true);
-    setProgress(0);
-
-    // 模拟进度更新
-    const progressInterval = setInterval(() => {
-      setProgress(prev => Math.min(prev + 10, 90));
-    }, 200);
 
     try {
-      const result = await onConfirm();
-      clearInterval(progressInterval);
-      setResult(result);
-      setProgress(100);
+      const opResult = await onConfirm();
+      setResult(opResult);
     } catch (error) {
       console.error('Batch operation failed:', error);
-      clearInterval(progressInterval);
-      setProgress(0);
     } finally {
       setIsProcessing(false);
     }
@@ -75,7 +63,6 @@ export function BatchConfirmDialog({
       onOpenChange(false);
       // 重置状态（延迟以等待关闭动画完成）
       setTimeout(() => {
-        setProgress(0);
         setResult(null);
       }, 200);
     }
@@ -114,12 +101,12 @@ export function BatchConfirmDialog({
           </div>
         )}
 
-        {/* 进度指示器 */}
+        {/* 处理中不确定态动画 */}
         {isProcessing && (
-          <div className="space-y-2 py-4">
-            <Progress value={progress} className="h-2" />
-            <p className="text-sm text-slate-600 dark:text-slate-400 text-center">
-              正在处理... ({progress}%)
+          <div className="flex flex-col items-center gap-3 py-6">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              正在{actionLabel}，请稍候...
             </p>
           </div>
         )}
@@ -155,7 +142,12 @@ export function BatchConfirmDialog({
                 onClick={handleConfirm}
                 disabled={isProcessing}
               >
-                {isProcessing ? '处理中...' : `确认${actionLabel}`}
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    处理中...
+                  </>
+                ) : `确认${actionLabel}`}
               </Button>
             </>
           ) : (

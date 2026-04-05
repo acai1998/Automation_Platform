@@ -214,12 +214,16 @@ const getTaskSemanticStatus = (task: Task): { key: TaskSemanticStatus; label: st
   }
   if (task.status === 'paused') return { key: 'paused', label: '暂停' };
   if (latest?.status === 'failed') return { key: 'failed', label: '失败' };
+  // 从未执行过时（latest 为空），显示"空闲"而非"成功"，避免语义误导
+  if (!latest) return { key: 'draft', label: '空闲' };
   return { key: 'success', label: '成功' };
 };
 
 const formatTime = (value?: string): string => {
   if (!value) return '-';
-  return new Date(value).toLocaleString('zh-CN', {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '-';
+  return d.toLocaleString('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -257,6 +261,8 @@ export default function Tasks() {
       return [];
     }
   });
+  const [filterNameDialogOpen, setFilterNameDialogOpen] = useState(false);
+  const [filterNameInput, setFilterNameInput] = useState('');
   const columnVisibility: Record<TaskSortKey, boolean> = {
     name: true,
     status: true,
@@ -292,11 +298,16 @@ export default function Tasks() {
   }, [savedFilters]);
 
   const saveCurrentFilter = useCallback(() => {
-    const name = window.prompt('请输入常用筛选名称');
-    if (!name?.trim()) return;
+    setFilterNameInput('');
+    setFilterNameDialogOpen(true);
+  }, []);
+
+  const handleSaveFilterConfirm = useCallback(() => {
+    const name = filterNameInput.trim();
+    if (!name) return;
 
     const preset = {
-      name: name.trim(),
+      name,
       keyword,
       statusFilter,
       triggerFilter,
@@ -307,8 +318,9 @@ export default function Tasks() {
       const withoutDuplicate = prev.filter((item) => item.name !== preset.name);
       return [preset, ...withoutDuplicate].slice(0, 6);
     });
+    setFilterNameDialogOpen(false);
     toast.success(`已保存常用筛选：${preset.name}`);
-  }, [keyword, statusFilter, triggerFilter, tagFilter]);
+  }, [filterNameInput, keyword, statusFilter, triggerFilter, tagFilter]);
 
   const applySavedFilter = useCallback((name: string) => {
     const target = savedFilters.find((item) => item.name === name);
@@ -667,9 +679,10 @@ export default function Tasks() {
       }
 
       if (result.failures > 0) {
-        const previewFailedIds = result.failedTaskIds.slice(0, 5).join(', ');
-        const hasMore = result.failedTaskIds.length > 5;
-        const failureDescription = result.failedTaskIds.length > 0
+        const failedIds = result.failedTaskIds ?? [];
+        const previewFailedIds = failedIds.slice(0, 5).join(', ');
+        const hasMore = failedIds.length > 5;
+        const failureDescription = failedIds.length > 0
           ? `失败任务ID: ${previewFailedIds}${hasMore ? ' ...' : ''}`
           : '请重试或查看后端日志';
 
@@ -1175,6 +1188,35 @@ export default function Tasks() {
           onConfirm={handleBatchConfirm}
         />
       )}
+
+      {/* 保存常用筛选名称对话框 */}
+      <Dialog open={filterNameDialogOpen} onOpenChange={setFilterNameDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>保存常用筛选</DialogTitle>
+            <DialogDescription>
+              为当前筛选条件命名，方便下次快速复用
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Input
+              placeholder="请输入筛选名称"
+              value={filterNameInput}
+              onChange={(e) => setFilterNameInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveFilterConfirm()}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFilterNameDialogOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleSaveFilterConfirm} disabled={!filterNameInput.trim()}>
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

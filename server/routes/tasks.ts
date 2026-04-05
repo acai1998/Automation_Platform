@@ -286,7 +286,7 @@ router.get('/', async (req, res) => {
       ),
       query<{ today_runs: number }[]>(
         `SELECT COUNT(*) as today_runs FROM Auto_TestCaseTaskExecutions
-         WHERE COALESCE(start_time, NOW()) BETWEEN ? AND ?`,
+         WHERE start_time IS NOT NULL AND start_time BETWEEN ? AND ?`,
         [todayStartStr, todayEndStr]
       ),
     ]);

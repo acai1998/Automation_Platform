@@ -1169,7 +1169,24 @@ export class TaskSchedulerService {
       return;
     }
 
-    // 更新缓存
+    // 获取脚本路径（在创建运行记录前校验，避免产生无法执行的 pending 记录堆积）
+    const cases = await AppDataSource.getRepository(TestCase).find({
+      where: { id: In(caseIds), enabled: true },
+      select: ['id', 'scriptPath'],
+    });
+    const scriptPaths = [...new Set(cases.map(c => c.scriptPath?.trim()).filter(Boolean))] as string[];
+
+    if (scriptPaths.length === 0) {
+      // 用例均无脚本路径，无法触发 Jenkins，跳过本次执行
+      // 注意：此处故意不创建运行记录，避免每次定时触发都堆积 pending 状态的无效记录
+      logger.warn(`Task ${taskId} has no script paths (all caseIds have empty scriptPath), skipping execution`, {
+        taskId,
+        caseIds,
+      }, LOG_CONTEXTS.EXECUTION);
+      return;
+    }
+
+    // 更新缓存（放在 scriptPaths 校验之后，只有真正要执行时才刷新 lastRunAt）
     const updatedCache: ScheduledTask = {
       id: row.id,
       name: row.name,
@@ -1183,13 +1200,6 @@ export class TaskSchedulerService {
       lastRunAt: new Date(),
     };
     this.taskCache.set(taskId, updatedCache);
-
-    // 获取脚本路径
-    const cases = await AppDataSource.getRepository(TestCase).find({
-      where: { id: In(caseIds), enabled: true },
-      select: ['id', 'scriptPath'],
-    });
-    const scriptPaths = [...new Set(cases.map(c => c.scriptPath?.trim()).filter(Boolean))] as string[];
 
     const callbackBase = ((process.env.API_CALLBACK_URL ?? '').trim() || 'http://localhost:3000').replace(/\/+$/, '');
     const callbackUrl = callbackBase.endsWith('/api/jenkins/callback')
@@ -1231,62 +1241,57 @@ export class TaskSchedulerService {
       caseCount: caseIds.length,
     });
 
-    // 2. 触发 Jenkins（非阻塞，失败时不影响运行记录已创建）
-    if (scriptPaths.length > 0) {
-      try {
-        const capturedRunId = execution.runId;
-        // [dev-10] 传入 onBuildResolved 回调，当 Jenkins 分配真实 buildNumber 后异步更新数据库
-        const triggerResult = await jenkinsService.triggerBatchJob(
-          execution.runId,
-          caseIds,
-          scriptPaths,
-          callbackUrl,
-          async (buildNumber: number, buildUrl: string) => {
-            const buildId = String(buildNumber);
-            logger.info(`[dev-10] Task ${taskId} build resolved via queueId poll`, {
-              taskId,
-              runId: capturedRunId,
-              buildId,
-              buildUrl,
-            }, LOG_CONTEXTS.EXECUTION);
-            await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
-          },
-          async (reason: 'cancelled' | 'timeout') => {
-            // [dev-11] Jenkins 队列取消/超时，主动将平台执行状态更新为 aborted 并释放槽位
-            logger.warn(`[dev-11] Task ${taskId} Jenkins queue ${reason}, marking execution as aborted`, {
-              taskId,
-              runId: capturedRunId,
-              reason,
-            }, LOG_CONTEXTS.EXECUTION);
-            try {
-              await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
-            } catch (err) {
-              logger.warn(`[dev-11] Failed to mark task execution as aborted`, {
-                taskId,
-                runId: capturedRunId,
-                error: err instanceof Error ? err.message : String(err),
-              }, LOG_CONTEXTS.EXECUTION);
-            }
-            this.releaseSlotByRunId(capturedRunId);
-          }
-        );
-
-        if (triggerResult.success) {
-          // [P1] Jenkins 触发成功后注册槽位，槽位持有直到回调或超时
-          this.registerRunningSlot(taskId, execution.runId);
-        } else {
-          logger.warn(`Jenkins trigger failed for task ${taskId}`, {
-            message: triggerResult.message,
+    // 2. 触发 Jenkins
+    try {
+      const capturedRunId = execution.runId;
+      // [dev-10] 传入 onBuildResolved 回调，当 Jenkins 分配真实 buildNumber 后异步更新数据库
+      const triggerResult = await jenkinsService.triggerBatchJob(
+        execution.runId,
+        caseIds,
+        scriptPaths,
+        callbackUrl,
+        async (buildNumber: number, buildUrl: string) => {
+          const buildId = String(buildNumber);
+          logger.info(`[dev-10] Task ${taskId} build resolved via queueId poll`, {
+            taskId,
+            runId: capturedRunId,
+            buildId,
+            buildUrl,
           }, LOG_CONTEXTS.EXECUTION);
-          throw new Error(`Jenkins trigger failed: ${triggerResult.message}`);
+          await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+        },
+        async (reason: 'cancelled' | 'timeout') => {
+          // [dev-11] Jenkins 队列取消/超时，主动将平台执行状态更新为 aborted 并释放槽位
+          logger.warn(`[dev-11] Task ${taskId} Jenkins queue ${reason}, marking execution as aborted`, {
+            taskId,
+            runId: capturedRunId,
+            reason,
+          }, LOG_CONTEXTS.EXECUTION);
+          try {
+            await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
+          } catch (err) {
+            logger.warn(`[dev-11] Failed to mark task execution as aborted`, {
+              taskId,
+              runId: capturedRunId,
+              error: err instanceof Error ? err.message : String(err),
+            }, LOG_CONTEXTS.EXECUTION);
+          }
+          this.releaseSlotByRunId(capturedRunId);
         }
-      } catch (jenkinsErr) {
-        // Jenkins 失败，将该任务记入重试（不注册槽位，不占用并发名额）
-        throw jenkinsErr;
+      );
+
+      if (triggerResult.success) {
+        // [P1] Jenkins 触发成功后注册槽位，槽位持有直到回调或超时
+        this.registerRunningSlot(taskId, execution.runId);
+      } else {
+        logger.warn(`Jenkins trigger failed for task ${taskId}`, {
+          message: triggerResult.message,
+        }, LOG_CONTEXTS.EXECUTION);
+        throw new Error(`Jenkins trigger failed: ${triggerResult.message}`);
       }
-    } else {
-      logger.warn(`Task ${taskId} has no script paths, execution record created but Jenkins not triggered`, {}, LOG_CONTEXTS.EXECUTION);
-      // 无脚本路径时，任务不会真正执行，不需要占用槽位
+    } catch (jenkinsErr) {
+      // Jenkins 失败，将该任务记入重试（不注册槽位，不占用并发名额）
+      throw jenkinsErr;
     }
   }
 
@@ -1512,8 +1517,7 @@ export class TaskSchedulerService {
       const pool = getPool();
       await pool.execute(
         `INSERT INTO Auto_TaskAuditLogs (task_id, action, operator_id, metadata, created_at)
-         VALUES (?, ?, ?, ?, NOW())
-         ON DUPLICATE KEY UPDATE id=id`, // 防止重复写入
+         VALUES (?, ?, ?, ?, NOW())`,
         [taskId, action, operatorId, JSON.stringify(metadata)]
       );
     } catch {

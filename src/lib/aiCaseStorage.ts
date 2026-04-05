@@ -1,4 +1,4 @@
-import type { AiCaseAttachmentRecord, AiCaseWorkspaceDocument } from '@/types/aiCases';
+import type { AiCaseAttachmentRecord, AiCaseNode, AiCaseMindData, AiCaseWorkspaceDocument } from '@/types/aiCases';
 
 const DB_NAME = 'automation-platform-ai-cases';
 const DB_VERSION = 1;
@@ -156,4 +156,84 @@ export async function deleteStaleWorkspaceAttachments(docId: string, activeNodeI
   } finally {
     db.close();
   }
+}
+
+/**
+ * 将脑图数据导出为 Markdown 格式字符串。
+ * 层级结构：# 根节点 / ## 功能模块 / ### 测试场景 / - [ ] 测试点
+ */
+export function exportMindDataToMarkdown(mindData: AiCaseMindData): string {
+  const lines: string[] = [];
+
+  function walkNode(node: AiCaseNode, depth: number): void {
+    const kind = node.metadata?.kind ?? 'testcase';
+    const topic = (node.topic ?? '').replace(/\s*\[.*?\]\s*/g, '').trim();
+
+    if (!topic) return;
+
+    if (depth === 0) {
+      lines.push(`# ${topic}`);
+      lines.push('');
+    } else if (kind === 'module') {
+      lines.push(`## ${topic}`);
+      lines.push('');
+    } else if (kind === 'scenario') {
+      lines.push(`### ${topic}`);
+      lines.push('');
+    } else if (kind === 'testcase') {
+      const priority = node.metadata?.priority ? ` [${node.metadata.priority}]` : '';
+      const status = node.metadata?.status ? ` (${node.metadata.status})` : '';
+      lines.push(`- [ ] **${topic}**${priority}${status}`);
+
+      // 展开子节点（前置条件/步骤/预期结果）
+      const children = (node.children ?? []) as AiCaseNode[];
+      for (const child of children) {
+        const childTopic = (child.topic ?? '').trim();
+        if (!childTopic) continue;
+
+        const grandchildren = (child.children ?? []) as AiCaseNode[];
+        if (grandchildren.length > 0) {
+          lines.push(`  - **${childTopic}**`);
+          for (const gc of grandchildren) {
+            const gcTopic = (gc.topic ?? '').trim();
+            if (gcTopic) lines.push(`    - ${gcTopic}`);
+          }
+        } else {
+          lines.push(`  - ${childTopic}`);
+        }
+      }
+
+      if (node.note) {
+        lines.push(`  > ${node.note.replace(/\n/g, ' ')}`);
+      }
+
+      return; // testcase 子节点已在上面处理，不再递归
+    } else {
+      // 未知类型，作为普通列表项
+      const indent = '  '.repeat(Math.max(0, depth - 1));
+      lines.push(`${indent}- ${topic}`);
+    }
+
+    // 递归子节点（非 testcase 类型才继续向下）
+    const children = (node.children ?? []) as AiCaseNode[];
+    for (const child of children) {
+      walkNode(child, depth + 1);
+    }
+  }
+
+  walkNode(mindData.nodeData, 0);
+  return lines.join('\n');
+}
+
+/**
+ * 触发浏览器下载指定文本内容为文件
+ */
+export function downloadTextFile(content: string, filename: string, mimeType = 'text/markdown'): void {
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

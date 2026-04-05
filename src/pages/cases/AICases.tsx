@@ -1,36 +1,17 @@
-import { ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-elixir';
 import 'mind-elixir/style.css';
-import {
-  Bot,
-  BrainCircuit,
-  CheckCircle2,
-  Circle,
-  CircleDashed,
-  Clock3,
-  Loader2,
-  PauseCircle,
-  RotateCcw,
-  ShieldAlert,
-  Upload,
-  XCircle,
-  Trash2,
-  ImageIcon,
-  Sparkles,
-  Link,
-  Tags,
-  Maximize2,
-  Minimize2,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { BrainCircuit, Loader2, Menu, X } from 'lucide-react';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import { AiCaseSidebar } from './components/AiCaseSidebar';
+import { AiCaseCanvasToolbar } from './components/AiCaseCanvasToolbar';
 import { toast } from 'sonner';
 import {
   aiCasesApi,
   type AiCaseGenerationResult,
   type AiCaseWorkspaceDetail,
 } from '@/api';
+import { Button } from '@/components/ui/button';
 import {
   appendNodeAttachmentId,
   computeProgress,
@@ -65,45 +46,6 @@ import {
 
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
-const STATUS_ACTIONS: Array<{ status: AiCaseNodeStatus; label: string; icon: ReactNode; className: string }> = [
-  {
-    status: 'todo',
-    label: '待执行',
-    icon: <Circle className="h-3.5 w-3.5" />,
-    className: 'border-slate-300 text-slate-700 hover:bg-slate-100',
-  },
-  {
-    status: 'doing',
-    label: '执行中',
-    icon: <Clock3 className="h-3.5 w-3.5" />,
-    className: 'border-blue-300 text-blue-700 hover:bg-blue-50',
-  },
-  {
-    status: 'blocked',
-    label: '阻塞',
-    icon: <ShieldAlert className="h-3.5 w-3.5" />,
-    className: 'border-amber-300 text-amber-700 hover:bg-amber-50',
-  },
-  {
-    status: 'passed',
-    label: '通过',
-    icon: <CheckCircle2 className="h-3.5 w-3.5" />,
-    className: 'border-emerald-300 text-emerald-700 hover:bg-emerald-50',
-  },
-  {
-    status: 'failed',
-    label: '失败',
-    icon: <XCircle className="h-3.5 w-3.5" />,
-    className: 'border-rose-300 text-rose-700 hover:bg-rose-50',
-  },
-  {
-    status: 'skipped',
-    label: '跳过',
-    icon: <PauseCircle className="h-3.5 w-3.5" />,
-    className: 'border-purple-300 text-purple-700 hover:bg-purple-50',
-  },
-];
-
 interface RemoteSyncMeta {
   syncMode: AiCaseSyncMode;
   remoteWorkspaceId: number | null;
@@ -125,24 +67,16 @@ interface CleanupStaleAttachmentOptions {
   showCountToast?: boolean;
 }
 
-type TopPanelSection = 'requirement' | 'progress' | 'node' | 'attachment' | 'mode';
 type StreamGenerateResultPayload =
   | AiCaseGenerationResult
   | { generated: AiCaseGenerationResult; workspace: AiCaseWorkspaceDetail };
-
-const TOP_PANEL_TABS: Array<{ key: TopPanelSection; label: string }> = [
-  { key: 'requirement', label: '需求输入' },
-  { key: 'progress', label: '执行进度' },
-  { key: 'node', label: '节点操作' },
-  { key: 'attachment', label: '截图证据' },
-  { key: 'mode', label: '模式提示' },
-];
 
 const MIN_CANVAS_SCALE = 0.6;
 const MAX_CANVAS_SCALE = 1.8;
 const CANVAS_SCALE_STEP = 0.1;
 const NODE_TAG_VISIBILITY_STORAGE_KEY = 'ai-case-node-tags-visible';
 const WAIT_COPY_MAGIC = 'MIND-ELIXIR-WAIT-COPY';
+const SIDEBAR_WIDTH = 320;
 
 function readNodeTagVisibilityPreference(): boolean {
   if (typeof window === 'undefined') {
@@ -276,8 +210,8 @@ function AiCasesInner() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [, setGenerationProgress] = useState(0);
-  const [, setGenerationStageText] = useState('');
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [generationStageText, setGenerationStageText] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isPublishingRemote, setIsPublishingRemote] = useState(false);
   const [isSyncingRemote, setIsSyncingRemote] = useState(false);
@@ -285,12 +219,12 @@ function AiCasesInner() {
   const [attachmentReloadSeed, setAttachmentReloadSeed] = useState(0);
   const [attachments, setAttachments] = useState<AiCaseAttachmentPreview[]>([]);
   const [remoteSyncMeta, setRemoteSyncMeta] = useState<RemoteSyncMeta>(DEFAULT_REMOTE_SYNC_META);
-  const [activePanelSection, setActivePanelSection] = useState<TopPanelSection | null>(null);
-  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
   const [canvasScalePercent, setCanvasScalePercent] = useState(100);
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
   const [showNodeKindTags, setShowNodeKindTags] = useState<boolean>(() => readNodeTagVisibilityPreference());
   const [isImportingMindNodes, setIsImportingMindNodes] = useState(false);
+  // 移动端侧边栏抽屉
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
@@ -307,21 +241,6 @@ function AiCasesInner() {
     }
   }, [showNodeKindTags]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const handleResize = () => {
-      setViewportWidth(window.innerWidth);
-    };
-
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, []);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -1525,153 +1444,7 @@ function AiCasesInner() {
     }
   };
 
-  const hasSelectedNode = Boolean(selectedNodeId);
-  const selectedNodeLabel = selectedNode?.topic || '未选中节点';
-  const isTopPanelPopoverMode = viewportWidth >= 1024 && viewportWidth < 1440;
-
-  const renderPanelSectionContent = (section: TopPanelSection, compact = false) => {
-    if (section === 'requirement') {
-      return (
-        <div className="space-y-2">
-          <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold">需求输入</label>
-          <textarea
-            value={requirementText}
-            onChange={(event) => setRequirementText(event.target.value)}
-            className="w-full min-h-[120px] rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm leading-6"
-            placeholder="粘贴 PRD、需求描述或技术方案，点击 AI 生成脑图"
-          />
-        </div>
-      );
-    }
-
-    if (section === 'progress') {
-      return (
-        <div className={`grid grid-cols-2 gap-2 text-xs ${compact ? '' : 'xl:grid-cols-4'}`}>
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">总测试点: <span className="font-semibold">{progress.total}</span></div>
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">待执行: <span className="font-semibold text-slate-700 dark:text-slate-100">{progress.todo}</span></div>
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">执行中: <span className="font-semibold text-blue-600">{progress.doing}</span></div>
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">阻塞: <span className="font-semibold text-amber-600">{progress.blocked}</span></div>
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">通过: <span className="font-semibold text-emerald-600">{progress.passed}</span></div>
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">失败: <span className="font-semibold text-rose-600">{progress.failed}</span></div>
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">跳过: <span className="font-semibold text-purple-600">{progress.skipped}</span></div>
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2">完成率: <span className="font-semibold">{progress.completionRate}%</span></div>
-        </div>
-      );
-    }
-
-    if (section === 'node') {
-      return (
-        <div className="space-y-3">
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-3">
-            <div className="text-[11px] text-slate-500 mb-1">当前节点</div>
-            <div className="text-sm font-medium text-slate-900 dark:text-white break-words">{selectedNodeLabel}</div>
-            {hasSelectedNode ? (
-              <div className="mt-1 text-xs text-slate-500 dark:text-slate-300">
-                状态：<span className="font-medium">{selectedNodeStatus}</span>
-              </div>
-            ) : null}
-          </div>
-          <div className={`grid grid-cols-2 gap-2 ${compact ? '' : 'lg:grid-cols-3 xl:grid-cols-6'}`}>
-            {STATUS_ACTIONS.map((item) => (
-              <button
-                key={item.status}
-                type="button"
-                onClick={() => void handleStatusChange(item.status)}
-                disabled={!canEditSelectedNode || isUpdatingNodeStatus}
-                className={`h-9 rounded-md border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40 ${item.className} ${
-                  selectedNodeStatus === item.status ? 'ring-2 ring-offset-1 ring-indigo-400' : ''
-                }`}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
-    if (section === 'attachment') {
-      return (
-        <div className="space-y-3">
-          <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
-            <span className="inline-flex h-8 px-3 items-center rounded-md border border-dashed border-slate-300 hover:border-indigo-400 hover:text-indigo-600 transition-colors">
-              {isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1" />}
-              上传截图
-            </span>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={handleUploadAttachment}
-              disabled={!canEditSelectedNode || isUploading}
-            />
-          </label>
-          <div className="text-[11px] text-slate-500 dark:text-slate-400">支持复制截图后按 Ctrl/Cmd + V 直接粘贴上传</div>
-          <div className={`grid grid-cols-1 gap-2 overflow-y-auto pr-1 ${compact ? 'max-h-[52vh]' : 'md:grid-cols-2 xl:grid-cols-3 max-h-44'}`}>
-            {attachments.length === 0 ? (
-              <div className="text-xs text-slate-500">当前节点暂无截图证据</div>
-            ) : (
-              attachments.map((attachment) => (
-                <div key={attachment.id} className="rounded border border-slate-200 dark:border-slate-700 p-2 bg-slate-50/70 dark:bg-slate-800/40">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-xs font-medium truncate">{attachment.name}</div>
-                      <div className="text-[11px] text-slate-500">{Math.round(attachment.size / 1024)} KB</div>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-slate-400 hover:text-rose-500 transition-colors"
-                      onClick={() => handleDeleteAttachment(attachment.id)}
-                      aria-label="删除截图"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <a
-                    href={attachment.previewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-2 inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:underline"
-                  >
-                    <ImageIcon className="h-3.5 w-3.5" />
-                    预览截图
-                  </a>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="rounded-md border border-indigo-100 dark:border-indigo-500/30 bg-indigo-50/70 dark:bg-indigo-500/10 p-3 text-xs text-indigo-900 dark:text-indigo-200 leading-5 space-y-2">
-        <div className="font-semibold flex items-center gap-1.5">
-          <Sparkles className="h-3.5 w-3.5" />
-          Phase 2 双模式（本地草稿 + 远端同步）
-        </div>
-        <div>
-          当前模式：{remoteSyncMeta.syncMode === 'hybrid' ? 'Hybrid（已接入远端）' : 'Local（仅本地草稿）'}。
-          {isRemoteLinked ? ' 节点状态点击将直接调用远端接口并回写本地草稿。' : ' 发布到远端后可启用节点状态实时远端更新。'}
-        </div>
-        <div className="flex items-center justify-between rounded-md border border-indigo-200/80 dark:border-indigo-400/30 bg-white/70 dark:bg-slate-900/40 px-2.5 py-2 text-[11px]">
-          <span className="inline-flex items-center gap-1.5">
-            <Tags className="h-3.5 w-3.5" />
-            节点标签：{showNodeKindTags ? '全局显示中' : '全局隐藏中'}
-          </span>
-          <button
-            type="button"
-            className="underline underline-offset-2 hover:opacity-80"
-            onClick={handleToggleNodeKindTags}
-          >
-            {showNodeKindTags ? '隐藏标签' : '显示标签'}
-          </button>
-        </div>
-      </div>
-    );
-  };
+  // ─── 辅助变量 ──────────────────────────────────────────────────────────────
 
   if (isBootstrapping || !mindData) {
     return (
@@ -1684,150 +1457,148 @@ function AiCasesInner() {
     );
   }
 
+  // ─── 新双栏布局 ─────────────────────────────────────────────────────────────
+
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3 p-3 sm:p-4 bg-slate-100/40 dark:bg-slate-950/30">
+    <div className="h-full flex flex-col bg-white dark:bg-slate-950 overflow-hidden">
+
+      {/* 顶部标题栏（全屏时隐藏） */}
       {!isCanvasFullscreen ? (
-        <section className="sticky top-0 z-30 rounded-xl border border-slate-200/80 dark:border-slate-700/60 bg-white/95 dark:bg-slate-900/95 shadow-sm backdrop-blur">
-          <div className="px-4 py-3 border-b border-slate-200/80 dark:border-slate-700/60">
-            <div className="min-[1440px]:grid min-[1440px]:grid-cols-[220px_minmax(300px,1fr)_220px_auto] min-[1440px]:items-center min-[1440px]:gap-3 flex flex-col gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-300">
-                  <BrainCircuit className="h-4 w-4" />
-                </div>
-                <div>
-                  <h1 className="text-base font-semibold text-slate-900 dark:text-white">AI 用例工作台</h1>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">desktop-first 布局（顶部操作区 + 全宽画布）</p>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">工作台名称</label>
-                <input
-                  value={workspaceName}
-                  onChange={(event) => setWorkspaceName(event.target.value)}
-                  className="h-9 w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
-                  placeholder="输入脑图标题"
-                />
-              </div>
-
-              <div className="space-y-1 text-xs text-slate-500">
-                <div className="font-medium">{saveStateText}</div>
-                <div>{remoteStatusText}</div>
-                <div className="truncate">当前节点：{selectedNodeLabel} · {selectedNodeStatus}</div>
-              </div>
-
-              <div className="grid grid-cols-2 min-[1440px]:grid-cols-4 gap-2">
-                <Button className="gap-1.5" onClick={handleGenerate} disabled={isGenerating || isPublishingRemote || isSyncingRemote}>
-                  {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                  AI生成
-                </Button>
-                <Button variant="outline" className="gap-1.5" onClick={handleResetTemplate} disabled={isGenerating || isPublishingRemote || isSyncingRemote}>
-                  <RotateCcw className="h-4 w-4" />
-                  重置模板
-                </Button>
-                <Button variant="outline" className="gap-1.5" onClick={handlePublishRemote} disabled={isPublishingRemote || isGenerating || isSyncingRemote}>
-                  {isPublishingRemote ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                  {isRemoteLinked ? '同步远端' : '发布远端'}
-                </Button>
-                <Button variant="outline" className="gap-1.5" onClick={handleSyncFromRemote} disabled={!isRemoteLinked || isSyncingRemote || isPublishingRemote}>
-                  {isSyncingRemote ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link className="h-4 w-4" />}
-                  拉取远端
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <div className="px-4 py-2 border-b border-slate-200/70 dark:border-slate-700/50 flex items-center gap-2 overflow-x-auto">
-            {TOP_PANEL_TABS.map((tab) => {
-              const autoHighlight =
-                (tab.key === 'node' && shouldHighlightNodePanel) ||
-                (tab.key === 'attachment' && shouldHighlightAttachmentPanel);
-              const isActive = activePanelSection === tab.key;
-              const triggerClassName = `h-8 shrink-0 px-3 rounded-md border text-xs font-medium transition-colors ${
-                isActive
-                  ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/70 dark:bg-indigo-500/15 dark:text-indigo-200'
-                  : autoHighlight
-                    ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/70 dark:bg-amber-500/15 dark:text-amber-200'
-                    : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'
-              }`;
-
-              if (isTopPanelPopoverMode) {
-                return (
-                  <Popover
-                    key={tab.key}
-                    open={isActive}
-                    onOpenChange={(open) => setActivePanelSection(open ? tab.key : null)}
-                  >
-                    <PopoverTrigger asChild>
-                      <button type="button" className={triggerClassName}>
-                        {tab.label}
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="start"
-                      side="bottom"
-                      sideOffset={8}
-                      className="w-[min(92vw,760px)] max-h-[68vh] overflow-y-auto p-3"
-                    >
-                      {renderPanelSectionContent(tab.key, true)}
-                    </PopoverContent>
-                  </Popover>
-                );
-              }
-
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => setActivePanelSection((prev) => (prev === tab.key ? null : tab.key))}
-                  className={triggerClassName}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {!isTopPanelPopoverMode && activePanelSection ? (
-            <div className="px-4 py-3 border-b border-slate-200/70 dark:border-slate-700/50 max-h-[260px] overflow-y-auto">
-              {renderPanelSectionContent(activePanelSection)}
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-
-      <section
-        ref={canvasSectionRef}
-        className={`relative flex-1 min-h-0 rounded-xl border border-slate-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900 shadow-sm overflow-hidden flex flex-col ${
-          isCanvasFullscreen ? 'rounded-none border-0' : ''
-        }`}
-      >
-        <div className="h-11 px-3 border-b border-slate-200/80 dark:border-slate-700/60 flex items-center justify-between bg-slate-50/80 dark:bg-slate-800/40">
-          <div className="text-xs text-slate-500 dark:text-slate-400">{isCanvasFullscreen ? '沉浸看图模式' : '脑图画布'}</div>
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" size="sm" className="h-8 px-2.5" onClick={handleZoomOut}>-</Button>
-            <div className="w-14 text-center text-xs font-medium text-slate-600 dark:text-slate-300">{canvasScalePercent}%</div>
-            <Button type="button" variant="outline" size="sm" className="h-8 px-2.5" onClick={handleZoomIn}>+</Button>
-            <Button type="button" variant="outline" size="sm" className="h-8" onClick={handleCenterCanvas}>居中</Button>
-            <Button type="button" variant="outline" size="sm" className="h-8" onClick={handleFitCanvas}>适配</Button>
-            <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void handleToggleCanvasFullscreen()}>
-              {isCanvasFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-              {isCanvasFullscreen ? '退出全屏' : '全屏'}
+        <header className="shrink-0 h-12 flex items-center justify-between px-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <div className="flex items-center gap-2.5">
+            {/* 移动端汉堡菜单 */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="lg:hidden h-8 w-8 p-0"
+              onClick={() => setSidebarOpen((v) => !v)}
+            >
+              {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
             </Button>
+            <div className="p-1.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-300">
+              <BrainCircuit className="h-4 w-4" />
+            </div>
+            <h1 className="text-sm font-semibold text-slate-900 dark:text-white">AI 用例工作台</h1>
           </div>
-        </div>
-
-        <div className="flex-1 min-h-[720px] [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none">
-          <div ref={mapContainerRef} className="h-full w-full" />
-        </div>
-      </section>
-
-      {!isCanvasFullscreen ? (
-        <div className="text-[11px] text-slate-500 px-1 flex items-center gap-1.5">
-          <CircleDashed className="h-3.5 w-3.5" />
-          顶部工作台区支持分组展开，画布区域已最大化；节点状态切换与进度统计保持实时联动。
-        </div>
+          <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+            <span className="hidden sm:block">{saveStateText}</span>
+            <span className="hidden md:block">{remoteStatusText}</span>
+          </div>
+        </header>
       ) : null}
+
+      {/* 主体：左侧边栏 + 右侧画布 */}
+      <div className="flex-1 min-h-0 flex relative">
+
+        {/* 桌端侧边栏（全屏时隐藏） */}
+        {!isCanvasFullscreen ? (
+          <div
+            className="hidden lg:block shrink-0 h-full overflow-hidden"
+            style={{ width: SIDEBAR_WIDTH }}
+          >
+            <AiCaseSidebar
+              workspaceName={workspaceName}
+              requirementText={requirementText}
+              onWorkspaceNameChange={setWorkspaceName}
+              onRequirementTextChange={setRequirementText}
+              isGenerating={isGenerating}
+              generationProgress={generationProgress}
+              generationStageText={generationStageText}
+              onGenerate={handleGenerate}
+              progress={progress}
+              selectedNode={selectedNode}
+              selectedNodeStatus={selectedNodeStatus}
+              canEditSelectedNode={canEditSelectedNode}
+              isUpdatingNodeStatus={isUpdatingNodeStatus}
+              onStatusChange={handleStatusChange}
+              attachments={attachments}
+              isUploading={isUploading}
+              onUploadAttachment={handleUploadAttachment}
+              onDeleteAttachment={handleDeleteAttachment}
+              isRemoteLinked={isRemoteLinked}
+              remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
+              isPublishingRemote={isPublishingRemote}
+              isSyncingRemote={isSyncingRemote}
+              onPublishRemote={handlePublishRemote}
+              onSyncFromRemote={handleSyncFromRemote}
+              onResetTemplate={handleResetTemplate}
+              onLoadHistoryWorkspace={applyWorkspaceDetail}
+              mindData={mindData}
+            />
+          </div>
+        ) : null}
+
+        {/* 移动端侧边栏 Drawer（全屏时隐藏） */}
+        {!isCanvasFullscreen && sidebarOpen ? (
+          <div className="lg:hidden absolute inset-0 z-40 flex">
+            {/* 遮罩 */}
+            <div
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              onClick={() => setSidebarOpen(false)}
+            />
+            {/* 侧边栏内容 */}
+            <div
+              className="relative z-50 h-full overflow-hidden bg-white dark:bg-slate-900 shadow-2xl"
+              style={{ width: SIDEBAR_WIDTH }}
+            >
+              <AiCaseSidebar
+                workspaceName={workspaceName}
+                requirementText={requirementText}
+                onWorkspaceNameChange={setWorkspaceName}
+                onRequirementTextChange={setRequirementText}
+                isGenerating={isGenerating}
+                generationProgress={generationProgress}
+                generationStageText={generationStageText}
+                onGenerate={handleGenerate}
+                progress={progress}
+                selectedNode={selectedNode}
+                selectedNodeStatus={selectedNodeStatus}
+                canEditSelectedNode={canEditSelectedNode}
+                isUpdatingNodeStatus={isUpdatingNodeStatus}
+                onStatusChange={handleStatusChange}
+                attachments={attachments}
+                isUploading={isUploading}
+                onUploadAttachment={handleUploadAttachment}
+                onDeleteAttachment={handleDeleteAttachment}
+                isRemoteLinked={isRemoteLinked}
+                remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
+                isPublishingRemote={isPublishingRemote}
+                isSyncingRemote={isSyncingRemote}
+                onPublishRemote={handlePublishRemote}
+                onSyncFromRemote={handleSyncFromRemote}
+                onResetTemplate={handleResetTemplate}
+                onLoadHistoryWorkspace={applyWorkspaceDetail}
+                mindData={mindData}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {/* 右侧画布区域 */}
+        <section
+          ref={canvasSectionRef}
+          className={`flex-1 min-w-0 flex flex-col overflow-hidden ${
+            isCanvasFullscreen ? 'fixed inset-0 z-50 bg-white dark:bg-slate-900' : ''
+          }`}
+        >
+          <AiCaseCanvasToolbar
+            scalePercent={canvasScalePercent}
+            isFullscreen={isCanvasFullscreen}
+            showNodeKindTags={showNodeKindTags}
+            onZoomIn={handleZoomIn}
+            onZoomOut={handleZoomOut}
+            onCenter={handleCenterCanvas}
+            onFit={handleFitCanvas}
+            onToggleFullscreen={() => void handleToggleCanvasFullscreen()}
+            onToggleNodeTags={handleToggleNodeKindTags}
+          />
+
+          <div className="flex-1 min-h-0 [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none">
+            <div ref={mapContainerRef} className="h-full w-full" />
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
