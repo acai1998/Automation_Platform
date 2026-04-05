@@ -999,8 +999,19 @@ export class TaskSchedulerService {
 
   /**
    * 注册下一次触发定时器
+   * 注意：调用前会自动清除同一任务的旧 timer，防止重复注册导致多次触发
    */
   private scheduleTask(task: ScheduledTask): void {
+    // 先清除同一任务可能已存在的旧 timer，防止重复注册
+    const existingTimer = this.timers.get(task.id);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.timers.delete(task.id);
+      logger.debug(`Task ${task.id} cleared existing timer before re-scheduling`, {
+        taskId: task.id,
+      }, LOG_CONTEXTS.EXECUTION);
+    }
+
     const next = getNextCronTime(task.cronExpression);
     if (!next) {
       logger.warn(`Cannot compute next run time for task ${task.id}, expr=${task.cronExpression}`, {}, LOG_CONTEXTS.EXECUTION);
@@ -1450,11 +1461,27 @@ export class TaskSchedulerService {
           logger.info(`New task ${row.id} registered by poll`, {}, LOG_CONTEXTS.EXECUTION);
         } else if (cached && cached.status !== row.status) {
           // 状态变更
-          cached.status = row.status;
           if (row.status !== 'active') {
             this.unregisterTask(row.id);
           } else {
-            this.scheduleTask(cached);
+            // 重新激活：先 unregister 清除旧 timer 和 cache，再重新注册
+            this.unregisterTask(row.id);
+            let caseIds: number[] = [];
+            try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
+            const reactivatedTask: ScheduledTask = {
+              id: row.id,
+              name: row.name,
+              cronExpression: row.cron_expression!,
+              caseIds,
+              projectId: row.project_id || 1,
+              environmentId: row.environment_id ?? undefined,
+              status: row.status as 'active',
+              maxRetries: row.max_retries ?? 1,
+              retryDelayMs: row.retry_delay_ms ?? 30_000,
+              lastRunAt: null,
+            };
+            this.taskCache.set(row.id, reactivatedTask);
+            this.scheduleTask(reactivatedTask);
           }
         } else if (cached && cached.cronExpression !== row.cron_expression) {
           // Cron 表达式变更，重新调度
