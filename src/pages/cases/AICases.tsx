@@ -910,6 +910,30 @@ function AiCasesInner() {
 
       if (eventName === 'result') {
         finalPayload = payload?.data ?? null;
+
+        // 流式渲染结束时，立即用 AI 生成的 workspaceName 更新骨架脑图根节点 topic
+        if (finalPayload !== null && typeof finalPayload === 'object') {
+          const fp = finalPayload as Record<string, unknown>;
+          const resultGenerated = 'generated' in fp
+            ? (fp.generated as { workspaceName?: string } | undefined)
+            : (fp as { workspaceName?: string });
+          const resultWsName =
+            typeof resultGenerated?.workspaceName === 'string' && resultGenerated.workspaceName.trim()
+              ? resultGenerated.workspaceName.trim()
+              : null;
+          if (resultWsName && skeletonData) {
+            const updatedSkeleton: AiCaseMindData = {
+              ...skeletonData,
+              nodeData: { ...skeletonData.nodeData, topic: resultWsName },
+            };
+            skeletonData = updatedSkeleton;
+            if (mindRef.current) {
+              mindRef.current.refresh(updatedSkeleton as MindElixirData);
+            }
+            setMindData(updatedSkeleton);
+            mindDataRef.current = updatedSkeleton;
+          }
+        }
         return;
       }
 
@@ -1313,8 +1337,28 @@ function AiCasesInner() {
         throw new Error('AI 返回数据为空');
       }
 
+      // 用 AI 自动生成的工作台名称更新主节点和工作台名
+      const aiWorkspaceName =
+        typeof generated.workspaceName === 'string' && generated.workspaceName.trim()
+          ? generated.workspaceName.trim()
+          : workspaceName;
+
+      // 若名字有变化则更新 workspaceName state
+      if (aiWorkspaceName !== workspaceName) {
+        setWorkspaceName(aiWorkspaceName);
+      }
+
+      // 始终确保 mapData 根节点 topic 与最终 workspaceName 一致（创建新对象，不直接修改）
+      const finalMapData =
+        generated.mapData.nodeData.topic !== aiWorkspaceName
+          ? {
+              ...generated.mapData,
+              nodeData: { ...generated.mapData.nodeData, topic: aiWorkspaceName },
+            }
+          : generated.mapData;
+
       setGenerationStageText('正在回写脑图节点与结构化步骤...');
-      const normalized = normalizeMindData(generated.mapData, {
+      const normalized = normalizeMindData(finalMapData, {
         showNodeKindTags: showNodeKindTagsRef.current,
       });
       const expanded = expandImportedCaseNodesFromNote(normalized, {

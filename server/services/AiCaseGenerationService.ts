@@ -92,6 +92,10 @@ function parseTemperature(value: string, fallback: number): number {
   return Math.max(0, Math.min(1.2, parsed));
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function trimCodeFence(raw: string): string {
   const cleaned = raw.trim();
   const fencedMatch = cleaned.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -99,6 +103,24 @@ function trimCodeFence(raw: string): string {
     return fencedMatch[1].trim();
   }
   return cleaned;
+}
+
+/**
+ * 校验 LLM 生成的 workspaceName 是否有意义：
+ * - 必须包含至少一个中文字符（避免英文无意义名）
+ * - 长度在 2-30 字符之间
+ * - 不是已知的无意义占位词
+ */
+function isValidWorkspaceName(name: string): boolean {
+  if (name.length < 2 || name.length > 30) {
+    return false;
+  }
+  const hasChinese = /[\u4e00-\u9fa5]/.test(name);
+  if (!hasChinese) {
+    return false;
+  }
+  const meaninglessPatterns = /^(ai\s*)?(test(case)?s?|workspace|plan|测试工作台)$/i;
+  return !meaninglessPatterns.test(name.trim());
 }
 
 function parsePriority(value: unknown): AiCaseNodePriority | undefined {
@@ -209,11 +231,9 @@ function normalizePlan(raw: unknown, fallbackWorkspaceName: string): AiCaseGener
     throw new Error('模型返回的 modules 无有效数据');
   }
 
+  const rawWsName = typeof payload.workspaceName === 'string' ? payload.workspaceName.trim() : '';
   return {
-    workspaceName:
-      typeof payload.workspaceName === 'string' && payload.workspaceName.trim()
-        ? payload.workspaceName.trim()
-        : fallbackWorkspaceName,
+    workspaceName: rawWsName && isValidWorkspaceName(rawWsName) ? rawWsName : fallbackWorkspaceName,
     modules,
   };
 }
@@ -261,6 +281,23 @@ export class AiCaseGenerationService {
     });
   }
 
+  private async streamModuleNodes(
+    mapData: AiCaseMapData,
+    onNode: ((event: AiCaseGenerationNodeEvent) => void) | undefined,
+    delayMs = 80
+  ): Promise<void> {
+    if (!onNode || !mapData.nodeData.children) {
+      return;
+    }
+    const totalModules = mapData.nodeData.children.length;
+    for (let moduleIndex = 0; moduleIndex < totalModules; moduleIndex++) {
+      onNode({ moduleNode: mapData.nodeData.children[moduleIndex], moduleIndex, totalModules });
+      if (moduleIndex < totalModules - 1) {
+        await sleep(delayMs);
+      }
+    }
+  }
+
   async generate(
     request: AiCaseGenerationRequest,
     onProgress?: (event: AiCaseGenerationProgressEvent) => void,
@@ -296,13 +333,8 @@ export class AiCaseGenerationService {
       const mapData = buildMapDataFromPlan(fallbackPlan);
       const counters = calculateWorkspaceCounters(mapData);
 
-      // 推送 fallback 的每个 module 节点
-      if (onNode && mapData.nodeData.children) {
-        const totalModules = mapData.nodeData.children.length;
-        mapData.nodeData.children.forEach((moduleNode, moduleIndex) => {
-          onNode({ moduleNode, moduleIndex, totalModules });
-        });
-      }
+      // 逐个推送 fallback 的每个 module 节点（各模块间加延迟让前端可见流式效果）
+      await this.streamModuleNodes(mapData, onNode);
 
       this.pushProgress(onProgress, {
         progress: 95,
@@ -339,13 +371,8 @@ export class AiCaseGenerationService {
       const mapData = buildMapDataFromPlan(plan);
       const counters = calculateWorkspaceCounters(mapData);
 
-      // 逐个推送 module 节点，让前端可以渐进式渲染
-      if (onNode && mapData.nodeData.children) {
-        const totalModules = mapData.nodeData.children.length;
-        mapData.nodeData.children.forEach((moduleNode, moduleIndex) => {
-          onNode({ moduleNode, moduleIndex, totalModules });
-        });
-      }
+      // 逐个推送 module 节点（各模块间加延迟让前端可见渐进式渲染效果）
+      await this.streamModuleNodes(mapData, onNode);
 
       this.pushProgress(onProgress, {
         progress: 98,
@@ -379,13 +406,8 @@ export class AiCaseGenerationService {
       const mapData = buildMapDataFromPlan(fallbackPlan);
       const counters = calculateWorkspaceCounters(mapData);
 
-      // 推送 fallback 的每个 module 节点
-      if (onNode && mapData.nodeData.children) {
-        const totalModules = mapData.nodeData.children.length;
-        mapData.nodeData.children.forEach((moduleNode, moduleIndex) => {
-          onNode({ moduleNode, moduleIndex, totalModules });
-        });
-      }
+      // 逐个推送 fallback 的每个 module 节点（各模块间加延迟让前端可见流式效果）
+      await this.streamModuleNodes(mapData, onNode);
 
       this.pushProgress(onProgress, {
         progress: 95,
@@ -442,13 +464,14 @@ export class AiCaseGenerationService {
         '  ]',
         '}',
         '要求:',
-        '1) modules 至少 3 个，每个 module 至少 1 个 scenario。',
-        '2) 每个 scenario 至少 2 个测试点。',
-        '3) 覆盖主流程、边界、异常、权限与兼容性。',
-        '4) 标题使用中文，简洁可执行。',
-        '5) 每个测试点都必须输出 preconditions / steps / expectedResults，且 steps 至少 2 条。',
-        '6) 每个测试点遵循固定顺序：测试点 -> 前置条件 -> 测试步骤 -> 预期结果。',
-        '7) 禁止输出“测试场景”作为测试点内部标签。',
+        '1) workspaceName 根据需求内容自动命名，使用中文，简洁概括核心功能（如"登录功能测试"、"支付流程测试"），不超过 20 字，禁止使用"AI Testcase Workspace"等无意义默认名。',
+        '2) modules 至少 3 个，每个 module 至少 1 个 scenario。',
+        '3) 每个 scenario 至少 2 个测试点。',
+        '4) 覆盖主流程、边界、异常、权限与兼容性。',
+        '5) 标题使用中文，简洁可执行。',
+        '6) 每个测试点都必须输出 preconditions / steps / expectedResults，且 steps 至少 2 条。',
+        '7) 每个测试点遵循固定顺序：测试点 -> 前置条件 -> 测试步骤 -> 预期结果。',
+        '8) 禁止输出"测试场景"作为测试点内部标签。',
       ].join('\n');
 
       this.pushProgress(onProgress, {
@@ -472,7 +495,7 @@ export class AiCaseGenerationService {
             { role: 'system', content: systemPrompt },
             {
               role: 'user',
-              content: `workspaceName: ${workspaceName}\nrequirement:\n${requirementText}`,
+              content: `requirement:\n${requirementText}`,
             },
           ],
         }),

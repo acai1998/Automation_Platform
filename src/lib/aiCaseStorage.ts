@@ -41,6 +41,36 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
+export async function listAllWorkspaceDocuments(): Promise<AiCaseWorkspaceDocument[]> {
+  const db = await openDb();
+
+  try {
+    const tx = db.transaction(DOC_STORE, 'readonly');
+    const store = tx.objectStore(DOC_STORE);
+    const docs = await requestToPromise<AiCaseWorkspaceDocument[]>(store.getAll());
+    return [...docs].sort((a, b) => b.updatedAt - a.updatedAt);
+  } finally {
+    db.close();
+  }
+}
+
+export async function deleteWorkspaceDocument(docId: string): Promise<void> {
+  const db = await openDb();
+
+  try {
+    const tx = db.transaction(DOC_STORE, 'readwrite');
+    const store = tx.objectStore(DOC_STORE);
+    await requestToPromise(store.delete(docId));
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('Failed to delete workspace document'));
+      tx.onabort = () => reject(tx.error ?? new Error('Delete workspace document transaction aborted'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
 export async function getWorkspaceDocument(docId: string): Promise<AiCaseWorkspaceDocument | null> {
   const db = await openDb();
 

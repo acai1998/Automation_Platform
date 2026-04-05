@@ -206,7 +206,22 @@ function sanitizeChecklist(lines: string[] | undefined, fallback: string[]): str
   return next.length > 0 ? next : fallback;
 }
 
-function composeCaseNote(testCase: AiCaseGenerationPlanCase): string {
+/**
+ * 将一组条目格式化为节点 topic 文字。
+ * 单条时直接返回该条内容；多条时使用 "1. xxx\n2. xxx" 换行拼接。
+ */
+function formatSectionTopic(label: string, items: string[]): string {
+  if (items.length === 1) {
+    return `${label}：${items[0]}`;
+  }
+  return `${label}：\n${items.map((item, i) => `${i + 1}. ${item}`).join('\n')}`;
+}
+
+/**
+ * 根据 testCase 生成 4 个固定子节点：测试点 / 前置条件 / 测试步骤 / 预期结果。
+ * 内容全部写在节点的 topic 里，不使用 note + 二次展开方案。
+ */
+function buildCaseChildNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[] {
   const hint = typeof testCase.note === 'string' ? testCase.note.trim() : '';
 
   const preconditions = sanitizeChecklist(testCase.preconditions, [
@@ -224,25 +239,12 @@ function composeCaseNote(testCase: AiCaseGenerationPlanCase): string {
     '业务数据与页面状态符合需求描述',
   ]);
 
-  const lines: string[] = [];
-
-  // 去掉"测试点:"中间层级，直接从前置条件开始，与前端展开格式保持一致
-  lines.push('前置条件:');
-  preconditions.forEach((item, index) => {
-    lines.push(`${index + 1}. ${item}`);
-  });
-
-  lines.push('', '测试步骤:');
-  steps.forEach((item, index) => {
-    lines.push(`${index + 1}. ${item}`);
-  });
-
-  lines.push('', '预期结果:');
-  expectedResults.forEach((item, index) => {
-    lines.push(`${index + 1}. ${item}`);
-  });
-
-  return lines.join('\n');
+  return [
+    createNode(formatSectionTopic('测试点', [testCase.title]), 'scenario', { aiGenerated: true }),
+    createNode(formatSectionTopic('前置条件', preconditions), 'scenario', { aiGenerated: true }),
+    createNode(formatSectionTopic('测试步骤', steps), 'scenario', { aiGenerated: true }),
+    createNode(formatSectionTopic('预期结果', expectedResults), 'scenario', { aiGenerated: true }),
+  ];
 }
 
 export function createAiCaseNodeId(): string {
@@ -362,7 +364,7 @@ export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData 
             createNode(testCase.title, 'testcase', {
               aiGenerated: true,
               priority: parsePriority(testCase.priority, 'P1'),
-              note: composeCaseNote(testCase),
+              children: buildCaseChildNodes(testCase),
             })
           )
         ),
