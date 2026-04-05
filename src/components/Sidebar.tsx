@@ -17,6 +17,7 @@ import {
   Monitor,
   Gauge,
   BrainCircuit,
+  History,
   PanelLeftClose,
   PanelLeftOpen,
   X,
@@ -50,7 +51,14 @@ const navItems: NavItem[] = [
       { label: "性能自动化", href: "/cases/performance", icon: <Gauge className="h-4 w-4" /> },
     ],
   },
-  { icon: <BrainCircuit className="h-5 w-5" />, label: "AI 生成用例", href: "/cases/ai" },
+  {
+    icon: <BrainCircuit className="h-5 w-5" />,
+    label: "AI 用例",
+    children: [
+      { label: "AI 生成用例", href: "/cases/ai", icon: <BrainCircuit className="h-4 w-4" /> },
+      { label: "用例记录", href: "/cases/ai-history", icon: <History className="h-4 w-4" /> },
+    ],
+  },
   { icon: <Boxes className="h-5 w-5" />, label: "任务管理", href: "/tasks" },
   { icon: <BarChart3 className="h-5 w-5" />, label: "运行记录", href: "/reports" },
   { icon: <Settings className="h-5 w-5" />, label: "系统设置", href: "/settings" },

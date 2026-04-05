@@ -1,7 +1,8 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-elixir';
 import 'mind-elixir/style.css';
-import { BrainCircuit, Loader2, Menu, X } from 'lucide-react';
+import { BrainCircuit, History, Loader2, Menu, X } from 'lucide-react';
+import { useLocation } from 'wouter';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { AiCaseSidebar } from './components/AiCaseSidebar';
 import { AiCaseCanvasToolbar } from './components/AiCaseCanvasToolbar';
@@ -19,6 +20,7 @@ import {
   expandImportedCaseNodesFromNote,
   findNodeById,
   generateMindDataFromRequirement,
+  inferWorkspaceNameFromRequirement,
   normalizeMindData,
   removeNodeAttachmentId,
   setNodeStatus,
@@ -184,6 +186,7 @@ function mergeRemoteWorkspaceToDoc(
 }
 
 function AiCasesInner() {
+  const [, setLocation] = useLocation();
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const canvasSectionRef = useRef<HTMLElement | null>(null);
   const mindRef = useRef<MindElixirInstance | null>(null);
@@ -202,6 +205,9 @@ function AiCasesInner() {
   const schedulePersistRef = useRef<(nextData: AiCaseMindData, nextSelectedNodeId: string | null) => void>(
     () => undefined
   );
+  // 标记工作台名称是否被用户手动编辑过，若未手动编辑则允许自动推断覆盖
+  const isWorkspaceNameUserEditedRef = useRef(false);
+  const autoInferNameTimerRef = useRef<number | null>(null);
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [workspaceName, setWorkspaceName] = useState('AI Testcase Workspace');
@@ -274,6 +280,10 @@ function AiCasesInner() {
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
+      if (autoInferNameTimerRef.current) {
+        window.clearTimeout(autoInferNameTimerRef.current);
+        autoInferNameTimerRef.current = null;
+      }
       clearGenerateProgressTimers();
     };
   }, [clearGenerateProgressTimers]);
@@ -283,6 +293,28 @@ function AiCasesInner() {
       attachments.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
     };
   }, [attachments]);
+
+  // 需求文本变化时，若用户未手动编辑过工作台名称，则 debounce 自动推断更新名称
+  useEffect(() => {
+    if (isWorkspaceNameUserEditedRef.current) {
+      return;
+    }
+
+    if (autoInferNameTimerRef.current) {
+      window.clearTimeout(autoInferNameTimerRef.current);
+    }
+
+    autoInferNameTimerRef.current = window.setTimeout(() => {
+      autoInferNameTimerRef.current = null;
+      if (isWorkspaceNameUserEditedRef.current) {
+        return;
+      }
+      const inferred = inferWorkspaceNameFromRequirement(requirementText);
+      if (inferred) {
+        setWorkspaceName(inferred);
+      }
+    }, 600);
+  }, [requirementText]);
 
   const persistDocument = useCallback(
     async (nextData: AiCaseMindData, nextSelectedNodeId: string | null) => {
@@ -424,7 +456,12 @@ function AiCasesInner() {
           }
 
           docRef.current = hydratedDoc;
-          setWorkspaceName(storedDoc.name || 'AI Testcase Workspace');
+          const storedName = storedDoc.name || 'AI Testcase Workspace';
+          // 如果本地存储的名称不是默认占位名，则视为"已编辑"，不允许自动推断覆盖
+          if (storedName !== 'AI Testcase Workspace') {
+            isWorkspaceNameUserEditedRef.current = true;
+          }
+          setWorkspaceName(storedName);
           setRequirementText(storedDoc.requirement || '');
           setMindData(hydratedDoc.mapData);
           setSelectedNodeId(storedDoc.lastSelectedNodeId ?? hydratedDoc.mapData.nodeData.id);
@@ -987,6 +1024,12 @@ function AiCasesInner() {
     return finalPayload;
   }, [applyGenerateProgress, requirementText, workspaceName]);
 
+  // 用户在侧边栏手动修改工作台名称时调用，标记"已手动编辑"，后续不再自动推断覆盖
+  const handleWorkspaceNameChange = useCallback((name: string) => {
+    isWorkspaceNameUserEditedRef.current = true;
+    setWorkspaceName(name);
+  }, []);
+
   const handleToggleNodeKindTags = useCallback(() => {
     const nextVisible = !showNodeKindTagsRef.current;
     showNodeKindTagsRef.current = nextVisible;
@@ -1035,6 +1078,8 @@ function AiCasesInner() {
         ? selectedNodeIdRef.current ?? mergedDoc.lastSelectedNodeId
         : mergedDoc.lastSelectedNodeId;
 
+      // 从远端加载时，名称由远端数据决定，标记为"已编辑"避免被自动推断覆盖
+      isWorkspaceNameUserEditedRef.current = true;
       setWorkspaceName(mergedDoc.name || 'AI Testcase Workspace');
       setRequirementText(mergedDoc.requirement || '');
       updateRemoteSyncMeta({
@@ -1090,12 +1135,12 @@ function AiCasesInner() {
   }, [attachmentReloadSeed, selectedNodeId]);
 
   useEffect(() => {
-    if (isBootstrapping || !mindDataRef.current) {
+    if (isBootstrapping || !mindDataRef.current || isGenerating) {
       return;
     }
 
     schedulePersistRef.current(mindDataRef.current, selectedNodeIdRef.current);
-  }, [workspaceName, requirementText, isBootstrapping, remoteSyncMeta]);
+  }, [workspaceName, requirementText, isBootstrapping, remoteSyncMeta, isGenerating]);
 
   const cleanupStaleAttachments = useCallback(
     async (nextData: AiCaseMindData, options?: CleanupStaleAttachmentOptions): Promise<number> => {
@@ -1343,7 +1388,8 @@ function AiCasesInner() {
           ? generated.workspaceName.trim()
           : workspaceName;
 
-      // 若名字有变化则更新 workspaceName state
+      // AI 生成后用 AI 给出的名称覆盖，标记为"已编辑"避免后续被自动推断再次覆盖
+      isWorkspaceNameUserEditedRef.current = true;
       if (aiWorkspaceName !== workspaceName) {
         setWorkspaceName(aiWorkspaceName);
       }
@@ -1638,6 +1684,16 @@ function AiCasesInner() {
             <h1 className="text-sm font-semibold text-slate-900 dark:text-white">AI 用例工作台</h1>
           </div>
           <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs gap-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+              onClick={() => setLocation('/cases/ai-history')}
+            >
+              <History className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">用例记录</span>
+            </Button>
             <span className="hidden sm:block">{saveStateText}</span>
             <span className="hidden md:block">{remoteStatusText}</span>
           </div>
@@ -1656,7 +1712,7 @@ function AiCasesInner() {
             <AiCaseSidebar
               workspaceName={workspaceName}
               requirementText={requirementText}
-              onWorkspaceNameChange={setWorkspaceName}
+              onWorkspaceNameChange={handleWorkspaceNameChange}
               onRequirementTextChange={setRequirementText}
               isGenerating={isGenerating}
               generationProgress={generationProgress}
@@ -1701,7 +1757,7 @@ function AiCasesInner() {
               <AiCaseSidebar
                 workspaceName={workspaceName}
                 requirementText={requirementText}
-                onWorkspaceNameChange={setWorkspaceName}
+                onWorkspaceNameChange={handleWorkspaceNameChange}
                 onRequirementTextChange={setRequirementText}
                 isGenerating={isGenerating}
                 generationProgress={generationProgress}
@@ -1724,9 +1780,9 @@ function AiCasesInner() {
                 onPublishRemote={handlePublishRemote}
                 onSyncFromRemote={handleSyncFromRemote}
                 onResetTemplate={handleResetTemplate}
-               onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
-               mindData={mindData}
-             />
+                onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
+                mindData={mindData}
+              />
            </div>
          </div>
         ) : null}

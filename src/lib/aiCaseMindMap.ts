@@ -613,6 +613,21 @@ function extractAnchor(requirement: string): string {
   return firstLine.length > 20 ? `${firstLine.slice(0, 20)}...` : firstLine;
 }
 
+/**
+ * 根据需求文本推断工作台名称（本地逻辑，无需 AI）。
+ * 规则：取需求文本的第一个非空行，截取前 20 字符，作为工作台名称。
+ * 若需求为空则返回 null（调用方可保持当前名称不变）。
+ */
+export function inferWorkspaceNameFromRequirement(requirement: string): string | null {
+  const trimmed = requirement.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const anchor = extractAnchor(trimmed);
+  // extractAnchor 已含截断逻辑，直接使用
+  return anchor === '目标功能' ? null : anchor;
+}
+
 export function createInitialMindData(title = 'AI Testcase Workspace'): AiCaseMindData {
   const root = createNode(title, 'root', {
     children: [
