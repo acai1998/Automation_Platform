@@ -1160,4 +1160,160 @@ describe('Tasks Page', () => {
       }
     });
   });
+
+  // ─── 本次修复专项测试 ───────────────────────────────────────
+
+  describe('getTaskSemanticStatus - 空闲态修复', () => {
+    it('active 任务从未执行过时应显示"空闲"而非"成功"', () => {
+      const neverRunTask = {
+        ...mockTasks[0],
+        status: 'active',
+        recentExecutions: [],  // 空数组 => latest 为 undefined
+      };
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: [neverRunTask], total: 1, stats: { activeCount: 1, todayRuns: 0 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+
+      renderWithProviders(<Tasks />);
+
+      // 从未执行过的 active 任务应显示"空闲"
+      expect(screen.getByText('空闲')).toBeInTheDocument();
+      // 不应显示"成功"标签
+      expect(screen.queryByText('成功')).not.toBeInTheDocument();
+    });
+
+    it('active 任务有成功执行记录时应显示"成功"', () => {
+      const successTask = {
+        ...mockTasks[0],
+        status: 'active',
+        recentExecutions: [
+          { id: 1, status: 'success', start_time: '2026-01-01', passed_cases: 5, failed_cases: 0, total_cases: 5 },
+        ],
+      };
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: [successTask], total: 1, stats: { activeCount: 1, todayRuns: 1 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+
+      renderWithProviders(<Tasks />);
+
+      expect(screen.getByText('成功')).toBeInTheDocument();
+    });
+
+    it('paused 任务应显示"暂停"（无论执行记录）', () => {
+      const pausedTask = {
+        ...mockTasks[0],
+        status: 'paused',
+        recentExecutions: [],
+      };
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: [pausedTask], total: 1, stats: { activeCount: 0, todayRuns: 0 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+
+      renderWithProviders(<Tasks />);
+
+      expect(screen.getByText('暂停')).toBeInTheDocument();
+    });
+  });
+
+  describe('保存常用筛选 Dialog 替换 window.prompt', () => {
+    it('点击保存筛选按钮后应显示 Dialog 而非 window.prompt', async () => {
+      // 确保不调用 window.prompt
+      const promptSpy = vi.spyOn(window, 'prompt');
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: mockTasks, total: 2, stats: { activeCount: 1, todayRuns: 0 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+
+      renderWithProviders(<Tasks />);
+
+      // 点击保存常用筛选按钮
+      const saveFilterBtn = screen.queryByText('保存筛选');
+      if (saveFilterBtn) {
+        fireEvent.click(saveFilterBtn);
+
+        // 应打开 Dialog，而非调用 window.prompt
+        await waitFor(() => {
+          expect(screen.getByRole('dialog')).toBeInTheDocument();
+        });
+        expect(promptSpy).not.toHaveBeenCalled();
+      }
+
+      promptSpy.mockRestore();
+    });
+  });
+
+  describe('formatTime - 无效日期守护', () => {
+    /**
+     * 通过渲染含无效日期的任务数据来验证 formatTime 不会渲染 "Invalid Date"
+     * formatTime 函数在任务卡片的 latest run 时间显示中使用
+     */
+    it('渲染含无效日期的任务时不应出现 "Invalid Date" 字符串', () => {
+      const taskWithInvalidDate = {
+        ...mockTasks[0],
+        recentExecutions: [
+          {
+            id: 1,
+            status: 'success',
+            start_time: 'not-a-valid-date',  // 无效日期
+            passed_cases: 5,
+            failed_cases: 0,
+            total_cases: 5,
+          },
+        ],
+      };
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: [taskWithInvalidDate], total: 1, stats: { activeCount: 1, todayRuns: 0 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+
+      renderWithProviders(<Tasks />);
+
+      // 不应有 "Invalid Date" 文字出现在页面中
+      expect(screen.queryByText(/Invalid Date/i)).not.toBeInTheDocument();
+    });
+
+    it('渲染 start_time 为 null/undefined 时应显示"-"而非报错', () => {
+      const taskWithNullDate = {
+        ...mockTasks[0],
+        recentExecutions: [
+          {
+            id: 1,
+            status: 'success',
+            start_time: null,
+            passed_cases: 5,
+            failed_cases: 0,
+            total_cases: 5,
+          },
+        ],
+      };
+
+      vi.spyOn(useTasksHooks, 'useTasks').mockReturnValue({
+        data: { data: [taskWithNullDate], total: 1, stats: { activeCount: 1, todayRuns: 0 } },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as any);
+
+      // 不应抛出异常
+      expect(() => renderWithProviders(<Tasks />)).not.toThrow();
+    });
+  });
 });

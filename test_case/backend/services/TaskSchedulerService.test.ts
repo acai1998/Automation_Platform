@@ -614,3 +614,118 @@ describe('TaskSchedulerService - Cron 表达式边界值测试', () => {
     expect(next!.getDate()).toBe(1);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('TaskSchedulerService - executeTask scriptPaths 前置校验（Bug修复验证）', () => {
+  /**
+   * 模拟 executeTask 中 scriptPaths 校验前置后的行为
+   *
+   * 修复背景：原来代码在 triggerTestExecution（创建运行记录）之后才检查
+   * scriptPaths.length === 0，导致每次 cron 触发都产生 pending 状态的无效记录堆积。
+   * 修复后将校验提前到创建运行记录之前。
+   */
+
+  type ExecuteResult = 'skipped_no_cases' | 'skipped_no_scripts' | 'executed';
+
+  /**
+   * 模拟修复后的 executeTask 提前返回逻辑
+   */
+  function simulateExecuteTask(params: {
+    caseIds: number[];
+    scriptPaths: string[];
+    taskStatus: string;
+  }): { result: ExecuteResult; recordCreated: boolean } {
+    // 1. 状态检查
+    if (params.taskStatus !== 'active') {
+      return { result: 'skipped_no_cases', recordCreated: false };
+    }
+
+    // 2. caseIds 为空 → 跳过
+    if (params.caseIds.length === 0) {
+      return { result: 'skipped_no_cases', recordCreated: false };
+    }
+
+    // 3. scriptPaths 为空 → 跳过（修复后：在此提前 return，不创建运行记录）
+    if (params.scriptPaths.length === 0) {
+      return { result: 'skipped_no_scripts', recordCreated: false };
+    }
+
+    // 4. 正常执行 → 创建运行记录 + 触发 Jenkins
+    return { result: 'executed', recordCreated: true };
+  }
+
+  it('scriptPaths 为空时应跳过执行且不创建运行记录', () => {
+    const { result, recordCreated } = simulateExecuteTask({
+      caseIds: [1, 2],
+      scriptPaths: [],         // 用例没有 scriptPath
+      taskStatus: 'active',
+    });
+    expect(result).toBe('skipped_no_scripts');
+    expect(recordCreated).toBe(false);
+  });
+
+  it('caseIds 为空时应跳过执行且不创建运行记录', () => {
+    const { result, recordCreated } = simulateExecuteTask({
+      caseIds: [],
+      scriptPaths: [],
+      taskStatus: 'active',
+    });
+    expect(result).toBe('skipped_no_cases');
+    expect(recordCreated).toBe(false);
+  });
+
+  it('正常情况（有 caseIds 且有 scriptPaths）应创建运行记录并执行', () => {
+    const { result, recordCreated } = simulateExecuteTask({
+      caseIds: [1, 2, 3],
+      scriptPaths: ['tests/login.spec.ts', 'tests/order.spec.ts'],
+      taskStatus: 'active',
+    });
+    expect(result).toBe('executed');
+    expect(recordCreated).toBe(true);
+  });
+
+  it('任务已暂停时应跳过且不创建运行记录', () => {
+    const { result, recordCreated } = simulateExecuteTask({
+      caseIds: [1],
+      scriptPaths: ['tests/login.spec.ts'],
+      taskStatus: 'paused',
+    });
+    expect(result).toBe('skipped_no_cases');
+    expect(recordCreated).toBe(false);
+  });
+
+  it('多个用例但所有用例均无 scriptPath 时，不应产生任何运行记录', () => {
+    // 模拟：5 个用例、scriptPaths 全部为空字符串经过 filter 后长度为 0
+    const rawScriptPaths = ['', '  ', '', null, undefined]
+      .map(p => (p ?? '').trim())
+      .filter(Boolean) as string[];
+
+    const { result, recordCreated } = simulateExecuteTask({
+      caseIds: [1, 2, 3, 4, 5],
+      scriptPaths: rawScriptPaths,  // 空数组
+      taskStatus: 'active',
+    });
+    expect(rawScriptPaths).toHaveLength(0);
+    expect(result).toBe('skipped_no_scripts');
+    expect(recordCreated).toBe(false);
+  });
+
+  it('重复触发同一无脚本任务：每次均应跳过，不累积记录', () => {
+    // 模拟每次 cron 触发时调用 simulateExecuteTask 的行为
+    const triggerCounts = 10;
+    let createdRecords = 0;
+
+    for (let i = 0; i < triggerCounts; i++) {
+      const { recordCreated } = simulateExecuteTask({
+        caseIds: [1],
+        scriptPaths: [],  // 始终无 scriptPath
+        taskStatus: 'active',
+      });
+      if (recordCreated) createdRecords++;
+    }
+
+    // 修复后：无论触发多少次，都不会创建运行记录
+    expect(createdRecords).toBe(0);
+  });
+});

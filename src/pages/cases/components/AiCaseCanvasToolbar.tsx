@@ -2,7 +2,7 @@ import {
   Maximize2,
   Minimize2,
   Focus,
-  Proportions,
+  Scan,
   Tags,
   ZoomIn,
   ZoomOut,
@@ -44,6 +44,7 @@ function ToolbarButton({
           size="sm"
           onClick={onClick}
           disabled={disabled}
+          aria-label={tooltip}
           className={`h-8 w-8 p-0 transition-colors ${
             active
               ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/60 dark:bg-indigo-500/15 dark:text-indigo-300'
@@ -100,7 +101,7 @@ export function AiCaseCanvasToolbar({
               <Focus className="h-3.5 w-3.5" />
             </ToolbarButton>
             <ToolbarButton tooltip="适配画布" onClick={onFit}>
-              <Proportions className="h-3.5 w-3.5" />
+              <Scan className="h-3.5 w-3.5" />
             </ToolbarButton>
             <ToolbarButton
               tooltip={showNodeKindTags ? '隐藏节点类型标签' : '显示节点类型标签'}

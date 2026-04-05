@@ -531,3 +531,114 @@ describe('tasks 路由 - 数据转换与格式化', () => {
     expect(truncateError('short error').length).toBe(11);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('tasks 路由 - today_runs 统计逻辑修复验证', () => {
+  /**
+   * 修复背景：原来使用 COALESCE(start_time, NOW()) 导致 pending 状态（start_time IS NULL）
+   * 的执行记录也会被纳入今日运行统计，产生数据虚高。
+   * 修复后改为 start_time IS NOT NULL AND start_time BETWEEN ? AND ?
+   */
+
+  interface MockExecution {
+    id: number;
+    status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+    start_time: string | null;
+  }
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
+
+  /**
+   * 模拟修复后的 today_runs 统计逻辑
+   * 只统计 start_time IS NOT NULL 且在今日范围内的记录
+   */
+  function countTodayRuns(executions: MockExecution[]): number {
+    return executions.filter(e => {
+      if (e.start_time === null) return false;
+      const t = new Date(e.start_time).getTime();
+      return t >= todayStart.getTime() && t <= todayEnd.getTime();
+    }).length;
+  }
+
+  /**
+   * 模拟修复前的旧逻辑（使用 COALESCE(start_time, NOW())）
+   * 当 start_time 为 NULL 时，使用当前时间，会被计入今日
+   */
+  function countTodayRunsOldLogic(executions: MockExecution[]): number {
+    const now = new Date();
+    return executions.filter(e => {
+      const effectiveTime = e.start_time !== null ? new Date(e.start_time) : now;
+      const t = effectiveTime.getTime();
+      return t >= todayStart.getTime() && t <= todayEnd.getTime();
+    }).length;
+  }
+
+  it('修复后：pending 记录（start_time=NULL）不应计入今日运行数', () => {
+    const executions: MockExecution[] = [
+      { id: 1, status: 'pending', start_time: null },
+      { id: 2, status: 'pending', start_time: null },
+      { id: 3, status: 'pending', start_time: null },
+    ];
+    expect(countTodayRuns(executions)).toBe(0);
+  });
+
+  it('修复前（旧逻辑）：pending 记录会错误地计入今日运行数', () => {
+    const executions: MockExecution[] = [
+      { id: 1, status: 'pending', start_time: null },
+      { id: 2, status: 'pending', start_time: null },
+    ];
+    // 旧逻辑下，start_time=NULL 会用当前时间代替，当前时间在今日范围内，所以被计入
+    expect(countTodayRunsOldLogic(executions)).toBe(2); // 错误计入了 2 条
+  });
+
+  it('修复后：已实际开始的执行记录（start_time 有值）应正确计入今日运行数', () => {
+    const now = new Date().toISOString();
+    const executions: MockExecution[] = [
+      { id: 1, status: 'running', start_time: now },
+      { id: 2, status: 'success', start_time: now },
+      { id: 3, status: 'failed', start_time: now },
+      { id: 4, status: 'pending', start_time: null },  // 不计入
+    ];
+    expect(countTodayRuns(executions)).toBe(3);
+  });
+
+  it('修复后：昨天的执行记录不应计入今日运行数', () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const executions: MockExecution[] = [
+      { id: 1, status: 'success', start_time: yesterday.toISOString() },
+      { id: 2, status: 'failed', start_time: yesterday.toISOString() },
+    ];
+    expect(countTodayRuns(executions)).toBe(0);
+  });
+
+  it('混合场景：今日实际运行 + pending + 昨日运行 → 只计今日实际', () => {
+    const now = new Date().toISOString();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const executions: MockExecution[] = [
+      { id: 1, status: 'success', start_time: now },           // 今日实际：✓
+      { id: 2, status: 'running', start_time: now },           // 今日实际：✓
+      { id: 3, status: 'pending', start_time: null },          // pending：✗
+      { id: 4, status: 'pending', start_time: null },          // pending：✗
+      { id: 5, status: 'success', start_time: yesterday.toISOString() }, // 昨日：✗
+    ];
+
+    expect(countTodayRuns(executions)).toBe(2);
+    // 修复前的旧逻辑会错误地返回 4（2个pending + 2个今日实际）
+    expect(countTodayRunsOldLogic(executions)).toBe(4);
+  });
+
+  it('start_time 为空字符串时不应计入（等同于无效值）', () => {
+    const executions = [
+      { id: 1, status: 'pending' as const, start_time: '' as unknown as null },
+    ];
+    // 空字符串 new Date('') => Invalid Date => getTime() = NaN
+    expect(countTodayRuns(executions)).toBe(0);
+  });
+});

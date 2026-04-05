@@ -620,8 +620,6 @@ function AiCasesInner() {
 
   const selectedNodeStatus = selectedNode?.metadata?.status ?? 'todo';
   const canEditSelectedNode = selectedNode?.metadata?.kind === 'testcase';
-  const shouldHighlightNodePanel = Boolean(selectedNode);
-  const shouldHighlightAttachmentPanel = Boolean(selectedNode);
 
   const progress = useMemo(() => {
     if (!mindData) {
@@ -1295,6 +1293,20 @@ function AiCasesInner() {
     }
   };
 
+  const handleLoadHistoryWorkspace = useCallback(async (id: number) => {
+    try {
+      const res = await aiCasesApi.getWorkspace(id);
+      if (!res.data) {
+        toast.error('获取工作台数据失败');
+        return;
+      }
+      applyWorkspaceDetail(res.data);
+      toast.success(`已加载工作台：${res.data.name}`);
+    } catch {
+      toast.error('加载历史工作台失败，请稍后重试');
+    }
+  }, [applyWorkspaceDetail]);
+
   const handlePublishRemote = async () => {
     if (!mindData) {
       toast.error('脑图尚未初始化，无法发布');
@@ -1523,7 +1535,7 @@ function AiCasesInner() {
               onPublishRemote={handlePublishRemote}
               onSyncFromRemote={handleSyncFromRemote}
               onResetTemplate={handleResetTemplate}
-              onLoadHistoryWorkspace={applyWorkspaceDetail}
+              onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
               mindData={mindData}
             />
           </div>
@@ -1568,11 +1580,11 @@ function AiCasesInner() {
                 onPublishRemote={handlePublishRemote}
                 onSyncFromRemote={handleSyncFromRemote}
                 onResetTemplate={handleResetTemplate}
-                onLoadHistoryWorkspace={applyWorkspaceDetail}
-                mindData={mindData}
-              />
-            </div>
-          </div>
+               onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
+               mindData={mindData}
+             />
+           </div>
+         </div>
         ) : null}
 
         {/* 右侧画布区域 */}
