@@ -813,6 +813,9 @@ function AiCasesInner() {
     let buffer = '';
     let finalPayload: StreamGenerateResultPayload | null = null;
 
+    // 渐进式渲染：收到第一个 node_module 时初始化骨架脑图
+    let skeletonData: AiCaseMindData | null = null;
+
     const processEventBlock = (block: string): void => {
       let eventName = 'message';
       const dataLines: string[] = [];
@@ -845,6 +848,63 @@ function AiCasesInner() {
 
       if (eventName === 'progress') {
         applyGenerateProgress(payload);
+        return;
+      }
+
+      // 渐进式节点推送：每收到一个 module 节点，立即追加到骨架脑图并刷新
+      if (eventName === 'node_module') {
+        const moduleNode = payload?.moduleNode;
+        const moduleIndex: number = typeof payload?.moduleIndex === 'number' ? payload.moduleIndex : 0;
+        const totalModules: number = typeof payload?.totalModules === 'number' ? payload.totalModules : 1;
+
+        if (!moduleNode || typeof moduleNode !== 'object') {
+          return;
+        }
+
+        if (!skeletonData) {
+          // 第一个 module：创建骨架根节点
+          const skeleton = createInitialMindData(workspaceName || 'AI Testcase Workspace');
+          skeleton.nodeData.children = [];
+          const normalizedSkeleton = normalizeMindData(skeleton, {
+            showNodeKindTags: showNodeKindTagsRef.current,
+          });
+          skeletonData = normalizedSkeleton;
+        }
+
+        // 追加新 module 节点（已含子节点），并展开 note 为子节点
+        const moduleAsData: AiCaseMindData = {
+          ...skeletonData,
+          nodeData: {
+            ...skeletonData.nodeData,
+            children: [
+              ...(skeletonData.nodeData.children ?? []),
+              moduleNode as AiCaseNode,
+            ],
+          },
+        };
+
+        const normalizedModule = normalizeMindData(moduleAsData, {
+          showNodeKindTags: showNodeKindTagsRef.current,
+        });
+        const expandedModule = expandImportedCaseNodesFromNote(normalizedModule, {
+          showNodeKindTags: showNodeKindTagsRef.current,
+        });
+
+        skeletonData = expandedModule.data;
+
+        // 实时刷新脑图（使用 mindRef 直接刷新，不触发 schedulePersist 避免频繁写 IndexedDB）
+        if (mindRef.current) {
+          mindRef.current.refresh(expandedModule.data as MindElixirData);
+        }
+        setMindData(expandedModule.data);
+        mindDataRef.current = expandedModule.data;
+
+        // 更新进度提示
+        const progressPercent = Math.round(((moduleIndex + 1) / totalModules) * 40) + 55;
+        setGenerationStageText(
+          `正在生成功能模块 ${moduleIndex + 1}/${totalModules}：${String(moduleNode.topic ?? '').slice(0, 20)}`
+        );
+        setGenerationProgress(Math.min(95, progressPercent));
         return;
       }
 
@@ -1399,14 +1459,53 @@ function AiCasesInner() {
     if (remoteId) {
       setIsUpdatingNodeStatus(true);
       try {
-        const response = await aiCasesApi.updateNodeStatus(remoteId, {
-          nodeId: selectedNodeId,
-          status,
-          meta: {
-            source: 'frontend_click',
-            localUpdatedAt: Date.now(),
-          },
-        });
+        // 先尝试直接更新节点状态
+        let response;
+        try {
+          response = await aiCasesApi.updateNodeStatus(remoteId, {
+            nodeId: selectedNodeId,
+            status,
+            meta: {
+              source: 'frontend_click',
+              localUpdatedAt: Date.now(),
+            },
+          });
+        } catch (firstError) {
+          // 如果是"未找到指定 nodeId"，说明本地 mapData 与远端不同步
+          // 自动先将最新 mapData 同步到远端，然后重试
+          const msg = firstError instanceof Error ? firstError.message : '';
+          if (msg.includes('未找到指定 nodeId')) {
+            console.warn('[AICases] nodeId not found on remote, auto-syncing mapData then retrying...');
+            const workspaceNameValue = workspaceName.trim() || 'AI Testcase Workspace';
+            const syncResp = await aiCasesApi.updateWorkspace(remoteId, {
+              name: workspaceNameValue,
+              requirementText: requirementText.trim(),
+              mapData: mindData,
+              syncSource: 'mixed',
+              status: remoteSyncMetaRef.current.remoteStatus ?? 'draft',
+              expectedVersion: remoteSyncMetaRef.current.remoteVersion ?? undefined,
+            });
+            if (syncResp.data) {
+              // 更新本地 remoteSyncMeta 版本
+              updateRemoteSyncMeta({
+                remoteVersion: syncResp.data.version,
+                remoteStatus: syncResp.data.status,
+                lastRemoteSyncedAt: Date.now(),
+              });
+            }
+            // 重试状态更新
+            response = await aiCasesApi.updateNodeStatus(remoteId, {
+              nodeId: selectedNodeId,
+              status,
+              meta: {
+                source: 'frontend_click',
+                localUpdatedAt: Date.now(),
+              },
+            });
+          } else {
+            throw firstError;
+          }
+        }
 
         if (!response.data?.workspace) {
           throw new Error('远端未返回工作台数据');

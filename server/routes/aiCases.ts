@@ -5,6 +5,7 @@ import { aiCaseService } from '../services/AiCaseService';
 import {
   aiCaseGenerationService,
   type AiCaseGenerationProgressEvent,
+  type AiCaseGenerationNodeEvent,
 } from '../services/AiCaseGenerationService';
 import type { AiCaseNodeStatus } from '../services/aiCaseMapBuilder';
 import type {
@@ -188,6 +189,13 @@ router.post('/generate/stream', async (req, res) => {
       writeSseEvent(res, 'progress', event);
     };
 
+    const emitNode = (event: AiCaseGenerationNodeEvent): void => {
+      if (clientClosed || res.writableEnded) {
+        return;
+      }
+      writeSseEvent(res, 'node_module', event);
+    };
+
     writeSseEvent(res, 'progress', {
       progress: 2,
       stage: '连接已建立，开始处理请求',
@@ -199,7 +207,8 @@ router.post('/generate/stream', async (req, res) => {
         requirementText,
         workspaceName,
       },
-      emitProgress
+      emitProgress,
+      emitNode
     );
 
     if (persist) {

@@ -67,6 +67,18 @@ export interface AiCaseGenerationProgressEvent {
   detail?: string;
 }
 
+/**
+ * 流式节点推送事件：每生成一个 module（含其下所有 testcase），推送一次
+ */
+export interface AiCaseGenerationNodeEvent {
+  /** 当前 module 节点的脑图数据（含子 testcase 节点） */
+  moduleNode: AiCaseMapData['nodeData'];
+  /** 当前 module 在 modules 列表中的索引（0-based） */
+  moduleIndex: number;
+  /** modules 总数 */
+  totalModules: number;
+}
+
 function parsePositiveInt(value: string, fallback: number): number {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -251,7 +263,8 @@ export class AiCaseGenerationService {
 
   async generate(
     request: AiCaseGenerationRequest,
-    onProgress?: (event: AiCaseGenerationProgressEvent) => void
+    onProgress?: (event: AiCaseGenerationProgressEvent) => void,
+    onNode?: (event: AiCaseGenerationNodeEvent) => void
   ): Promise<AiCaseGenerationResult> {
     const requirementText = request.requirementText?.trim();
     const workspaceName = request.workspaceName?.trim() || 'AI Testcase Workspace';
@@ -282,6 +295,14 @@ export class AiCaseGenerationService {
       const fallbackPlan = buildFallbackPlan(requirementText, workspaceName);
       const mapData = buildMapDataFromPlan(fallbackPlan);
       const counters = calculateWorkspaceCounters(mapData);
+
+      // 推送 fallback 的每个 module 节点
+      if (onNode && mapData.nodeData.children) {
+        const totalModules = mapData.nodeData.children.length;
+        mapData.nodeData.children.forEach((moduleNode, moduleIndex) => {
+          onNode({ moduleNode, moduleIndex, totalModules });
+        });
+      }
 
       this.pushProgress(onProgress, {
         progress: 95,
@@ -318,6 +339,14 @@ export class AiCaseGenerationService {
       const mapData = buildMapDataFromPlan(plan);
       const counters = calculateWorkspaceCounters(mapData);
 
+      // 逐个推送 module 节点，让前端可以渐进式渲染
+      if (onNode && mapData.nodeData.children) {
+        const totalModules = mapData.nodeData.children.length;
+        mapData.nodeData.children.forEach((moduleNode, moduleIndex) => {
+          onNode({ moduleNode, moduleIndex, totalModules });
+        });
+      }
+
       this.pushProgress(onProgress, {
         progress: 98,
         stage: '正在计算统计指标',
@@ -349,6 +378,14 @@ export class AiCaseGenerationService {
       const fallbackPlan = buildFallbackPlan(requirementText, workspaceName);
       const mapData = buildMapDataFromPlan(fallbackPlan);
       const counters = calculateWorkspaceCounters(mapData);
+
+      // 推送 fallback 的每个 module 节点
+      if (onNode && mapData.nodeData.children) {
+        const totalModules = mapData.nodeData.children.length;
+        mapData.nodeData.children.forEach((moduleNode, moduleIndex) => {
+          onNode({ moduleNode, moduleIndex, totalModules });
+        });
+      }
 
       this.pushProgress(onProgress, {
         progress: 95,
