@@ -407,7 +407,7 @@ describe('tasks 路由 - 综合业务规则', () => {
   });
 
   it('手动任务创建时 cron 不是必填项', () => {
-    const triggerType = 'manual';
+    const triggerType: string = 'manual';
     const cronExpression = undefined;
 
     let error: string | null = null;

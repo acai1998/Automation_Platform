@@ -1477,13 +1477,14 @@ function AiCasesInner() {
           if (msg.includes('未找到指定 nodeId')) {
             console.warn('[AICases] nodeId not found on remote, auto-syncing mapData then retrying...');
             const workspaceNameValue = workspaceName.trim() || 'AI Testcase Workspace';
+            // 注意：此处不传 expectedVersion，强制以本地数据覆盖远端
+            // 因为本地节点比远端新（远端版本可能落后），版本校验会阻塞标记流程
             const syncResp = await aiCasesApi.updateWorkspace(remoteId, {
               name: workspaceNameValue,
               requirementText: requirementText.trim(),
               mapData: mindData,
               syncSource: 'mixed',
               status: remoteSyncMetaRef.current.remoteStatus ?? 'draft',
-              expectedVersion: remoteSyncMetaRef.current.remoteVersion ?? undefined,
             });
             if (syncResp.data) {
               // 更新本地 remoteSyncMeta 版本
