@@ -207,21 +207,22 @@ function sanitizeChecklist(lines: string[] | undefined, fallback: string[]): str
 }
 
 /**
- * 将一组条目格式化为节点 topic 文字。
+ * 将一组条目格式化为纯文本行列表。
  * 单条时直接返回该条内容；多条时使用 "1. xxx\n2. xxx" 换行拼接。
  */
-function formatSectionTopic(label: string, items: string[]): string {
+function formatSectionLines(items: string[]): string {
   if (items.length === 1) {
-    return `${label}：${items[0]}`;
+    return items[0];
   }
-  return `${label}：\n${items.map((item, i) => `${i + 1}. ${item}`).join('\n')}`;
+  return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
 }
 
 /**
- * 根据 testCase 生成 4 个固定子节点：测试点 / 前置条件 / 测试步骤 / 预期结果。
- * 内容全部写在节点的 topic 里，不使用 note + 二次展开方案。
+ * 将 testCase 的前置条件/测试步骤/预期结果合并为 note 字符串（四段式格式），
+ * 供前端侧边栏或导出时展示详细信息。
+ * 不生成子节点，保持 testcase 为叶子节点，每条 case 在脑图中占一行。
  */
-function buildCaseChildNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[] {
+function buildCaseNote(testCase: AiCaseGenerationPlanCase): string {
   const hint = typeof testCase.note === 'string' ? testCase.note.trim() : '';
 
   const preconditions = sanitizeChecklist(testCase.preconditions, [
@@ -240,11 +241,11 @@ function buildCaseChildNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[
   ]);
 
   return [
-    createNode(formatSectionTopic('测试点', [testCase.title]), 'scenario', { aiGenerated: true }),
-    createNode(formatSectionTopic('前置条件', preconditions), 'scenario', { aiGenerated: true }),
-    createNode(formatSectionTopic('测试步骤', steps), 'scenario', { aiGenerated: true }),
-    createNode(formatSectionTopic('预期结果', expectedResults), 'scenario', { aiGenerated: true }),
-  ];
+    `测试点：${testCase.title}`,
+    `前置条件：${formatSectionLines(preconditions)}`,
+    `测试步骤：${formatSectionLines(steps)}`,
+    `预期结果：${formatSectionLines(expectedResults)}`,
+  ].join('\n');
 }
 
 export function createAiCaseNodeId(): string {
@@ -361,10 +362,11 @@ export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData 
         aiGenerated: true,
         children: module.scenarios.flatMap((scenario) =>
           scenario.cases.map((testCase) =>
+            // 每条 case 作为叶子节点（无子节点），详情存入 note，脑图中占一行
             createNode(testCase.title, 'testcase', {
               aiGenerated: true,
               priority: parsePriority(testCase.priority, 'P1'),
-              children: buildCaseChildNodes(testCase),
+              note: buildCaseNote(testCase),
             })
           )
         ),

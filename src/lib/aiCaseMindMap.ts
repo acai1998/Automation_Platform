@@ -36,44 +36,6 @@ const NODE_KIND_TAG_STYLE: Record<Exclude<AiCaseNodeKind, 'root'>, Record<string
   },
 };
 
-// testcase 子节点（四段式）各段的标签样式
-type CaseSectionLabel = '测试点' | '前置条件' | '测试步骤' | '预期结果';
-
-const CASE_SECTION_TAG_STYLE: Record<CaseSectionLabel, Record<string, string>> = {
-  测试点: {
-    background: '#DCFCE7',
-    color: '#166534',
-    borderRadius: '6px',
-    padding: '1px 6px',
-    fontSize: '11px',
-  },
-  前置条件: {
-    background: '#FEF9C3',
-    color: '#854D0E',
-    borderRadius: '6px',
-    padding: '1px 6px',
-    fontSize: '11px',
-  },
-  测试步骤: {
-    background: '#DBEAFE',
-    color: '#1E40AF',
-    borderRadius: '6px',
-    padding: '1px 6px',
-    fontSize: '11px',
-  },
-  预期结果: {
-    background: '#FCE7F3',
-    color: '#9D174D',
-    borderRadius: '6px',
-    padding: '1px 6px',
-    fontSize: '11px',
-  },
-};
-
-function makeSectionTag(label: CaseSectionLabel): { text: string; style: Record<string, string> } {
-  return { text: label, style: CASE_SECTION_TAG_STYLE[label] };
-}
-
 interface NormalizeMindDataOptions {
   showNodeKindTags?: boolean;
 }
@@ -108,8 +70,8 @@ function createDefaultMetadata(kind: AiCaseNodeKind): AiCaseNodeMetadata {
 }
 
 function resolveNodeKindTags(kind: AiCaseNodeKind, showNodeKindTags: boolean): AiCaseNode['tags'] | undefined {
-  // scenario 节点现在用于 testcase 下的 section 标题（前置条件/测试步骤/预期结果）
-  // 这些节点本身已经是语义清晰的中文标题，不需要额外的"测试场景"标签
+  // scenario 节点不添加节点类型标签：其语义已通过节点名称和上下文清晰表达
+  // testcase 现在是叶子节点，展示详情不再依赖 scenario 子节点
   if (!showNodeKindTags || kind === 'root' || kind === 'scenario') {
     return undefined;
   }
@@ -217,124 +179,10 @@ function createNode(
   };
 }
 
-function toChecklist(lines: string[]): string[] {
-  return lines.map((line) => line.trim()).filter((line) => Boolean(line));
-}
-
-
-interface ParsedCaseNoteSections {
-  testPoint: string[];
-  preconditions: string[];
-  steps: string[];
-  expectedResults: string[];
-}
-
-type CaseNoteSectionKey = keyof ParsedCaseNoteSections;
-
-const CASE_NOTE_SECTION_KEY_MAP: Record<'测试点' | '前置条件' | '测试步骤' | '预期结果', CaseNoteSectionKey> = {
-  测试点: 'testPoint',
-  前置条件: 'preconditions',
-  测试步骤: 'steps',
-  预期结果: 'expectedResults',
-};
-
-// 同时作为 CASE_NOTE_SECTION_TITLE_MAP（CaseNoteSectionKey → 中文标题）和
-// section 节点标签标识（CaseSectionLabel），消除两份相同映射
-const SECTION_LABEL_MAP: Record<CaseNoteSectionKey, CaseSectionLabel> = {
-  testPoint: '测试点',
-  preconditions: '前置条件',
-  steps: '测试步骤',
-  expectedResults: '预期结果',
-};
-
-// 保留旧名称兼容内部使用
-const CASE_NOTE_SECTION_TITLE_MAP: Record<CaseNoteSectionKey, string> = SECTION_LABEL_MAP;
-
-function normalizeChecklistItem(line: string): string {
-  return line
-    .replace(/^[-*•]\s*/, '')
-    .replace(/^\d+[\.\)、]\s*/, '')
-    .trim();
-}
-
-function parseCaseNoteSections(note: string): ParsedCaseNoteSections {
-  const sections: ParsedCaseNoteSections = {
-    testPoint: [],
-    preconditions: [],
-    steps: [],
-    expectedResults: [],
-  };
-
-  let activeSection: CaseNoteSectionKey | null = null;
-
-  for (const rawLine of note.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line) {
-      continue;
-    }
-
-    const withColon = line.match(/^(测试点|前置条件|测试步骤|预期结果)\s*[:：]\s*(.*)$/);
-    if (withColon) {
-      activeSection = CASE_NOTE_SECTION_KEY_MAP[withColon[1] as keyof typeof CASE_NOTE_SECTION_KEY_MAP];
-      const inlineItem = normalizeChecklistItem(withColon[2]);
-      if (inlineItem) {
-        sections[activeSection].push(inlineItem);
-      }
-      continue;
-    }
-
-    const pureHeader = line.match(/^(测试点|前置条件|测试步骤|预期结果)$/);
-    if (pureHeader) {
-      activeSection = CASE_NOTE_SECTION_KEY_MAP[pureHeader[1] as keyof typeof CASE_NOTE_SECTION_KEY_MAP];
-      continue;
-    }
-
-    if (!activeSection) {
-      continue;
-    }
-
-    const normalizedItem = normalizeChecklistItem(line);
-    if (normalizedItem) {
-      sections[activeSection].push(normalizedItem);
-    }
-  }
-
-  return sections;
-}
-
-function buildCaseNoteChildren(
-  sections: ParsedCaseNoteSections,
-  aiGenerated: boolean,
-  fallbackTestPoint: string
-): AiCaseNode[] {
-  // 四段固定顺序：测试点 / 前置条件 / 测试步骤 / 预期结果
-  // 每段生成一个节点，内容全写在 topic 里（多项换行展示，不拆子节点）
-  const orderedSections: CaseNoteSectionKey[] = ['testPoint', 'preconditions', 'steps', 'expectedResults'];
-
-  const withFallback: ParsedCaseNoteSections = {
-    ...sections,
-    testPoint: sections.testPoint.length > 0 ? sections.testPoint : [fallbackTestPoint],
-  };
-
-  return orderedSections
-    .map((key) => ({ key, items: toChecklist(withFallback[key]) }))
-    .filter((section) => section.items.length > 0)
-    .map((section) => {
-      // topic = 纯内容（多项换行），通过 tag 标识段落类型
-      const topic = section.items.length === 1
-        ? section.items[0]
-        : section.items.map((item, i) => `${i + 1}. ${item}`).join('\n');
-      return createNode(topic, 'scenario', {
-        aiGenerated,
-        tags: [makeSectionTag(SECTION_LABEL_MAP[section.key])],
-      });
-    });
-}
-
 /**
- * 判断一个 testcase 节点是否是旧格式（testcase 第一个子节点的 topic=="测试点" 且 kind=="scenario"）
- * 旧格式：testcase -> 测试点（scenario）-> 前置条件（scenario）-> ...
- * 新格式：testcase 子节点的 topic 是具体内容，通过 tags 标识类型
+ * 判断一个 testcase 节点是否包含旧格式的展开子节点
+ * 旧格式1：第一个子节点 topic === "测试点" 且 kind === "scenario"（最旧格式）
+ * 旧格式2：子节点带有 section tag（前置条件/测试步骤/预期结果 标签）
  */
 function isLegacyExpandedTestcase(node: AiCaseNode): boolean {
   const children = node.children as AiCaseNode[] | undefined;
@@ -342,17 +190,77 @@ function isLegacyExpandedTestcase(node: AiCaseNode): boolean {
     return false;
   }
   const firstChild = children[0];
-  // 旧格式特征：topic 是"测试点"且 kind 是 scenario（排除用户手动输入“测试点”内容的误判）
-  return firstChild?.topic === '测试点' &&
-    (firstChild?.metadata as Partial<AiCaseNodeMetadata> | undefined)?.kind === 'scenario';
+  // 最旧格式：topic 是"测试点"
+  if (firstChild?.topic === '测试点' &&
+    (firstChild?.metadata as Partial<AiCaseNodeMetadata> | undefined)?.kind === 'scenario') {
+    return true;
+  }
+  // 新旧格式：子节点带有 section tag（通过 tag text 识别）
+  const sectionLabels = new Set(['测试点', '前置条件', '测试步骤', '预期结果']);
+  return children.some((child) => {
+    const tags = (child as AiCaseNode).tags;
+    return Array.isArray(tags) && tags.some((t) => {
+      const text = typeof t === 'string' ? t : t?.text;
+      return typeof text === 'string' && sectionLabels.has(text);
+    });
+  });
 }
 
+/**
+ * 将旧格式的展开子节点收回到 note 字段（迁移）。
+ * 旧格式：testcase 下有「前置条件」「测试步骤」「预期结果」等 section 子节点。
+ * 新格式：testcase 是叶子节点，详情存在 note 里，脑图中每条 case 占一行。
+ */
+function collapseChildrenToNote(node: AiCaseNode): string {
+  const children = (node.children ?? []) as AiCaseNode[];
+  const sectionLabels = ['测试点', '前置条件', '测试步骤', '预期结果'];
+  const parts: string[] = [];
+
+  for (const child of children) {
+    // 识别 section label：优先从 tag，其次从 topic 前缀
+    let label: string | null = null;
+    const tags = child.tags;
+    if (Array.isArray(tags)) {
+      for (const t of tags) {
+        const text = typeof t === 'string' ? t : t?.text;
+        if (typeof text === 'string' && sectionLabels.includes(text)) {
+          label = text;
+          break;
+        }
+      }
+    }
+    if (!label) {
+      for (const sl of sectionLabels) {
+        if (child.topic.startsWith(`${sl}：`) || child.topic.startsWith(`${sl}:`)) {
+          label = sl;
+          break;
+        }
+      }
+    }
+
+    const content = label
+      ? child.topic.replace(new RegExp(`^${label}[：:]\\s*`), '').trim()
+      : child.topic.trim();
+
+    if (content) {
+      parts.push(label ? `${label}：${content}` : content);
+    }
+  }
+
+  return parts.join('\n');
+}
+
+/**
+ * 迁移旧格式的展开子节点为叶子节点（note 存储详情）。
+ * 不再把 note 展开为子节点——新格式下 testcase 始终是叶子节点，每条 case 在脑图中占一行。
+ * 当 migrateLegacy=true 时，会把已有子节点的旧格式 testcase 收回为叶子节点。
+ */
 export function expandImportedCaseNodesFromNote(
   data: AiCaseMindData,
   options?: {
     candidateNodeIds?: string[];
     showNodeKindTags?: boolean;
-    /** 是否强制迁移旧格式节点（已有子节点但第一子节点 topic==="测试点"）*/
+    /** 是否强制迁移旧格式节点（已有子节点的旧格式）到叶子节点 */
     migrateLegacy?: boolean;
   }
 ): { data: AiCaseMindData; expandedCount: number } {
@@ -362,7 +270,7 @@ export function expandImportedCaseNodesFromNote(
   const migrateLegacy = options?.migrateLegacy ?? false;
 
   const next = cloneData(data);
-  let expandedCount = 0;
+  let migratedCount = 0;
 
   const walk = (node: AiCaseNode): void => {
     for (const child of node.children ?? []) {
@@ -380,39 +288,26 @@ export function expandImportedCaseNodesFromNote(
 
     const hasChildren = (node.children?.length ?? 0) > 0;
 
-    // 如果已有子节点：仅在 migrateLegacy=true 且是旧格式时才重建
-    if (hasChildren) {
-      if (!migrateLegacy || !isLegacyExpandedTestcase(node)) {
-        return;
+    // 如果有子节点（旧格式），且开启了迁移，则收回子节点内容到 note，成为叶子节点
+    if (hasChildren && migrateLegacy && isLegacyExpandedTestcase(node)) {
+      const noteFromChildren = collapseChildrenToNote(node);
+      if (noteFromChildren) {
+        node.note = noteFromChildren;
       }
-      // 旧格式迁移：清除旧 children，从 note 重新展开
       delete node.children;
+      node.metadata = {
+        ...metadata,
+        nodeVersion: metadata.nodeVersion + 1,
+        updatedAt: Date.now(),
+      };
+      migratedCount += 1;
     }
-
-    const note = typeof node.note === 'string' ? node.note.trim() : '';
-    if (!note) {
-      return;
-    }
-
-    const sections = parseCaseNoteSections(note);
-    const children = buildCaseNoteChildren(sections, metadata.aiGenerated, node.topic);
-    if (children.length === 0) {
-      return;
-    }
-
-    node.children = children;
-    node.expanded = true;
-    node.metadata = {
-      ...metadata,
-      nodeVersion: metadata.nodeVersion + 1,
-      updatedAt: Date.now(),
-    };
-    expandedCount += 1;
+    // 新格式：testcase 已经是叶子节点，note 存储详情，直接保留，不做任何展开
   };
 
   walk(next.nodeData);
 
-  if (expandedCount === 0) {
+  if (migratedCount === 0) {
     return { data, expandedCount: 0 };
   }
 
@@ -420,37 +315,27 @@ export function expandImportedCaseNodesFromNote(
     data: normalizeMindData(next, {
       showNodeKindTags: options?.showNodeKindTags ?? true,
     }),
-    expandedCount,
+    expandedCount: migratedCount,
   };
 }
 
-function buildCaseChildren(
+function buildCaseNote(
   preconditions: string[],
   steps: string[],
   expectedResults: string[],
   title: string
-): AiCaseNode[] {
-  const fmtContent = (items: string[]): string | null => {
-    if (items.length === 0) return null;
+): string {
+  const fmtLines = (items: string[]): string => {
+    if (items.length === 0) return '';
     if (items.length === 1) return items[0];
     return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
   };
 
-  const sections: Array<{ label: CaseSectionLabel; content: string | null }> = [
-    { label: '测试点', content: title.trim() || null },
-    { label: '前置条件', content: fmtContent(preconditions) },
-    { label: '测试步骤', content: fmtContent(steps) },
-    { label: '预期结果', content: fmtContent(expectedResults) },
-  ];
-
-  return sections
-    .filter((s): s is { label: CaseSectionLabel; content: string } => s.content !== null)
-    .map((s) =>
-      createNode(s.content, 'scenario', {
-        aiGenerated: true,
-        tags: [makeSectionTag(s.label)],
-      })
-    );
+  const lines: string[] = [`测试点：${title.trim()}`];
+  if (preconditions.length > 0) lines.push(`前置条件：${fmtLines(preconditions)}`);
+  if (steps.length > 0) lines.push(`测试步骤：${fmtLines(steps)}`);
+  if (expectedResults.length > 0) lines.push(`预期结果：${fmtLines(expectedResults)}`);
+  return lines.join('\n');
 }
 
 function buildSmokeCases(anchor: string): AiCaseNode[] {
@@ -458,7 +343,7 @@ function buildSmokeCases(anchor: string): AiCaseNode[] {
     createNode(`${anchor} 主流程可以顺利完成`, 'testcase', {
       priority: 'P0',
       aiGenerated: true,
-      children: buildCaseChildren(
+      note: buildCaseNote(
         ['已有可登录测试账号，且目标环境可访问'],
         ['进入登录页面并输入有效账号密码', '点击登录并等待页面跳转'],
         ['登录成功并跳转到用户主页', '页面展示当前用户信息且会话状态有效'],
@@ -468,7 +353,7 @@ function buildSmokeCases(anchor: string): AiCaseNode[] {
     createNode(`${anchor} 关键参数校验与提示正确`, 'testcase', {
       priority: 'P1',
       aiGenerated: true,
-      children: buildCaseChildren(
+      note: buildCaseNote(
         ['已准备非法与合法输入组合'],
         ['输入非法参数并提交', '根据错误提示修正后再次提交'],
         ['非法参数有明确错误提示', '修正后可正常完成流程'],
@@ -593,7 +478,7 @@ function buildCoverageModules(anchor: string): AiCaseNode[] {
         createNode(point.title, 'testcase', {
           aiGenerated: true,
           priority: point.priority ?? 'P1',
-          children: buildCaseChildren(point.preconditions, point.steps, point.expectedResults, point.title),
+          note: buildCaseNote(point.preconditions, point.steps, point.expectedResults, point.title),
         })
       ),
     })

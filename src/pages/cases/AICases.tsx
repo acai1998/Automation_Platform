@@ -876,7 +876,7 @@ function AiCasesInner() {
         return;
       }
 
-      let payload: any;
+      let payload: Record<string, unknown>;
       try {
         payload = JSON.parse(dataLines.join('\n'));
       } catch {
@@ -1319,10 +1319,7 @@ function AiCasesInner() {
                 refreshMind: true,
               });
 
-              const expandedHint = expanded.expandedCount > 0
-                ? `，已自动拆分 ${expanded.expandedCount} 个节点的步骤/预期`
-                : '';
-              toast.success(`已导入 ${importedNodes.length} 个节点${expandedHint}`);
+              toast.success(`已导入 ${importedNodes.length} 个节点`);
             } finally {
               setIsImportingMindNodes(false);
             }

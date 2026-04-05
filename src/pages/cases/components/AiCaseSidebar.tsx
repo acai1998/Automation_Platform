@@ -290,6 +290,32 @@ export function AiCaseSidebar({
                   })()}
                   {!canEditSelectedNode ? <span className="text-[10px] text-slate-400">（仅测试点可切换状态）</span> : null}
                 </div>
+                {/* 展示 testcase 的四段式详情（note） */}
+                {canEditSelectedNode && selectedNode?.note ? (
+                  <div className="mt-2 space-y-1">
+                    {selectedNode.note.split(/\r?\n/).map((line, idx) => {
+                      const trimmed = line.trim();
+                      if (!trimmed) return null;
+                      const sectionMatch = trimmed.match(/^(测试点|前置条件|测试步骤|预期结果)[：:]\s*([\s\S]*)$/);
+                      if (sectionMatch) {
+                        const labelColors: Record<string, string> = {
+                          '测试点': 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400',
+                          '前置条件': 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400',
+                          '测试步骤': 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
+                          '预期结果': 'bg-pink-50 text-pink-700 dark:bg-pink-900/20 dark:text-pink-400',
+                        };
+                        const labelClass = labelColors[sectionMatch[1]] ?? 'bg-slate-50 text-slate-600';
+                        return (
+                          <div key={idx} className="rounded-md p-1.5">
+                            <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded mb-0.5 ${labelClass}`}>{sectionMatch[1]}</span>
+                            <p className="text-[11px] text-slate-600 dark:text-slate-400 whitespace-pre-wrap leading-relaxed">{sectionMatch[2]}</p>
+                          </div>
+                        );
+                      }
+                      return <p key={idx} className="text-[11px] text-slate-500 whitespace-pre-wrap">{trimmed}</p>;
+                    })}
+                  </div>
+                ) : null}
               </>
             ) : (
               <p className="text-[11px] text-slate-400">请在脑图中点击一个节点</p>

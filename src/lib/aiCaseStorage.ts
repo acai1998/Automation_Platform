@@ -215,26 +215,22 @@ export function exportMindDataToMarkdown(mindData: AiCaseMindData): string {
       const status = node.metadata?.status ? ` (${node.metadata.status})` : '';
       lines.push(`- [ ] **${topic}**${priority}${status}`);
 
-      // 展开子节点（前置条件/步骤/预期结果）
+      // 新格式：testcase 是叶子节点，note 存储四段式详情（测试点/前置条件/测试步骤/预期结果）
+      if (node.note) {
+        for (const noteLine of node.note.split(/\r?\n/)) {
+          const trimmedLine = noteLine.trim();
+          if (trimmedLine) {
+            lines.push(`  - ${trimmedLine}`);
+          }
+        }
+      }
+
+      // 兼容旧格式：仍有子节点时也展示
       const children = (node.children ?? []) as AiCaseNode[];
       for (const child of children) {
         const childTopic = (child.topic ?? '').trim();
         if (!childTopic) continue;
-
-        const grandchildren = (child.children ?? []) as AiCaseNode[];
-        if (grandchildren.length > 0) {
-          lines.push(`  - **${childTopic}**`);
-          for (const gc of grandchildren) {
-            const gcTopic = (gc.topic ?? '').trim();
-            if (gcTopic) lines.push(`    - ${gcTopic}`);
-          }
-        } else {
-          lines.push(`  - ${childTopic}`);
-        }
-      }
-
-      if (node.note) {
-        lines.push(`  > ${node.note.replace(/\n/g, ' ')}`);
+        lines.push(`  - ${childTopic}`);
       }
 
       return; // testcase 子节点已在上面处理，不再递归
