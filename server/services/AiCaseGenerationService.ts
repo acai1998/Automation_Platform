@@ -231,6 +231,24 @@ function normalizePlan(raw: unknown, fallbackWorkspaceName: string): AiCaseGener
     throw new Error('模型返回的 modules 无有效数据');
   }
 
+  // 代码层强制校验结构下限，不仅靠 prompt 约束
+  if (modules.length < 3) {
+    throw new Error(`模型返回的模块数量不足（得到 ${modules.length} 个，少于要求的 3 个）`);
+  }
+
+  for (const m of modules) {
+    for (const s of m.scenarios) {
+      if (s.cases.length < 2) {
+        throw new Error(`模块「${m.name}」中场景「${s.name}」的测试点不足（得到 ${s.cases.length} 个，少于要求的 2 个）`);
+      }
+      for (const c of s.cases) {
+        if (!c.steps || c.steps.length < 2) {
+          throw new Error(`场景「${s.name}」中测试点「${c.title}」的测试步骤不足（得到 ${c.steps?.length ?? 0} 条，少于要求的 2 条）`);
+        }
+      }
+    }
+  }
+
   const rawWsName = typeof payload.workspaceName === 'string' ? payload.workspaceName.trim() : '';
   return {
     workspaceName: rawWsName && isValidWorkspaceName(rawWsName) ? rawWsName : fallbackWorkspaceName,
@@ -508,15 +526,23 @@ export class AiCaseGenerationService {
         source: 'llm',
       });
 
-      const payload = (await response.json()) as OpenAiChatResponse & {
-        error?: { message?: string };
-      };
-
-      if (!response.ok) {
-        throw new Error(payload.error?.message || `LLM 请求失败: HTTP ${response.status}`);
+      // 先读取原始文本，再手动解析 JSON，避免网关错误等非 JSON 响应导致上下文丢失
+      const rawText = await response.text();
+      let payload: (OpenAiChatResponse & { error?: { message?: string } }) | null = null;
+      try {
+        payload = JSON.parse(rawText) as OpenAiChatResponse & { error?: { message?: string } };
+      } catch {
+        if (!response.ok) {
+          throw new Error(`LLM 请求失败: HTTP ${response.status}, 响应内容=${rawText.slice(0, 300)}`);
+        }
+        throw new Error(`LLM 返回了非 JSON 内容: ${rawText.slice(0, 300)}`);
       }
 
-      const content = payload.choices?.[0]?.message?.content;
+      if (!response.ok) {
+        throw new Error(payload?.error?.message || `LLM 请求失败: HTTP ${response.status}`);
+      }
+
+      const content = payload?.choices?.[0]?.message?.content;
       if (!content || typeof content !== 'string') {
         throw new Error('LLM 返回内容为空');
       }

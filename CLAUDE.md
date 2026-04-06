@@ -639,36 +639,6 @@ Jenkins 回调支持三种认证方式（任选其一）：
 
 ---
 
-## 前端开发规范
-
-### 表单字段验证
-- 所有输入必须验证非空
-- 数值字段验证格式和范围
-- 提供清晰的错误提示信息
-
-### 状态管理
-使用 TanStack Query 进行服务端状态管理：
-- 自动缓存管理
-- 自动重试机制
-- 实时同步
-
-### 图表展示
-使用 **Recharts** 库实现：
-- ✅ 绑定真实数据
-- ✅ 支持 Hover Tooltip 展示详细数据
-- ✅ 支持多种图表类型（折线图、柱状图、饼图、甜甜圈图）
-- ✅ 支持自定义颜色主题和交互效果
-- ✅ 支持日期范围筛选和数据刷新
-- ❌ **禁止**使用静态图片或手写 SVG 模拟
-
-### 异步操作模式
-对于耗时操作（如 Jenkins 执行）：
-- 立即返回并显示加载状态
-- 使用轮询或 WebSocket 获取进度
-- 显示明确的完成状态和错误提示
-
----
-
 ## 代码质量要求
 
 ### TypeScript 类型检查
@@ -676,147 +646,16 @@ Jenkins 回调支持三种认证方式（任选其一）：
 - ✅ 严格的参数类型检查
 - ❌ **禁止** `any` 类型（用 `unknown` 或具体类型替代）
 
-### 错误处理
-- 使用 try-catch 捕获异常
-- 提供详细的错误信息
-- 用户界面显示友好的错误提示
-
 ### 代码命名规范
-- 统一的命名约定
 - 文件名与组件名一致（如 `Button.tsx` 导出 `Button` 组件）
-- 类和接口使用 PascalCase
-- 函数和变量使用 camelCase
+- 类和接口使用 PascalCase，函数和变量使用 camelCase
 
-### 性能指标
-| 指标 | 目标值 | 说明 |
-|-----|-------|------|
-| 轮询间隔 | 3000ms | 平衡实时性和性能 |
-| API 响应时间 | < 500ms | 平均响应时间 |
-| 前端加载时间 | < 3s | 首屏加载时间 |
-| 图表渲染时间 | < 1s | 图表加载和渲染时间 |
-| 数据刷新延迟 | < 2s | 数据刷新到页面更新的延迟 |
-
----
-
-## 常用命令和工具
-
-### 调试和验证
-```bash
-# Jenkins 健康检查
-curl http://localhost:3000/api/jenkins/health
-
-# 诊断执行问题
-curl "http://localhost:3000/api/jenkins/diagnose?runId=123"
-
-# 测试回调接口
-curl -X POST http://localhost:3000/api/executions/callback \
-  -H "X-Api-Key: <api_key>" \
-  -H "Content-Type: application/json" \
-  -d '{"runId": 123, "status": "success", ...}'
-
-# 手动修复卡住的执行记录
-curl -X POST http://localhost:3000/api/jenkins/callback/manual-sync/:runId \
-  -H "X-Api-Key: <api_key>"
-
-# 查看执行详情
-curl http://localhost:3000/api/jenkins/batch/123
-
-# 查询卡住的执行
-curl http://localhost:3000/api/executions/stuck
-```
-
-### 测试命令
-```bash
-# 运行前端测试
-npx vitest
-
-# 运行测试并监听变化
-npx vitest --watch
-
-# 运行单次测试
-npx vitest run
-
-# 测试覆盖率
-npx vitest --coverage
-
-# 运行特定测试文件
-npx vitest test_case/frontend/components/GitHubRepositoryTable.test.tsx
-```
-
-### 类型检查
-```bash
-# 检查前端类型
-npx tsc --noEmit -p tsconfig.json
-
-# 检查后端类型
-npx tsc --noEmit -p tsconfig.server.json
-```
-
-### 部署相关
-```bash
-# 构建前端
-npm run build
-
-# 预览构建结果
-npm run preview
-
-# 构建后端
-npm run server:build
-
-# 生产环境启动（使用 PM2）
-npm run prod:start
-
-# 停止生产服务
-npm run prod:stop
-
-# 重启生产服务
-npm run prod:restart
-
-# 重新加载配置（零停机）
-npm run prod:reload
-
-# 查看生产日志
-npm run prod:logs
-
-# 查看服务状态
-npm run prod:status
-
-# 完整部署流程
-npm run prod:deploy
-```
-
-### PM2 进程管理
-```bash
-# 查看所有进程
-pm2 list
-
-# 查看详细信息
-pm2 show autotest-platform
-
-# 监控资源使用
-pm2 monit
-
-# 重启所有进程
-pm2 restart all
-
-# 保存进程列表
-pm2 save
-
-# 设置开机自启
-pm2 startup
-```
-
-### 环境配置
-```bash
-# 复制环境变量模板
-cp .env.example .env
-
-# 检查环境变量
-bash scripts/check-env.sh
-
-# 验证环境配置
-bash deployment/scripts/verify-env.sh
-```
+### 性能参考指标
+| 指标 | 目标值 |
+|-----|-------|
+| 轮询间隔 | 3000ms |
+| API 响应时间 | < 500ms |
+| 前端首屏加载 | < 3s |
 
 ---
 
@@ -916,34 +755,6 @@ systemctl start nginx
 
 ---
 
-## 安全最佳实践
-
-### 认证和授权
-- 使用 JWT Token 进行用户认证
-- 实现基于角色的访问控制（RBAC）
-- 敏感操作需要二次验证
-- Token 有效期管理
-
-### 数据保护
-- 密码使用 bcrypt 加密
-- 敏感信息不要记录到日志
-- API 响应过滤敏感字段
-- 使用 HTTPS 传输数据
-
-### 输入验证
-- 所有用户输入必须验证
-- 防止 SQL 注入（使用参数化查询）
-- 防止 XSS 攻击（输入转义）
-- 限制文件上传类型和大小
-
-### API 安全
-- 实现速率限制
-- CORS 配置
-- CSRF 保护
-- API Key 认证（用于 Jenkins 回调）
-
----
-
 ## 最佳实践
 
 ### 数据查询优化
@@ -989,37 +800,87 @@ systemctl start nginx
    - 耗时操作使用异步队列
    - Jenkins 触发使用非阻塞调用
 
-### 错误处理最佳实践
-1. **前端错误处理**：
-   - 使用 try-catch 包裹异步操作
-   - 显示友好的错误提示
-   - 记录错误日志供调试
+## 开源库复用规范
 
-2. **后端错误处理**：
-   - 统一错误响应格式
-   - 区分业务错误和系统错误
-   - 敏感信息不要暴露给前端
+**核心原则：优先复用成熟开源库，禁止重复造轮子。** 遇到通用问题时，先查项目已有依赖，再考虑引入新库，最后才自行实现。
 
-3. **数据验证**：
-   - 前端验证用户输入
-   - 后端验证所有请求参数
-   - 使用 TypeScript 类型检查
+### 项目已有可复用库速查
 
-### 代码组织最佳实践
-1. **组件拆分**：
-   - 单一职责原则
-   - 可复用组件抽取到 `src/components/`
-   - 业务组件放在对应页面目录
+#### 前端（`src/`）
+| 场景 | 使用库 | 说明 |
+|------|--------|------|
+| 日期格式化 / 计算 | `date-fns` | `format`, `addDays`, `differenceInDays` 等，**禁止**手写日期运算 |
+| 日期选择器 | `react-day-picker` | 已集成，直接复用 |
+| 图表 | `recharts` | 折线/柱状/饼图/甜甜圈，**禁止**用 SVG 手写 |
+| 虚拟滚动 | `@tanstack/react-virtual` | 列表超 100 条时必须使用 |
+| 服务端状态 | `@tanstack/react-query` | 所有 API 请求走 TanStack Query，禁止裸 fetch + useState |
+| UI 组件 | `shadcn/ui` + `radix-ui` | Button/Dialog/Select 等基础组件直接用，路径 `src/components/ui/` |
+| 通知 Toast | `sonner` | `toast.success / toast.error`，禁止自写 Toast |
+| 表单校验 | `react-hook-form` + `zod`（若已引入）| 复杂表单使用，简单场景可用受控组件 |
+| 路由 | `wouter` | `useRoute`, `useLocation`, `<Link>`, `<Route>` |
+| 样式工具 | `clsx` / `tailwind-merge` / `cn()` | 合并 className，路径 `src/lib/utils.ts` |
+| 图标 | `lucide-react` | 已内置 600+ 图标，**禁止**手写 SVG 图标 |
 
-2. **服务层设计**：
-   - 业务逻辑放在 Service 层
-   - 数据访问放在 Repository 层
-   - 控制器只负责路由和参数验证
+#### 后端（`server/`）
+| 场景 | 使用库 | 说明 |
+|------|--------|------|
+| ORM / 数据库 | `TypeORM` + `mysql2` | 实体定义在 `server/entities/`，禁止裸 SQL 字符串拼接 |
+| HTTP 路由 | `express` | 路由文件在 `server/routes/` |
+| 参数校验 | `express-validator` 或 手动校验 | 统一在路由层做入参校验 |
+| 定时任务 | `node-cron` | 已有 `TaskSchedulerService` 封装，**勿重复实现** Cron 逻辑 |
+| Git 操作 | `simple-git` | 仓库克隆、diff、log 等，**禁止**用 `child_process.exec('git ...')` |
+| 邮件发送 | `nodemailer` | 已有 `EmailService` 封装 |
+| WebSocket | `socket.io` | 已有实时推送基础设施，新增实时功能接入现有 Socket 服务 |
+| 密码加密 | `bcryptjs` | `bcrypt.hash / bcrypt.compare`，禁止明文存储 |
+| JWT | `jsonwebtoken` | 已在 `AuthService` 封装，复用现有方法 |
+| 环境变量 | `dotenv` | 统一从 `.env` 读取，参考 `.env.example` |
 
-3. **类型定义**：
-   - 共享类型放在 `shared/types/`
-   - 前端类型放在 `src/types/`
-   - 后端类型放在 `server/types/`
+### 引入新库的决策流程
+
+```
+遇到通用需求
+  ↓
+① 先查上方速查表，项目已有？→ 直接用
+  ↓ 否
+② 检查 package.json，已安装但未列出？→ 直接 import
+  ↓ 否
+③ npm 上有成熟库（周下载量 > 100k，近期维护）？→ npm install 后使用
+  ↓ 否或库太重
+④ 自行实现最小业务逻辑（必须写注释说明为何不用现成库）
+```
+
+### 典型复用示例
+
+```typescript
+// ✅ 正确：用 date-fns 做日期运算
+import { format, subDays, isAfter } from 'date-fns';
+const yesterday = subDays(new Date(), 1);
+
+// ❌ 错误：手写日期计算
+const yesterday = new Date(Date.now() - 86400000);
+
+// ✅ 正确：用 lucide-react 图标
+import { CheckCircle, AlertTriangle } from 'lucide-react';
+
+// ❌ 错误：内联 SVG
+<svg width="16" height="16">...</svg>
+
+// ✅ 正确：用 simple-git 执行 Git 操作
+import simpleGit from 'simple-git';
+const git = simpleGit(repoPath);
+await git.pull();
+
+// ❌ 错误：shell 调用
+import { exec } from 'child_process';
+exec('git pull', ...);
+
+// ✅ 正确：用 TanStack Query 管理请求状态
+const { data, isLoading } = useQuery({ queryKey: ['cases'], queryFn: fetchCases });
+
+// ❌ 错误：裸 fetch + useState
+const [data, setData] = useState(null);
+useEffect(() => { fetch('/api/cases').then(...) }, []);
+```
 
 ## 扩展开发指南
 
@@ -1065,15 +926,6 @@ systemctl start nginx
 - [项目结构说明](docs/PROJECT_STRUCTURE.md)
 - [项目快速开始](docs/QUICK_START.md)
 - [部署指南](deployment/README.md)
-
----
-
-## 联系与支持
-
-如有问题或建议，请：
-1. 查阅相关文档
-2. 检查 GitHub Issues
-3. 联系项目维护者
 
 ---
 

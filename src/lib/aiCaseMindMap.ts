@@ -93,22 +93,33 @@ function normalizeNode(
   const incoming = (node.metadata ?? {}) as Partial<AiCaseNodeMetadata>;
 
   const status = incoming.status && isAiCaseNodeStatus(incoming.status) ? incoming.status : base.status;
+  const now = Date.now();
   const merged: AiCaseNodeMetadata = {
     ...base,
     ...incoming,
     kind: incoming.kind ?? inferredKind,
     status,
-    priority: incoming.priority ?? base.priority,
+    // 严格枚举校验：priority 必须是合法值，否则回退到默认值
+    priority: (incoming.priority === 'P0' || incoming.priority === 'P1' || incoming.priority === 'P2' || incoming.priority === 'P3')
+      ? incoming.priority
+      : base.priority,
+    // 严格类型校验：attachmentIds 只接受非空字符串
     attachmentIds: Array.isArray(incoming.attachmentIds)
-      ? [...new Set(incoming.attachmentIds.filter(Boolean))]
+      ? [...new Set(incoming.attachmentIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0))]
       : [],
     nodeVersion: typeof incoming.nodeVersion === 'number' && incoming.nodeVersion > 0
       ? incoming.nodeVersion
       : base.nodeVersion,
-    updatedAt: typeof incoming.updatedAt === 'number' ? incoming.updatedAt : Date.now(),
+    updatedAt: typeof incoming.updatedAt === 'number' ? incoming.updatedAt : now,
+    // 校验每条历史记录的 status 合法性，并限制最多保留 20 条
     statusHistory: Array.isArray(incoming.statusHistory) && incoming.statusHistory.length > 0
       ? incoming.statusHistory
-      : [{ status, at: Date.now() }],
+          .map((item) => ({
+            status: isAiCaseNodeStatus(item.status) ? item.status : status,
+            at: typeof item.at === 'number' ? item.at : now,
+          }))
+          .slice(-20)
+      : [{ status, at: now }],
   };
 
   node.metadata = merged;
@@ -278,7 +289,6 @@ function migrateNestedTestcaseToFlat(node: AiCaseNode): void {
   // 情况2：子节点 topic 带旧前缀标签 → 去掉前缀并把多行内容改为分号拼接
   const needsLabelStrip = flatChildren.some((c) => LEGACY_LABEL_RE.test(c.topic));
   if (needsLabelStrip) {
-    const sectionOrder = ['前置条件', '测试步骤', '预期结果'];
     const rebuilt: AiCaseNode[] = [];
 
     for (const child of flatChildren) {
@@ -297,14 +307,8 @@ function migrateNestedTestcaseToFlat(node: AiCaseNode): void {
       }
     }
 
-    // 按 前置条件 / 测试步骤 / 预期结果 顺序重排（保证稳定顺序）
-    rebuilt.sort((a, b) => {
-      const ai = sectionOrder.findIndex((s) => a.topic.startsWith(s));
-      const bi = sectionOrder.findIndex((s) => b.topic.startsWith(s));
-      // 已经去掉了前缀标签，无法再按前缀排序；保留原顺序
-      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-    });
-
+    // 注意：此处已去掉了前缀标签（如「前置条件：」），无法再按前缀排序。
+    // 子节点顺序由原始 flatChildren 遍历顺序保证（前置条件→测试步骤→预期结果）。
     node.children = rebuilt;
     return;
   }
@@ -356,9 +360,13 @@ export function expandImportedCaseNodesFromNote(
       const childNodes = expandNoteToChildren(node.note as string);
       if (childNodes.length > 0) {
         node.children = childNodes;
+        // 安全递增：防止 nodeVersion 为 undefined/NaN 导致版本号异常
+        const currentVersion = typeof metadata.nodeVersion === 'number' && metadata.nodeVersion > 0
+          ? metadata.nodeVersion
+          : 1;
         node.metadata = {
           ...metadata,
-          nodeVersion: metadata.nodeVersion + 1,
+          nodeVersion: currentVersion + 1,
           updatedAt: Date.now(),
         };
         expandedCount += 1;
@@ -369,9 +377,13 @@ export function expandImportedCaseNodesFromNote(
     // 情况2：最旧格式（嵌套 "测试点" scenario 层）→ 迁移为新格式
     if (isLegacyNestedTestcase(node)) {
       migrateNestedTestcaseToFlat(node);
+      // 安全递增：防止 nodeVersion 为 undefined/NaN 导致版本号异常
+      const currentVersion = typeof metadata.nodeVersion === 'number' && metadata.nodeVersion > 0
+        ? metadata.nodeVersion
+        : 1;
       node.metadata = {
         ...metadata,
-        nodeVersion: metadata.nodeVersion + 1,
+        nodeVersion: currentVersion + 1,
         updatedAt: Date.now(),
       };
       expandedCount += 1;
@@ -686,12 +698,16 @@ export function setNodeStatus(data: AiCaseMindData, nodeId: string, status: AiCa
     }
 
     const now = Date.now();
+    // 安全递增：防止 nodeVersion 为 undefined/NaN
+    const currentVersion = typeof current.nodeVersion === 'number' && current.nodeVersion > 0
+      ? current.nodeVersion
+      : 1;
     node.metadata = {
       ...current,
       status,
-      nodeVersion: current.nodeVersion + 1,
+      nodeVersion: currentVersion + 1,
       updatedAt: now,
-      statusHistory: [...current.statusHistory, { status, at: now }].slice(-20),
+      statusHistory: [...(current.statusHistory ?? []), { status, at: now }].slice(-20),
     };
   });
 }

@@ -197,6 +197,8 @@ function AiCasesInner() {
   const isUploadingRef = useRef(false);
   const showNodeKindTagsRef = useRef(readNodeTagVisibilityPreference());
   const generateProgressResetTimerRef = useRef<number | null>(null);
+  // 流式请求的 AbortController：用于组件卸载或重新生成时取消未完成的请求
+  const streamAbortControllerRef = useRef<AbortController | null>(null);
   const remoteSyncMetaRef = useRef<RemoteSyncMeta>(DEFAULT_REMOTE_SYNC_META);
   const cleanupStaleAttachmentsRef = useRef<(
     nextData: AiCaseMindData,
@@ -285,6 +287,9 @@ function AiCasesInner() {
         autoInferNameTimerRef.current = null;
       }
       clearGenerateProgressTimers();
+      // 组件卸载时应中止正在进行的流式请求，防止还未卸载时尝试 setState
+      streamAbortControllerRef.current?.abort();
+      streamAbortControllerRef.current = null;
     };
   }, [clearGenerateProgressTimers]);
 
@@ -808,6 +813,11 @@ function AiCasesInner() {
   );
 
   const streamGenerateFromBackend = useCallback(async (): Promise<StreamGenerateResultPayload> => {
+    // 中止上一次未完成的流式请求（如快速重复点击生成按钮）
+    streamAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    streamAbortControllerRef.current = controller;
+
     const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
 
     const streamEndpoint =
@@ -826,6 +836,7 @@ function AiCasesInner() {
         workspaceName,
         persist: false,
       }),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -854,6 +865,11 @@ function AiCasesInner() {
     let skeletonData: AiCaseMindData | null = null;
 
     const processEventBlock = (block: string): void => {
+      // 如果请求已被中止，不再处理任何事件
+      if (controller.signal.aborted) {
+        return;
+      }
+
       let eventName = 'message';
       const dataLines: string[] = [];
 
@@ -888,7 +904,7 @@ function AiCasesInner() {
         return;
       }
 
-      // 渐进式节点推送：每收到一个 module 节点，立即追加到骨架脑图并刷新
+      // 渐进式节点推送：每收到一个 module 节点，立即按索引位置替换到骨架脑图
       if (eventName === 'node_module') {
         const moduleNode = payload?.moduleNode;
         const moduleIndex: number = typeof payload?.moduleIndex === 'number' ? payload.moduleIndex : 0;
@@ -899,7 +915,7 @@ function AiCasesInner() {
         }
 
         if (!skeletonData) {
-          // 第一个 module：创建骨架根节点
+          // 第一个 module：创建骨架根节点（预分配 totalModules 个占位 slot）
           const skeleton = createInitialMindData(workspaceName || 'AI Testcase Workspace');
           skeleton.nodeData.children = [];
           const normalizedSkeleton = normalizeMindData(skeleton, {
@@ -908,33 +924,44 @@ function AiCasesInner() {
           skeletonData = normalizedSkeleton;
         }
 
-        // 追加新 module 节点（已含子节点），并展开 note 为子节点
-        const moduleAsData: AiCaseMindData = {
+        // 性能优化：只对当前新模块做 normalize + expand，再按索引替换到骨架中
+        // 避免每次全量 normalize 整棵树（旧逻辑每次 append 导致 O(n²) 开销）
+        const singleModuleData: AiCaseMindData = {
           ...skeletonData,
           nodeData: {
             ...skeletonData.nodeData,
-            children: [
-              ...(skeletonData.nodeData.children ?? []),
-              moduleNode as AiCaseNode,
-            ],
+            children: [moduleNode as AiCaseNode],
           },
         };
-
-        const normalizedModule = normalizeMindData(moduleAsData, {
+        const normalizedSingleModule = normalizeMindData(singleModuleData, {
           showNodeKindTags: showNodeKindTagsRef.current,
         });
-        const expandedModule = expandImportedCaseNodesFromNote(normalizedModule, {
+        const expandedSingleModule = expandImportedCaseNodesFromNote(normalizedSingleModule, {
           showNodeKindTags: showNodeKindTagsRef.current,
         });
+        const normalizedModuleNode = expandedSingleModule.data.nodeData.children?.[0] as AiCaseNode | undefined;
 
-        skeletonData = expandedModule.data;
+        // 按索引替换（而非 append），防止并发推送或重试模块顺序错乱
+        const nextChildren = [...(skeletonData.nodeData.children ?? [])];
+        if (normalizedModuleNode) {
+          nextChildren[moduleIndex] = normalizedModuleNode;
+        }
+
+        const nextSkeletonData: AiCaseMindData = {
+          ...skeletonData,
+          nodeData: {
+            ...skeletonData.nodeData,
+            children: nextChildren,
+          },
+        };
+        skeletonData = nextSkeletonData;
 
         // 实时刷新脑图（使用 mindRef 直接刷新，不触发 schedulePersist 避免频繁写 IndexedDB）
         if (mindRef.current) {
-          mindRef.current.refresh(expandedModule.data as MindElixirData);
+          mindRef.current.refresh(nextSkeletonData as MindElixirData);
         }
-        setMindData(expandedModule.data);
-        mindDataRef.current = expandedModule.data;
+        setMindData(nextSkeletonData);
+        mindDataRef.current = nextSkeletonData;
 
         // 更新进度提示
         const progressPercent = Math.round(((moduleIndex + 1) / totalModules) * 40) + 55;

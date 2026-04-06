@@ -248,9 +248,8 @@ function buildCaseChildNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[
   ];
 }
 
-export function createAiCaseNodeId(): string {
-  return `node-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
-}
+// ID 生成规则统一维护在 shared 层，此处转发以保持向后兼容
+export { createAiCaseNodeId } from '@shared/types/aiCaseNodeMetadata';
 
 export function normalizeMapData(raw: unknown): AiCaseMapData {
   if (!raw || typeof raw !== 'object') {
@@ -278,9 +277,10 @@ export function calculateWorkspaceCounters(mapData: AiCaseMapData): AiCaseWorksp
     skippedCases: 0,
   };
 
-  const visit = (node: AiCaseMapNode): void => {
+  const visit = (node: AiCaseMapNode, depth: number): void => {
     const children = Array.isArray(node.children) ? node.children : [];
-    const kind = node.metadata?.kind ?? inferNodeKind(1, children.length);
+    // 传递真实 depth 以防止深层节点 kind 推断错误
+    const kind = node.metadata?.kind ?? inferNodeKind(depth, children.length);
     // 只统计 testcase 类型节点（scenario 子节点不计入）
     const shouldCount = kind === 'testcase';
 
@@ -295,10 +295,10 @@ export function calculateWorkspaceCounters(mapData: AiCaseMapData): AiCaseWorksp
       if (status === 'skipped') stats.skippedCases += 1;
     }
 
-    children.forEach((child) => visit(child));
+    children.forEach((child) => visit(child, depth + 1));
   };
 
-  visit(mapData.nodeData);
+  visit(mapData.nodeData, 0);
   return stats;
 }
 
@@ -361,15 +361,19 @@ export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData 
     children: plan.modules.map((module) =>
       createNode(module.name, 'module', {
         aiGenerated: true,
-        children: module.scenarios.flatMap((scenario) =>
-          scenario.cases.map((testCase) =>
-            // testcase 节点含前置条件/测试步骤/预期结果子节点，可在脑图中展开查看
-            createNode(testCase.title, 'testcase', {
-              aiGenerated: true,
-              priority: parsePriority(testCase.priority, 'P1'),
-              children: buildCaseChildNodes(testCase),
-            })
-          )
+        // 保留 scenario 层：每个 scenario 独立成为子节点，避免语义丢失
+        children: module.scenarios.map((scenario) =>
+          createNode(scenario.name, 'scenario', {
+            aiGenerated: true,
+            children: scenario.cases.map((testCase) =>
+              // testcase 节点含前置条件/测试步骤/预期结果子节点，可在脑图中展开查看
+              createNode(testCase.title, 'testcase', {
+                aiGenerated: true,
+                priority: parsePriority(testCase.priority, 'P1'),
+                children: buildCaseChildNodes(testCase),
+              })
+            ),
+          })
         ),
       })
     ),

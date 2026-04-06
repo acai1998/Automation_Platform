@@ -83,9 +83,8 @@ export const AI_CASE_NODE_STATUS_ORDER: AiCaseNodeStatus[] = [
   'skipped',
 ];
 
-export function createAiCaseNodeId(): string {
-  return `node-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
-}
+// ID 生成规则统一维护在 shared 层，此处转发以保持向后兼容
+export { createAiCaseNodeId } from '@shared/types/aiCaseNodeMetadata';
 
 export function createAiCaseAttachmentId(): string {
   return `attachment-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
