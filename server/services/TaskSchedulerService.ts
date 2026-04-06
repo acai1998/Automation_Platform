@@ -4,13 +4,16 @@
  * 功能：
  * 1. 启动时加载所有 scheduled + active 任务，注册 Cron 定时器
  * 2. 支持动态添加/移除/更新任务调度
- * 3. 服务启动恢复：检测漏触发（上次执行时间 + cron 间隔 < now），进行补偿执行
+ * 3. 服务启动恢复：检测漏触发（上次执行时间 + cron 下次执行时间 < now），进行补偿执行
  * 4. 并发上限（CONCURRENCY_LIMIT）：超限时将任务放入等待队列
  * 5. 失败重试：支持 maxRetries / retryDelayMs 配置
  * 6. [P1] 并发槽位以 runId 为维度，槽位在 Jenkins 回调或执行超时后释放
  * 7. [P1] 等待队列支持优先级、入队时间、最大深度和队列超时机制
+ *
+ * 依赖：croner（零依赖、原生 TS 支持的 cron 解析库）
  */
 
+import { Cron } from 'croner';
 import { query, queryOne, getPool } from '../config/database';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS } from '../config/logging';
@@ -126,121 +129,51 @@ const PRIORITY_SCHEDULED = 2;
 const PRIORITY_RETRY = 3;
 
 // ──────────────────────────────────────────────────────────
-// Cron 工具函数（轻量级，无第三方依赖）
+// Cron 工具函数（基于 croner 库，零依赖、原生 TS 支持）
 // ──────────────────────────────────────────────────────────
 
 /**
- * 解析标准 5 段 cron 表达式，返回最小触发间隔（毫秒）
- * 注意：这里只做近似计算，用于漏触发检测
- * 格式：分 时 日 月 周
+ * 根据 cron 表达式计算下次触发时间（基于 croner）
+ * 已导出，供路由层（cron/preview 接口）直接复用
+ *
+ * @param expr  标准 5 段 cron 表达式（分 时 日 月 周）
+ * @param from  基准时间，默认当前时间
+ * @returns     下次触发时间；表达式非法时返回 null
  */
-function parseCronToIntervalMs(expr: string): number | null {
+export function getNextCronTime(expr: string, from: Date = new Date()): Date | null {
   try {
-    const parts = expr.trim().split(/\s+/);
-    if (parts.length !== 5) return null;
-    const [min, hour] = parts;
-
-    // 简单处理常见模式
-    // */N 分钟: 返回 N * 60 * 1000
-    if (/^\*\/(\d+)$/.test(min) && hour === '*') {
-      const n = parseInt(min.replace('*/', ''));
-      return n * 60 * 1000;
-    }
-
-    // 每小时（0 * * * *）
-    if (min !== '*' && hour === '*') {
-      return 60 * 60 * 1000;
-    }
-
-    // 每天（0 2 * * *）
-    if (min !== '*' && /^\d+$/.test(hour)) {
-      return 24 * 60 * 60 * 1000;
-    }
-
-    // 默认1小时
-    return 60 * 60 * 1000;
+    const job = new Cron(expr, { paused: true });
+    return job.nextRun(from) ?? null;
   } catch {
     return null;
   }
 }
 
 /**
- * 根据 cron 表达式计算下次触发时间
- * 精简实现，支持常见的 5 段 cron（分 时 日 月 周）
- * 已导出，供路由层（cron/preview 接口）直接复用，避免重复实现
+ * 计算指定时间点之前最近一次应触发的时间（用于漏触发检测）
+ *
+ * 原理：从 `before` 往前逐步回溯，找到上一个触发时间点。
+ * 采用 croner.nextRun 正向推算：找到 before 之前 24h 内的最近一次触发时刻。
+ *
+ * @param expr    标准 5 段 cron 表达式
+ * @param before  参考时间（通常为 now），返回此时间之前的最近一次触发时间
+ * @returns       上一次应触发的时间；无法解析时返回 null
  */
-export function getNextCronTime(expr: string, from: Date = new Date()): Date | null {
+function getPrevCronTime(expr: string, before: Date): Date | null {
   try {
-    const parts = expr.trim().split(/\s+/);
-    if (parts.length !== 5) return null;
-    const [minPart, hourPart, domPart, monthPart, dowPart] = parts;
-
-    const parseField = (field: string, max: number): number[] | null => {
-      if (field === '*') return null; // means "any"
-      if (/^\*\/(\d+)$/.test(field)) {
-        const step = parseInt(field.replace('*/', ''));
-        const result: number[] = [];
-        for (let i = 0; i <= max; i += step) result.push(i);
-        return result;
-      }
-      if (/^\d+(,\d+)*$/.test(field)) {
-        return field.split(',').map(Number);
-      }
-      if (/^(\d+)-(\d+)$/.test(field)) {
-        const [, a, b] = /^(\d+)-(\d+)$/.exec(field)!;
-        const result: number[] = [];
-        for (let i = parseInt(a); i <= parseInt(b); i++) result.push(i);
-        return result;
-      }
-      if (/^\d+$/.test(field)) return [parseInt(field)];
-      return null;
-    };
-
-    const allowedMins = parseField(minPart, 59);
-    const allowedHours = parseField(hourPart, 23);
-    const allowedDoms = parseField(domPart, 31);
-    const allowedMonths = parseField(monthPart, 12);
-    const allowedDows = parseField(dowPart, 6);
-
-    // 从下一分钟开始查找
-    const candidate = new Date(from.getTime() + 60 * 1000);
-    candidate.setSeconds(0, 0);
-
-    // 最多查找 400 天
-    const maxSearch = new Date(from.getTime() + 400 * 24 * 60 * 60 * 1000);
-
-    while (candidate < maxSearch) {
-      // 检查月
-      if (allowedMonths && !allowedMonths.includes(candidate.getMonth() + 1)) {
-        candidate.setMonth(candidate.getMonth() + 1, 1);
-        candidate.setHours(0, 0, 0, 0);
-        continue;
-      }
-      // 检查日
-      if (allowedDoms && !allowedDoms.includes(candidate.getDate())) {
-        candidate.setDate(candidate.getDate() + 1);
-        candidate.setHours(0, 0, 0, 0);
-        continue;
-      }
-      // 检查周几
-      if (allowedDows && !allowedDows.includes(candidate.getDay())) {
-        candidate.setDate(candidate.getDate() + 1);
-        candidate.setHours(0, 0, 0, 0);
-        continue;
-      }
-      // 检查小时
-      if (allowedHours && !allowedHours.includes(candidate.getHours())) {
-        candidate.setHours(candidate.getHours() + 1, 0, 0, 0);
-        continue;
-      }
-      // 检查分钟
-      if (allowedMins && !allowedMins.includes(candidate.getMinutes())) {
-        candidate.setMinutes(candidate.getMinutes() + 1, 0, 0);
-        continue;
-      }
-      return new Date(candidate);
+    const job = new Cron(expr, { paused: true });
+    // 往前最多查 MAX_MISSED_WINDOW_MS（默认 24h）+ 1 个触发周期
+    // 策略：以 before 为终点，从足够早的时间向前遍历，找到最近一次
+    const windowStart = new Date(before.getTime() - MAX_MISSED_WINDOW_MS - 7 * 24 * 60 * 60 * 1000);
+    let prev: Date | null = null;
+    let cursor = windowStart;
+    while (true) {
+      const next = job.nextRun(cursor);
+      if (!next || next >= before) break;
+      prev = next;
+      cursor = next;
     }
-    return null;
+    return prev;
   } catch {
     return null;
   }
@@ -933,11 +866,14 @@ export class TaskSchedulerService {
       max_retries: number | null;
       retry_delay_ms: number | null;
       trigger_type: string;
+      last_run_at: string | null;
     }
 
     const row = await queryOne<TaskRow>(
-      `SELECT id, name, cron_expression, case_ids, project_id, environment_id, status, max_retries, retry_delay_ms, trigger_type
-       FROM Auto_TestCaseTasks WHERE id = ?`,
+      `SELECT t.id, t.name, t.cron_expression, t.case_ids, t.project_id, t.environment_id,
+              t.status, t.max_retries, t.retry_delay_ms, t.trigger_type,
+              (SELECT MAX(start_time) FROM Auto_TestCaseTaskExecutions WHERE task_id = t.id) as last_run_at
+       FROM Auto_TestCaseTasks t WHERE t.id = ?`,
       [taskId]
     );
 
@@ -956,13 +892,17 @@ export class TaskSchedulerService {
       status: row.status,
       maxRetries: row.max_retries ?? 1,
       retryDelayMs: row.retry_delay_ms ?? 30_000,
-      lastRunAt: null,
+      lastRunAt: row.last_run_at ? new Date(row.last_run_at) : null,
     };
   }
 
   /**
    * 漏触发补偿
-   * 若 now - lastRunAt > 触发间隔，说明服务重启期间有漏触发，立即补跑一次
+   *
+   * 判断逻辑（基于 croner 精确推算，不再依赖近似间隔）：
+   * 1. 从 lastRunAt 开始，用 croner 计算上一次「应该」触发的时间点（prevShouldRun）
+   * 2. 若 prevShouldRun > lastRunAt，说明在 lastRunAt 之后、now 之前有一次漏触发
+   * 3. 同时要求漏触发时间在 MAX_MISSED_WINDOW_MS（24h）内，避免长时间停机后批量补偿
    */
   private async compensateMissedFires(task: ScheduledTask): Promise<void> {
     if (!task.lastRunAt) {
@@ -970,31 +910,48 @@ export class TaskSchedulerService {
       return;
     }
 
-    const intervalMs = parseCronToIntervalMs(task.cronExpression);
-    if (!intervalMs) return;
+    const now = new Date();
+    const elapsed = now.getTime() - task.lastRunAt.getTime();
 
-    const elapsed = Date.now() - task.lastRunAt.getTime();
-
-    if (elapsed > intervalMs && elapsed <= MAX_MISSED_WINDOW_MS) {
-      logger.info(`Task ${task.id} (${task.name}) missed ${Math.floor(elapsed / 60_000)} min, compensating...`, {
+    // 超出补偿窗口，跳过（防止停机过久后批量触发）
+    if (elapsed > MAX_MISSED_WINDOW_MS) {
+      logger.info(`Task ${task.id} (${task.name}) elapsed ${Math.floor(elapsed / 60_000)} min > MAX_MISSED_WINDOW, skip compensation`, {
         taskId: task.id,
         lastRunAt: task.lastRunAt,
         elapsed,
-        intervalMs,
+        maxWindowMs: MAX_MISSED_WINDOW_MS,
       }, LOG_CONTEXTS.EXECUTION);
-
-      // 记录补偿日志到审计表
-      await this.recordAuditLog(task.id, 'compensated', SCHEDULER_USER_ID, {
-        reason: 'missed_fire_compensation',
-        lastRunAt: task.lastRunAt,
-        elapsedMs: elapsed,
-      });
-
-      // 异步触发，不阻塞启动
-      setImmediate(() => this.dispatchTask(task.id, 'scheduled').catch(err => {
-        logger.errorLog(err, `Compensation dispatch failed for task ${task.id}`, {});
-      }));
+      return;
     }
+
+    // 用 croner 精确计算：自 lastRunAt 以来，在 now 之前是否有应触发的时间点
+    const prevShouldRun = getPrevCronTime(task.cronExpression, now);
+
+    if (!prevShouldRun || prevShouldRun <= task.lastRunAt) {
+      // 没有漏触发（上一个应触发时间 ≤ 上次执行时间）
+      return;
+    }
+
+    // 有漏触发：prevShouldRun > lastRunAt，且在 MAX_MISSED_WINDOW 内
+    logger.info(`Task ${task.id} (${task.name}) missed fire detected. prevShouldRun=${prevShouldRun.toISOString()}, lastRunAt=${task.lastRunAt.toISOString()}, compensating...`, {
+      taskId: task.id,
+      lastRunAt: task.lastRunAt,
+      prevShouldRun,
+      elapsed,
+    }, LOG_CONTEXTS.EXECUTION);
+
+    // 记录补偿日志到审计表
+    await this.recordAuditLog(task.id, 'compensated', SCHEDULER_USER_ID, {
+      reason: 'missed_fire_compensation',
+      lastRunAt: task.lastRunAt,
+      prevShouldRun,
+      elapsedMs: elapsed,
+    });
+
+    // 异步触发，不阻塞启动
+    setImmediate(() => this.dispatchTask(task.id, 'scheduled').catch(err => {
+      logger.errorLog(err, `Compensation dispatch failed for task ${task.id}`, {});
+    }));
   }
 
   /**
@@ -1473,6 +1430,19 @@ export class TaskSchedulerService {
             this.unregisterTask(row.id);
             let caseIds: number[] = [];
             try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
+
+            // Bug Fix: 从 DB 查询上次执行时间，防止 lastRunAt=null 导致跳过漏触发补偿检测
+            let lastRunAt: Date | null = null;
+            try {
+              const lastRunRow = await queryOne<{ last_run_at: string | null }>(
+                `SELECT MAX(start_time) as last_run_at FROM Auto_TestCaseTaskExecutions WHERE task_id = ?`,
+                [row.id]
+              );
+              lastRunAt = lastRunRow?.last_run_at ? new Date(lastRunRow.last_run_at) : null;
+            } catch {
+              // 查询失败时使用 null，补偿逻辑会跳过（从未执行过视为无需补偿）
+            }
+
             const reactivatedTask: ScheduledTask = {
               id: row.id,
               name: row.name,
@@ -1483,9 +1453,11 @@ export class TaskSchedulerService {
               status: row.status as 'active',
               maxRetries: row.max_retries ?? 1,
               retryDelayMs: row.retry_delay_ms ?? 30_000,
-              lastRunAt: null,
+              lastRunAt,
             };
             this.taskCache.set(row.id, reactivatedTask);
+            // 重新激活时也做漏触发补偿
+            await this.compensateMissedFires(reactivatedTask);
             this.scheduleTask(reactivatedTask);
           }
         } else if (cached && cached.cronExpression !== row.cron_expression) {

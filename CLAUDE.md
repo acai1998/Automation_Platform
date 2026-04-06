@@ -119,7 +119,7 @@ npx tsc --noEmit -p tsconfig.server.json
 - 服务层：分离的业务逻辑和服务层
 - 实时通信：Socket.IO（支持 WebSocket 推送）
 - Git 集成：simple-git（仓库同步和脚本解析）
-- 任务调度：node-cron（定时任务和周期性任务）
+- 任务调度：croner（定时任务和周期性任务，零依赖、原生 TS 支持）
 - 邮件服务：nodemailer（测试报告通知）
 
 ### 核心功能模块
@@ -568,7 +568,7 @@ Jenkins 回调支持三种认证方式（任选其一）：
 ### TaskSchedulerService 核心能力（v1.3.0）
 
 #### 调度引擎
-- **自研5段式 Cron 解析**：无第三方依赖，支持 `* / , -` 语法
+- **Cron 解析（croner 库）**：零依赖、原生 TS，支持 5 段标准 cron，`* / , -` 语法完整覆盖
 - **服务重启恢复**：启动时遍历 DB 中所有 `trigger_type='scheduled'` 的 active 任务并自动注册
 - **漏触发补偿**：基于 `lastRunAt` 检测 24h 窗口内的漏触发，自动补偿执行
 - **每分钟 DB 轮询**：自动同步任务增删改（cron 变更、状态变更、新任务注册）
@@ -827,7 +827,7 @@ systemctl start nginx
 | ORM / 数据库 | `TypeORM` + `mysql2` | 实体定义在 `server/entities/`，禁止裸 SQL 字符串拼接 |
 | HTTP 路由 | `express` | 路由文件在 `server/routes/` |
 | 参数校验 | `express-validator` 或 手动校验 | 统一在路由层做入参校验 |
-| 定时任务 | `node-cron` | 已有 `TaskSchedulerService` 封装，**勿重复实现** Cron 逻辑 |
+| 定时任务 | `croner` | 已有 `TaskSchedulerService` 封装，**勿重复实现** Cron 逻辑 |
 | Git 操作 | `simple-git` | 仓库克隆、diff、log 等，**禁止**用 `child_process.exec('git ...')` |
 | 邮件发送 | `nodemailer` | 已有 `EmailService` 封装 |
 | WebSocket | `socket.io` | 已有实时推送基础设施，新增实时功能接入现有 Socket 服务 |
