@@ -126,34 +126,40 @@ npx tsc --noEmit -p tsconfig.server.json
 
 #### 0. AI 测试用例脑图（`src/lib/aiCaseMindMap.ts` / `server/services/aiCaseMapBuilder.ts`）
 
-**脑图节点结构（v1.5.1 起，4节点平铺格式）**：
+**脑图节点结构（v1.5.2 起，4节点链式串联格式）**：
 ```
 根节点
 └── 功能模块（module）
-    └── 测试点（testcase）          ← 测试点标题
-        ├── 前置条件内容（scenario） ← 多条用「1.xxx；2.xxx」分号拼接，不加前缀标签
-        ├── 测试步骤内容（scenario） ← 同上
-        └── 预期结果内容（scenario） ← 同上
+    └── 场景（scenario）
+        └── 测试点（testcase）              ← 节点1：测试点标题
+            └── 前置条件内容（scenario）    ← 节点2：多条用「1.xxx；2.xxx」分号拼接
+                └── 测试步骤内容（scenario）  ← 节点3：同上
+                    └── 预期结果内容（scenario） ← 节点4：同上（叶子节点）
 ```
+
+脑图中 4 个节点横向串联展开为**一行**，对应一条完整测试用例：
+`测试点 ──→ 前置条件 ──→ 测试步骤 ──→ 预期结果`
 
 **核心函数说明**（`src/lib/aiCaseMindMap.ts`）：
 - `fmtInline(items)` — 将多条条目格式化为单行：单条直接返回原文，多条用 `1.xxx；2.xxx` 分号拼接
-- `buildCaseChildren(preconditions, steps, expectedResults)` — 构建 testcase 的 3 个子节点（无前缀标签）
-- `isLegacyNestedTestcase(node)` — 检测旧格式节点（嵌套"测试点"层 或 含"前置条件："等前缀标签的子节点）
-- `migrateNestedTestcaseToFlat(node)` — 将旧格式子节点迁移为新的 4 节点平铺格式（去掉前缀标签 + 多行改分号拼接）
+- `buildCaseChain(preconditions, steps, expectedResults)` — 构建 testcase 的链式子节点（前置条件→步骤→预期结果，每级只有1个子节点）
+- `isNewChainFormat(node)` — 检测节点是否已是新链式格式（第一个子节点无旧前缀标签）
+- `migrateToChainFormat(node)` — 将旧格式子节点迁移为新链式格式，返回链式根节点列表；`null` 表示已是新格式
 - `expandImportedCaseNodesFromNote(data, options)` — 全局遍历脑图数据，自动迁移所有旧格式 testcase 节点
-- `expandNoteToChildren(note)` — 将仅有 `note` 字段的旧版 testcase 展开为 3 个 scenario 子节点
+- `expandNoteToChildren(note)` — 将仅有 `note` 字段的旧版 testcase 解析为链式子节点列表
 
 **后端对应函数**（`server/services/aiCaseMapBuilder.ts`）：
 - `fmtInline(items)` — 同前端，保持前后端生成格式一致
-- `buildCaseChildNodes(testCase)` — 后端构建 testcase 子节点（前置条件 / 测试步骤 / 预期结果，无前缀标签）
+- `buildCaseChainNodes(testCase)` — 后端构建 testcase 链式子节点（前置条件→测试步骤→预期结果）
 - `buildMapDataFromPlan(plan)` — 将 AI 生成的 JSON 计划转换为标准脑图数据格式
 
 **旧数据迁移策略**：
 - 触发时机：用户打开画布时（`bootstrap` 阶段），`expandImportedCaseNodesFromNote` 自动检测并迁移
-- 两种旧格式均已覆盖：
-  1. 嵌套 "测试点" 层（`testcase → 测试点(scenario) → [前置条件/测试步骤/预期结果]`）
-  2. 含前缀标签格式（`testcase → "前置条件：xxx" / "测试步骤：xxx"` 等子节点）
+- 三种旧格式均已覆盖：
+  1. 仅有 `note` 字段（`note` 中含前缀标签格式）
+  2. 嵌套 "测试点" 层（`testcase → 测试点(scenario) → [前置条件/测试步骤/预期结果]`）
+  3. 含前缀标签格式（`testcase → "前置条件：xxx" / "测试步骤：xxx"` 等并列子节点）
+- 迁移后统一转为链式：`testcase → 前置条件 → 测试步骤 → 预期结果`
 - 迁移后自动将 `nodeVersion + 1`，写入 IndexedDB 缓存，下次打开无需重复迁移
 
 #### 1. 测试用例管理（`/api/cases`）
@@ -931,8 +937,18 @@ useEffect(() => { fetch('/api/cases').then(...) }, []);
 
 ## 更新日志
 
+### v1.5.2 (2026-04-06)
+- 🗺️ **AI 脑图节点结构再次重构**：从「4节点扁平并列」改为「4节点链式串联（一行展示）」
+  - 新结构：`testcase → 前置条件 → 测试步骤 → 预期结果`，每级只有1个子节点，脑图中横向串联成一行
+  - `buildCaseChain` / `buildCaseChainNodes`（前后端）构建链式子节点，取代旧的并列兄弟节点方案
+- 🔄 **旧数据迁移升级**（`src/lib/aiCaseMindMap.ts`）：
+  - 新增 `isNewChainFormat` 检测节点是否已是链式新格式
+  - 新增 `migrateToChainFormat` 统一将三种旧格式（note格式 / 嵌套"测试点"层 / 并列前缀标签子节点）迁移为链式结构
+  - 旧的 `isLegacyNestedTestcase` / `migrateNestedTestcaseToFlat` / `extractCaseSiblings` 已合并重构
+- 🔧 **Sidebar 和导出适配**：`AiCaseSidebar` 通过链式访问（`testcase.children[0]` → `.children[0]` → `.children[0]`）展示前置条件/步骤/预期结果；`exportMindDataToMarkdown` 同步适配链式结构
+
 ### v1.5.1 (2026-04-06)
-- 🗺️ **AI 脑图节点结构重构**：将多层嵌套格式改为「4节点横向平铺」结构
+- 🗺️ **AI 脑图节点结构重构**：将多层嵌套格式改为「4节点横向平铺」结构（已被 v1.5.2 进一步重构）
   - testcase 节点直接挂 3 个 scenario 子节点：前置条件 / 测试步骤 / 预期结果
   - 多条内容不再换行，改用分号拼接（`1.xxx；2.xxx；3.xxx`），节点简洁可读
   - 子节点 `topic` 不再携带「前置条件：」等前缀标签，纯内容展示
