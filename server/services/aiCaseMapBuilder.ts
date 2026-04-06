@@ -218,11 +218,10 @@ function formatSectionLines(items: string[]): string {
 }
 
 /**
- * 将 testCase 的前置条件/测试步骤/预期结果合并为 note 字符串（四段式格式），
- * 供前端侧边栏或导出时展示详细信息。
- * 不生成子节点，保持 testcase 为叶子节点，每条 case 在脑图中占一行。
+ * 为 testCase 构建子节点列表（前置条件/测试步骤/预期结果）。
+ * testcase 节点本身占一行，子节点可折叠展开查看详情。
  */
-function buildCaseNote(testCase: AiCaseGenerationPlanCase): string {
+function buildCaseChildNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[] {
   const hint = typeof testCase.note === 'string' ? testCase.note.trim() : '';
 
   const preconditions = sanitizeChecklist(testCase.preconditions, [
@@ -241,11 +240,10 @@ function buildCaseNote(testCase: AiCaseGenerationPlanCase): string {
   ]);
 
   return [
-    `测试点：${testCase.title}`,
-    `前置条件：${formatSectionLines(preconditions)}`,
-    `测试步骤：${formatSectionLines(steps)}`,
-    `预期结果：${formatSectionLines(expectedResults)}`,
-  ].join('\n');
+    createNode(`前置条件：${formatSectionLines(preconditions)}`, 'scenario', { aiGenerated: true }),
+    createNode(`测试步骤：${formatSectionLines(steps)}`, 'scenario', { aiGenerated: true }),
+    createNode(`预期结果：${formatSectionLines(expectedResults)}`, 'scenario', { aiGenerated: true }),
+  ];
 }
 
 export function createAiCaseNodeId(): string {
@@ -281,7 +279,8 @@ export function calculateWorkspaceCounters(mapData: AiCaseMapData): AiCaseWorksp
   const visit = (node: AiCaseMapNode): void => {
     const children = Array.isArray(node.children) ? node.children : [];
     const kind = node.metadata?.kind ?? inferNodeKind(1, children.length);
-    const shouldCount = kind === 'testcase' || children.length === 0;
+    // 只统计 testcase 类型节点（scenario 子节点不计入）
+    const shouldCount = kind === 'testcase';
 
     if (shouldCount) {
       const status = parseStatus(node.metadata?.status, 'todo');
@@ -362,11 +361,11 @@ export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData 
         aiGenerated: true,
         children: module.scenarios.flatMap((scenario) =>
           scenario.cases.map((testCase) =>
-            // 每条 case 作为叶子节点（无子节点），详情存入 note，脑图中占一行
+            // testcase 节点含前置条件/测试步骤/预期结果子节点，可在脑图中展开查看
             createNode(testCase.title, 'testcase', {
               aiGenerated: true,
               priority: parsePriority(testCase.priority, 'P1'),
-              note: buildCaseNote(testCase),
+              children: buildCaseChildNodes(testCase),
             })
           )
         ),
