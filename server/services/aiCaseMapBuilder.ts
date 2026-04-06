@@ -1,3 +1,5 @@
+import { createAiCaseNodeId } from '@shared/types/aiCaseNodeMetadata';
+
 export type AiCaseNodeStatus = 'todo' | 'doing' | 'blocked' | 'passed' | 'failed' | 'skipped';
 export type AiCaseNodePriority = 'P0' | 'P1' | 'P2' | 'P3';
 export type AiCaseNodeKind = 'root' | 'module' | 'scenario' | 'testcase';
