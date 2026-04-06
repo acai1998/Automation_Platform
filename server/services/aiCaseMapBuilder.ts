@@ -182,13 +182,16 @@ function fmtInline(items: string[]): string {
 }
 
 /**
- * 构建 testcase 的 4 列子节点：
- *   节点1 = testcase 自身（测试点标题）
- *   节点2 = 前置条件内容（多条用分号拼接，不换行，不加前缀标签）
+ * 构建单个 testcase 对应的 4 个扁平节点（用于挂在父 scenario 下）：
+ *   节点1 = testcase 自身（测试点标题）—— 调用方负责创建，此处只返回节点2/3/4
+ *   节点2 = 前置条件内容（多条用分号拼接，写在 topic 里，不展开子节点）
  *   节点3 = 测试步骤内容（同上）
  *   节点4 = 预期结果内容（同上）
+ *
+ * 注意：返回的 3 个节点应与 testcase 节点同级（均为父 scenario 的子节点），
+ * 而不是 testcase 的子节点。
  */
-function buildCaseChildNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[] {
+function buildCaseSiblingNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[] {
   const hint = typeof testCase.note === 'string' ? testCase.note.trim() : '';
 
   const preconditions = sanitizeChecklist(testCase.preconditions, [
@@ -328,19 +331,26 @@ export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData 
       createNode(module.name, 'module', {
         aiGenerated: true,
         // 保留 scenario 层：每个 scenario 独立成为子节点，避免语义丢失
-        children: module.scenarios.map((scenario) =>
-          createNode(scenario.name, 'scenario', {
-            aiGenerated: true,
-            children: scenario.cases.map((testCase) =>
-              // testcase 节点含前置条件/测试步骤/预期结果子节点，可在脑图中展开查看
+        children: module.scenarios.map((scenario) => {
+          // 每个 testcase 展开为 4 个扁平节点（testcase 本身 + 前置条件 + 测试步骤 + 预期结果），
+          // 均作为 scenario 的子节点，而非 testcase 的子节点。
+          const caseNodes: AiCaseMapNode[] = [];
+          for (const testCase of scenario.cases) {
+            // 节点1：测试点（无子节点）
+            caseNodes.push(
               createNode(testCase.title, 'testcase', {
                 aiGenerated: true,
                 priority: parsePriority(testCase.priority, 'P1'),
-                children: buildCaseChildNodes(testCase),
               })
-            ),
-          })
-        ),
+            );
+            // 节点2/3/4：前置条件、测试步骤、预期结果（同级，内容写在 topic 里）
+            caseNodes.push(...buildCaseSiblingNodes(testCase));
+          }
+          return createNode(scenario.name, 'scenario', {
+            aiGenerated: true,
+            children: caseNodes,
+          });
+        }),
       })
     ),
   });

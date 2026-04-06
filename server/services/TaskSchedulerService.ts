@@ -1415,9 +1415,22 @@ export class TaskSchedulerService {
         const cached = this.taskCache.get(row.id);
 
         if (!cached && row.status === 'active') {
-          // 新任务
+          // 新任务：从 DB 查询上次执行时间，并做漏触发补偿（与重新激活路径保持一致）
           let caseIds: number[] = [];
           try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
+
+          // Bug Fix: 新任务也需要查 DB 获取 lastRunAt，否则会错误跳过漏触发补偿
+          let lastRunAt: Date | null = null;
+          try {
+            const lastRunRow = await queryOne<{ last_run_at: string | null }>(
+              `SELECT MAX(start_time) as last_run_at FROM Auto_TestCaseTaskExecutions WHERE task_id = ?`,
+              [row.id]
+            );
+            lastRunAt = lastRunRow?.last_run_at ? new Date(lastRunRow.last_run_at) : null;
+          } catch {
+            // 查询失败时使用 null，补偿逻辑会跳过（从未执行过视为无需补偿）
+          }
+
           const newTask: ScheduledTask = {
             id: row.id,
             name: row.name,
@@ -1428,11 +1441,13 @@ export class TaskSchedulerService {
             status: row.status,
             maxRetries: row.max_retries ?? 1,
             retryDelayMs: row.retry_delay_ms ?? 30_000,
-            lastRunAt: null,
+            lastRunAt,
           };
           this.taskCache.set(row.id, newTask);
+          // Bug Fix: 新任务也需要做漏触发补偿（与 loadAndRegisterAllTasks 和重新激活路径保持一致）
+          await this.compensateMissedFires(newTask);
           this.scheduleTask(newTask);
-          logger.info(`New task ${row.id} registered by poll`, {}, LOG_CONTEXTS.EXECUTION);
+          logger.info(`New task ${row.id} registered by poll`, { lastRunAt }, LOG_CONTEXTS.EXECUTION);
         } else if (cached && cached.status !== row.status) {
           // 状态变更
           if (row.status !== 'active') {

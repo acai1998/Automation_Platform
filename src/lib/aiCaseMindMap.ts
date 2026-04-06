@@ -204,24 +204,8 @@ function hasNoteOnlyFormat(node: AiCaseNode): boolean {
 const LEGACY_LABEL_RE = /^(前置条件|测试步骤|预期结果)[：:]\s*/;
 
 /**
- * 判断 testcase 节点是否为需要迁移的旧格式：
- * 1. 最旧格式：第一个子节点 topic === "测试点"（嵌套层）
- * 2. 次旧格式：第一个子节点 topic 以 "前置条件：" 等前缀标签开头（含前缀标签的单节点格式）
- */
-function isLegacyNestedTestcase(node: AiCaseNode): boolean {
-  const children = node.children as AiCaseNode[] | undefined;
-  if (!children || children.length === 0) return false;
-  const firstChild = children[0];
-  if (!firstChild) return false;
-  // 情况1：嵌套"测试点"层
-  if (firstChild.topic === '测试点') return true;
-  // 情况2：子节点 topic 带有旧前缀标签（如"前置条件：xxx"）
-  return LEGACY_LABEL_RE.test(firstChild.topic);
-}
-
-/**
- * 将 note 字段解析为前置条件/测试步骤/预期结果子节点列表（新格式：纯内容+分号拼接）。
- * 用于将仅有 note 的旧格式 testcase 迁移为新格式。
+ * 将 note 字段解析为前置条件/测试步骤/预期结果节点列表（新格式：纯内容+分号拼接）。
+ * 用于将仅有 note 的旧格式 testcase 迁移为新的扁平兄弟节点格式。
  */
 function expandNoteToChildren(note: string): AiCaseNode[] {
   const sectionPrefixes = ['前置条件', '测试步骤', '预期结果'] as const;
@@ -266,36 +250,45 @@ function expandNoteToChildren(note: string): AiCaseNode[] {
   return children;
 }
 
+
 /**
- * 将旧格式的 testcase 子节点迁移为新格式（纯内容+分号拼接，不含前缀标签）。
- * 处理两种历史格式：
- *  1. 嵌套"测试点"层：testcase → 测试点(scenario) → [前置条件/测试步骤/预期结果]
- *  2. 前缀标签格式：testcase → "前置条件：xxx\n..." / "测试步骤：xxx\n..."
+ * 提取 testcase 节点应展开的兄弟节点列表（前置条件/测试步骤/预期结果）。
+ * 处理三类历史格式，统一转换为新的扁平兄弟节点格式：
+ *  1. 仅有 note 字段（中间迁移格式）→ 解析 note 得到兄弟节点列表
+ *  2. 嵌套"测试点"层（最旧格式）→ 提升并清理前缀标签后得到兄弟节点
+ *  3. 旧格式（testcase 下已有 scenario 子节点）→ 将子节点提升为兄弟节点
+ *
+ * 返回 null 表示无需迁移（已是新格式：testcase 无子节点）。
  */
-function migrateNestedTestcaseToFlat(node: AiCaseNode): void {
+function extractCaseSiblings(node: AiCaseNode): AiCaseNode[] | null {
+  // 情况1：仅有 note，无子节点（中间版本的迁移格式）
+  if (hasNoteOnlyFormat(node)) {
+    const siblings = expandNoteToChildren(node.note as string);
+    return siblings.length > 0 ? siblings : null;
+  }
+
   const children = (node.children ?? []) as AiCaseNode[];
-  if (children.length === 0) return;
 
-  const firstChild = children[0];
-  if (!firstChild) return;
+  // 无子节点：已是新格式
+  if (children.length === 0) {
+    return null;
+  }
 
-  // 情况1：嵌套"测试点"层 → 将其子节点提升，再走情况2逻辑处理前缀标签
+  // 情况2：嵌套"测试点"层 → 先提升，再处理前缀标签
+  // 情况3：旧格式 scenario 子节点（含前缀标签或不含）→ 处理后提升为兄弟节点
   let flatChildren: AiCaseNode[];
-  if (firstChild.topic === '测试点' && (firstChild.children?.length ?? 0) > 0) {
-    flatChildren = (firstChild.children ?? []) as AiCaseNode[];
+  if (children[0]?.topic === '测试点' && (children[0]?.children?.length ?? 0) > 0) {
+    flatChildren = (children[0].children ?? []) as AiCaseNode[];
   } else {
     flatChildren = children;
   }
 
-  // 情况2：子节点 topic 带旧前缀标签 → 去掉前缀并把多行内容改为分号拼接
   const needsLabelStrip = flatChildren.some((c) => LEGACY_LABEL_RE.test(c.topic));
   if (needsLabelStrip) {
     const rebuilt: AiCaseNode[] = [];
-
     for (const child of flatChildren) {
       const labelMatch = child.topic.match(/^(前置条件|测试步骤|预期结果)[：:]\s*([\s\S]*)$/);
       if (labelMatch) {
-        // 把换行内容拆开，去掉行首编号，再用分号重新拼接
         const rawContent = labelMatch[2].trim();
         const lines = rawContent
           .split(/\r?\n/)
@@ -307,24 +300,18 @@ function migrateNestedTestcaseToFlat(node: AiCaseNode): void {
         rebuilt.push(child);
       }
     }
-
-    // 注意：此处已去掉了前缀标签（如「前置条件：」），无法再按前缀排序。
-    // 子节点顺序由原始 flatChildren 遍历顺序保证（前置条件→测试步骤→预期结果）。
-    node.children = rebuilt;
-    return;
+    return rebuilt;
   }
 
-  // 已是新格式（纯内容），直接提升（仅处理了嵌套层但子节点已是新格式）
-  if (flatChildren !== children) {
-    node.children = flatChildren;
-  }
+  // 子节点已是纯内容格式（scenario 节点），直接提升为兄弟节点
+  return flatChildren;
 }
 
 /**
- * 处理 testcase 节点，确保其有前置条件/测试步骤/预期结果子节点。
- * - 如果只有 note（中间迁移格式）：将 note 展开为子节点
- * - 如果是最旧格式（嵌套 "scenario" 层）：迁移为新格式
- * - 如果已有前置条件/测试步骤/预期结果子节点：保留
+ * 遍历脑图数据，将所有需要迁移的 testcase 节点（含 note/旧子节点格式）
+ * 重构为新的扁平兄弟节点格式：
+ *   - testcase 节点本身不再有子节点
+ *   - 前置条件/测试步骤/预期结果节点成为 testcase 的兄弟节点（挂在父节点下）
  */
 export function expandImportedCaseNodesFromNote(
   data: AiCaseMindData,
@@ -342,56 +329,63 @@ export function expandImportedCaseNodesFromNote(
   const next = cloneData(data);
   let expandedCount = 0;
 
-  const walk = (node: AiCaseNode): void => {
-    for (const child of node.children ?? []) {
-      walk(child as AiCaseNode);
+  /**
+   * 遍历父节点，在其 children 中找到需要迁移的 testcase，
+   * 将其子节点提升为兄弟节点（插在 testcase 之后）。
+   */
+  const walk = (parent: AiCaseNode): void => {
+    const children = (parent.children ?? []) as AiCaseNode[];
+
+    // 先递归处理深层节点
+    for (const child of children) {
+      walk(child);
     }
 
-    if (candidateSet && !candidateSet.has(node.id)) {
-      return;
-    }
+    let hasChanges = false;
+    const nextChildren: AiCaseNode[] = [];
 
-    const metadata = node.metadata ?? createDefaultMetadata('testcase');
-    if (metadata.kind !== 'testcase') {
-      return;
-    }
+    for (const child of children) {
+      const metadata = child.metadata ?? createDefaultMetadata('testcase');
+      const isTestcase = metadata.kind === 'testcase';
+      const inCandidateSet = candidateSet ? candidateSet.has(child.id) : true;
 
-    // 情况1：仅有 note，无子节点（中间版本的迁移格式）→ 展开为子节点
-    if (hasNoteOnlyFormat(node)) {
-      const childNodes = expandNoteToChildren(node.note as string);
-      if (childNodes.length > 0) {
-        node.children = childNodes;
-        // 安全递增：防止 nodeVersion 为 undefined/NaN 导致版本号异常
-        const currentVersion = typeof metadata.nodeVersion === 'number' && metadata.nodeVersion > 0
-          ? metadata.nodeVersion
-          : 1;
-        node.metadata = {
-          ...metadata,
-          nodeVersion: currentVersion + 1,
-          updatedAt: Date.now(),
-        };
-        expandedCount += 1;
+      if (!isTestcase || !inCandidateSet) {
+        nextChildren.push(child);
+        continue;
       }
-      return;
-    }
 
-    // 情况2：最旧格式（嵌套 "测试点" scenario 层）→ 迁移为新格式
-    if (isLegacyNestedTestcase(node)) {
-      migrateNestedTestcaseToFlat(node);
-      // 安全递增：防止 nodeVersion 为 undefined/NaN 导致版本号异常
+      const siblings = extractCaseSiblings(child);
+
+      if (siblings === null) {
+        // 已是新格式（无子节点），无需迁移
+        nextChildren.push(child);
+        continue;
+      }
+
+      // 迁移：移除 testcase 的子节点，将兄弟节点插在 testcase 之后
       const currentVersion = typeof metadata.nodeVersion === 'number' && metadata.nodeVersion > 0
         ? metadata.nodeVersion
         : 1;
-      node.metadata = {
-        ...metadata,
-        nodeVersion: currentVersion + 1,
-        updatedAt: Date.now(),
+
+      const migratedTestcase: AiCaseNode = {
+        ...child,
+        metadata: {
+          ...metadata,
+          nodeVersion: currentVersion + 1,
+          updatedAt: Date.now(),
+        },
       };
+      delete migratedTestcase.children;
+      delete migratedTestcase.note;
+
+      nextChildren.push(migratedTestcase, ...siblings);
       expandedCount += 1;
-      return;
+      hasChanges = true;
     }
 
-    // 情况3：已是新格式（直接子节点为前置条件/测试步骤/预期结果）→ 保留
+    if (hasChanges) {
+      parent.children = nextChildren;
+    }
   };
 
   walk(next.nodeData);
@@ -420,18 +414,17 @@ function fmtInline(items: string[]): string {
 }
 
 /**
- * 构建 testcase 的 4 列子节点：
- *   节点1 = testcase 自身（测试点标题）
- *   节点2 = 前置条件内容（多条用分号拼接，不换行，不加前缀标签）
+ * 构建单个 testcase 对应的 3 个兄弟节点（前置条件/测试步骤/预期结果），
+ * 用于与 testcase 节点同级挂在父 scenario 下，而非作为 testcase 的子节点。
+ *   节点2 = 前置条件内容（多条用分号拼接，写在 topic 里，不展开子节点）
  *   节点3 = 测试步骤内容（同上）
  *   节点4 = 预期结果内容（同上）
  */
-function buildCaseChildren(
+function buildCaseSiblings(
   preconditions: string[],
   steps: string[],
   expectedResults: string[],
 ): AiCaseNode[] {
-  // 每个 section 至少保留一个兜底节点，确保 testcase 始终有「前置条件/测试步骤/预期结果」三个子节点
   const safePreconditions = preconditions.length > 0 ? preconditions : ['无特殊前置条件'];
   const safeSteps = steps.length > 0 ? steps : ['执行目标操作并记录结果'];
   const safeExpectedResults = expectedResults.length > 0 ? expectedResults : ['功能符合预期'];
@@ -444,25 +437,20 @@ function buildCaseChildren(
 }
 
 function buildSmokeCases(anchor: string): AiCaseNode[] {
+  // 每个 testcase 展开为 4 个扁平节点：testcase 本身（无子节点）+ 前置条件 + 步骤 + 预期结果（均同级）
   return [
-    createNode(`${anchor} 主流程可以顺利完成`, 'testcase', {
-      priority: 'P0',
-      aiGenerated: true,
-      children: buildCaseChildren(
-        ['已有可登录测试账号，且目标环境可访问'],
-        ['进入登录页面并输入有效账号密码', '点击登录并等待页面跳转'],
-        ['登录成功并跳转到用户主页', '页面展示当前用户信息且会话状态有效'],
-      ),
-    }),
-    createNode(`${anchor} 关键参数校验与提示正确`, 'testcase', {
-      priority: 'P1',
-      aiGenerated: true,
-      children: buildCaseChildren(
-        ['已准备非法与合法输入组合'],
-        ['输入非法参数并提交', '根据错误提示修正后再次提交'],
-        ['非法参数有明确错误提示', '修正后可正常完成流程'],
-      ),
-    }),
+    createNode(`${anchor} 主流程可以顺利完成`, 'testcase', { priority: 'P0', aiGenerated: true }),
+    ...buildCaseSiblings(
+      ['已有可登录测试账号，且目标环境可访问'],
+      ['进入登录页面并输入有效账号密码', '点击登录并等待页面跳转'],
+      ['登录成功并跳转到用户主页', '页面展示当前用户信息且会话状态有效'],
+    ),
+    createNode(`${anchor} 关键参数校验与提示正确`, 'testcase', { priority: 'P1', aiGenerated: true }),
+    ...buildCaseSiblings(
+      ['已准备非法与合法输入组合'],
+      ['输入非法参数并提交', '根据错误提示修正后再次提交'],
+      ['非法参数有明确错误提示', '修正后可正常完成流程'],
+    ),
   ];
 }
 
@@ -574,18 +562,23 @@ function buildCoverageModules(anchor: string): AiCaseNode[] {
     },
   ];
 
-  return blocks.map((item) =>
-    createNode(item.module, 'module', {
-      aiGenerated: true,
-      children: item.points.map((point) =>
+  return blocks.map((item) => {
+    // 每个 testcase 展开为 4 个扁平节点（testcase 本身 + 前置条件 + 步骤 + 预期结果），均作为 module 的子节点
+    const caseNodes: AiCaseNode[] = [];
+    for (const point of item.points) {
+      caseNodes.push(
         createNode(point.title, 'testcase', {
           aiGenerated: true,
           priority: point.priority ?? 'P1',
-          children: buildCaseChildren(point.preconditions, point.steps, point.expectedResults),
         })
-      ),
-    })
-  );
+      );
+      caseNodes.push(...buildCaseSiblings(point.preconditions, point.steps, point.expectedResults));
+    }
+    return createNode(item.module, 'module', {
+      aiGenerated: true,
+      children: caseNodes,
+    });
+  });
 }
 
 function extractAnchor(requirement: string): string {

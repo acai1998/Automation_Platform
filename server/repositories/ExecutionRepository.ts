@@ -247,7 +247,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     taskId?: number;
     taskName?: string;
     totalCases: number;
-    executedBy: number;
+    /** null 表示系统调度触发（无操作人） */
+    executedBy: number | null;
   }): Promise<TaskExecution> {
     const execution = this.repository.create({
       ...executionData,
