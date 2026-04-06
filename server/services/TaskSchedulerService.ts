@@ -22,8 +22,6 @@ import { executionService } from './ExecutionService';
 import { AppDataSource } from '../config/database';
 import { TestCase } from '../entities/TestCase';
 import { In } from 'typeorm';
-import { ExecutionRepository } from '../repositories/ExecutionRepository';
-
 // ──────────────────────────────────────────────────────────
 // 类型定义
 // ──────────────────────────────────────────────────────────
@@ -152,22 +150,25 @@ export function getNextCronTime(expr: string, from: Date = new Date()): Date | n
 /**
  * 计算指定时间点之前最近一次应触发的时间（用于漏触发检测）
  *
- * 原理：从 `before` 往前逐步回溯，找到上一个触发时间点。
- * 采用 croner.nextRun 正向推算：找到 before 之前 24h 内的最近一次触发时刻。
+ * 性能优化策略：
+ * - 仅在 maxWindowMs（默认 24h）内向前遍历
+ * - 增加 safetyLimit 防止极端高频 cron 场景下无限循环
+ * - 最大迭代次数 = maxWindowMs / 60s ≈ 1440（即每分钟触发也只遍历 1440 次）
  *
- * @param expr    标准 5 段 cron 表达式
- * @param before  参考时间（通常为 now），返回此时间之前的最近一次触发时间
- * @returns       上一次应触发的时间；无法解析时返回 null
+ * @param expr       标准 5 段 cron 表达式
+ * @param before     参考时间（通常为 now），返回此时间之前的最近一次触发时间
+ * @param maxWindowMs 最大向前查找范围（默认与漏触发补偿窗口一致）
+ * @returns          上一次应触发的时间；无法解析时返回 null
  */
-function getPrevCronTime(expr: string, before: Date): Date | null {
+function getPrevCronTime(expr: string, before: Date, maxWindowMs = MAX_MISSED_WINDOW_MS): Date | null {
   try {
     const job = new Cron(expr, { paused: true });
-    // 往前最多查 MAX_MISSED_WINDOW_MS（默认 24h）+ 1 个触发周期
-    // 策略：以 before 为终点，从足够早的时间向前遍历，找到最近一次
-    const windowStart = new Date(before.getTime() - MAX_MISSED_WINDOW_MS - 7 * 24 * 60 * 60 * 1000);
+    const windowStart = new Date(before.getTime() - maxWindowMs);
     let prev: Date | null = null;
     let cursor = windowStart;
-    while (true) {
+    // 安全上限：maxWindowMs 内最多触发 maxWindowMs/60s 次（每分钟 cron 为最高频）
+    let safetyLimit = Math.ceil(maxWindowMs / 60_000) + 10;
+    while (safetyLimit-- > 0) {
       const next = job.nextRun(cursor);
       if (!next || next >= before) break;
       prev = next;

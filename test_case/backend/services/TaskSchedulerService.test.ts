@@ -1,132 +1,72 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { Cron } from 'croner';
 
 /**
- * TaskSchedulerService 单元测试
+ * TaskSchedulerService 单元测试（重构版 - 基于 croner 库）
  *
- * 测试策略：
- * - 使用纯函数提取方式测试 Cron 解析、漏触发检测、并发逻辑
- * - 对有副作用的方法（DB、Jenkins）进行 mock
- * - 聚焦核心调度逻辑的正确性
+ * 变更说明：
+ * - 替换旧版手搓 parseCronToIntervalMs / getNextCronTime 为基于 croner 的版本
+ * - 新增 getPrevCronTime 测试（漏触发检测核心逻辑）
+ * - 新增 shouldCompensate 基于精确触发点的测试（替换原来基于 interval 的近似逻辑）
+ * - 保留并发调度器、重试策略、审计日志、executeTask 等原有测试
  */
 
 // ──────────────────────────────────────────────────────────────────────────────
-// 提取自 TaskSchedulerService 的纯函数逻辑（用于单元测试）
+// 从 TaskSchedulerService 复制的纯函数逻辑（与生产代码保持同步）
 // ──────────────────────────────────────────────────────────────────────────────
 
-/**
- * 解析 5 段 Cron 表达式，返回近似触发间隔（毫秒）
- * 与 TaskSchedulerService 内部逻辑一致
- */
-function parseCronToIntervalMs(expr: string): number | null {
-  try {
-    const parts = expr.trim().split(/\s+/);
-    if (parts.length !== 5) return null;
-    const [min, hour] = parts;
-
-    if (/^\*\/(\d+)$/.test(min) && hour === '*') {
-      const n = parseInt(min.replace('*/', ''));
-      return n * 60 * 1000;
-    }
-    if (min !== '*' && hour === '*') {
-      return 60 * 60 * 1000;
-    }
-    if (min !== '*' && /^\d+$/.test(hour)) {
-      return 24 * 60 * 60 * 1000;
-    }
-    return 60 * 60 * 1000;
-  } catch {
-    return null;
-  }
-}
+const MAX_MISSED_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * 计算 Cron 表达式的下次触发时间
- * 与 TaskSchedulerService 内部逻辑一致
+ * 计算 Cron 表达式的下次触发时间（基于 croner，与生产代码一致）
  */
 function getNextCronTime(expr: string, from: Date = new Date()): Date | null {
   try {
-    const parts = expr.trim().split(/\s+/);
-    if (parts.length !== 5) return null;
-    const [minPart, hourPart, domPart, monthPart, dowPart] = parts;
-
-    const parseField = (field: string, max: number): number[] | null => {
-      if (field === '*') return null;
-      if (/^\*\/(\d+)$/.test(field)) {
-        const step = parseInt(field.replace('*/', ''));
-        const result: number[] = [];
-        for (let i = 0; i <= max; i += step) result.push(i);
-        return result;
-      }
-      if (/^\d+(,\d+)*$/.test(field)) {
-        return field.split(',').map(Number);
-      }
-      if (/^(\d+)-(\d+)$/.test(field)) {
-        const [, a, b] = /^(\d+)-(\d+)$/.exec(field)!;
-        const result: number[] = [];
-        for (let i = parseInt(a); i <= parseInt(b); i++) result.push(i);
-        return result;
-      }
-      if (/^\d+$/.test(field)) return [parseInt(field)];
-      return null;
-    };
-
-    const allowedMins = parseField(minPart, 59);
-    const allowedHours = parseField(hourPart, 23);
-    const allowedDoms = parseField(domPart, 31);
-    const allowedMonths = parseField(monthPart, 12);
-    const allowedDows = parseField(dowPart, 6);
-
-    const candidate = new Date(from.getTime() + 60 * 1000);
-    candidate.setSeconds(0, 0);
-
-    const maxSearch = new Date(from.getTime() + 400 * 24 * 60 * 60 * 1000);
-
-    while (candidate < maxSearch) {
-      if (allowedMonths && !allowedMonths.includes(candidate.getMonth() + 1)) {
-        candidate.setMonth(candidate.getMonth() + 1, 1);
-        candidate.setHours(0, 0, 0, 0);
-        continue;
-      }
-      if (allowedDoms && !allowedDoms.includes(candidate.getDate())) {
-        candidate.setDate(candidate.getDate() + 1);
-        candidate.setHours(0, 0, 0, 0);
-        continue;
-      }
-      if (allowedDows && !allowedDows.includes(candidate.getDay())) {
-        candidate.setDate(candidate.getDate() + 1);
-        candidate.setHours(0, 0, 0, 0);
-        continue;
-      }
-      if (allowedHours && !allowedHours.includes(candidate.getHours())) {
-        candidate.setHours(candidate.getHours() + 1, 0, 0, 0);
-        continue;
-      }
-      if (allowedMins && !allowedMins.includes(candidate.getMinutes())) {
-        candidate.setMinutes(candidate.getMinutes() + 1, 0, 0);
-        continue;
-      }
-      return new Date(candidate);
-    }
-    return null;
+    const job = new Cron(expr, { paused: true });
+    return job.nextRun(from) ?? null;
   } catch {
     return null;
   }
 }
 
 /**
- * 漏触发检测逻辑
+ * 计算指定时间点之前最近一次应触发时间（基于 croner，与生产代码一致）
+ * 用于漏触发检测：若 prev > lastRunAt 则说明存在漏触发
+ */
+function getPrevCronTime(expr: string, before: Date, maxWindowMs = MAX_MISSED_WINDOW_MS): Date | null {
+  try {
+    const job = new Cron(expr, { paused: true });
+    const windowStart = new Date(before.getTime() - maxWindowMs);
+    let prev: Date | null = null;
+    let cursor = windowStart;
+    let safetyLimit = Math.ceil(maxWindowMs / 60_000) + 10;
+    while (safetyLimit-- > 0) {
+      const next = job.nextRun(cursor);
+      if (!next || next >= before) break;
+      prev = next;
+      cursor = next;
+    }
+    return prev;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 漏触发检测（基于精确触发点，与生产代码 compensateMissedFires 保持一致）
  * 返回 true 表示应该补偿执行
  */
 function shouldCompensate(
   lastRunAt: Date | null,
   cronExpression: string,
-  maxMissedWindowMs = 24 * 60 * 60 * 1000
+  now: Date = new Date(),
+  maxMissedWindowMs = MAX_MISSED_WINDOW_MS
 ): boolean {
   if (!lastRunAt) return false;
-  const intervalMs = parseCronToIntervalMs(cronExpression);
-  if (!intervalMs) return false;
-  const elapsed = Date.now() - lastRunAt.getTime();
-  return elapsed > intervalMs && elapsed <= maxMissedWindowMs;
+  if (now.getTime() - lastRunAt.getTime() > maxMissedWindowMs) return false;
+  const prevShouldRun = getPrevCronTime(cronExpression, now, maxMissedWindowMs);
+  if (!prevShouldRun) return false;
+  return prevShouldRun > lastRunAt;
 }
 
 /**
@@ -195,159 +135,222 @@ function shouldRetry(state: RetryState): boolean {
 // 测试套件
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe('TaskSchedulerService - Cron 解析', () => {
-  describe('parseCronToIntervalMs', () => {
-    it('应解析 */5 * * * * 为 5 分钟间隔', () => {
-      expect(parseCronToIntervalMs('*/5 * * * *')).toBe(5 * 60 * 1000);
-    });
-
-    it('应解析 */10 * * * * 为 10 分钟间隔', () => {
-      expect(parseCronToIntervalMs('*/10 * * * *')).toBe(10 * 60 * 1000);
-    });
-
-    it('应解析 */30 * * * * 为 30 分钟间隔', () => {
-      expect(parseCronToIntervalMs('*/30 * * * *')).toBe(30 * 60 * 1000);
-    });
-
-    it('应解析 0 * * * * 为 1 小时间隔', () => {
-      expect(parseCronToIntervalMs('0 * * * *')).toBe(60 * 60 * 1000);
-    });
-
-    it('应解析 0 2 * * * 为 24 小时间隔', () => {
-      expect(parseCronToIntervalMs('0 2 * * *')).toBe(24 * 60 * 60 * 1000);
-    });
-
-    it('应解析 30 6 * * * 为 24 小时间隔', () => {
-      expect(parseCronToIntervalMs('30 6 * * *')).toBe(24 * 60 * 60 * 1000);
-    });
-
-    it('非标准 4 段 cron 应返回 null', () => {
-      expect(parseCronToIntervalMs('0 * * *')).toBeNull();
-    });
-
-    it('非标准 6 段 cron 应返回 null', () => {
-      expect(parseCronToIntervalMs('0 0 * * * *')).toBeNull();
-    });
-
-    it('空字符串应返回 null', () => {
-      expect(parseCronToIntervalMs('')).toBeNull();
-    });
-
-    it('带额外空格的 cron 应正常解析', () => {
-      expect(parseCronToIntervalMs('  */5  *  *  *  *  ')).toBe(5 * 60 * 1000);
-    });
+describe('TaskSchedulerService - getNextCronTime（基于 croner）', () => {
+  it('每分钟触发（* * * * *）返回 from 之后的时间', () => {
+    const from = new Date('2026-03-12T10:00:00.000Z');
+    const next = getNextCronTime('* * * * *', from);
+    expect(next).not.toBeNull();
+    expect(next!.getTime()).toBeGreaterThan(from.getTime());
   });
 
-  describe('getNextCronTime', () => {
-    it('应返回下一分钟（* * * * *）', () => {
-      const from = new Date('2026-03-12T10:00:00.000Z');
-      const next = getNextCronTime('* * * * *', from);
-      expect(next).not.toBeNull();
-      expect(next!.getTime()).toBeGreaterThan(from.getTime());
-      // 下次触发应在 from 后至少 60 秒
-      expect(next!.getTime() - from.getTime()).toBeGreaterThanOrEqual(60 * 1000);
-    });
+  it('每日触发（0 2 * * *）在 02:30 后推算，下次晚于 from', () => {
+    const from = new Date('2026-03-12T02:30:00.000Z');
+    const next = getNextCronTime('0 2 * * *', from);
+    expect(next).not.toBeNull();
+    expect(next!.getTime()).toBeGreaterThan(from.getTime());
+  });
 
-    it('应解析每日触发（0 2 * * *）返回非空时间', () => {
-      const from = new Date('2026-03-12T02:30:00.000Z');
-      const next = getNextCronTime('0 2 * * *', from);
-      expect(next).not.toBeNull();
-      // 下次触发应该是明天的 02:00
-      expect(next!.getTime()).toBeGreaterThan(from.getTime());
-    });
+  it('每5分钟触发（*/5 * * * *）下次在 6 分钟内', () => {
+    const from = new Date('2026-03-12T10:00:00.000Z');
+    const next = getNextCronTime('*/5 * * * *', from);
+    expect(next).not.toBeNull();
+    expect(next!.getTime() - from.getTime()).toBeLessThanOrEqual(6 * 60 * 1000);
+  });
 
-    it('应解析每 5 分钟触发（*/5 * * * *）', () => {
-      const from = new Date('2026-03-12T10:00:00.000Z');
-      const next = getNextCronTime('*/5 * * * *', from);
-      expect(next).not.toBeNull();
-      expect(next!.getTime()).toBeGreaterThan(from.getTime());
-      // 下次触发应在 5 分钟内
-      expect(next!.getTime() - from.getTime()).toBeLessThanOrEqual(5 * 60 * 1000 + 60 * 1000);
-    });
+  it('非法 cron 返回 null', () => {
+    expect(getNextCronTime('invalid cron')).toBeNull();
+    expect(getNextCronTime('')).toBeNull();
+    expect(getNextCronTime('0 * * *')).toBeNull();
+  });
 
-    it('非法 cron 应返回 null', () => {
-      expect(getNextCronTime('invalid cron')).toBeNull();
-    });
+  it('指定日触发（0 9 15 * *）getDate 为 15', () => {
+    const from = new Date('2026-03-10T09:00:00.000Z');
+    const next = getNextCronTime('0 9 15 * *', from);
+    expect(next).not.toBeNull();
+    expect(next!.getDate()).toBe(15);
+  });
 
-    it('应支持指定日触发（0 9 15 * *）', () => {
-      const from = new Date('2026-03-10T09:00:00.000Z');
-      const next = getNextCronTime('0 9 15 * *', from);
-      expect(next).not.toBeNull();
-      expect(next!.getDate()).toBe(15);
-    });
+  it('每周一触发（0 8 * * 1）getDay 为 1', () => {
+    const from = new Date('2026-03-12T08:00:00.000Z');
+    const next = getNextCronTime('0 8 * * 1', from);
+    expect(next).not.toBeNull();
+    expect(next!.getDay()).toBe(1);
+  });
 
-    it('应支持星期触发（0 8 * * 1 = 每周一）', () => {
-      // 2026-03-12 是星期四，下一个周一是 2026-03-16
-      const from = new Date('2026-03-12T08:00:00.000Z');
-      const next = getNextCronTime('0 8 * * 1', from);
-      expect(next).not.toBeNull();
-      expect(next!.getDay()).toBe(1); // 周一
-    });
+  it('逗号分隔（0 8,20 * * *）09:00 后下次为 20 时', () => {
+    const from = new Date('2026-03-12T09:00:00.000Z');
+    const next = getNextCronTime('0 8,20 * * *', from);
+    expect(next).not.toBeNull();
+    expect(next!.getHours()).toBe(20);
+  });
 
-    it('应支持逗号分隔多值（0 8,20 * * *）', () => {
-      const from = new Date('2026-03-12T09:00:00.000Z'); // 当前 9 点，下次应是 20 点
-      const next = getNextCronTime('0 8,20 * * *', from);
-      expect(next).not.toBeNull();
-      expect(next!.getHours()).toBe(20);
-    });
+  it('范围表达式（0 9-17 * * *）触发时间在 9~17 时', () => {
+    const from = new Date('2026-03-12T08:00:00.000Z');
+    const next = getNextCronTime('0 9-17 * * *', from);
+    expect(next).not.toBeNull();
+    const h = next!.getHours();
+    expect(h).toBeGreaterThanOrEqual(9);
+    expect(h).toBeLessThanOrEqual(17);
+  });
 
-    it('应支持范围表达式（0 9-17 * * *）', () => {
-      const from = new Date('2026-03-12T08:00:00.000Z');
-      const next = getNextCronTime('0 9-17 * * *', from);
-      expect(next).not.toBeNull();
-      const h = next!.getHours();
-      expect(h).toBeGreaterThanOrEqual(9);
-      expect(h).toBeLessThanOrEqual(17);
-    });
+  it('每月第一天（0 0 1 * *）date 为 1', () => {
+    const from = new Date('2026-03-15T00:00:00.000Z');
+    const next = getNextCronTime('0 0 1 * *', from);
+    expect(next).not.toBeNull();
+    expect(next!.getDate()).toBe(1);
+  });
+
+  it('每天 12 点（0 12 * * *）hour=12 minute=0', () => {
+    const from = new Date('2026-03-12T10:00:00.000Z');
+    const next = getNextCronTime('0 12 * * *', from);
+    expect(next).not.toBeNull();
+    expect(next!.getHours()).toBe(12);
+    expect(next!.getMinutes()).toBe(0);
+  });
+
+  it('工作日触发（0 2 * * 1-5）day 在 1-5', () => {
+    const from = new Date('2026-04-06T01:00:00.000Z');
+    const next = getNextCronTime('0 2 * * 1-5', from);
+    expect(next).not.toBeNull();
+    expect(next!.getDay()).toBeGreaterThanOrEqual(1);
+    expect(next!.getDay()).toBeLessThanOrEqual(5);
   });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe('TaskSchedulerService - 漏触发补偿', () => {
-  it('从未运行过的任务（lastRunAt=null）不需要补偿', () => {
+describe('TaskSchedulerService - getPrevCronTime（漏触发检测核心）', () => {
+  it('每分钟触发：应能找到 before 之前的触发点', () => {
+    const now = new Date('2026-03-12T10:05:00.000Z');
+    const prev = getPrevCronTime('* * * * *', now);
+    expect(prev).not.toBeNull();
+    expect(prev!.getTime()).toBeLessThan(now.getTime());
+  });
+
+  it('每5分钟触发：上次运行(10:06)在最近触发点(10:05)之后 => prev <= lastRunAt（无漏触发）', () => {
+    const now = new Date('2026-03-12T10:08:00.000Z');
+    const lastRunAt = new Date('2026-03-12T10:06:00.000Z');
+    const prev = getPrevCronTime('*/5 * * * *', now);
+    expect(prev).not.toBeNull();
+    expect(prev!.getTime() <= lastRunAt.getTime()).toBe(true);
+  });
+
+  it('每5分钟触发：上次运行(9:58)在最近触发点之前 => prev > lastRunAt（有漏触发）', () => {
+    const now = new Date('2026-03-12T10:10:00.000Z');
+    const lastRunAt = new Date('2026-03-12T09:58:00.000Z');
+    const prev = getPrevCronTime('*/5 * * * *', now);
+    expect(prev).not.toBeNull();
+    expect(prev!.getTime() > lastRunAt.getTime()).toBe(true);
+  });
+
+  it('每日 02:00：今天成功跑过(02:01)，prev(02:00) <= lastRunAt => 无漏触发', () => {
+    const now = new Date('2026-04-06T09:00:00.000Z');
+    const lastRunAt = new Date('2026-04-06T02:01:00.000Z');
+    const prev = getPrevCronTime('0 2 * * *', now);
+    expect(prev).not.toBeNull();
+    expect(prev!.getTime() <= lastRunAt.getTime()).toBe(true);
+  });
+
+  it('每日 02:00：停机重启，今天 02:00 被跳过 => prev > lastRunAt(昨天 02:01)', () => {
+    const now = new Date('2026-04-06T09:00:00.000Z');
+    const lastRunAt = new Date('2026-04-05T02:01:00.000Z');
+    const prev = getPrevCronTime('0 2 * * *', now);
+    expect(prev).not.toBeNull();
+    expect(prev!.getTime() > lastRunAt.getTime()).toBe(true);
+  });
+
+  it('工作日 02:00：周一重启，周一 02:00 被跳过 => prev > lastRunAt(周五)', () => {
+    const now = new Date('2026-04-06T09:00:00.000Z');
+    const lastRunAt = new Date('2026-04-03T02:01:00.000Z');
+    const prev = getPrevCronTime('0 2 * * 1-5', now);
+    expect(prev).not.toBeNull();
+    expect(prev!.getTime() > lastRunAt.getTime()).toBe(true);
+  });
+
+  it('非法 cron 返回 null', () => {
+    expect(getPrevCronTime('invalid', new Date())).toBeNull();
+    expect(getPrevCronTime('', new Date())).toBeNull();
+  });
+
+  it('高频 cron（*/1 * * * *）24h 窗口内不超时（< 500ms）', () => {
+    const now = new Date();
+    const t = Date.now();
+    const prev = getPrevCronTime('*/1 * * * *', now);
+    expect(prev).not.toBeNull();
+    expect(Date.now() - t).toBeLessThan(500);
+  });
+
+  it('自定义小窗口（1分钟）中每分钟 cron 的 prev 在 60s 内', () => {
+    // 10:05:30 时，窗口为 [10:04:30, 10:05:30)，10:05:00 在窗口内可被找到
+    const now = new Date('2026-03-12T10:05:30.000Z');
+    const prev = getPrevCronTime('* * * * *', now, 60 * 1000);
+    expect(prev).not.toBeNull();
+    expect(now.getTime() - prev!.getTime()).toBeLessThanOrEqual(60 * 1000);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('TaskSchedulerService - shouldCompensate（基于精确触发点）', () => {
+  it('lastRunAt=null => 不补偿', () => {
     expect(shouldCompensate(null, '*/5 * * * *')).toBe(false);
   });
 
-  it('1分钟前运行过、间隔5分钟的任务不需要补偿', () => {
-    const lastRunAt = new Date(Date.now() - 1 * 60 * 1000); // 1分钟前
-    expect(shouldCompensate(lastRunAt, '*/5 * * * *')).toBe(false);
+  it('elapsed > 24h => 超窗口不补偿', () => {
+    const now = new Date('2026-03-12T10:00:00.000Z');
+    const lastRunAt = new Date(now.getTime() - 25 * 60 * 60 * 1000);
+    expect(shouldCompensate(lastRunAt, '*/5 * * * *', now)).toBe(false);
   });
 
-  it('10分钟前运行过、间隔5分钟的任务需要补偿', () => {
-    const lastRunAt = new Date(Date.now() - 10 * 60 * 1000); // 10分钟前
-    expect(shouldCompensate(lastRunAt, '*/5 * * * *')).toBe(true);
+  it('每5分钟：上次运行在最近触发点之后 => 无漏触发', () => {
+    const now = new Date('2026-03-12T10:08:00.000Z');
+    const lastRunAt = new Date('2026-03-12T10:06:00.000Z');
+    expect(shouldCompensate(lastRunAt, '*/5 * * * *', now)).toBe(false);
   });
 
-  it('超过24小时的漏触发不需要补偿（窗口外）', () => {
-    const lastRunAt = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25小时前
-    expect(shouldCompensate(lastRunAt, '*/5 * * * *')).toBe(false);
+  it('每5分钟：上次运行在最近触发点之前 => 有漏触发', () => {
+    const now = new Date('2026-03-12T10:10:00.000Z');
+    const lastRunAt = new Date('2026-03-12T09:58:00.000Z');
+    expect(shouldCompensate(lastRunAt, '*/5 * * * *', now)).toBe(true);
   });
 
-  it('恰好在窗口内（23小时）的漏触发应补偿', () => {
-    const lastRunAt = new Date(Date.now() - 23 * 60 * 60 * 1000); // 23小时前
-    // 每小时任务，23小时前运行，超过了1小时间隔，在24小时内
-    expect(shouldCompensate(lastRunAt, '0 * * * *')).toBe(true);
+  it('每小时：50 分钟前运行 => 无漏触发', () => {
+    const now = new Date('2026-03-12T10:50:00.000Z');
+    const lastRunAt = new Date('2026-03-12T10:01:00.000Z');
+    expect(shouldCompensate(lastRunAt, '0 * * * *', now)).toBe(false);
   });
 
-  it('无法解析的 cron 不触发补偿', () => {
-    const lastRunAt = new Date(Date.now() - 10 * 60 * 1000);
-    expect(shouldCompensate(lastRunAt, 'invalid')).toBe(false);
+  it('每小时：70 分钟前运行 => 有漏触发', () => {
+    const now = new Date('2026-03-12T11:10:00.000Z');
+    const lastRunAt = new Date('2026-03-12T10:00:00.000Z');
+    expect(shouldCompensate(lastRunAt, '0 * * * *', now)).toBe(true);
   });
 
-  it('每日任务（0 2 * * *）在服务停机超过24h未运行时不应补偿（超出窗口）', () => {
-    const lastRunAt = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25小时前，超窗口
-    expect(shouldCompensate(lastRunAt, '0 2 * * *')).toBe(false);
+  it('每日任务：今天 02:00 被跳过，elapsed < 24h => 应补偿', () => {
+    // now=2026-04-06T03:05Z，lastRunAt=2026-04-05T04:00Z，elapsed≈23h
+    // prev(0 2 * * *)=今天 02:00 > lastRunAt(昨天 04:00) => 漏触发
+    const now = new Date('2026-04-06T03:05:00.000Z');
+    const lastRunAt = new Date('2026-04-05T04:00:00.000Z');
+    expect(shouldCompensate(lastRunAt, '0 2 * * *', now)).toBe(true);
   });
 
-  it('每日任务（0 2 * * *）elapsed > interval 且在窗口内应补偿', () => {
-    // 25h > 24h interval，且 elapsed(25h) > maxWindow(24h) => false（超窗口）
-    // 需要 elapsed > interval 且 elapsed <= 24h:
-    // 例如，elapsed = 24h + 1min = just over interval，且在24h窗口内（实际不可能，因为24h+1min > 24h窗口）
-    // 修正：使用自定义窗口 = 48h，则 25h 满足 elapsed > 24h 且 elapsed <= 48h
-    const lastRunAt = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25小时前
-    const customWindow = 48 * 60 * 60 * 1000; // 48小时窗口
-    expect(shouldCompensate(lastRunAt, '0 2 * * *', customWindow)).toBe(true);
+  it('每日任务：elapsed > 24h => 超窗口不补偿', () => {
+    const now = new Date('2026-04-06T09:00:00.000Z');
+    const lastRunAt = new Date('2026-04-05T02:01:00.000Z'); // elapsed≈31h
+    expect(shouldCompensate(lastRunAt, '0 2 * * *', now)).toBe(false);
+  });
+
+  it('非法 cron => 不补偿', () => {
+    const now = new Date();
+    const lastRunAt = new Date(now.getTime() - 10 * 60 * 1000);
+    expect(shouldCompensate(lastRunAt, 'invalid', now)).toBe(false);
+  });
+
+  it('lastRunAt 精确等于 prevShouldRun => 不补偿（已执行）', () => {
+    const now = new Date('2026-03-12T10:10:00.000Z');
+    const prevShouldRun = getPrevCronTime('*/5 * * * *', now)!;
+    expect(prevShouldRun).not.toBeNull();
+    expect(shouldCompensate(prevShouldRun, '*/5 * * * *', now)).toBe(false);
   });
 });
 
@@ -586,34 +589,6 @@ describe('TaskSchedulerService - 审计日志条目格式验证', () => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe('TaskSchedulerService - Cron 表达式边界值测试', () => {
-  it('*/1 触发间隔应为 1 分钟', () => {
-    expect(parseCronToIntervalMs('*/1 * * * *')).toBe(60 * 1000);
-  });
-
-  it('*/60 触发间隔应为 60 分钟', () => {
-    expect(parseCronToIntervalMs('*/60 * * * *')).toBe(60 * 60 * 1000);
-  });
-
-  it('0 0 * * * 触发间隔应为 24 小时', () => {
-    expect(parseCronToIntervalMs('0 0 * * *')).toBe(24 * 60 * 60 * 1000);
-  });
-
-  it('每天固定时间触发（0 12 * * *）', () => {
-    const from = new Date('2026-03-12T10:00:00.000Z');
-    const next = getNextCronTime('0 12 * * *', from);
-    expect(next).not.toBeNull();
-    expect(next!.getHours()).toBe(12);
-    expect(next!.getMinutes()).toBe(0);
-  });
-
-  it('每月第一天触发（0 0 1 * *）', () => {
-    const from = new Date('2026-03-15T00:00:00.000Z');
-    const next = getNextCronTime('0 0 1 * *', from);
-    expect(next).not.toBeNull();
-    expect(next!.getDate()).toBe(1);
-  });
-});
 
 // ──────────────────────────────────────────────────────────────────────────────
 
