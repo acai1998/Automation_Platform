@@ -79,6 +79,11 @@ export interface AiCaseGenerationNodeEvent {
   totalModules: number;
 }
 
+// ─── normalizePlan 结构校验下限（避免魔法数字散落在代码中）─────────────────────
+const PLAN_MIN_MODULES = 3;
+const PLAN_MIN_CASES_PER_SCENARIO = 2;
+const PLAN_MIN_STEPS_PER_CASE = 2;
+
 function parsePositiveInt(value: string, fallback: number): number {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -232,18 +237,18 @@ function normalizePlan(raw: unknown, fallbackWorkspaceName: string): AiCaseGener
   }
 
   // 代码层强制校验结构下限，不仅靠 prompt 约束
-  if (modules.length < 3) {
-    throw new Error(`模型返回的模块数量不足（得到 ${modules.length} 个，少于要求的 3 个）`);
+  if (modules.length < PLAN_MIN_MODULES) {
+    throw new Error(`模型返回的模块数量不足（得到 ${modules.length} 个，少于要求的 ${PLAN_MIN_MODULES} 个）`);
   }
 
   for (const m of modules) {
     for (const s of m.scenarios) {
-      if (s.cases.length < 2) {
-        throw new Error(`模块「${m.name}」中场景「${s.name}」的测试点不足（得到 ${s.cases.length} 个，少于要求的 2 个）`);
+      if (s.cases.length < PLAN_MIN_CASES_PER_SCENARIO) {
+        throw new Error(`模块「${m.name}」中场景「${s.name}」的测试点不足（得到 ${s.cases.length} 个，少于要求的 ${PLAN_MIN_CASES_PER_SCENARIO} 个）`);
       }
       for (const c of s.cases) {
-        if (!c.steps || c.steps.length < 2) {
-          throw new Error(`场景「${s.name}」中测试点「${c.title}」的测试步骤不足（得到 ${c.steps?.length ?? 0} 条，少于要求的 2 条）`);
+        if (!c.steps || c.steps.length < PLAN_MIN_STEPS_PER_CASE) {
+          throw new Error(`场景「${s.name}」中测试点「${c.title}」的测试步骤不足（得到 ${c.steps?.length ?? 0} 条，少于要求的 ${PLAN_MIN_STEPS_PER_CASE} 条）`);
         }
       }
     }
@@ -570,12 +575,19 @@ export class AiCaseGenerationService {
 
   private resolveCompletionEndpoint(baseUrl: string): string {
     const normalized = baseUrl.trim().replace(/\/+$/, '');
+
+    // 已经是完整路径，直接使用
     if (normalized.endsWith('/chat/completions')) {
       return normalized;
     }
-    if (normalized.endsWith('/v1')) {
+
+    // 以 /v1 结尾：追加 /chat/completions
+    if (/\/v\d+$/.test(normalized)) {
       return `${normalized}/chat/completions`;
     }
+
+    // 其他情况：追加标准的 /v1/chat/completions
+    // 注意：若 baseUrl 已包含自定义子路径（如 /v2），此处不会重复追加
     return `${normalized}/v1/chat/completions`;
   }
 }

@@ -915,13 +915,16 @@ function AiCasesInner() {
         }
 
         if (!skeletonData) {
-          // 第一个 module：创建骨架根节点（预分配 totalModules 个占位 slot）
-          const skeleton = createInitialMindData(workspaceName || 'AI Testcase Workspace');
-          skeleton.nodeData.children = [];
-          const normalizedSkeleton = normalizeMindData(skeleton, {
-            showNodeKindTags: showNodeKindTagsRef.current,
-          });
-          skeletonData = normalizedSkeleton;
+          // 第一个 module：创建最小骨架根节点（不生成默认子节点，避免白白创建再丢弃）
+          const emptyRoot = normalizeMindData({
+            nodeData: {
+              id: `node-skeleton-root`,
+              topic: workspaceName || 'AI Testcase Workspace',
+              expanded: true,
+              children: [],
+            },
+          }, { showNodeKindTags: showNodeKindTagsRef.current });
+          skeletonData = emptyRoot;
         }
 
         // 性能优化：只对当前新模块做 normalize + expand，再按索引替换到骨架中
@@ -1387,7 +1390,7 @@ function AiCasesInner() {
     };
   }, [isImportingMindNodes, setDataAndSync, uploadImageFiles]);
 
-  const handleGenerate = async () => {
+  const handleGenerate = useCallback(async () => {
     if (!requirementText.trim()) {
       toast.error('请先输入需求描述，再执行 AI 生成');
       return;
@@ -1469,7 +1472,15 @@ function AiCasesInner() {
     } finally {
       setIsGenerating(false);
     }
-  };
+  }, [
+    requirementText,
+    workspaceName,
+    streamGenerateFromBackend,
+    startGenerateProgress,
+    finishGenerateProgress,
+    setDataAndSync,
+    cleanupStaleAttachments,
+  ]);
 
   const handleLoadHistoryWorkspace = useCallback(async (id: number) => {
     try {
@@ -1485,7 +1496,7 @@ function AiCasesInner() {
     }
   }, [applyWorkspaceDetail]);
 
-  const handlePublishRemote = async () => {
+  const handlePublishRemote = useCallback(async () => {
     if (!mindData) {
       toast.error('脑图尚未初始化，无法发布');
       return;
@@ -1528,9 +1539,9 @@ function AiCasesInner() {
     } finally {
       setIsPublishingRemote(false);
     }
-  };
+  }, [mindData, workspaceName, requirementText, applyWorkspaceDetail, cleanupStaleAttachments, updateRemoteSyncMeta]);
 
-  const handleSyncFromRemote = async () => {
+  const handleSyncFromRemote = useCallback(async () => {
     const remoteId = remoteSyncMetaRef.current.remoteWorkspaceId;
     if (!remoteId) {
       toast.error('当前草稿尚未发布到远端');
@@ -1554,9 +1565,9 @@ function AiCasesInner() {
     } finally {
       setIsSyncingRemote(false);
     }
-  };
+  }, [applyWorkspaceDetail, cleanupStaleAttachments]);
 
-  const handleResetTemplate = async () => {
+  const handleResetTemplate = useCallback(async () => {
     const next = createInitialMindData(workspaceName || 'AI Testcase Workspace');
     setDataAndSync(next, {
       selectedId: next.nodeData.id,
@@ -1565,9 +1576,9 @@ function AiCasesInner() {
     await cleanupStaleAttachments(next);
     setAttachmentReloadSeed((value) => value + 1);
     toast.success('已恢复默认脑图模板');
-  };
+  }, [workspaceName, setDataAndSync, cleanupStaleAttachments]);
 
-  const handleStatusChange = async (status: AiCaseNodeStatus) => {
+  const handleStatusChange = useCallback(async (status: AiCaseNodeStatus) => {
     if (!mindData || !selectedNodeId || !canEditSelectedNode) {
       toast.error('请先选中一个可执行测试节点');
       return;
@@ -1646,15 +1657,15 @@ function AiCasesInner() {
       selectedId: selectedNodeId,
       refreshMind: true,
     });
-  };
+  }, [mindData, selectedNodeId, canEditSelectedNode, workspaceName, requirementText, applyWorkspaceDetail, updateRemoteSyncMeta, setDataAndSync]);
 
-  const handleUploadAttachment = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleUploadAttachment = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     void uploadImageFiles(files, 'picker');
-  };
+  }, [uploadImageFiles]);
 
-  const handleDeleteAttachment = async (attachmentId: string) => {
+  const handleDeleteAttachment = useCallback(async (attachmentId: string) => {
     if (!mindData || !selectedNodeId) {
       return;
     }
@@ -1672,7 +1683,7 @@ function AiCasesInner() {
       console.error('[AICases] failed to delete attachment', error);
       toast.error('删除截图失败，请稍后重试');
     }
-  };
+  }, [mindData, selectedNodeId, setDataAndSync]);
 
   // ─── 辅助变量 ──────────────────────────────────────────────────────────────
 
@@ -1731,89 +1742,70 @@ function AiCasesInner() {
       {/* 主体：左侧边栏 + 右侧画布 */}
       <div className="flex-1 min-h-0 flex relative">
 
-        {/* 桌端侧边栏（全屏时隐藏） */}
-        {!isCanvasFullscreen ? (
-          <div
-            className="hidden lg:block shrink-0 h-full overflow-hidden"
-            style={{ width: SIDEBAR_WIDTH }}
-          >
-            <AiCaseSidebar
-              workspaceName={workspaceName}
-              requirementText={requirementText}
-              onWorkspaceNameChange={handleWorkspaceNameChange}
-              onRequirementTextChange={setRequirementText}
-              isGenerating={isGenerating}
-              generationProgress={generationProgress}
-              generationStageText={generationStageText}
-              onGenerate={handleGenerate}
-              progress={progress}
-              selectedNode={selectedNode}
-              selectedNodeStatus={selectedNodeStatus}
-              canEditSelectedNode={canEditSelectedNode}
-              isUpdatingNodeStatus={isUpdatingNodeStatus}
-              onStatusChange={handleStatusChange}
-              attachments={attachments}
-              isUploading={isUploading}
-              onUploadAttachment={handleUploadAttachment}
-              onDeleteAttachment={handleDeleteAttachment}
-              isRemoteLinked={isRemoteLinked}
-              remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
-              isPublishingRemote={isPublishingRemote}
-              isSyncingRemote={isSyncingRemote}
-              onPublishRemote={handlePublishRemote}
-              onSyncFromRemote={handleSyncFromRemote}
-              onResetTemplate={handleResetTemplate}
-              onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
-              mindData={mindData}
-            />
-          </div>
-        ) : null}
+        {/* 提取 AiCaseSidebar 公共 props，桌端 / 移动端共享同一份，避免两处维护 */}
+        {(() => {
+          const sidebarProps = {
+            workspaceName,
+            requirementText,
+            onWorkspaceNameChange: handleWorkspaceNameChange,
+            onRequirementTextChange: setRequirementText,
+            isGenerating,
+            generationProgress,
+            generationStageText,
+            onGenerate: handleGenerate,
+            progress,
+            selectedNode,
+            selectedNodeStatus,
+            canEditSelectedNode,
+            isUpdatingNodeStatus,
+            onStatusChange: handleStatusChange,
+            attachments,
+            isUploading,
+            onUploadAttachment: handleUploadAttachment,
+            onDeleteAttachment: handleDeleteAttachment,
+            isRemoteLinked,
+            remoteWorkspaceId: remoteSyncMeta.remoteWorkspaceId ?? null,
+            isPublishingRemote,
+            isSyncingRemote,
+            onPublishRemote: handlePublishRemote,
+            onSyncFromRemote: handleSyncFromRemote,
+            onResetTemplate: handleResetTemplate,
+            onLoadHistoryWorkspace: handleLoadHistoryWorkspace,
+            mindData,
+          };
 
-        {/* 移动端侧边栏 Drawer（全屏时隐藏） */}
-        {!isCanvasFullscreen && sidebarOpen ? (
-          <div className="lg:hidden absolute inset-0 z-40 flex">
-            {/* 遮罩 */}
-            <div
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-              onClick={() => setSidebarOpen(false)}
-            />
-            {/* 侧边栏内容 */}
-            <div
-              className="relative z-50 h-full overflow-hidden bg-white dark:bg-slate-900 shadow-2xl"
-              style={{ width: SIDEBAR_WIDTH }}
-            >
-              <AiCaseSidebar
-                workspaceName={workspaceName}
-                requirementText={requirementText}
-                onWorkspaceNameChange={handleWorkspaceNameChange}
-                onRequirementTextChange={setRequirementText}
-                isGenerating={isGenerating}
-                generationProgress={generationProgress}
-                generationStageText={generationStageText}
-                onGenerate={handleGenerate}
-                progress={progress}
-                selectedNode={selectedNode}
-                selectedNodeStatus={selectedNodeStatus}
-                canEditSelectedNode={canEditSelectedNode}
-                isUpdatingNodeStatus={isUpdatingNodeStatus}
-                onStatusChange={handleStatusChange}
-                attachments={attachments}
-                isUploading={isUploading}
-                onUploadAttachment={handleUploadAttachment}
-                onDeleteAttachment={handleDeleteAttachment}
-                isRemoteLinked={isRemoteLinked}
-                remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
-                isPublishingRemote={isPublishingRemote}
-                isSyncingRemote={isSyncingRemote}
-                onPublishRemote={handlePublishRemote}
-                onSyncFromRemote={handleSyncFromRemote}
-                onResetTemplate={handleResetTemplate}
-                onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
-                mindData={mindData}
-              />
-           </div>
-         </div>
-        ) : null}
+          return (
+            <>
+              {/* 桌端侧边栏（全屏时隐藏） */}
+              {!isCanvasFullscreen ? (
+                <div
+                  className="hidden lg:block shrink-0 h-full overflow-hidden"
+                  style={{ width: SIDEBAR_WIDTH }}
+                >
+                  <AiCaseSidebar {...sidebarProps} />
+                </div>
+              ) : null}
+
+              {/* 移动端侧边栏 Drawer（全屏时隐藏） */}
+              {!isCanvasFullscreen && sidebarOpen ? (
+                <div className="lg:hidden absolute inset-0 z-40 flex">
+                  {/* 遮罩 */}
+                  <div
+                    className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+                    onClick={() => setSidebarOpen(false)}
+                  />
+                  {/* 侧边栏内容 */}
+                  <div
+                    className="relative z-50 h-full overflow-hidden bg-white dark:bg-slate-900 shadow-2xl"
+                    style={{ width: SIDEBAR_WIDTH }}
+                  >
+                    <AiCaseSidebar {...sidebarProps} />
+                  </div>
+                </div>
+              ) : null}
+            </>
+          );
+        })()}
 
         {/* 右侧画布区域 */}
         <section

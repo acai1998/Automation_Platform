@@ -33,7 +33,13 @@ pipeline {
     }
     
     options {
-        buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '5'))
+        // 只保留最近 5 次部署记录，30 天自动过期，减少 JENKINS_HOME 占用
+        buildDiscarder(logRotator(
+            numToKeepStr:         '5',
+            artifactNumToKeepStr: '3',
+            daysToKeepStr:        '30',
+            artifactDaysToKeepStr:'7'
+        ))
         timeout(time: 15, unit: 'MINUTES')
         disableConcurrentBuilds()
     }
@@ -271,20 +277,36 @@ COMPOSE_EOF
                 script {
                     echo "清理未使用的资源..."
                     sh """
-                        # 清理未使用的镜像
+                        # 清理悬空镜像（dangling images）
                         docker image prune -f
-                        
-                        # 清理未使用的容器
+
+                        # 清理已停止容器
                         docker container prune -f
-                        
+
+                        # 清理 24h 以前的 build 缓存
+                        docker builder prune -f --filter until=24h || true
+
+                        # 清理备份标签：只保留最新 3 个 backup 镜像
+                        docker images --format '{{.Repository}}:{{.Tag}}' \
+                            | grep 'backup-' \
+                            | sort -r \
+                            | tail -n +4 \
+                            | xargs -r docker rmi -f || true
+
                         # 清理备份配置
                         rm -f ${PROJECT_DIR}/docker-compose.yml.backup || true
-                        
+
+                        echo "📊 Docker 磁盘占用情况:"
+                        docker system df
+
                         echo "清理完成"
                     """
-                    
+
                     // 登出 Docker
                     sh 'docker logout docker.cnb.cool || true'
+
+                    // 清理 Jenkins workspace
+                    cleanWs()
                 }
             }
         }
@@ -351,6 +373,8 @@ COMPOSE_EOF
                     rm -f ${PROJECT_DIR}/docker-compose.yml.backup 2>/dev/null || true
                     docker logout docker.cnb.cool 2>/dev/null || true
                 """
+                // 清理 Jenkins workspace，避免磁盘堆积
+                cleanWs()
             }
         }
     }

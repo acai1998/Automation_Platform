@@ -8,6 +8,7 @@ import type {
   AiCaseProgress,
 } from '@/types/aiCases';
 import { createAiCaseNodeId, isAiCaseNodeStatus } from '@/types/aiCases';
+import { incrementNodeVersion } from '@shared/types/aiCaseNodeMetadata';
 
 const NODE_KIND_TAG_TEXT: Record<Exclude<AiCaseNodeKind, 'root'>, string> = {
   module: '功能模块',
@@ -430,17 +431,16 @@ function buildCaseChildren(
   steps: string[],
   expectedResults: string[],
 ): AiCaseNode[] {
-  const children: AiCaseNode[] = [];
-  if (preconditions.length > 0) {
-    children.push(createNode(fmtInline(preconditions), 'scenario', { aiGenerated: true }));
-  }
-  if (steps.length > 0) {
-    children.push(createNode(fmtInline(steps), 'scenario', { aiGenerated: true }));
-  }
-  if (expectedResults.length > 0) {
-    children.push(createNode(fmtInline(expectedResults), 'scenario', { aiGenerated: true }));
-  }
-  return children;
+  // 每个 section 至少保留一个兜底节点，确保 testcase 始终有「前置条件/测试步骤/预期结果」三个子节点
+  const safePreconditions = preconditions.length > 0 ? preconditions : ['无特殊前置条件'];
+  const safeSteps = steps.length > 0 ? steps : ['执行目标操作并记录结果'];
+  const safeExpectedResults = expectedResults.length > 0 ? expectedResults : ['功能符合预期'];
+
+  return [
+    createNode(fmtInline(safePreconditions), 'scenario', { aiGenerated: true }),
+    createNode(fmtInline(safeSteps), 'scenario', { aiGenerated: true }),
+    createNode(fmtInline(safeExpectedResults), 'scenario', { aiGenerated: true }),
+  ];
 }
 
 function buildSmokeCases(anchor: string): AiCaseNode[] {
@@ -718,7 +718,8 @@ export function appendNodeAttachmentId(data: AiCaseMindData, nodeId: string, att
     node.metadata = {
       ...current,
       attachmentIds: [...new Set([...(current.attachmentIds ?? []), attachmentId])],
-      nodeVersion: current.nodeVersion + 1,
+      // 使用 shared 层安全递增，防止 nodeVersion 为 undefined/NaN
+      nodeVersion: incrementNodeVersion(current.nodeVersion),
       updatedAt: Date.now(),
     };
   });
@@ -730,7 +731,8 @@ export function removeNodeAttachmentId(data: AiCaseMindData, nodeId: string, att
     node.metadata = {
       ...current,
       attachmentIds: (current.attachmentIds ?? []).filter((id) => id !== attachmentId),
-      nodeVersion: current.nodeVersion + 1,
+      // 使用 shared 层安全递增，防止 nodeVersion 为 undefined/NaN
+      nodeVersion: incrementNodeVersion(current.nodeVersion),
       updatedAt: Date.now(),
     };
   });

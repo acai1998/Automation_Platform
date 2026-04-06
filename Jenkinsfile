@@ -23,7 +23,13 @@ pipeline {
     }
 
     options {
-        buildDiscarder(logRotator(numToKeepStr: '20'))
+        // 只保留最近 10 次构建记录，制品只保留 5 次，减少 JENKINS_HOME 磁盘占用
+        buildDiscarder(logRotator(
+            numToKeepStr:         '10',
+            artifactNumToKeepStr: '5',
+            daysToKeepStr:        '30',
+            artifactDaysToKeepStr:'7'
+        ))
         timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
         // 每次构建前清理 workspace，确保拉取最新 Jenkinsfile
@@ -165,6 +171,32 @@ pipeline {
                 }
             }
         }
+
+        // ── Stage 4: 清理工作空间 ───────────────────────────────────────────────
+        stage('清理工作空间') {
+            agent { label "${env.EXEC_NODE}" }
+            steps {
+                script {
+                    // 清理 Docker 悬空资源，释放磁盘空间
+                    sh '''
+                        echo "🧹 清理 Docker 悬空镜像（dangling）..."
+                        docker image prune -f || true
+
+                        echo "🧹 清理已停止的容器..."
+                        docker container prune -f || true
+
+                        echo "🧹 清理未使用的 Docker 构建缓存..."
+                        docker builder prune -f --filter until=24h || true
+
+                        echo "📊 Docker 磁盘占用:"
+                        docker system df || true
+                    '''
+                    // 清理 workspace，避免残留文件堆积
+                    cleanWs()
+                    echo "✅ 工作空间清理完成"
+                }
+            }
+        }
     }
 
     post {
@@ -173,6 +205,8 @@ pipeline {
                 // post.always 在 agent none 下没有默认 node，需显式指定节点才能执行 sh
                 node(env.EXEC_NODE ?: 'master') {
                     sh 'docker logout docker.cnb.cool || true'
+                    // 无论成功失败，都清理 workspace 避免磁盘堆积
+                    cleanWs()
                 }
                 // entrypoint.sh 已在容器内完成平台回调
                 // 若容器异常崩溃导致回调丢失，平台侧的 ExecutionMonitorService + fallback sync 会兜底

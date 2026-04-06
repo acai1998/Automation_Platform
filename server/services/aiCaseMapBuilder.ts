@@ -1,25 +1,19 @@
-import { createAiCaseNodeId } from '@shared/types/aiCaseNodeMetadata';
+import {
+  createAiCaseNodeId,
+  incrementNodeVersion,
+  normalizeNodeMetadata,
+  parseStatus,
+  parsePriority,
+  type AiCaseNodeStatus,
+  type AiCaseNodePriority,
+  type AiCaseNodeKind,
+  type AiCaseNodeMetadata,
+  type AiCaseStatusHistoryItem,
+  STATUS_HISTORY_MAX_LENGTH,
+} from '@shared/types/aiCaseNodeMetadata';
 
-export type AiCaseNodeStatus = 'todo' | 'doing' | 'blocked' | 'passed' | 'failed' | 'skipped';
-export type AiCaseNodePriority = 'P0' | 'P1' | 'P2' | 'P3';
-export type AiCaseNodeKind = 'root' | 'module' | 'scenario' | 'testcase';
-
-export interface AiCaseStatusHistoryItem {
-  status: AiCaseNodeStatus;
-  at: number;
-}
-
-export interface AiCaseNodeMetadata {
-  kind: AiCaseNodeKind;
-  status: AiCaseNodeStatus;
-  priority: AiCaseNodePriority;
-  owner: string | null;
-  attachmentIds: string[];
-  aiGenerated: boolean;
-  nodeVersion: number;
-  updatedAt: number;
-  statusHistory: AiCaseStatusHistoryItem[];
-}
+// ─── 重新导出 shared 层类型，保持向后兼容（下游直接 import 此文件的代码不需要改）────
+export type { AiCaseNodeStatus, AiCaseNodePriority, AiCaseNodeKind, AiCaseNodeMetadata, AiCaseStatusHistoryItem };
 
 export interface AiCaseMapNode {
   id: string;
@@ -84,8 +78,6 @@ export interface AiCaseNodeStatusUpdateResult {
   mapData: AiCaseMapData;
 }
 
-const STATUS_ORDER: AiCaseNodeStatus[] = ['todo', 'doing', 'blocked', 'passed', 'failed', 'skipped'];
-
 function cloneMapData(data: AiCaseMapData): AiCaseMapData {
   if (typeof structuredClone === 'function') {
     return structuredClone(data);
@@ -93,18 +85,32 @@ function cloneMapData(data: AiCaseMapData): AiCaseMapData {
   return JSON.parse(JSON.stringify(data)) as AiCaseMapData;
 }
 
-function parseStatus(value: unknown, fallback: AiCaseNodeStatus = 'todo'): AiCaseNodeStatus {
-  if (typeof value === 'string' && (STATUS_ORDER as string[]).includes(value)) {
-    return value as AiCaseNodeStatus;
-  }
-  return fallback;
+function inferNodeKind(depth: number, childCount: number): AiCaseNodeKind {
+  if (depth === 0) return 'root';
+  if (childCount === 0) return 'testcase';
+  if (depth === 1) return 'module';
+  return 'scenario';
 }
 
-function parsePriority(value: unknown, fallback: AiCaseNodePriority = 'P2'): AiCaseNodePriority {
-  if (value === 'P0' || value === 'P1' || value === 'P2' || value === 'P3') {
-    return value;
+function normalizeNode(node: AiCaseMapNode, depth: number): AiCaseMapNode {
+  const children = Array.isArray(node.children) ? node.children : [];
+  const inferredKind = inferNodeKind(depth, children.length);
+
+  // 复用 shared 层统一校验逻辑，避免重复维护
+  const metadata = normalizeNodeMetadata(node.metadata as Partial<AiCaseNodeMetadata> | undefined, {
+    inferredKind,
+  });
+
+  node.metadata = metadata;
+  node.expanded = node.expanded ?? true;
+
+  if (children.length > 0) {
+    node.children = children.map((child) => normalizeNode(child, depth + 1));
+  } else {
+    delete node.children;
   }
-  return fallback;
+
+  return node;
 }
 
 function createMetadata(kind: AiCaseNodeKind, now: number): AiCaseNodeMetadata {
@@ -119,56 +125,6 @@ function createMetadata(kind: AiCaseNodeKind, now: number): AiCaseNodeMetadata {
     updatedAt: now,
     statusHistory: [{ status: 'todo', at: now }],
   };
-}
-
-function inferNodeKind(depth: number, childCount: number): AiCaseNodeKind {
-  if (depth === 0) return 'root';
-  if (childCount === 0) return 'testcase';
-  if (depth === 1) return 'module';
-  return 'scenario';
-}
-
-function normalizeNode(node: AiCaseMapNode, depth: number): AiCaseMapNode {
-  const children = Array.isArray(node.children) ? node.children : [];
-  const now = Date.now();
-  const inferredKind = inferNodeKind(depth, children.length);
-  const baseMetadata = createMetadata(inferredKind, now);
-  const incoming = (node.metadata ?? {}) as Partial<AiCaseNodeMetadata>;
-  const status = parseStatus(incoming.status, baseMetadata.status);
-
-  const metadata: AiCaseNodeMetadata = {
-    ...baseMetadata,
-    ...incoming,
-    kind: incoming.kind ?? inferredKind,
-    status,
-    priority: parsePriority(incoming.priority, baseMetadata.priority),
-    owner: typeof incoming.owner === 'string' || incoming.owner === null ? incoming.owner : null,
-    attachmentIds: Array.isArray(incoming.attachmentIds)
-      ? [...new Set(incoming.attachmentIds.filter((id): id is string => typeof id === 'string' && id.length > 0))]
-      : [],
-    aiGenerated: typeof incoming.aiGenerated === 'boolean' ? incoming.aiGenerated : false,
-    nodeVersion: typeof incoming.nodeVersion === 'number' && incoming.nodeVersion > 0 ? incoming.nodeVersion : 1,
-    updatedAt: typeof incoming.updatedAt === 'number' ? incoming.updatedAt : now,
-    statusHistory: Array.isArray(incoming.statusHistory) && incoming.statusHistory.length > 0
-      ? incoming.statusHistory
-          .map((item) => ({
-            status: parseStatus(item.status, status),
-            at: typeof item.at === 'number' ? item.at : now,
-          }))
-          .slice(-20)
-      : [{ status, at: now }],
-  };
-
-  node.metadata = metadata;
-  node.expanded = node.expanded ?? true;
-
-  if (children.length > 0) {
-    node.children = children.map((child) => normalizeNode(child, depth + 1));
-  } else {
-    delete node.children;
-  }
-
-  return node;
 }
 
 function createNode(
@@ -186,14 +142,19 @@ function createNode(
   metadata.priority = options?.priority ?? 'P2';
   metadata.aiGenerated = options?.aiGenerated ?? false;
 
-  return {
+  const node: AiCaseMapNode = {
     id: createAiCaseNodeId(),
     topic,
-    note: options?.note,
     expanded: true,
     metadata,
-    children: options?.children,
+    ...(options?.children !== undefined ? { children: options.children } : {}),
   };
+
+  if (options?.note !== undefined) {
+    node.note = options.note;
+  }
+
+  return node;
 }
 
 function sanitizeChecklist(lines: string[] | undefined, fallback: string[]): string[] {
@@ -212,8 +173,10 @@ function sanitizeChecklist(lines: string[] | undefined, fallback: string[]): str
  * 将多条条目格式化为单行文本（与前端 fmtInline 保持一致）：
  * - 单条：直接返回原文
  * - 多条：1.xxx；2.xxx；3.xxx（分号拼接，不换行，不加前缀标签）
+ * 契约：调用方应保证 items 非空
  */
 function fmtInline(items: string[]): string {
+  if (items.length === 0) return '';
   if (items.length === 1) return items[0];
   return items.map((item, i) => `${i + 1}.${item}`).join('；');
 }
@@ -328,9 +291,10 @@ export function updateNodeStatusInMap(
       node.metadata = {
         ...metadata,
         status: nextStatus,
-        nodeVersion: (metadata.nodeVersion ?? 1) + 1,
+        // 使用 shared 层的安全递增函数，防止 nodeVersion 为 undefined/NaN
+        nodeVersion: incrementNodeVersion(metadata.nodeVersion),
         updatedAt: now,
-        statusHistory: [...(metadata.statusHistory ?? []), { status: nextStatus, at: now }].slice(-20),
+        statusHistory: [...(metadata.statusHistory ?? []), { status: nextStatus, at: now }].slice(-STATUS_HISTORY_MAX_LENGTH),
       };
       updated = true;
       return true;
