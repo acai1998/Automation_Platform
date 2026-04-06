@@ -182,16 +182,16 @@ function fmtInline(items: string[]): string {
 }
 
 /**
- * 构建单个 testcase 对应的 4 个扁平节点（用于挂在父 scenario 下）：
- *   节点1 = testcase 自身（测试点标题）—— 调用方负责创建，此处只返回节点2/3/4
- *   节点2 = 前置条件内容（多条用分号拼接，写在 topic 里，不展开子节点）
- *   节点3 = 测试步骤内容（同上）
- *   节点4 = 预期结果内容（同上）
+ * 构建 testcase 的 4 节点链式结构（纵向串联，脑图中形成一行）：
+ *   节点1 = testcase 自身（测试点标题）
+ *   节点2 = 前置条件（testcase 的唯一子节点，内容写在 topic 里，多条分号拼接）
+ *   节点3 = 测试步骤（节点2 的唯一子节点）
+ *   节点4 = 预期结果（节点3 的唯一子节点）
  *
- * 注意：返回的 3 个节点应与 testcase 节点同级（均为父 scenario 的子节点），
- * 而不是 testcase 的子节点。
+ * 链式结构：testcase → 前置条件 → 测试步骤 → 预期结果
+ * 脑图效果：4个节点横向串联成一行
  */
-function buildCaseSiblingNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[] {
+function buildCaseChainNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[] {
   const hint = typeof testCase.note === 'string' ? testCase.note.trim() : '';
 
   const preconditions = sanitizeChecklist(testCase.preconditions, [
@@ -209,11 +209,10 @@ function buildCaseSiblingNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNod
     '业务数据与页面状态符合需求描述',
   ]);
 
-  return [
-    createNode(fmtInline(preconditions), 'scenario', { aiGenerated: true }),
-    createNode(fmtInline(steps), 'scenario', { aiGenerated: true }),
-    createNode(fmtInline(expectedResults), 'scenario', { aiGenerated: true }),
-  ];
+  // 从尾到头链式嵌套：预期结果 ← 测试步骤 ← 前置条件
+  const expectedNode = createNode(fmtInline(expectedResults), 'scenario', { aiGenerated: true });
+  const stepsNode = createNode(fmtInline(steps), 'scenario', { aiGenerated: true, children: [expectedNode] });
+  return [createNode(fmtInline(preconditions), 'scenario', { aiGenerated: true, children: [stepsNode] })];
 }
 
 // ID 生成规则统一维护在 shared 层，此处转发以保持向后兼容
@@ -331,26 +330,20 @@ export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData 
       createNode(module.name, 'module', {
         aiGenerated: true,
         // 保留 scenario 层：每个 scenario 独立成为子节点，避免语义丢失
-        children: module.scenarios.map((scenario) => {
-          // 每个 testcase 展开为 4 个扁平节点（testcase 本身 + 前置条件 + 测试步骤 + 预期结果），
-          // 均作为 scenario 的子节点，而非 testcase 的子节点。
-          const caseNodes: AiCaseMapNode[] = [];
-          for (const testCase of scenario.cases) {
-            // 节点1：测试点（无子节点）
-            caseNodes.push(
+        children: module.scenarios.map((scenario) =>
+          createNode(scenario.name, 'scenario', {
+            aiGenerated: true,
+            // 每个 testcase 含 3 个链式子节点（前置条件→测试步骤→预期结果），
+            // 脑图中形成横向串联的一行（节点1--节点2--节点3--节点4）
+            children: scenario.cases.map((testCase) =>
               createNode(testCase.title, 'testcase', {
                 aiGenerated: true,
                 priority: parsePriority(testCase.priority, 'P1'),
+                children: buildCaseChainNodes(testCase),
               })
-            );
-            // 节点2/3/4：前置条件、测试步骤、预期结果（同级，内容写在 topic 里）
-            caseNodes.push(...buildCaseSiblingNodes(testCase));
-          }
-          return createNode(scenario.name, 'scenario', {
-            aiGenerated: true,
-            children: caseNodes,
-          });
-        }),
+            ),
+          })
+        ),
       })
     ),
   });

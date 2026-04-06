@@ -455,7 +455,7 @@ export class JenkinsService {
   private async pollQueueForBuild(
     queueId: number,
     runId: number,
-    maxWaitMs = 60_000,
+    maxWaitMs = parseInt(process.env.JENKINS_QUEUE_POLL_TIMEOUT_MS || String(5 * 60_000), 10), // 默认等待 5 分钟（可通过环境变量调整）
     pollIntervalMs = 3_000
   ): Promise<{ buildNumber: number; buildUrl: string; queueWaitMs: number } | null | { cancelled: true } | { timeout: true }> {
     const logger = require('../utils/logger').default;

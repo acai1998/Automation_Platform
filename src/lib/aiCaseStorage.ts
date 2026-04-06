@@ -215,14 +215,19 @@ export function exportMindDataToMarkdown(mindData: AiCaseMindData): string {
       const status = node.metadata?.status ? ` (${node.metadata.status})` : '';
       lines.push(`- [ ] **${topic}**${priority}${status}`);
 
-      const children = (node.children ?? []) as AiCaseNode[];
+      // 新链式格式：testcase → 前置条件 → 测试步骤 → 预期结果（每级1个子节点）
+      const preconditionNode = ((node.children ?? []) as AiCaseNode[])[0];
+      const stepsNode = ((preconditionNode?.children ?? []) as AiCaseNode[])[0];
+      const expectedNode = ((stepsNode?.children ?? []) as AiCaseNode[])[0];
 
-      if (children.length > 0) {
-        // 新格式：子节点为前置条件/测试步骤/预期结果
-        for (const child of children) {
-          const childTopic = (child.topic ?? '').trim();
-          if (!childTopic) continue;
-          lines.push(`  - ${childTopic}`);
+      const chainSections: Array<{ label: string; topic: string }> = [];
+      if (preconditionNode?.topic) chainSections.push({ label: '前置条件', topic: preconditionNode.topic.trim() });
+      if (stepsNode?.topic) chainSections.push({ label: '测试步骤', topic: stepsNode.topic.trim() });
+      if (expectedNode?.topic) chainSections.push({ label: '预期结果', topic: expectedNode.topic.trim() });
+
+      if (chainSections.length > 0) {
+        for (const s of chainSections) {
+          lines.push(`  - **${s.label}**：${s.topic}`);
         }
       } else if (node.note) {
         // 兼容旧格式：只有 note 的 testcase

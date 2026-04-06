@@ -290,55 +290,63 @@ export function AiCaseSidebar({
                   })()}
                   {!canEditSelectedNode ? <span className="text-[10px] text-slate-400">（仅测试点可切换状态）</span> : null}
                 </div>
-                {/* 展示 testcase 的子节点详情（前置条件/测试步骤/预期结果） */}
-                {canEditSelectedNode && Array.isArray(selectedNode?.children) && selectedNode.children.length > 0 ? (
-                  <div className="mt-2 space-y-1">
-                    {(selectedNode.children as AiCaseNode[]).map((child, idx) => {
-                      const topic = child.topic?.trim() ?? '';
-                      if (!topic) return null;
-                      const sectionMatch = topic.match(/^(前置条件|测试步骤|预期结果)[：:]\s*([\s\S]*)$/);
-                      if (sectionMatch) {
-                        const labelColors: Record<string, string> = {
-                          '前置条件': 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400',
-                          '测试步骤': 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
-                          '预期结果': 'bg-pink-50 text-pink-700 dark:bg-pink-900/20 dark:text-pink-400',
-                        };
-                        const labelClass = labelColors[sectionMatch[1]] ?? 'bg-slate-50 text-slate-600';
-                        return (
-                          <div key={idx} className="rounded-md p-1.5">
-                            <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded mb-0.5 ${labelClass}`}>{sectionMatch[1]}</span>
-                            <p className="text-[11px] text-slate-600 dark:text-slate-400 whitespace-pre-wrap leading-relaxed">{sectionMatch[2]}</p>
-                          </div>
-                        );
-                      }
-                      return <p key={idx} className="text-[11px] text-slate-500 whitespace-pre-wrap">{topic}</p>;
-                    })}
-                  </div>
-                ) : canEditSelectedNode && selectedNode?.note ? (
-                  // 兼容仅有 note 的旧格式数据
-                  <div className="mt-2 space-y-1">
-                    {selectedNode.note.split(/\r?\n/).map((line, idx) => {
-                      const trimmed = line.trim();
-                      if (!trimmed) return null;
-                      const sectionMatch = trimmed.match(/^(前置条件|测试步骤|预期结果)[：:]\s*([\s\S]*)$/);
-                      if (sectionMatch) {
-                        const labelColors: Record<string, string> = {
-                          '前置条件': 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400',
-                          '测试步骤': 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
-                          '预期结果': 'bg-pink-50 text-pink-700 dark:bg-pink-900/20 dark:text-pink-400',
-                        };
-                        const labelClass = labelColors[sectionMatch[1]] ?? 'bg-slate-50 text-slate-600';
-                        return (
-                          <div key={idx} className="rounded-md p-1.5">
-                            <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded mb-0.5 ${labelClass}`}>{sectionMatch[1]}</span>
-                            <p className="text-[11px] text-slate-600 dark:text-slate-400 whitespace-pre-wrap leading-relaxed">{sectionMatch[2]}</p>
-                          </div>
-                        );
-                      }
-                      return <p key={idx} className="text-[11px] text-slate-500 whitespace-pre-wrap">{trimmed}</p>;
-                    })}
-                  </div>
-                ) : null}
+                {/* 展示 testcase 的链式子节点（前置条件→测试步骤→预期结果） */}
+                {canEditSelectedNode ? (() => {
+                  // 新链式格式：testcase → 前置条件 → 测试步骤 → 预期结果（每级1个子节点）
+                  const preconditionNode = (selectedNode?.children as AiCaseNode[] | undefined)?.[0];
+                  const stepsNode = (preconditionNode?.children as AiCaseNode[] | undefined)?.[0];
+                  const expectedNode = (stepsNode?.children as AiCaseNode[] | undefined)?.[0];
+
+                  const sections: Array<{ label: string; topic: string; colorClass: string }> = [];
+                  if (preconditionNode?.topic) {
+                    sections.push({ label: '前置条件', topic: preconditionNode.topic.trim(), colorClass: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400' });
+                  }
+                  if (stepsNode?.topic) {
+                    sections.push({ label: '测试步骤', topic: stepsNode.topic.trim(), colorClass: 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400' });
+                  }
+                  if (expectedNode?.topic) {
+                    sections.push({ label: '预期结果', topic: expectedNode.topic.trim(), colorClass: 'bg-pink-50 text-pink-700 dark:bg-pink-900/20 dark:text-pink-400' });
+                  }
+
+                  // 兼容仅有 note 的旧格式
+                  if (sections.length === 0 && selectedNode?.note) {
+                    const labelColors: Record<string, string> = {
+                      '前置条件': 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400',
+                      '测试步骤': 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
+                      '预期结果': 'bg-pink-50 text-pink-700 dark:bg-pink-900/20 dark:text-pink-400',
+                    };
+                    return (
+                      <div className="mt-2 space-y-1">
+                        {selectedNode.note.split(/\r?\n/).map((line, idx) => {
+                          const trimmed = line.trim();
+                          if (!trimmed) return null;
+                          const m = trimmed.match(/^(前置条件|测试步骤|预期结果)[：:]\s*([\s\S]*)$/);
+                          if (m) {
+                            return (
+                              <div key={idx} className="rounded-md p-1.5">
+                                <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded mb-0.5 ${labelColors[m[1]] ?? 'bg-slate-50 text-slate-600'}`}>{m[1]}</span>
+                                <p className="text-[11px] text-slate-600 dark:text-slate-400 whitespace-pre-wrap leading-relaxed">{m[2]}</p>
+                              </div>
+                            );
+                          }
+                          return <p key={idx} className="text-[11px] text-slate-500 whitespace-pre-wrap">{trimmed}</p>;
+                        })}
+                      </div>
+                    );
+                  }
+
+                  if (sections.length === 0) return null;
+                  return (
+                    <div className="mt-2 space-y-1">
+                      {sections.map((s, idx) => (
+                        <div key={idx} className="rounded-md p-1.5">
+                          <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded mb-0.5 ${s.colorClass}`}>{s.label}</span>
+                          <p className="text-[11px] text-slate-600 dark:text-slate-400 whitespace-pre-wrap leading-relaxed">{s.topic}</p>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })() : null}
               </>
             ) : (
               <p className="text-[11px] text-slate-400">请在脑图中点击一个节点</p>
