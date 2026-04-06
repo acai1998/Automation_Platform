@@ -188,28 +188,32 @@ function hasNoteOnlyFormat(node: AiCaseNode): boolean {
   return hasNote && !hasChildren;
 }
 
+// 旧版前缀标签匹配（用于识别需要迁移的历史数据）
+const LEGACY_LABEL_RE = /^(前置条件|测试步骤|预期结果)[：:]\s*/;
+
 /**
- * 判断 testcase 节点是否包含最旧格式（第一个子节点 topic === "测试点"）
- * 最旧格式： testcase 下有一个 "scenario" 类型且 topic="测试点" 的子节点
+ * 判断 testcase 节点是否为需要迁移的旧格式：
+ * 1. 最旧格式：第一个子节点 topic === "测试点"（嵌套层）
+ * 2. 次旧格式：第一个子节点 topic 以 "前置条件：" 等前缀标签开头（含前缀标签的单节点格式）
  */
 function isLegacyNestedTestcase(node: AiCaseNode): boolean {
   const children = node.children as AiCaseNode[] | undefined;
   if (!children || children.length === 0) return false;
   const firstChild = children[0];
-  return firstChild?.topic === '测试点' &&
-    (firstChild?.metadata as Partial<AiCaseNodeMetadata> | undefined)?.kind === 'scenario';
+  if (!firstChild) return false;
+  // 情况1：嵌套"测试点"层
+  if (firstChild.topic === '测试点') return true;
+  // 情况2：子节点 topic 带有旧前缀标签（如"前置条件：xxx"）
+  return LEGACY_LABEL_RE.test(firstChild.topic);
 }
 
 /**
- * 将 note 字段解析为前置条件/测试步骤/预期结果子节点列表。
- * 用于将仅有 note 的旧格式 testcase 迁移为有子节点的新格式。
+ * 将 note 字段解析为前置条件/测试步骤/预期结果子节点列表（新格式：纯内容+分号拼接）。
+ * 用于将仅有 note 的旧格式 testcase 迁移为新格式。
  */
 function expandNoteToChildren(note: string): AiCaseNode[] {
   const sectionPrefixes = ['前置条件', '测试步骤', '预期结果'] as const;
-  const children: AiCaseNode[] = [];
   const lines = note.split(/\r?\n/);
-
-  // 尝试按四段式解析（测试点/前置条件/测试步骤/预期结果）
   const sections: Record<string, string[]> = {};
   let currentSection = '';
 
@@ -224,21 +228,25 @@ function expandNoteToChildren(note: string): AiCaseNode[] {
         sections[currentSection].push(match[2].trim());
       }
     } else if (currentSection) {
-      sections[currentSection] = sections[currentSection] ?? [];
-      sections[currentSection].push(line);
+      // 去掉行首编号（"1. " / "1." / "①" 等）
+      const cleaned = line.replace(/^\d+[\.\)、]\s*/, '').trim();
+      if (cleaned) {
+        sections[currentSection] = sections[currentSection] ?? [];
+        sections[currentSection].push(cleaned);
+      }
     }
   }
 
+  const children: AiCaseNode[] = [];
   for (const prefix of sectionPrefixes) {
     const content = sections[prefix];
     if (content && content.length > 0) {
-      children.push(
-        createNode(`${prefix}：${content.join('\n')}`, 'scenario', { aiGenerated: true })
-      );
+      // 新格式：多条用分号拼接，不加前缀标签
+      children.push(createNode(fmtInline(content), 'scenario', { aiGenerated: true }));
     }
   }
 
-  // 如果无法解析各段，直接把整个 note 作为一个子节点
+  // 无法解析各段时，把整个 note 作为一个子节点（兜底）
   if (children.length === 0 && note.trim()) {
     children.push(createNode(note.trim(), 'scenario', { aiGenerated: true }));
   }
@@ -247,21 +255,64 @@ function expandNoteToChildren(note: string): AiCaseNode[] {
 }
 
 /**
- * 将最旧格式（嵌套 "scenario"层）的 testcase 迁移为新格式（前置条件/测试步骤/预期结果直接挂在 testcase 下）
+ * 将旧格式的 testcase 子节点迁移为新格式（纯内容+分号拼接，不含前缀标签）。
+ * 处理两种历史格式：
+ *  1. 嵌套"测试点"层：testcase → 测试点(scenario) → [前置条件/测试步骤/预期结果]
+ *  2. 前缀标签格式：testcase → "前置条件：xxx\n..." / "测试步骤：xxx\n..."
  */
 function migrateNestedTestcaseToFlat(node: AiCaseNode): void {
   const children = (node.children ?? []) as AiCaseNode[];
   if (children.length === 0) return;
 
-  // 最旧格式： testcase 下有一个 "scenario" 子节点（测试点），该子节点下才有前置条件等
   const firstChild = children[0];
-  if (firstChild?.topic === '测试点' && (firstChild?.children?.length ?? 0) > 0) {
-    // 将 testcase 的直接子节点替换为 "scenario" 子节点的内容
-    node.children = firstChild.children;
+  if (!firstChild) return;
+
+  // 情况1：嵌套"测试点"层 → 将其子节点提升，再走情况2逻辑处理前缀标签
+  let flatChildren: AiCaseNode[];
+  if (firstChild.topic === '测试点' && (firstChild.children?.length ?? 0) > 0) {
+    flatChildren = (firstChild.children ?? []) as AiCaseNode[];
+  } else {
+    flatChildren = children;
+  }
+
+  // 情况2：子节点 topic 带旧前缀标签 → 去掉前缀并把多行内容改为分号拼接
+  const needsLabelStrip = flatChildren.some((c) => LEGACY_LABEL_RE.test(c.topic));
+  if (needsLabelStrip) {
+    const sectionOrder = ['前置条件', '测试步骤', '预期结果'];
+    const rebuilt: AiCaseNode[] = [];
+
+    for (const child of flatChildren) {
+      const labelMatch = child.topic.match(/^(前置条件|测试步骤|预期结果)[：:]\s*([\s\S]*)$/);
+      if (labelMatch) {
+        // 把换行内容拆开，去掉行首编号，再用分号重新拼接
+        const rawContent = labelMatch[2].trim();
+        const lines = rawContent
+          .split(/\r?\n/)
+          .map((l) => l.replace(/^\d+[\.\)、]\s*/, '').trim())
+          .filter(Boolean);
+        const newTopic = fmtInline(lines.length > 0 ? lines : [rawContent]);
+        rebuilt.push(createNode(newTopic, 'scenario', { aiGenerated: child.metadata?.aiGenerated ?? true }));
+      } else {
+        rebuilt.push(child);
+      }
+    }
+
+    // 按 前置条件 / 测试步骤 / 预期结果 顺序重排（保证稳定顺序）
+    rebuilt.sort((a, b) => {
+      const ai = sectionOrder.findIndex((s) => a.topic.startsWith(s));
+      const bi = sectionOrder.findIndex((s) => b.topic.startsWith(s));
+      // 已经去掉了前缀标签，无法再按前缀排序；保留原顺序
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+
+    node.children = rebuilt;
     return;
   }
 
-  // 已经是新格式（直接挂前置条件/测试步骤/预期结果），不需要迁移
+  // 已是新格式（纯内容），直接提升（仅处理了嵌套层但子节点已是新格式）
+  if (flatChildren !== children) {
+    node.children = flatChildren;
+  }
 }
 
 /**
@@ -344,26 +395,38 @@ export function expandImportedCaseNodesFromNote(
   };
 }
 
+/**
+ * 将多条条目格式化为单行文本：
+ * - 单条：直接返回原文
+ * - 多条：1.xxx；2.xxx；3.xxx（分号拼接，不换行）
+ */
+function fmtInline(items: string[]): string {
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0];
+  return items.map((item, i) => `${i + 1}.${item}`).join('；');
+}
+
+/**
+ * 构建 testcase 的 4 列子节点：
+ *   节点1 = testcase 自身（测试点标题）
+ *   节点2 = 前置条件内容（多条用分号拼接，不换行，不加前缀标签）
+ *   节点3 = 测试步骤内容（同上）
+ *   节点4 = 预期结果内容（同上）
+ */
 function buildCaseChildren(
   preconditions: string[],
   steps: string[],
   expectedResults: string[],
 ): AiCaseNode[] {
-  const fmtLines = (items: string[]): string => {
-    if (items.length === 0) return '';
-    if (items.length === 1) return items[0];
-    return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
-  };
-
   const children: AiCaseNode[] = [];
   if (preconditions.length > 0) {
-    children.push(createNode(`前置条件：${fmtLines(preconditions)}`, 'scenario', { aiGenerated: true }));
+    children.push(createNode(fmtInline(preconditions), 'scenario', { aiGenerated: true }));
   }
   if (steps.length > 0) {
-    children.push(createNode(`测试步骤：${fmtLines(steps)}`, 'scenario', { aiGenerated: true }));
+    children.push(createNode(fmtInline(steps), 'scenario', { aiGenerated: true }));
   }
   if (expectedResults.length > 0) {
-    children.push(createNode(`预期结果：${fmtLines(expectedResults)}`, 'scenario', { aiGenerated: true }));
+    children.push(createNode(fmtInline(expectedResults), 'scenario', { aiGenerated: true }));
   }
   return children;
 }

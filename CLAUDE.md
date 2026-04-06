@@ -124,6 +124,38 @@ npx tsc --noEmit -p tsconfig.server.json
 
 ### 核心功能模块
 
+#### 0. AI 测试用例脑图（`src/lib/aiCaseMindMap.ts` / `server/services/aiCaseMapBuilder.ts`）
+
+**脑图节点结构（v1.5.1 起，4节点平铺格式）**：
+```
+根节点
+└── 功能模块（module）
+    └── 测试点（testcase）          ← 测试点标题
+        ├── 前置条件内容（scenario） ← 多条用「1.xxx；2.xxx」分号拼接，不加前缀标签
+        ├── 测试步骤内容（scenario） ← 同上
+        └── 预期结果内容（scenario） ← 同上
+```
+
+**核心函数说明**（`src/lib/aiCaseMindMap.ts`）：
+- `fmtInline(items)` — 将多条条目格式化为单行：单条直接返回原文，多条用 `1.xxx；2.xxx` 分号拼接
+- `buildCaseChildren(preconditions, steps, expectedResults)` — 构建 testcase 的 3 个子节点（无前缀标签）
+- `isLegacyNestedTestcase(node)` — 检测旧格式节点（嵌套"测试点"层 或 含"前置条件："等前缀标签的子节点）
+- `migrateNestedTestcaseToFlat(node)` — 将旧格式子节点迁移为新的 4 节点平铺格式（去掉前缀标签 + 多行改分号拼接）
+- `expandImportedCaseNodesFromNote(data, options)` — 全局遍历脑图数据，自动迁移所有旧格式 testcase 节点
+- `expandNoteToChildren(note)` — 将仅有 `note` 字段的旧版 testcase 展开为 3 个 scenario 子节点
+
+**后端对应函数**（`server/services/aiCaseMapBuilder.ts`）：
+- `fmtInline(items)` — 同前端，保持前后端生成格式一致
+- `buildCaseChildNodes(testCase)` — 后端构建 testcase 子节点（前置条件 / 测试步骤 / 预期结果，无前缀标签）
+- `buildMapDataFromPlan(plan)` — 将 AI 生成的 JSON 计划转换为标准脑图数据格式
+
+**旧数据迁移策略**：
+- 触发时机：用户打开画布时（`bootstrap` 阶段），`expandImportedCaseNodesFromNote` 自动检测并迁移
+- 两种旧格式均已覆盖：
+  1. 嵌套 "测试点" 层（`testcase → 测试点(scenario) → [前置条件/测试步骤/预期结果]`）
+  2. 含前缀标签格式（`testcase → "前置条件：xxx" / "测试步骤：xxx"` 等子节点）
+- 迁移后自动将 `nodeVersion + 1`，写入 IndexedDB 缓存，下次打开无需重复迁移
+
 #### 1. 测试用例管理（`/api/cases`）
 - GET `/api/cases` - 获取用例列表（支持分页、过滤、搜索）
 - GET `/api/cases/modules/list` - 获取模块列表
@@ -1047,6 +1079,17 @@ systemctl start nginx
 
 ## 更新日志
 
+### v1.5.1 (2026-04-06)
+- 🗺️ **AI 脑图节点结构重构**：将多层嵌套格式改为「4节点横向平铺」结构
+  - testcase 节点直接挂 3 个 scenario 子节点：前置条件 / 测试步骤 / 预期结果
+  - 多条内容不再换行，改用分号拼接（`1.xxx；2.xxx；3.xxx`），节点简洁可读
+  - 子节点 `topic` 不再携带「前置条件：」等前缀标签，纯内容展示
+- 🔄 **旧数据自动迁移**（`src/lib/aiCaseMindMap.ts`）：
+  - `isLegacyNestedTestcase` 检测两种历史格式（嵌套"测试点"层 / 含前缀标签的子节点）
+  - `migrateNestedTestcaseToFlat` 去前缀标签 + 多行改分号拼接 + 子节点顺序排列
+  - 用户打开画布时自动触发迁移，写入 IndexedDB，下次打开无需重复处理
+- 🔧 **前后端格式统一**：`server/services/aiCaseMapBuilder.ts` 同步引入 `fmtInline` 和 `buildCaseChildNodes`，后端生成数据与前端渲染格式完全一致
+
 ### v1.3.1 (2026-03-12)
 - ✨ 任务管理页面新增**关联用例**功能：新建/编辑任务时可通过选择器多选测试用例，支持关键字搜索（300ms防抖）和 API/UI/性能类型过滤
 - 🎨 任务卡片新增关联用例数量显示（`ListChecks` 图标 + 数量，未关联时显示橙色提示）
@@ -1093,5 +1136,5 @@ systemctl start nginx
 
 ---
 
-**最后更新时间**：2026-03-15
-**文档版本**：v1.3.1
+**最后更新时间**：2026-04-06
+**文档版本**：v1.5.1

@@ -207,19 +207,21 @@ function sanitizeChecklist(lines: string[] | undefined, fallback: string[]): str
 }
 
 /**
- * 将一组条目格式化为纯文本行列表。
- * 单条时直接返回该条内容；多条时使用 "1. xxx\n2. xxx" 换行拼接。
+ * 将多条条目格式化为单行文本（与前端 fmtInline 保持一致）：
+ * - 单条：直接返回原文
+ * - 多条：1.xxx；2.xxx；3.xxx（分号拼接，不换行，不加前缀标签）
  */
-function formatSectionLines(items: string[]): string {
-  if (items.length === 1) {
-    return items[0];
-  }
-  return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
+function fmtInline(items: string[]): string {
+  if (items.length === 1) return items[0];
+  return items.map((item, i) => `${i + 1}.${item}`).join('；');
 }
 
 /**
- * 为 testCase 构建子节点列表（前置条件/测试步骤/预期结果）。
- * testcase 节点本身占一行，子节点可折叠展开查看详情。
+ * 构建 testcase 的 4 列子节点：
+ *   节点1 = testcase 自身（测试点标题）
+ *   节点2 = 前置条件内容（多条用分号拼接，不换行，不加前缀标签）
+ *   节点3 = 测试步骤内容（同上）
+ *   节点4 = 预期结果内容（同上）
  */
 function buildCaseChildNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[] {
   const hint = typeof testCase.note === 'string' ? testCase.note.trim() : '';
@@ -240,9 +242,9 @@ function buildCaseChildNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[
   ]);
 
   return [
-    createNode(`前置条件：${formatSectionLines(preconditions)}`, 'scenario', { aiGenerated: true }),
-    createNode(`测试步骤：${formatSectionLines(steps)}`, 'scenario', { aiGenerated: true }),
-    createNode(`预期结果：${formatSectionLines(expectedResults)}`, 'scenario', { aiGenerated: true }),
+    createNode(fmtInline(preconditions), 'scenario', { aiGenerated: true }),
+    createNode(fmtInline(steps), 'scenario', { aiGenerated: true }),
+    createNode(fmtInline(expectedResults), 'scenario', { aiGenerated: true }),
   ];
 }
 
