@@ -127,6 +127,13 @@ function createMetadata(kind: AiCaseNodeKind, now: number): AiCaseNodeMetadata {
   };
 }
 
+/** section tag 样式（前置条件/测试步骤/预期结果） */
+const SECTION_TAG_STYLES: Record<string, Record<string, string>> = {
+  '前置条件': { background: '#FEF9C3', color: '#854D0E', borderRadius: '8px', padding: '2px 6px' },
+  '测试步骤': { background: '#DBEAFE', color: '#1E40AF', borderRadius: '8px', padding: '2px 6px' },
+  '预期结果': { background: '#FCE7F3', color: '#9D174D', borderRadius: '8px', padding: '2px 6px' },
+};
+
 function createNode(
   topic: string,
   kind: AiCaseNodeKind,
@@ -135,6 +142,8 @@ function createNode(
     note?: string;
     aiGenerated?: boolean;
     children?: AiCaseMapNode[];
+    /** 节点 tag（会在 normalizeNode 中被保留，不被 kind 标签覆盖） */
+    tags?: AiCaseMapNode['tags'];
   }
 ): AiCaseMapNode {
   const now = Date.now();
@@ -148,6 +157,7 @@ function createNode(
     expanded: true,
     metadata,
     ...(options?.children !== undefined ? { children: options.children } : {}),
+    ...(options?.tags && Array.isArray(options.tags) && options.tags.length > 0 ? { tags: options.tags } : {}),
   };
 
   if (options?.note !== undefined) {
@@ -210,9 +220,21 @@ function buildCaseChainNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[
   ]);
 
   // 从尾到头链式嵌套：预期结果 ← 测试步骤 ← 前置条件
-  const expectedNode = createNode(fmtInline(expectedResults), 'scenario', { aiGenerated: true });
-  const stepsNode = createNode(fmtInline(steps), 'scenario', { aiGenerated: true, children: [expectedNode] });
-  return [createNode(fmtInline(preconditions), 'scenario', { aiGenerated: true, children: [stepsNode] })];
+  // 每个节点带上对应的 section tag（前置条件/测试步骤/预期结果）
+  const expectedNode = createNode(fmtInline(expectedResults), 'scenario', {
+    aiGenerated: true,
+    tags: [{ text: '预期结果', style: SECTION_TAG_STYLES['预期结果'] }],
+  });
+  const stepsNode = createNode(fmtInline(steps), 'scenario', {
+    aiGenerated: true,
+    children: [expectedNode],
+    tags: [{ text: '测试步骤', style: SECTION_TAG_STYLES['测试步骤'] }],
+  });
+  return [createNode(fmtInline(preconditions), 'scenario', {
+    aiGenerated: true,
+    children: [stepsNode],
+    tags: [{ text: '前置条件', style: SECTION_TAG_STYLES['前置条件'] }],
+  })];
 }
 
 // ID 生成规则统一维护在 shared 层，此处转发以保持向后兼容
@@ -326,26 +348,23 @@ export function updateNodeStatusInMap(
 export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData {
   const root = createNode(plan.workspaceName, 'root', {
     aiGenerated: true,
-    children: plan.modules.map((module) =>
-      createNode(module.name, 'module', {
-        aiGenerated: true,
-        // 保留 scenario 层：每个 scenario 独立成为子节点，避免语义丢失
-        children: module.scenarios.map((scenario) =>
-          createNode(scenario.name, 'scenario', {
+    children: plan.modules.map((module) => {
+      // 将所有 scenario 下的 testcase 扁平合并到 module 直属子节点，
+      // 与前端重置模板结构保持一致：root → module → testcase → 链式3节点
+      const caseNodes = module.scenarios.flatMap((scenario) =>
+        scenario.cases.map((testCase) =>
+          createNode(testCase.title, 'testcase', {
             aiGenerated: true,
-            // 每个 testcase 含 3 个链式子节点（前置条件→测试步骤→预期结果），
-            // 脑图中形成横向串联的一行（节点1--节点2--节点3--节点4）
-            children: scenario.cases.map((testCase) =>
-              createNode(testCase.title, 'testcase', {
-                aiGenerated: true,
-                priority: parsePriority(testCase.priority, 'P1'),
-                children: buildCaseChainNodes(testCase),
-              })
-            ),
+            priority: parsePriority(testCase.priority, 'P1'),
+            children: buildCaseChainNodes(testCase),
           })
-        ),
-      })
-    ),
+        )
+      );
+      return createNode(module.name, 'module', {
+        aiGenerated: true,
+        children: caseNodes,
+      });
+    }),
   });
 
   return normalizeMapData({ nodeData: root });

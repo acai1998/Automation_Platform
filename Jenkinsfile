@@ -112,6 +112,14 @@ pipeline {
                         echo "⚠️ 凭据 CNB_DOCKER_TOKEN 未配置，跳过制品库登录（如镜像为私有请先添加凭据）"
                     }
 
+                    // ── 镜像预热：pull 并打印耗时，方便排查慢的原因 ──
+                    sh """
+                        echo "🐳 [$(date '+%H:%M:%S')] 开始拉取测试执行镜像..."
+                        docker pull ${TEST_RUNNER_IMAGE} || echo "⚠️ 镜像拉取失败，尝试使用本地缓存"
+                        echo "🐳 [$(date '+%H:%M:%S')] 镜像就绪"
+                    """
+
+                    echo "🚀 [${new Date().format('HH:mm:ss')}] 启动测试容器..."
                     def testExitCode = sh(
                         script: """
                             docker run --rm \\
@@ -128,6 +136,7 @@ pipeline {
                         """,
                         returnStatus: true
                     )
+                    echo "🏁 [${new Date().format('HH:mm:ss')}] 测试容器退出，exitCode=${testExitCode}"
 
                     writeFile file: "${env.WORKSPACE}/pytest_exit_code.txt", text: "${testExitCode}\n"
 

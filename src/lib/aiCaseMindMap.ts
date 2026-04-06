@@ -37,6 +37,13 @@ const NODE_KIND_TAG_STYLE: Record<Exclude<AiCaseNodeKind, 'root'>, Record<string
   },
 };
 
+/** 链式节点的 section tag 样式（前置条件/测试步骤/预期结果） */
+const SECTION_TAG_STYLES: Record<string, Record<string, string>> = {
+  '前置条件': { background: '#FEF9C3', color: '#854D0E', borderRadius: '8px', padding: '2px 6px' },
+  '测试步骤': { background: '#DBEAFE', color: '#1E40AF', borderRadius: '8px', padding: '2px 6px' },
+  '预期结果': { background: '#FCE7F3', color: '#9D174D', borderRadius: '8px', padding: '2px 6px' },
+};
+
 interface NormalizeMindDataOptions {
   showNodeKindTags?: boolean;
 }
@@ -237,14 +244,20 @@ function expandNoteToChildren(note: string): AiCaseNode[] {
   for (const prefix of sectionPrefixes) {
     const content = sections[prefix];
     if (content && content.length > 0) {
-      // 新格式：多条用分号拼接，不加前缀标签
-      children.push(createNode(fmtInline(content), 'scenario', { aiGenerated: true }));
+      // 新格式：多条用分号拼接，加对应 section tag
+      children.push(createNode(fmtInline(content), 'scenario', {
+        aiGenerated: true,
+        tags: [{ text: prefix, style: SECTION_TAG_STYLES[prefix] }],
+      }));
     }
   }
 
-  // 无法解析各段时，把整个 note 作为一个子节点（兜底）
+  // 无法解析各段时，把整个 note 作为一个子节点（兜底，加前置条件 tag）
   if (children.length === 0 && note.trim()) {
-    children.push(createNode(note.trim(), 'scenario', { aiGenerated: true }));
+    children.push(createNode(note.trim(), 'scenario', {
+      aiGenerated: true,
+      tags: [{ text: '前置条件', style: SECTION_TAG_STYLES['前置条件'] }],
+    }));
   }
 
   return children;
@@ -325,10 +338,21 @@ function migrateToChainFormat(node: AiCaseNode): AiCaseNode[] | null {
   const steps = sections['测试步骤'] ?? ['执行目标操作'];
   const expectedResults = sections['预期结果'] ?? ['功能符合预期'];
 
-  // 重新构建链式结构
-  const expectedNode = createNode(fmtInline(expectedResults), 'scenario', { aiGenerated: true });
-  const stepsNode = createNode(fmtInline(steps), 'scenario', { aiGenerated: true, children: [expectedNode] });
-  return [createNode(fmtInline(preconditions), 'scenario', { aiGenerated: true, children: [stepsNode] })];
+  // 重新构建链式结构，每个节点带上对应的 section tag
+  const expectedNode = createNode(fmtInline(expectedResults), 'scenario', {
+    aiGenerated: true,
+    tags: [{ text: '预期结果', style: SECTION_TAG_STYLES['预期结果'] }],
+  });
+  const stepsNode = createNode(fmtInline(steps), 'scenario', {
+    aiGenerated: true,
+    children: [expectedNode],
+    tags: [{ text: '测试步骤', style: SECTION_TAG_STYLES['测试步骤'] }],
+  });
+  return [createNode(fmtInline(preconditions), 'scenario', {
+    aiGenerated: true,
+    children: [stepsNode],
+    tags: [{ text: '前置条件', style: SECTION_TAG_STYLES['前置条件'] }],
+  })];
 }
 
 /**
@@ -428,9 +452,21 @@ function buildCaseChain(
   const safeExpectedResults = expectedResults.length > 0 ? expectedResults : ['功能符合预期'];
 
   // 从尾到头链式嵌套：预期结果 ← 测试步骤 ← 前置条件
-  const expectedNode = createNode(fmtInline(safeExpectedResults), 'scenario', { aiGenerated: true });
-  const stepsNode = createNode(fmtInline(safeSteps), 'scenario', { aiGenerated: true, children: [expectedNode] });
-  return [createNode(fmtInline(safePreconditions), 'scenario', { aiGenerated: true, children: [stepsNode] })];
+  // 每个节点带上对应的 section tag
+  const expectedNode = createNode(fmtInline(safeExpectedResults), 'scenario', {
+    aiGenerated: true,
+    tags: [{ text: '预期结果', style: SECTION_TAG_STYLES['预期结果'] }],
+  });
+  const stepsNode = createNode(fmtInline(safeSteps), 'scenario', {
+    aiGenerated: true,
+    children: [expectedNode],
+    tags: [{ text: '测试步骤', style: SECTION_TAG_STYLES['测试步骤'] }],
+  });
+  return [createNode(fmtInline(safePreconditions), 'scenario', {
+    aiGenerated: true,
+    children: [stepsNode],
+    tags: [{ text: '前置条件', style: SECTION_TAG_STYLES['前置条件'] }],
+  })];
 }
 
 function buildSmokeCases(anchor: string): AiCaseNode[] {
