@@ -25,7 +25,8 @@ import { webSocketService } from './WebSocketService';
 export interface CaseExecutionInput {
   caseIds: number[];
   projectId: number;
-  triggeredBy: number;
+  /** null 表示系统调度触发（无操作人），因为调度器系统用户 ID=0 在 Auto_Users 表中不存在 */
+  triggeredBy: number | null;
   triggerType: 'manual' | 'jenkins' | 'schedule';
   jenkinsJob?: string;
   runConfig?: Record<string, unknown>;

@@ -36,8 +36,8 @@ export class TaskExecution {
   @Column({ type: 'int', name: 'duration', default: 0 })
   duration: number;
 
-  @Column({ type: 'int', name: 'executed_by' })
-  executedBy: number;
+  @Column({ type: 'int', name: 'executed_by', nullable: true })
+  executedBy: number | null;
 
   @ManyToOne(() => User, { eager: false })
   @JoinColumn({ name: 'executed_by' })

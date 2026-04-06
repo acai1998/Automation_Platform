@@ -227,7 +227,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async createTestRun(runData: {
     projectId: number;
     triggerType: TestRunTriggerTypeType;
-    triggerBy: number;
+    /** null 表示系统调度触发（无操作人） */
+    triggerBy: number | null;
     jenkinsJob?: string;
     runConfig?: Record<string, unknown>;
     totalCases: number;
@@ -1145,7 +1146,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async triggerExecution(input: {
     caseIds: number[];
     projectId: number;
-    triggeredBy: number;
+    /** null 表示系统调度触发（无操作人） */
+    triggeredBy: number | null;
     triggerType: 'manual' | 'jenkins' | 'schedule';
     jenkinsJob?: string;
     runConfig?: Record<string, unknown>;

@@ -103,8 +103,12 @@ interface RetryState {
 /** 全局最大并发执行任务数 */
 const CONCURRENCY_LIMIT = parseInt(process.env.TASK_CONCURRENCY_LIMIT || '3', 10);
 
-/** 系统自动操作时 operator_id 使用 0（调度引擎、补偿触发等） */
-const SCHEDULER_USER_ID = 0;
+/**
+ * 系统自动操作时 operator_id 使用 null（调度引擎、补偿触发等）
+ * ⚠️ 重要：不能使用 0，因为 Auto_Users 表中不存在 id=0 的用户，
+ *   而 Auto_TestCaseTaskExecutions.executed_by 有外键约束 → 插入会失败！
+ */
+const SCHEDULER_USER_ID: null = null;
 
 /** 最大漏触发补偿窗口（毫秒），默认 24 小时 */
 const MAX_MISSED_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -1141,6 +1145,13 @@ export class TaskSchedulerService {
         taskId,
         caseIds,
       }, LOG_CONTEXTS.EXECUTION);
+      // ⚠️ Bug Fix: 即使跳过执行，也必须更新内存中的 lastRunAt
+      // 否则 compensateMissedFires 每次都会误判为"漏触发"并额外再 dispatch 一次，
+      // 导致每个 cron 周期产生 2 条记录（补偿 + 正常），记录不断堆积
+      const cachedTask = this.taskCache.get(taskId);
+      if (cachedTask) {
+        cachedTask.lastRunAt = new Date();
+      }
       return;
     }
 

@@ -25,8 +25,8 @@ export class TestRun {
   @Column({ type: 'enum', enum: ['manual', 'jenkins', 'schedule'], default: 'manual', name: 'trigger_type' })
   triggerType: 'manual' | 'jenkins' | 'schedule';
 
-  @Column({ type: 'int', name: 'trigger_by' })
-  triggerBy: number;
+  @Column({ type: 'int', name: 'trigger_by', nullable: true })
+  triggerBy: number | null;
 
   @ManyToOne(() => User, { eager: false })
   @JoinColumn({ name: 'trigger_by' })
