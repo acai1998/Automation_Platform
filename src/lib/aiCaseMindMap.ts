@@ -44,6 +44,30 @@ const SECTION_TAG_STYLES: Record<string, Record<string, string>> = {
   '预期结果': { background: '#FCE7F3', color: '#9D174D', borderRadius: '8px', padding: '2px 6px' },
 };
 
+/**
+ * testcase 节点的状态背景色映射（通过 mind-elixir 的 style 属性设置节点背景）
+ * 仅在状态非 todo 时生效，todo 状态保留默认白色背景
+ */
+const STATUS_NODE_STYLE: Partial<Record<AiCaseNodeStatus, { background: string; color: string }>> = {
+  passed:  { background: '#F0FDF4', color: '#166534' },
+  failed:  { background: '#FFF1F2', color: '#9F1239' },
+  doing:   { background: '#EFF6FF', color: '#1E40AF' },
+  blocked: { background: '#FFFBEB', color: '#92400E' },
+  skipped: { background: '#FAF5FF', color: '#6B21A8' },
+};
+
+/**
+ * testcase 节点的状态 tag 映射（追加在节点 tags 数组尾部）
+ * todo 状态不添加状态 tag，避免每个节点都显示"待执行"
+ */
+const STATUS_TAG_MAP: Partial<Record<AiCaseNodeStatus, { text: string; style: Record<string, string> }>> = {
+  passed:  { text: '✓ 通过', style: { background: '#DCFCE7', color: '#166534', borderRadius: '8px', padding: '2px 6px', fontWeight: '600' } },
+  failed:  { text: '✗ 失败', style: { background: '#FFE4E6', color: '#9F1239', borderRadius: '8px', padding: '2px 6px', fontWeight: '600' } },
+  doing:   { text: '⏳ 进行中', style: { background: '#DBEAFE', color: '#1E40AF', borderRadius: '8px', padding: '2px 6px' } },
+  blocked: { text: '⊘ 阻塞', style: { background: '#FEF3C7', color: '#92400E', borderRadius: '8px', padding: '2px 6px' } },
+  skipped: { text: '— 跳过', style: { background: '#F3E8FF', color: '#6B21A8', borderRadius: '8px', padding: '2px 6px' } },
+};
+
 interface NormalizeMindDataOptions {
   showNodeKindTags?: boolean;
 }
@@ -78,9 +102,10 @@ function createDefaultMetadata(kind: AiCaseNodeKind): AiCaseNodeMetadata {
 }
 
 function resolveNodeKindTags(kind: AiCaseNodeKind, showNodeKindTags: boolean): AiCaseNode['tags'] | undefined {
-  // scenario 节点不添加节点类型标签：其语义已通过节点名称和上下文清晰表达
-  // testcase 现在是叶子节点，展示详情不再依赖 scenario 子节点
-  if (!showNodeKindTags || kind === 'root' || kind === 'scenario') {
+  // scenario / testcase 节点不添加节点类型标签：
+  // - scenario：语义已通过节点名称和上下文清晰表达
+  // - testcase：是链式结构起始节点，位置和上下文已足够表达语义；类型标签在每行重复出现视觉冗余
+  if (!showNodeKindTags || kind === 'root' || kind === 'scenario' || kind === 'testcase') {
     return undefined;
   }
 
@@ -139,7 +164,7 @@ function normalizeNode(
     delete node.children;
   }
 
-  // 若 showNodeKindTags=false：清除所有 tags（包括 section 标签）
+  // 若 showNodeKindTags=false：清除所有 tags（包括 section 标签），但 testcase 状态 tag 仍需保留
   // 若 showNodeKindTags=true 且节点已有自定义 section tags：保留它们
   // 否则按 kind 自动生成 tags
   if (!options.showNodeKindTags) {
@@ -152,6 +177,47 @@ function normalizeNode(
         node.tags = tags;
       } else {
         delete node.tags;
+      }
+    }
+  }
+
+  // testcase 节点：应用状态背景色，并在显示 tags 时追加状态 tag
+  if (merged.kind === 'testcase') {
+    const nodeStyle = STATUS_NODE_STYLE[merged.status];
+    if (nodeStyle) {
+      // mind-elixir 通过 NodeObj 上的 style 字段设置节点背景色和文字色
+      (node as AiCaseNode & { style?: Record<string, string> }).style = nodeStyle;
+    } else {
+      // todo 状态：清除之前可能设置过的颜色，恢复默认
+      delete (node as AiCaseNode & { style?: Record<string, string> }).style;
+    }
+
+    if (options.showNodeKindTags && merged.status !== 'todo') {
+      const statusTag = STATUS_TAG_MAP[merged.status];
+      if (statusTag) {
+        // 状态 tag 追加到尾部（section tag 之后，或作为唯一 tag）
+        const existingTags = Array.isArray(node.tags) ? [...node.tags] : [];
+        // 移除旧的状态 tag（避免重复追加），按 tag text 识别
+        const statusTexts = new Set(Object.values(STATUS_TAG_MAP).map((t) => t?.text));
+        const filteredTags = existingTags.filter(
+          (t): t is { text: string; style: Record<string, string> } =>
+            typeof t === 'object' && t !== null && 'text' in t && !statusTexts.has((t as { text: string }).text)
+        );
+        node.tags = [...filteredTags, { text: statusTag.text, style: statusTag.style }];
+      }
+    } else if (!options.showNodeKindTags || merged.status === 'todo') {
+      // 隐藏 tags 或 todo 状态时，移除状态 tag（但保留 section tags 逻辑已在上方处理）
+      if (Array.isArray(node.tags)) {
+        const statusTexts = new Set(Object.values(STATUS_TAG_MAP).map((t) => t?.text));
+        const filtered = node.tags.filter(
+          (t): t is { text: string; style: Record<string, string> } =>
+            typeof t === 'object' && t !== null && 'text' in t && !statusTexts.has((t as { text: string }).text)
+        );
+        if (filtered.length > 0) {
+          node.tags = filtered;
+        } else {
+          delete node.tags;
+        }
       }
     }
   }
