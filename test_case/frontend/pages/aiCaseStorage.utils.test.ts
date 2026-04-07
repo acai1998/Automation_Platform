@@ -112,11 +112,12 @@ describe('exportMindDataToMarkdown', () => {
     expect(md).toMatch(/- \[ \] \*\*密码错误\*\* \[P0\]/);
   });
 
-  it('带 note 的 testcase 应将 note 以引用块形式追加', () => {
+  it('带 note 的 testcase 应将 note 以缩进列表项追加（每行一个）', () => {
     const data = makeTestMindData();
     const md = exportMindDataToMarkdown(data);
-    // note 换行符应被替换为空格
-    expect(md).toMatch(/^\s+> 这是备注内容 第二行/m);
+    // note 每行作为独立的缩进列表项输出
+    expect(md).toMatch(/^\s+- 这是备注内容/m);
+    expect(md).toMatch(/^\s+- 第二行/m);
   });
 
   it('空脑图（只有根节点）不应报错', () => {
@@ -150,8 +151,8 @@ describe('exportMindDataToMarkdown', () => {
     expect(md).not.toMatch(/^- \[ \] \*\*\*\*/m);
   });
 
-  it('testcase 的子节点（步骤）应作为缩进列表展示', () => {
-    const step = makeNode('step1', '输入用户名', 'testcase', []);
+  it('testcase 的链式子节点应以 **标签**：内容 形式展示（前置条件/测试步骤/预期结果）', () => {
+    const step = makeNode('step1', '输入用户名', 'scenario', []);
     const tc = makeNode('tc', '登录流程', 'testcase', [step]);
     const root = makeNode('root', '根', 'root', [tc]);
     const data: AiCaseMindData = {
@@ -163,13 +164,15 @@ describe('exportMindDataToMarkdown', () => {
       overflowHidden: false,
     };
     const md = exportMindDataToMarkdown(data);
-    expect(md).toMatch(/^\s+- 输入用户名/m);
+    // 链式第一个子节点作为前置条件展示
+    expect(md).toMatch(/^\s+- \*\*前置条件\*\*：输入用户名/m);
   });
 
-  it('testcase 的步骤节点有子节点时应加粗标题并展开孙节点', () => {
-    const grandchild = makeNode('gc1', '预期结果：成功', 'testcase', []);
-    const step = makeNode('step1', '操作步骤', 'testcase', [grandchild]);
-    const tc = makeNode('tc', '带子步骤用例', 'testcase', [step]);
+  it('testcase 链式结构应输出前置条件/测试步骤/预期结果三行', () => {
+    const expectedNode = makeNode('gc1', '操作成功', 'scenario', []);
+    const stepsNode = makeNode('step1', '点击提交按钮', 'scenario', [expectedNode]);
+    const precondNode = makeNode('precond', '页面已打开', 'scenario', [stepsNode]);
+    const tc = makeNode('tc', '提交流程', 'testcase', [precondNode]);
     const root = makeNode('root', '根', 'root', [tc]);
     const data: AiCaseMindData = {
       nodeData: root,
@@ -180,10 +183,10 @@ describe('exportMindDataToMarkdown', () => {
       overflowHidden: false,
     };
     const md = exportMindDataToMarkdown(data);
-    // 步骤标题应加粗
-    expect(md).toMatch(/^\s+- \*\*操作步骤\*\*/m);
-    // 孙节点缩进展开
-    expect(md).toMatch(/^\s+- 预期结果：成功/m);
+    // 链式三个节点应分别展示
+    expect(md).toMatch(/- \*\*前置条件\*\*：页面已打开/);
+    expect(md).toMatch(/- \*\*测试步骤\*\*：点击提交按钮/);
+    expect(md).toMatch(/- \*\*预期结果\*\*：操作成功/);
   });
 
   it('priority 字段应附加在 testcase 行末', () => {

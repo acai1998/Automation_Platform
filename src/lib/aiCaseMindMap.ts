@@ -211,11 +211,11 @@ function hasNoteOnlyFormat(node: AiCaseNode): boolean {
 const LEGACY_LABEL_RE = /^(前置条件|测试步骤|预期结果)[：:]\s*/;
 
 /**
- * 将 note 字段解析为前置条件/测试步骤/预期结果节点列表（新格式：纯内容+分号拼接）。
- * 用于将仅有 note 的旧格式 testcase 迁移为新的扁平兄弟节点格式。
+ * 将 note 字段解析为链式嵌套节点（前置条件→测试步骤→预期结果）。
+ * 用于将仅有 note 的旧格式 testcase 迁移为新的链式格式。
+ * 返回值为链式的第一个节点（前置条件），内部嵌套后续节点。
  */
 function expandNoteToChildren(note: string): AiCaseNode[] {
-  const sectionPrefixes = ['前置条件', '测试步骤', '预期结果'] as const;
   const lines = note.split(/\r?\n/);
   const sections: Record<string, string[]> = {};
   let currentSection = '';
@@ -240,27 +240,37 @@ function expandNoteToChildren(note: string): AiCaseNode[] {
     }
   }
 
-  const children: AiCaseNode[] = [];
-  for (const prefix of sectionPrefixes) {
-    const content = sections[prefix];
-    if (content && content.length > 0) {
-      // 新格式：多条用分号拼接，加对应 section tag
-      children.push(createNode(fmtInline(content), 'scenario', {
-        aiGenerated: true,
-        tags: [{ text: prefix, style: SECTION_TAG_STYLES[prefix] }],
-      }));
-    }
-  }
+  const parsedPreconditions = sections['前置条件'];
+  const parsedSteps = sections['测试步骤'];
+  const parsedExpectedResults = sections['预期结果'];
 
-  // 无法解析各段时，把整个 note 作为一个子节点（兜底，加前置条件 tag）
-  if (children.length === 0 && note.trim()) {
-    children.push(createNode(note.trim(), 'scenario', {
+  // 无法解析各段时，把整个 note 作为前置条件节点（兜底）
+  if (!parsedPreconditions && !parsedSteps && !parsedExpectedResults && note.trim()) {
+    return [createNode(note.trim(), 'scenario', {
       aiGenerated: true,
       tags: [{ text: '前置条件', style: SECTION_TAG_STYLES['前置条件'] }],
-    }));
+    })];
   }
 
-  return children;
+  const preconditions = parsedPreconditions ?? ['无特殊前置条件'];
+  const steps = parsedSteps ?? ['执行目标操作'];
+  const expectedResults = parsedExpectedResults ?? ['功能符合预期'];
+
+  // 构建链式嵌套（与 buildCaseChain 保持一致），每个节点带 section tag
+  const expectedNode = createNode(fmtInline(expectedResults), 'scenario', {
+    aiGenerated: true,
+    tags: [{ text: '预期结果', style: SECTION_TAG_STYLES['预期结果'] }],
+  });
+  const stepsNode = createNode(fmtInline(steps), 'scenario', {
+    aiGenerated: true,
+    children: [expectedNode],
+    tags: [{ text: '测试步骤', style: SECTION_TAG_STYLES['测试步骤'] }],
+  });
+  return [createNode(fmtInline(preconditions), 'scenario', {
+    aiGenerated: true,
+    children: [stepsNode],
+    tags: [{ text: '前置条件', style: SECTION_TAG_STYLES['前置条件'] }],
+  })];
 }
 
 
