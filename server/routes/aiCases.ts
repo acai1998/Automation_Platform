@@ -1,6 +1,8 @@
 import { Router, type Response } from 'express';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import { authenticate } from '../middleware/auth';
+import { ServiceError } from '../utils/ServiceError';
+import { buildPagination } from '../../shared/types/api';
 import { aiCaseService } from '../services/AiCaseService';
 import {
   aiCaseGenerationService,
@@ -65,11 +67,14 @@ function getOperatorId(req: Parameters<typeof authenticate>[0]): number {
   return req.user.id;
 }
 
-function resolveErrorStatus(message: string): number {
-  if (message.includes('版本冲突')) return 409;
-  if (message.includes('不存在')) return 404;
-  if (message.includes('不能为空') || message.includes('无效') || message.includes('必须')) return 400;
-  return 500;
+/**
+ * 从路由 catch 块中提取 HTTP 状态码
+ * - 若是 ServiceError 则直接取其 statusCode（第一选）
+ * - 否则回退为 500（未知错误）
+ * 已弃用基于字符串匹配的 resolveErrorStatus，改用结构化 ServiceError
+ */
+function resolveErrorStatus(error: unknown): number {
+  return ServiceError.resolveStatus(error);
 }
 
 function writeSseEvent(res: Response, event: string, payload: unknown): void {
@@ -135,7 +140,7 @@ router.post('/generate', async (req, res) => {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '生成失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 
@@ -244,7 +249,7 @@ router.post('/generate/stream', async (req, res) => {
     const message = error instanceof Error ? error.message : '生成失败';
 
     if (!res.headersSent) {
-      res.status(resolveErrorStatus(message)).json({ success: false, message });
+      res.status(resolveErrorStatus(error)).json({ success: false, message });
       return;
     }
 
@@ -272,8 +277,9 @@ router.post('/generate/stream', async (req, res) => {
 router.get('/workspaces', async (req, res) => {
   try {
     const projectId = toNumberOrUndefined(req.query.projectId);
-    const limit = toNumberOrUndefined(req.query.limit);
-    const offset = toNumberOrUndefined(req.query.offset);
+    // 分页上限保护：默认 20，最大 100
+    const limit = Math.min(100, Math.max(1, toNumberOrUndefined(req.query.limit) ?? 20));
+    const offset = Math.max(0, toNumberOrUndefined(req.query.offset) ?? 0);
     const status = isWorkspaceStatus(req.query.status) ? req.query.status : undefined;
     const keyword = typeof req.query.keyword === 'string' ? req.query.keyword : undefined;
 
@@ -285,10 +291,16 @@ router.get('/workspaces', async (req, res) => {
       offset,
     });
 
-    res.json({ success: true, ...result });
+    // 使用明确的 PaginatedResponse 格式，不展开 service 返回对象
+    res.json({
+      success: true,
+      data: result.data,
+      total: result.total,
+      pagination: buildPagination(limit, offset, result.total),
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '获取工作台失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 
@@ -308,7 +320,7 @@ router.get('/workspaces/:id', async (req, res) => {
     res.json({ success: true, data: workspace });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '获取工作台详情失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 
@@ -343,7 +355,7 @@ router.post('/workspaces', async (req, res) => {
     res.status(201).json({ success: true, data: created });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '创建工作台失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 
@@ -376,7 +388,7 @@ router.put('/workspaces/:id', async (req, res) => {
     res.json({ success: true, data: updated });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '更新工作台失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 
@@ -416,7 +428,7 @@ router.post('/workspaces/:id/node-status', async (req, res) => {
     res.json({ success: true, data: result });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '更新节点状态失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 
@@ -431,16 +443,25 @@ router.get('/workspaces/:id/node-executions', async (req, res) => {
     const limit = toNumberOrUndefined(req.query.limit);
     const offset = toNumberOrUndefined(req.query.offset);
 
+    // 分页上限保护
+    const limitNum = Math.min(100, Math.max(1, limit ?? 20));
+    const offsetNum = Math.max(0, offset ?? 0);
+
     const result = await aiCaseService.listNodeExecutions(workspaceId, {
       nodeId,
-      limit,
-      offset,
+      limit: limitNum,
+      offset: offsetNum,
     });
 
-    res.json({ success: true, ...result });
+    res.json({
+      success: true,
+      data: result.data,
+      total: result.total,
+      pagination: buildPagination(limitNum, offsetNum, result.total),
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '获取节点状态流水失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 
@@ -481,7 +502,7 @@ router.post('/workspaces/:id/attachments', async (req, res) => {
     res.status(201).json({ success: true, data: attachment });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '创建附件失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 
@@ -492,16 +513,24 @@ router.post('/workspaces/:id/attachments', async (req, res) => {
 router.get('/workspaces/:id/attachments', async (req, res) => {
   try {
     const workspaceId = parseId(req.params.id, 'workspaceId');
+    // 分页上限保护
+    const limitNum = Math.min(100, Math.max(1, toNumberOrUndefined(req.query.limit) ?? 20));
+    const offsetNum = Math.max(0, toNumberOrUndefined(req.query.offset) ?? 0);
     const result = await aiCaseService.listAttachments(workspaceId, {
       nodeId: typeof req.query.nodeId === 'string' ? req.query.nodeId : undefined,
-      limit: toNumberOrUndefined(req.query.limit),
-      offset: toNumberOrUndefined(req.query.offset),
+      limit: limitNum,
+      offset: offsetNum,
     });
 
-    res.json({ success: true, ...result });
+    res.json({
+      success: true,
+      data: result.data,
+      total: result.total,
+      pagination: buildPagination(limitNum, offsetNum, result.total),
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '获取附件列表失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 
@@ -516,7 +545,7 @@ router.delete('/attachments/:attachmentId', async (req, res) => {
     res.json({ success: true, message: '附件已删除' });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '删除附件失败';
-    res.status(resolveErrorStatus(message)).json({ success: false, message });
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });
 

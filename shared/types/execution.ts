@@ -135,3 +135,28 @@ export function isActiveStatus(status: TestRunStatusType | TaskExecutionStatusTy
 export function isCompletedStatus(status: TestRunStatusType | TaskExecutionStatusType): boolean {
   return !isActiveStatus(status);
 }
+
+// ============================================================================
+// 通用枚举校验工厂
+// ============================================================================
+
+/**
+ * 创建类型安全的枚举校验函数
+ *
+ * 统一解决各路由中重复的 Array.includes 校验模式，
+ * 确保新增枚举值时校验逻辑自动更新
+ *
+ * @example
+ * ```ts
+ * const isValidStatus = createEnumValidator(TaskExecutionStatus);
+ * isValidStatus('running'); // true
+ * isValidStatus('unknown'); // false（且类型收窄为 TaskExecutionStatusType）
+ * ```
+ */
+export function createEnumValidator<T extends string>(
+  enumObj: Record<string, T>
+): (value: unknown) => value is T {
+  const validValues = new Set<string>(Object.values(enumObj));
+  return (value: unknown): value is T =>
+    typeof value === 'string' && validValues.has(value);
+}

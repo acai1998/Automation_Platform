@@ -61,6 +61,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     loadUser();
   }, [loadUser]);
 
+  // 监听全局 401 事件（由 request() 派发），立即清除认证状态触发重定向
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setUser(null);
+    };
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+  }, []);
+
   // 登录
   const login = useCallback(async (email: string, password: string, remember = false) => {
     const result = await apiLogin(email, password, remember);

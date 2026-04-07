@@ -6,6 +6,7 @@ import { taskSchedulerService, getNextCronTime } from '../services/TaskScheduler
 import { executionService } from '../services/ExecutionService';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS } from '../config/logging';
+import { TaskExecutionStatus } from '../../shared/types/execution';
 
 const router = Router();
 
@@ -31,8 +32,9 @@ async function writeAuditLog(
   }
 }
 
-// 任务执行状态联合类型（与前端 useTasks.ts 保持一致）
-type TaskExecutionStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+// TaskExecutionStatus 统一从 shared/types/execution 引入，不再重复定义
+// 类型别名供路由内部使用（联合字符串类型，兼容数据库查询结果）
+type TaskExecutionStatusValue = `${TaskExecutionStatus}`;
 
 interface Task {
   id: number;
@@ -62,7 +64,7 @@ interface TestCase {
 
 interface TaskExecution {
   id: number;
-  status: TaskExecutionStatus;
+  status: TaskExecutionStatusValue;
   start_time?: string;
   end_time?: string;
   duration?: number;

@@ -1503,6 +1503,7 @@ function AiCasesInner() {
       finishGenerateProgress(generated.source === 'llm' ? 'AI 生成完成' : '模板生成完成');
       toast.success(`AI 用例脑图生成完成（${generated.source === 'llm' ? '大模型' : '回退模板'}）`);
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
       console.error('[AICases] remote stream generate failed, fallback local', error);
       setGenerationProgress(68);
       setGenerationStageText('远端流式生成失败，正在切换本地模板...');
@@ -1519,7 +1520,24 @@ function AiCasesInner() {
       await cleanupStaleAttachments(expanded.data);
       setAttachmentReloadSeed((value) => value + 1);
       finishGenerateProgress('本地模板生成完成');
-      toast.warning('远端流式 AI 生成失败，已使用本地模板生成');
+
+      // 认证失败单独提示，引导用户重新登录
+      const isAuthError =
+        errMsg.includes('未提供认证令牌') ||
+        errMsg.includes('无效或过期的令牌') ||
+        errMsg.includes('HTTP 401') ||
+        errMsg.includes('未认证');
+      if (isAuthError) {
+        toast.warning('登录状态已过期，AI 生成已切换至本地模板。请重新登录后再试', {
+          duration: 6000,
+          action: {
+            label: '去登录',
+            onClick: () => window.location.replace('/login'),
+          },
+        });
+      } else {
+        toast.warning(`远端 AI 生成失败，已使用本地模板生成（${errMsg}）`, { duration: 5000 });
+      }
     } finally {
       setIsGenerating(false);
     }

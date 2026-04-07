@@ -1,12 +1,19 @@
 import type { AiCaseMindData, AiCaseNodeStatus, AiCaseWorkspaceStatus } from '@/types/aiCases';
+import { clearToken } from '@/services/authApi';
 
 const API_BASE = '/api';
 
-interface ApiResponse<T> {
+export interface ApiResponse<T> {
   success: boolean;
   data?: T;
   message?: string;
   total?: number;
+  /** 分页元数据（列表类接口使用） */
+  pagination?: {
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
 }
 
 /**
@@ -36,11 +43,16 @@ export async function request<T>(
     const data = await response.json();
 
     if (!response.ok) {
+      // 认证失败：清除本地 token，并通知 AuthContext 更新登录状态
+      if (response.status === 401) {
+        clearToken();
+        window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+      }
       throw new Error(data.message || 'Request failed');
     }
 
     return data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(`API Error [${endpoint}]:`, error);
     throw error;
   }
@@ -113,7 +125,11 @@ export const dashboardApi = {
     }),
 
   getAll: (timeRange: string = '30d') =>
-    request<any>(`/dashboard/all?timeRange=${timeRange}&_ts=${Date.now()}`, {
+    request<{
+      stats: DashboardStats;
+      todayExecution: TodayExecution;
+      trendData: DailySummary[];
+    }>(`/dashboard/all?timeRange=${timeRange}&_ts=${Date.now()}`, {
       cache: 'no-store',
     }),
 };
@@ -130,9 +146,41 @@ export interface ExecutionResult {
   status: string;
 }
 
+export interface ExecutionCaseResult {
+  id: number;
+  caseId: number;
+  caseName: string;
+  status: 'passed' | 'failed' | 'skipped' | 'error';
+  duration: number;
+  errorMessage?: string | null;
+  stackTrace?: string | null;
+  screenshotPath?: string | null;
+  logPath?: string | null;
+  assertionsTotal?: number;
+  assertionsPassed?: number;
+  responseData?: string | null;
+}
+
+export interface ExecutionRunDetail {
+  id: number;
+  status: string;
+  triggerType: string;
+  triggerByName?: string | null;
+  totalCases?: number;
+  passedCases?: number;
+  failedCases?: number;
+  skippedCases?: number;
+  durationMs?: number | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  jenkinsJob?: string | null;
+  jenkinsBuildId?: string | null;
+  jenkinsUrl?: string | null;
+}
+
 export interface ExecutionDetail {
-  execution: any;
-  caseResults: any[];
+  execution: ExecutionRunDetail;
+  caseResults: ExecutionCaseResult[];
 }
 
 export const executionApi = {
@@ -144,7 +192,7 @@ export const executionApi = {
 
   getDetail: (id: number) => request<ExecutionDetail>(`/executions/${id}`),
 
-  getList: (limit: number = 20) => request<any[]>(`/executions?limit=${limit}`),
+  getList: (limit: number = 20) => request<ExecutionRunDetail[]>(`/executions?limit=${limit}`),
 
   cancel: (id: number) =>
     request(`/executions/${id}/cancel`, { method: 'POST' }),
@@ -222,7 +270,7 @@ export const casesApi = {
   delete: (id: number) =>
     request(`/cases/${id}`, { method: 'DELETE' }),
 
-  getModules: () => request<string[]>('/cases/modules/list'),
+  getModules: () => request<string[]>('/cases/modules'),
 };
 
 // ==================== Tasks API ====================
@@ -266,7 +314,20 @@ export const tasksApi = {
     return request<Task[]>(`/tasks?${query}`);
   },
 
-  getDetail: (id: number) => request<Task & { cases: any[]; recentExecutions: any[] }>(`/tasks/${id}`),
+  getDetail: (id: number) => request<Task & {
+    cases: Array<{ id: number; name: string; type: string; status: string; priority: string }>;
+    recentExecutions: Array<{
+      id: number;
+      status: string;
+      startTime: string | null;
+      endTime: string | null;
+      duration: number | null;
+      passedCases: number;
+      failedCases: number;
+      totalCases: number;
+    }>;
+    latestRunId: number | null;
+  }>(`/tasks/${id}`),
 
   create: (data: CreateTaskInput) =>
     request<{ id: number }>('/tasks', {
@@ -284,7 +345,17 @@ export const tasksApi = {
     request(`/tasks/${id}`, { method: 'DELETE' }),
 
   getExecutions: (id: number, limit: number = 20) =>
-    request<any[]>(`/tasks/${id}/executions?limit=${limit}`),
+    request<Array<{
+      id: number;
+      status: string;
+      startTime: string | null;
+      endTime: string | null;
+      duration: number | null;
+      passedCases: number;
+      failedCases: number;
+      totalCases: number;
+      executedByName: string | null;
+    }>>(`/tasks/${id}/executions?limit=${limit}`),
 };
 
 // ==================== AI Cases API ====================
@@ -375,12 +446,26 @@ export interface AiCaseAttachmentItem {
 }
 
 export const aiCasesApi = {
-  generate: (data: {
+  /**
+   * 调用 AI 生成测试用例脑图
+   *
+   * @param data.requirementText - 需求文档文本（必填）
+   * @param data.workspaceName   - 工作台名称（可选，默认由 AI 推断）
+   * @param data.projectId       - 关联项目 ID（可选）
+   * @param data.persist         - 是否将结果持久化到数据库
+   *   - false/undefined（默认）：返回 AiCaseGenerationResult（仅生成结果，不持久化）
+   *   - true：返回 { generated, workspace }（生成结果 + 已创建的工作台详情）
+   */
+  generate: <TPersist extends boolean = false>(data: {
     requirementText: string;
     workspaceName?: string;
     projectId?: number;
-    persist?: boolean;
-  }) => request<AiCaseGenerationResult | { generated: AiCaseGenerationResult; workspace: AiCaseWorkspaceDetail }>('/ai-cases/generate', {
+    persist?: TPersist;
+  }) => request<
+    TPersist extends true
+      ? { generated: AiCaseGenerationResult; workspace: AiCaseWorkspaceDetail }
+      : AiCaseGenerationResult
+  >('/ai-cases/generate', {
     method: 'POST',
     body: JSON.stringify(data),
   }),

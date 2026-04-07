@@ -126,8 +126,9 @@ router.post('/:id/start', async (req, res) => {
  */
 router.get('/test-runs', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit as string) || 50;
-    const offset = parseInt(req.query.offset as string) || 0;
+    // 分页上限保护：默认 50，最大 100
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
 
     const filters: {
       triggerType?: string[];
@@ -226,7 +227,8 @@ router.get("/:id", async (req, res) => {
  */
 router.get('/', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit as string) || 20;
+    // 分页上限保护：默认 20，最大 100
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
     const data = await executionService.getRecentExecutions(limit);
     res.json({ success: true, data });
   } catch (error: unknown) {

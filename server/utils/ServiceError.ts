@@ -1,23 +1,34 @@
 /**
  * 服务层错误类
  * 用于统一业务逻辑错误处理
+ *
+ * 使用方式：
+ * - ServiceError.notFound('Workspace', '123')  → 404
+ * - ServiceError.validation('名称不能为空', ...)  → 422
+ * - ServiceError.conflict('版本冲突', ...)           → 409
+ * - ServiceError.business('业务异常', ...)           → 400
+ * - ServiceError.dataAccess('数据库错误', err)     → 500
  */
 export class ServiceError extends Error {
   public readonly statusCode: number;
-  public readonly details?: any;
-  public readonly context?: Record<string, any>;
+  /** 机器可读错误码，如 NOT_FOUND / VALIDATION_ERROR 等 */
+  public readonly code: string;
+  public readonly details?: unknown;
+  public readonly context?: Record<string, unknown>;
 
   constructor(
     message: string,
     originalError?: Error | string,
     statusCode: number = 500,
-    details?: any,
-    context?: Record<string, any>
+    code: string = 'INTERNAL_ERROR',
+    details?: unknown,
+    context?: Record<string, unknown>
   ) {
     super(message);
     
     this.name = 'ServiceError';
     this.statusCode = statusCode;
+    this.code = code;
     this.details = details;
     this.context = context;
 
@@ -31,59 +42,75 @@ export class ServiceError extends Error {
   }
 
   /**
-   * 创建业务逻辑错误
+   * 创建业务逻辑错误（400）
    */
-  static business(message: string, details?: any, context?: Record<string, any>): ServiceError {
-    return new ServiceError(message, undefined, 400, details, context);
+  static business(message: string, details?: unknown, context?: Record<string, unknown>): ServiceError {
+    return new ServiceError(message, undefined, 400, 'BUSINESS_ERROR', details, context);
   }
 
   /**
-   * 创建数据访问错误
+   * 创建数据访问错误（500）
    */
-  static dataAccess(message: string, originalError?: Error, context?: Record<string, any>): ServiceError {
-    return new ServiceError(message, originalError, 500, undefined, context);
+  static dataAccess(message: string, originalError?: Error, context?: Record<string, unknown>): ServiceError {
+    return new ServiceError(message, originalError, 500, 'DATA_ACCESS_ERROR', undefined, context);
   }
 
   /**
-   * 创建验证错误
+   * 创建验证错误（422）
    */
-  static validation(message: string, details?: any, context?: Record<string, any>): ServiceError {
-    return new ServiceError(message, undefined, 422, details, context);
+  static validation(message: string, details?: unknown, context?: Record<string, unknown>): ServiceError {
+    return new ServiceError(message, undefined, 422, 'VALIDATION_ERROR', details, context);
   }
 
   /**
-   * 创建未找到资源错误
+   * 创建未找到资源错误（404）
    */
-  static notFound(resource: string, identifier?: string, context?: Record<string, any>): ServiceError {
+  static notFound(resource: string, identifier?: string, context?: Record<string, unknown>): ServiceError {
     const message = identifier 
-      ? `${resource} with identifier ${identifier} not found`
-      : `${resource} not found`;
-    return new ServiceError(message, undefined, 404, undefined, context);
+      ? `${resource} 不存在（ID: ${identifier}）`
+      : `${resource} 不存在`;
+    return new ServiceError(message, undefined, 404, 'NOT_FOUND', undefined, context);
   }
 
   /**
-   * 创建权限错误
+   * 创建版本冲突错误（409）
    */
-  static forbidden(operation: string, context?: Record<string, any>): ServiceError {
-    return new ServiceError(`Access denied: ${operation}`, undefined, 403, undefined, context);
+  static conflict(message: string, details?: unknown, context?: Record<string, unknown>): ServiceError {
+    return new ServiceError(message, undefined, 409, 'CONFLICT', details, context);
   }
 
   /**
-   * 获取错误的结构化表示
+   * 创建权限错误（403）
+   */
+  static forbidden(operation: string, context?: Record<string, unknown>): ServiceError {
+    return new ServiceError(`权限不足：${operation}`, undefined, 403, 'FORBIDDEN', undefined, context);
+  }
+
+  /**
+   * 从路由捕获的未知错误中提取 HTTP 状态码
+   * 用于统一错误处理中间件：若 service 层抛出 ServiceError 则直接取其 statusCode
+   */
+  static resolveStatus(error: unknown): number {
+    if (error instanceof ServiceError) {
+      return error.statusCode;
+    }
+    return 500;
+  }
+
+  /**
+   * 获取错误的结构化表示（符合 API 错误应答规范）
    */
   toResponse(): {
-    error: string;
-    statusCode: number;
-    details?: any;
-    context?: Record<string, any>;
-    timestamp: string;
+    success: false;
+    error: { code: string; message: string; details?: unknown };
   } {
     return {
-      error: this.message,
-      statusCode: this.statusCode,
-      details: this.details,
-      context: this.context,
-      timestamp: new Date().toISOString(),
+      success: false,
+      error: {
+        code: this.code,
+        message: this.message,
+        details: this.details,
+      },
     };
   }
 }
