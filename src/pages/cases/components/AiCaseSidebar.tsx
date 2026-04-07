@@ -187,8 +187,6 @@ function HistoryWorkspaceList({
 }
 
 export interface AiCaseSidebarProps {
-  workspaceName: string; requirementText: string;
-  onWorkspaceNameChange: (v: string) => void; onRequirementTextChange: (v: string) => void;
   isGenerating: boolean; generationProgress: number; generationStageText: string; onGenerate: () => void;
   progress: AiCaseProgress;
   selectedNode: AiCaseNode | null; selectedNodeStatus: AiCaseNodeStatus;
@@ -203,7 +201,6 @@ export interface AiCaseSidebarProps {
 }
 
 export function AiCaseSidebar({
-  workspaceName, requirementText, onWorkspaceNameChange, onRequirementTextChange,
   isGenerating, generationProgress, generationStageText, onGenerate, progress,
   selectedNode, selectedNodeStatus, canEditSelectedNode, isUpdatingNodeStatus, onStatusChange,
   attachments, isUploading, onUploadAttachment, onDeleteAttachment,
@@ -217,44 +214,13 @@ export function AiCaseSidebar({
   const handleExportMarkdown = useCallback(() => {
     if (!mindData) { toast.error('脑图数据尚未加载，无法导出'); return; }
     const md = exportMindDataToMarkdown(mindData);
-    const safeTitle = (workspaceName || 'AI-Testcase').replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_');
+    const safeTitle = (mindData.nodeData.topic || 'AI-Testcase').replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_');
     downloadTextFile(md, `${safeTitle}.md`);
     toast.success('测试用例已导出为 Markdown');
-  }, [mindData, workspaceName]);
+  }, [mindData]);
 
   return (
     <aside className="h-full flex flex-col overflow-y-auto overflow-x-hidden bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">
-
-      {/* ══ 需求输入 ══════════════════════════════════════ */}
-      <SidebarSection title="需求输入" icon={<FileText className="h-3.5 w-3.5" />} defaultOpen>
-        <div className="space-y-2.5">
-          <div className="space-y-1">
-            <label className="block text-[11px] text-slate-500 dark:text-slate-400 font-medium">工作台名称</label>
-            <input value={workspaceName} onChange={(e) => onWorkspaceNameChange(e.target.value)}
-              className="h-8 w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40 focus:border-indigo-400 transition-colors"
-              placeholder="输入工作台标题" />
-          </div>
-          <div className="space-y-1">
-            <label className="block text-[11px] text-slate-500 dark:text-slate-400 font-medium">需求描述 / PRD</label>
-            <textarea value={requirementText} onChange={(e) => onRequirementTextChange(e.target.value)} rows={8}
-              className="w-full resize-none rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2.5 text-sm leading-6 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40 focus:border-indigo-400 transition-colors"
-              placeholder="粘贴 PRD、需求描述或技术方案，点击「AI 生成」按钮自动生成测试用例脑图..." />
-          </div>
-          <Button className="w-full gap-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm" onClick={onGenerate} disabled={isBusy}>
-            {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-            {isGenerating ? 'AI 生成中...' : 'AI 生成测试用例'}
-          </Button>
-          {(isGenerating || generationProgress > 0) ? (
-            <div className="space-y-1.5 rounded-lg bg-indigo-50/70 dark:bg-indigo-900/15 border border-indigo-100 dark:border-indigo-800/30 p-2.5">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-indigo-700 dark:text-indigo-300 truncate">{generationStageText || '正在处理...'}</span>
-                <span className="shrink-0 ml-2 font-semibold text-indigo-700 dark:text-indigo-300 tabular-nums">{generationProgress}%</span>
-              </div>
-              <Progress value={generationProgress} className="h-1.5 bg-indigo-100 dark:bg-indigo-900/40 [&>div]:bg-indigo-500" />
-            </div>
-          ) : null}
-        </div>
-      </SidebarSection>
 
       {/* ══ 执行进度 ══════════════════════════════════════ */}
       <SidebarSection title="执行进度" icon={<CheckCircle2 className="h-3.5 w-3.5" />} defaultOpen>

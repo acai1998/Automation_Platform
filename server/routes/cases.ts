@@ -40,23 +40,39 @@ router.get('/', async (req, res) => {
   const timer = createTimer();
 
   try {
-    const { projectId, module, enabled, type, search, priority, owner, limit = 50, offset = 0 } = req.query;
+    const { projectId, module, enabled, type, search, priority, owner, limit, offset } = req.query;
+
+    // 分页参数安全解析：统一上限保护，防止无边界查询；NaN 兜底为默认值
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 50));
+    const offsetNum = Math.max(0, parseInt(offset as string) || 0);
+
+    // projectId 安全解析：parseInt + isNaN 双重检查，防止 NaN 流入 SQL
+    let projectIdNum: number | undefined;
+    if (projectId !== undefined && projectId !== '') {
+      projectIdNum = parseInt(projectId as string, 10);
+      if (isNaN(projectIdNum)) {
+        return res.status(400).json({
+          success: false,
+          message: '无效的 projectId：必须为正整数',
+        });
+      }
+    }
 
     logger.info('Fetching test cases list', {
-      filters: { projectId, module, enabled, type, search, priority, owner },
-      pagination: { limit, offset },
+      filters: { projectId: projectIdNum, module, enabled, type, search, priority, owner },
+      pagination: { limit: limitNum, offset: offsetNum },
     }, LOG_CONTEXTS.CASES);
 
     const options = {
-      projectId: projectId ? Number(projectId) : undefined,
+      projectId: projectIdNum,
       module: module as string | undefined,
       enabled: enabled !== undefined ? (enabled === 'true' || enabled === '1') : undefined,
       type: type as string | undefined,
       search: search as string | undefined,
       priority: priority as string | undefined,
       owner: owner as string | undefined,
-      limit: Number(limit),
-      offset: Number(offset),
+      limit: limitNum,
+      offset: offsetNum,
     };
 
     const data = await testCaseRepository.findAllWithUser(options);
@@ -122,10 +138,11 @@ router.get('/', async (req, res) => {
 });
 
 /**
- * GET /api/cases/owners/list
+ * GET /api/cases/owners
  * 获取所有负责人列表
+ * @deprecated 旧路径 /owners/list 保留向后兼容，请使用 /owners
  */
-router.get('/owners/list', async (_req, res) => {
+router.get('/owners', async (_req, res) => {
   try {
     const data = await testCaseRepository.getDistinctOwners();
 
@@ -135,7 +152,7 @@ router.get('/owners/list', async (_req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      endpoint: '/api/cases/owners/list',
+      endpoint: '/api/cases/owners',
       method: 'GET'
     });
 
@@ -145,10 +162,11 @@ router.get('/owners/list', async (_req, res) => {
 });
 
 /**
- * GET /api/cases/modules/list
+ * GET /api/cases/modules
  * 获取所有模块列表
+ * @deprecated 旧路径 /modules/list 保留向后兼容，请使用 /modules
  */
-router.get('/modules/list', async (_req, res) => {
+router.get('/modules', async (_req, res) => {
   try {
     const data = await testCaseRepository.getDistinctModules();
 
@@ -158,7 +176,7 @@ router.get('/modules/list', async (_req, res) => {
     console.error('Database operation failed:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
-      endpoint: '/api/cases/modules/list',
+      endpoint: '/api/cases/modules',
       method: 'GET'
     });
 
@@ -168,27 +186,20 @@ router.get('/modules/list', async (_req, res) => {
 });
 
 /**
- * GET /api/cases/running/list
+ * GET /api/cases/running
  * 获取所有正在运行的用例（注：远程表无此字段，返回空数组）
+ * @deprecated 旧路径 /running/list 保留向后兼容，请使用 /running
  */
-router.get('/running/list', async (_req, res) => {
-  try {
-    // 远程 Auto_TestCase 表没有 running_status 字段
-    // 返回空数组以保持 API 兼容性
-    res.json({ success: true, data: [] });
-  } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: '/api/cases/running/list',
-      method: 'GET'
-    });
-
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    res.status(500).json({ success: false, message });
-  }
+router.get('/running', async (_req, res) => {
+  // 远程 Auto_TestCase 表没有 running_status 字段，返回空数组以保持 API 兼容性
+  res.json({ success: true, data: [] });
 });
+
+// ── 向后兼容别名：旧 /xxx/list 路径重定向到新 REST 路径 ────────────────────
+// 保留这些别名，防止现有集成方调用时 404；待所有消费方切换后可删除
+router.get('/owners/list', (_req, res) => res.redirect(301, '/api/cases/owners'));
+router.get('/modules/list', (_req, res) => res.redirect(301, '/api/cases/modules'));
+router.get('/running/list', (_req, res) => res.redirect(301, '/api/cases/running'));
 
 /**
  * GET /api/cases/:id

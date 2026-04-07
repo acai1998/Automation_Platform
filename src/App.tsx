@@ -19,7 +19,7 @@ import APICases from "./pages/cases/APICases";
 import UICases from "./pages/cases/UICases";
 import PerformanceCases from "./pages/cases/PerformanceCases";
 import AICases from "./pages/cases/AICases";
-import AICaseHistory from "./pages/cases/AICaseHistory";
+import AICaseCreate from "./pages/cases/AICaseCreate";
 import Reports from "./pages/reports/Reports";
 import ReportDetail from "./pages/reports/ReportDetail";
 import { Settings, User } from "lucide-react";
@@ -106,6 +106,13 @@ function Router() {
           </Layout>
         </ProtectedRoute>
       </Route>
+      <Route path="/cases/ai-create">
+        <ProtectedRoute>
+          <Layout>
+            <AICaseCreate />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
       <Route path="/cases/ai">
         <ProtectedRoute>
           <Layout>
@@ -114,11 +121,7 @@ function Router() {
         </ProtectedRoute>
       </Route>
       <Route path="/cases/ai-history">
-        <ProtectedRoute>
-          <Layout>
-            <AICaseHistory />
-          </Layout>
-        </ProtectedRoute>
+        <Redirect to="/cases/ai-create" />
       </Route>
 
       <Route path="/tasks">

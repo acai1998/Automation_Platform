@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import { deleteWorkspaceDocument } from '@/lib/aiCaseStorage';
 import { computeProgress } from '@/lib/aiCaseMindMap';
 import type { AiCaseWorkspaceDocument, AiCaseProgress } from '@/types/aiCases';
-import { AI_CASE_WORKSPACE_ID } from '@/types/aiCases';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -152,17 +151,20 @@ export function AiCaseHistoryCard({
   doc,
   onOpen,
   onDeleted,
+  currentDocId,
 }: {
   doc: AiCaseWorkspaceDocument;
   onOpen: (id: string) => void;
   onDeleted: (id: string) => void;
+  /** 当前在脑图页面打开的文档 ID，用于标识「当前工作区」 badge */
+  currentDocId?: string;
 }) {
   const progress = useMemo(() => computeProgress(doc.mapData), [doc.mapData]);
   const modules = useMemo(() => countModules(doc), [doc]);
   const [expanded, setExpanded] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const isCurrent = doc.id === AI_CASE_WORKSPACE_ID;
+  const isCurrent = currentDocId !== undefined && doc.id === currentDocId;
 
   const handleDelete = useCallback(async () => {
     setDeleting(true);

@@ -9,6 +9,8 @@ pipeline {
         string(name: 'MARKER',       description: 'Pytest marker标记',  defaultValue: '')
         string(name: 'REPO_URL',     description: '测试用例仓库URL',    defaultValue: '')
         string(name: 'REPO_BRANCH',  description: '测试用例仓库分支',   defaultValue: 'master')
+        string(name: 'PARALLEL_WORKERS', description: '并发进程数（0=禁用串行执行，auto=按CPU核数，N=指定数量）', defaultValue: 'auto')
+        booleanParam(name: 'FORCE_PULL_IMAGE', description: '强制重新拉取测试镜像（镜像有更新时勾选）', defaultValue: false)
     }
 
     environment {
@@ -112,30 +114,58 @@ pipeline {
                         echo "⚠️ 凭据 CNB_DOCKER_TOKEN 未配置，跳过制品库登录（如镜像为私有请先添加凭据）"
                     }
 
-                    // ── 镜像预热：pull 并打印耗时，方便排查慢的原因 ──
+                    // ── 镜像预热：本地已有则跳过 pull；FORCE_PULL_IMAGE=true 时强制更新 ──
+                    def forcePull = params.FORCE_PULL_IMAGE == true
                     sh """
-                        echo "docker-pull start: \$(date '+%H:%M:%S')"
-                        docker pull ${TEST_RUNNER_IMAGE} || echo "WARNING: image pull failed, using local cache"
-                        echo "docker-pull done:  \$(date '+%H:%M:%S')"
+                        echo "docker-pull check: \$(date '+%H:%M:%S')  force=${forcePull}"
+                        if [ "${forcePull}" = "true" ]; then
+                            echo "强制拉取模式，开始 docker pull..."
+                            docker pull ${TEST_RUNNER_IMAGE} || echo "WARNING: image pull failed"
+                            echo "docker-pull done:  \$(date '+%H:%M:%S')"
+                        elif docker image inspect ${TEST_RUNNER_IMAGE} > /dev/null 2>&1; then
+                            echo "✅ 镜像已存在，跳过 pull（镜像有更新时请勾选 FORCE_PULL_IMAGE 参数）"
+                        else
+                            echo "镜像不存在，开始拉取..."
+                            docker pull ${TEST_RUNNER_IMAGE} || echo "WARNING: image pull failed"
+                            echo "docker-pull done:  \$(date '+%H:%M:%S')"
+                        fi
                     """
 
+                    // ── 将环境变量写入临时文件，再通过 --env-file 传给容器 ──────────────────
+                    // 直接在 shell 命令字符串中嵌入参数值（GString 插值）会导致：
+                    //   SCRIPT_PATHS / MARKER 等值含双引号 " 时破坏 shell 命令结构
+                    //   值含换行符时导致 shell 解析错误
+                    // --env-file 方式：每行 KEY=VALUE，docker 原生支持，完全规避 shell 展开
+                    def envFile = "${reportDir}/.docker_env"
+                    // writeFile 写入 Groovy 字符串，不经过 shell，值中的特殊字符不会被展开
+                    writeFile file: envFile, text: [
+                        "RUN_ID=${params.RUN_ID}",
+                        "PLATFORM_URL=${env.PLATFORM_API_URL}",
+                        "REPO_URL=${params.REPO_URL ?: ''}",
+                        "REPO_BRANCH=${params.REPO_BRANCH ?: 'master'}",
+                        "SCRIPT_PATHS=${params.SCRIPT_PATHS ?: ''}",
+                        "MARKER=${params.MARKER ?: ''}",
+                        "PARALLEL_WORKERS=${params.PARALLEL_WORKERS ?: 'auto'}",
+                        "CALLBACK_URL=${callbackUrl}",
+                    ].join('\n') + '\n'
+
                     echo "[${new Date().format('HH:mm:ss')}] docker-run start"
-                    def testExitCode = sh(
-                        script: """
-                            docker run --rm \\
-                                --shm-size=2g \\
-                                -e RUN_ID="${params.RUN_ID}" \\
-                                -e PLATFORM_URL="${env.PLATFORM_API_URL}" \\
-                                -e REPO_URL="${params.REPO_URL}" \\
-                                -e REPO_BRANCH="${params.REPO_BRANCH ?: 'master'}" \\
-                                -e SCRIPT_PATHS="${params.SCRIPT_PATHS}" \\
-                                -e MARKER="${params.MARKER}" \\
-                                -e CALLBACK_URL="${callbackUrl}" \\
-                                -v ${reportDir}:/workspace \\
-                                ${TEST_RUNNER_IMAGE}
-                        """,
-                        returnStatus: true
-                    )
+                    def testExitCode = 1
+                    try {
+                        testExitCode = sh(
+                            script: """
+                                docker run --rm \\
+                                    --shm-size=2g \\
+                                    --env-file "${envFile}" \\
+                                    -v ${reportDir}:/workspace \\
+                                    ${TEST_RUNNER_IMAGE}
+                            """,
+                            returnStatus: true
+                        )
+                    } finally {
+                        // 无论成功失败都清理含凭据信息的临时文件
+                        sh "rm -f '${envFile}' || true"
+                    }
                     echo "[${new Date().format('HH:mm:ss')}] docker-run done, exitCode=${testExitCode}"
 
                     writeFile file: "${env.WORKSPACE}/pytest_exit_code.txt", text: "${testExitCode}\n"

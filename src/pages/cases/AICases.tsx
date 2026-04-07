@@ -1,12 +1,20 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-elixir';
 import 'mind-elixir/style.css';
-import { BrainCircuit, History, Loader2, Menu, X } from 'lucide-react';
+import { BrainCircuit, History, Loader2, Menu, X, FileText, Bot } from 'lucide-react';
 import { useLocation } from 'wouter';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { AiCaseSidebar } from './components/AiCaseSidebar';
 import { AiCaseCanvasToolbar } from './components/AiCaseCanvasToolbar';
 import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogClose,
+} from '@/components/ui/dialog';
 import {
   aiCasesApi,
   type AiCaseGenerationResult,
@@ -186,7 +194,22 @@ function mergeRemoteWorkspaceToDoc(
 }
 
 function AiCasesInner() {
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
+
+  // 从 URL 参数读取要打开的文档 ID；未指定时回退到固定的默认工作区
+  // 使用 state 而非 useMemo，确保 URL 变化时能响应式更新
+  const [activeDocId, setActiveDocId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('docId') || AI_CASE_WORKSPACE_ID;
+  });
+
+  // 监听 wouter location 变化（同路径下 search 参数变化时同步 activeDocId）
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const newDocId = params.get('docId') || AI_CASE_WORKSPACE_ID;
+    setActiveDocId((prev) => (prev !== newDocId ? newDocId : prev));
+  }, [location]);
+
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const canvasSectionRef = useRef<HTMLElement | null>(null);
   const mindRef = useRef<MindElixirInstance | null>(null);
@@ -210,6 +233,8 @@ function AiCasesInner() {
   // 标记工作台名称是否被用户手动编辑过，若未手动编辑则允许自动推断覆盖
   const isWorkspaceNameUserEditedRef = useRef(false);
   const autoInferNameTimerRef = useRef<number | null>(null);
+  // bootstrap 阶段的自动生成延迟定时器，卸载时需要清除
+  const autoGenerateTimerRef = useRef<number | null>(null);
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [workspaceName, setWorkspaceName] = useState('AI Testcase Workspace');
@@ -233,6 +258,8 @@ function AiCasesInner() {
   const [isImportingMindNodes, setIsImportingMindNodes] = useState(false);
   // 移动端侧边栏抽屉
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // 需求编辑弹窗
+  const [isRequirementDialogOpen, setIsRequirementDialogOpen] = useState(false);
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
@@ -327,7 +354,7 @@ function AiCasesInner() {
       const currentDoc = docRef.current;
       const remoteMeta = remoteSyncMetaRef.current;
       const nextDoc: AiCaseWorkspaceDocument = {
-        id: AI_CASE_WORKSPACE_ID,
+        id: docRef.current?.id ?? activeDocId,
         name: workspaceName.trim() || 'AI Testcase Workspace',
         requirement: requirementText,
         mapData: nextData,
@@ -421,10 +448,12 @@ function AiCasesInner() {
 
   useEffect(() => {
     let active = true;
+    // activeDocId \u53d8\u5316\u65f6\u91cd\u65b0\u5f00\u59cb\u52a0\u8f7d\uff0c\u91cd\u7f6e\u52a0\u8f7d\u6001
+    setIsBootstrapping(true);
 
     const bootstrap = async () => {
       try {
-        const storedDoc = await getWorkspaceDocument(AI_CASE_WORKSPACE_ID);
+        const storedDoc = await getWorkspaceDocument(activeDocId);
         if (!active) return;
 
         if (storedDoc) {
@@ -461,6 +490,8 @@ function AiCasesInner() {
           }
 
           docRef.current = hydratedDoc;
+          // 记录最后打开的文档 ID，供历史列表页展示「当前工作区」badge
+          window.localStorage.setItem('ai-case-last-opened-doc-id', hydratedDoc.id);
           const storedName = storedDoc.name || 'AI Testcase Workspace';
           // 如果本地存储的名称不是默认占位名，则视为"已编辑"，不允许自动推断覆盖
           if (storedName !== 'AI Testcase Workspace') {
@@ -471,12 +502,25 @@ function AiCasesInner() {
           setMindData(hydratedDoc.mapData);
           setSelectedNodeId(storedDoc.lastSelectedNodeId ?? hydratedDoc.mapData.nodeData.id);
           setSaveState('saved');
+
+          // 检查是否需要自动生成
+          const searchParams = new URLSearchParams(window.location.search);
+          if (searchParams.get('autoGenerate') === 'true') {
+            // 移除 URL 参数避免刷新重复触发
+            const newUrl = window.location.pathname;
+            window.history.replaceState({}, '', newUrl);
+            // 延迟一点执行，确保状态已更新
+            autoGenerateTimerRef.current = window.setTimeout(() => {
+              autoGenerateTimerRef.current = null;
+              handleGenerateRef.current?.();
+            }, 100);
+          }
         } else {
           const initialData = normalizeMindData(createInitialMindData('AI Testcase Workspace'), {
             showNodeKindTags: showNodeKindTagsRef.current,
           });
           const initialDoc: AiCaseWorkspaceDocument = {
-            id: AI_CASE_WORKSPACE_ID,
+            id: activeDocId,
             name: 'AI Testcase Workspace',
             requirement: '',
             mapData: initialData,
@@ -513,7 +557,7 @@ function AiCasesInner() {
           showNodeKindTags: showNodeKindTagsRef.current,
         });
         const fallbackDoc: AiCaseWorkspaceDocument = {
-          id: AI_CASE_WORKSPACE_ID,
+          id: activeDocId,
           name: 'AI Testcase Workspace',
           requirement: '',
           mapData: fallbackData,
@@ -548,8 +592,12 @@ function AiCasesInner() {
 
     return () => {
       active = false;
+      if (autoGenerateTimerRef.current !== null) {
+        clearTimeout(autoGenerateTimerRef.current);
+        autoGenerateTimerRef.current = null;
+      }
     };
-  }, []);
+  }, [activeDocId]);
 
   useEffect(() => {
     if (isBootstrapping || !mapContainerRef.current || mindRef.current || !mindDataRef.current) {
@@ -1084,7 +1132,7 @@ function AiCasesInner() {
     (workspace: AiCaseWorkspaceDetail, options?: { keepSelection?: boolean }) => {
       const now = Date.now();
       const fallbackDoc: AiCaseWorkspaceDocument = {
-        id: AI_CASE_WORKSPACE_ID,
+        id: docRef.current?.id ?? activeDocId,
         name: workspace.name || 'AI Testcase Workspace',
         requirement: workspace.requirementText || '',
         mapData: normalizeMindData(workspace.mapData, {
@@ -1137,7 +1185,7 @@ function AiCasesInner() {
 
     const loadAttachments = async () => {
       try {
-        const rows = await listNodeAttachments(AI_CASE_WORKSPACE_ID, selectedNodeId);
+        const rows = await listNodeAttachments(docRef.current?.id ?? activeDocId, selectedNodeId);
         if (!active) {
           return;
         }
@@ -1177,7 +1225,7 @@ function AiCasesInner() {
       const activeNodeIds = collectNodeIds(nextData.nodeData);
 
       try {
-        const cleanedCount = await deleteStaleWorkspaceAttachments(AI_CASE_WORKSPACE_ID, activeNodeIds);
+        const cleanedCount = await deleteStaleWorkspaceAttachments(docRef.current?.id ?? activeDocId, activeNodeIds);
 
         if ((options?.showCountToast ?? true) && cleanedCount > 0) {
           toast.success(
@@ -1253,8 +1301,8 @@ function AiCasesInner() {
 
           const attachmentId = createAiCaseAttachmentId();
           await saveNodeAttachment({
-            id: attachmentId,
-            docId: AI_CASE_WORKSPACE_ID,
+          id: attachmentId,
+          docId: docRef.current?.id ?? activeDocId,
             nodeId: currentSelectedNodeId,
             name: normalizedFile.name,
             mimeType: normalizedFile.type,
@@ -1390,12 +1438,15 @@ function AiCasesInner() {
     };
   }, [isImportingMindNodes, setDataAndSync, uploadImageFiles]);
 
+  const handleGenerateRef = useRef<() => void>();
+
   const handleGenerate = useCallback(async () => {
     if (!requirementText.trim()) {
       toast.error('请先输入需求描述，再执行 AI 生成');
       return;
     }
 
+    setIsRequirementDialogOpen(false);
     startGenerateProgress();
     setIsGenerating(true);
     try {
@@ -1481,6 +1532,10 @@ function AiCasesInner() {
     setDataAndSync,
     cleanupStaleAttachments,
   ]);
+
+  useEffect(() => {
+    handleGenerateRef.current = handleGenerate;
+  }, [handleGenerate]);
 
   const handleLoadHistoryWorkspace = useCallback(async (id: number) => {
     try {
@@ -1728,7 +1783,17 @@ function AiCasesInner() {
               variant="ghost"
               size="sm"
               className="h-7 px-2 text-xs gap-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
-              onClick={() => setLocation('/cases/ai-history')}
+              onClick={() => setIsRequirementDialogOpen(true)}
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">需求信息</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs gap-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+              onClick={() => setLocation('/cases/ai-create')}
             >
               <History className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">用例记录</span>
@@ -1745,14 +1810,10 @@ function AiCasesInner() {
         {/* 提取 AiCaseSidebar 公共 props，桌端 / 移动端共享同一份，避免两处维护 */}
         {(() => {
           const sidebarProps = {
-            workspaceName,
-            requirementText,
-            onWorkspaceNameChange: handleWorkspaceNameChange,
-            onRequirementTextChange: setRequirementText,
             isGenerating,
             generationProgress,
             generationStageText,
-            onGenerate: handleGenerate,
+            onGenerate: () => setIsRequirementDialogOpen(true),
             progress,
             selectedNode,
             selectedNodeStatus,
@@ -1831,6 +1892,53 @@ function AiCasesInner() {
           </div>
         </section>
       </div>
+
+      {/* 需求编辑弹窗 */}
+      <Dialog open={isRequirementDialogOpen} onOpenChange={setIsRequirementDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>需求信息</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                工作台名称
+              </label>
+              <input
+                value={workspaceName}
+                onChange={(e) => handleWorkspaceNameChange(e.target.value)}
+                className="h-10 w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-colors"
+                placeholder="输入工作台标题"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                需求描述 / PRD
+              </label>
+              <textarea
+                value={requirementText}
+                onChange={(e) => setRequirementText(e.target.value)}
+                rows={10}
+                className="w-full resize-none rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-sm leading-relaxed text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-colors"
+                placeholder="粘贴 PRD、需求描述或技术方案，点击「AI 生成」按钮自动生成测试用例脑图..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">取消</Button>
+            </DialogClose>
+            <Button
+              className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
+              onClick={handleGenerate}
+              disabled={isGenerating || !requirementText.trim()}
+            >
+              {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+              {isGenerating ? 'AI 生成中...' : 'AI 生成测试用例'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

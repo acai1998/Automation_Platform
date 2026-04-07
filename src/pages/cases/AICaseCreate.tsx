@@ -1,21 +1,48 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'wouter';
 import {
-  BrainCircuit, Search, ChevronDown, ChevronUp,
-  Filter, RefreshCw,
+  BrainCircuit, Bot, Loader2, Plus, Search,
+  ChevronDown, ChevronUp, Filter, RefreshCw,
 } from 'lucide-react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { listAllWorkspaceDocuments } from '@/lib/aiCaseStorage';
-import { computeProgress } from '@/lib/aiCaseMindMap';
-import type { AiCaseWorkspaceDocument } from '@/types/aiCases';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from '@/components/ui/sheet';
+import { toast } from 'sonner';
+import { saveWorkspaceDocument, listAllWorkspaceDocuments } from '@/lib/aiCaseStorage';
+import { createInitialMindData, normalizeMindData, computeProgress } from '@/lib/aiCaseMindMap';
+import { type AiCaseWorkspaceDocument } from '@/types/aiCases';
 import { AiCaseHistoryCard } from './components/AiCaseHistoryCard';
 
 // ── Types ─────────────────────────────────────────────────────────
 
 type SortKey = 'updatedAt' | 'createdAt' | 'total' | 'completionRate';
 type FilterMode = 'all' | 'synced' | 'local-only';
+
+/** 生成工作台文档的唯一 ID */
+function generateWorkspaceId(): string {
+  return `ai-ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// 常量定义在模块级别，避免每次渲染重建
+const SORT_OPTS: Array<{ key: SortKey; label: string }> = [
+  { key: 'updatedAt', label: '最近更新' },
+  { key: 'createdAt', label: '创建时间' },
+  { key: 'total', label: '用例数' },
+  { key: 'completionRate', label: '通过率' },
+];
+
+const FILTER_LABELS: Record<FilterMode, string> = {
+  all: '全部',
+  synced: '已同步',
+  'local-only': '仅本地',
+};
 
 // ── Summary Stats ─────────────────────────────────────────────────
 
@@ -69,15 +96,159 @@ function SummaryStats({ docs }: { docs: AiCaseWorkspaceDocument[] }) {
   );
 }
 
+// ── New Requirement Sheet ─────────────────────────────────────────
+
+interface NewRequirementSheetProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: () => void;
+}
+
+function NewRequirementSheet({ open, onOpenChange, onCreated }: NewRequirementSheetProps) {
+  const [, setLocation] = useLocation();
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [requirementText, setRequirementText] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleGenerate = async () => {
+    if (!requirementText.trim()) {
+      toast.error('请先输入需求描述');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const name = workspaceName.trim() || 'AI Testcase Workspace';
+      const initialData = normalizeMindData(createInitialMindData(name), {
+        showNodeKindTags: true,
+      });
+
+      const now = Date.now();
+      const docId = generateWorkspaceId();
+      const newDoc: AiCaseWorkspaceDocument = {
+        id: docId,
+        name,
+        requirement: requirementText,
+        mapData: initialData,
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+        lastSelectedNodeId: initialData.nodeData.id,
+        syncMode: 'local',
+        remoteWorkspaceId: null,
+        remoteVersion: null,
+        remoteStatus: null,
+        lastRemoteSyncedAt: null,
+      };
+
+      await saveWorkspaceDocument(newDoc);
+      onCreated();
+      onOpenChange(false);
+      setWorkspaceName('');
+      setRequirementText('');
+      setLocation(`/cases/ai?docId=${encodeURIComponent(docId)}&autoGenerate=true`);
+    } catch (error) {
+      console.error('[AICaseCreate] failed to create workspace', error);
+      toast.error('创建工作台失败，请重试');
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleClose = () => {
+    if (!isSubmitting) {
+      onOpenChange(false);
+      // 取消时重置表单内容，下次打开时是干净的新建表单
+      setWorkspaceName('');
+      setRequirementText('');
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={handleClose}>
+      <SheetContent className="w-full sm:max-w-lg flex flex-col gap-0 p-0 overflow-hidden" preventClose={isSubmitting}>
+        <SheetHeader className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-sm shadow-indigo-500/25 flex-shrink-0">
+              <Bot className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <SheetTitle className="text-base font-bold text-slate-900 dark:text-white">
+                新增需求
+              </SheetTitle>
+              <SheetDescription className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                输入需求，AI 将自动生成测试用例脑图
+              </SheetDescription>
+            </div>
+          </div>
+        </SheetHeader>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+              工作台名称{' '}
+              <span className="text-slate-400 font-normal text-xs">（可选）</span>
+            </label>
+            <Input
+              value={workspaceName}
+              onChange={(e) => setWorkspaceName(e.target.value)}
+              placeholder="例如：登录模块测试"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+              需求描述 / PRD <span className="text-rose-500">*</span>
+            </label>
+            <Textarea
+              value={requirementText}
+              onChange={(e) => setRequirementText(e.target.value)}
+              rows={14}
+              className="resize-none leading-relaxed"
+              placeholder="粘贴 PRD、需求描述或技术方案，AI 将自动分析并生成完整的测试用例脑图..."
+            />
+          </div>
+        </div>
+
+        <div className="flex-shrink-0 px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={handleClose}
+              disabled={isSubmitting}
+            >
+              取消
+            </Button>
+            <Button
+              className="flex-1 gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
+              onClick={handleGenerate}
+              disabled={isSubmitting || !requirementText.trim()}
+            >
+              {isSubmitting
+                ? <><Loader2 className="h-4 w-4 animate-spin" />准备中…</>
+                : <><Bot className="h-4 w-4" />AI 生成用例</>}
+            </Button>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────
 
-export default function AICaseHistory() {
+/** 上次在脑图页面打开的文档 ID，用于列表页标识「当前工作区」 */
+const LAST_OPENED_DOC_KEY = 'ai-case-last-opened-doc-id';
+
+export default function AICaseCreate() {
   const [, setLocation] = useLocation();
+  const [sheetOpen, setSheetOpen] = useState(false);
+  // 读取最后一次在脑图页面打开的文档 ID
+  const [lastOpenedDocId] = useState(() =>
+    window.localStorage.getItem(LAST_OPENED_DOC_KEY) ?? undefined
+  );
   const [docs, setDocs] = useState<AiCaseWorkspaceDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [lastOpenedDocId] = useState(() =>
-    window.localStorage.getItem('ai-case-last-opened-doc-id') ?? undefined
-  );
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('updatedAt');
   const [sortDesc, setSortDesc] = useState(true);
@@ -157,18 +328,6 @@ export default function AICaseHistory() {
     else { setSortKey(k); setSortDesc(true); }
   }, [sortKey]);
 
-  const SORT_OPTS: Array<{ key: SortKey; label: string }> = [
-    { key: 'updatedAt', label: '最近更新' },
-    { key: 'createdAt', label: '创建时间' },
-    { key: 'total', label: '用例数' },
-    { key: 'completionRate', label: '通过率' },
-  ];
-  const FILTER_LABELS: Record<FilterMode, string> = {
-    all: '全部',
-    synced: '已同步',
-    'local-only': '仅本地',
-  };
-
   return (
     <div className="h-full flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden">
       {/* ── Page Header ── */}
@@ -179,8 +338,8 @@ export default function AICaseHistory() {
               <BrainCircuit className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900 dark:text-white">用例记录</h1>
-              <p className="text-xs text-slate-500 dark:text-slate-400">管理所有 AI 生成的测试用例工作区</p>
+              <h1 className="text-lg font-bold text-slate-900 dark:text-white">AI 生成用例</h1>
+              <p className="text-xs text-slate-500 dark:text-slate-400">输入需求，AI 自动为你生成完整测试用例脑图</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -192,11 +351,11 @@ export default function AICaseHistory() {
               刷新
             </Button>
             <Button
-              size="sm" className="h-8 text-xs gap-1.5"
-              onClick={() => setLocation('/cases/ai-create')}
+              size="sm" className="h-8 text-xs gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+              onClick={() => setSheetOpen(true)}
             >
-              <BrainCircuit className="h-3.5 w-3.5" />
-              新建生成
+              <Plus className="h-3.5 w-3.5" />
+              新增需求
             </Button>
           </div>
         </div>
@@ -285,7 +444,7 @@ export default function AICaseHistory() {
           </div>
 
           {/* Result count hint */}
-          {!loading && (
+          {!loading && docs.length > 0 && (
             <p className="text-xs text-slate-400">
               共 {displayed.length} 条记录
               {(search || filter !== 'all') && docs.length !== displayed.length
@@ -325,10 +484,13 @@ export default function AICaseHistory() {
                 还没有生成记录
               </h3>
               <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-xs">
-                去「AI 生成用例」页面，输入需求描述来生成你的第一批测试用例
+                输入需求描述，让 AI 自动为你生成第一批测试用例脑图
               </p>
-              <Button className="gap-1.5" onClick={() => setLocation('/cases/ai-create')}>
-                <BrainCircuit className="h-4 w-4" />开始生成
+              <Button
+                className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+                onClick={() => setSheetOpen(true)}
+              >
+                <Plus className="h-4 w-4" />新增需求
               </Button>
             </div>
           )}
@@ -351,19 +513,26 @@ export default function AICaseHistory() {
           {!loading && displayed.length > 0 && (
             <div className="space-y-3">
               {displayed.map((doc) => (
-<AiCaseHistoryCard
-key={doc.id}
-doc={doc}
-onOpen={handleOpen}
-onDeleted={handleDeleted}
-currentDocId={lastOpenedDocId}
-/>
+                <AiCaseHistoryCard
+                  key={doc.id}
+                  doc={doc}
+                  onOpen={handleOpen}
+                  onDeleted={handleDeleted}
+                  currentDocId={lastOpenedDocId}
+                />
               ))}
             </div>
           )}
 
         </div>
       </div>
+
+      {/* ── New Requirement Sheet ── */}
+      <NewRequirementSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        onCreated={load}
+      />
     </div>
   );
 }
