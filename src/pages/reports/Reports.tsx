@@ -23,6 +23,20 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Checkbox } from '@/components/ui/checkbox';
 import { useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
+
+/**
+ * 将毫秒时长格式化为可读字符串（与仪表盘口径一致）
+ * 例：1279600ms → "21m 20s"，39000ms → "39s"
+ */
+function formatDuration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || ms <= 0) return '-';
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+}
+
 /**
  * 运行记录页面
  * 采用与用例管理一致的现代化 SaaS Dashboard 风格
@@ -233,7 +247,7 @@ export default function Reports() {
                         {record.start_time ? new Date(record.start_time).toLocaleString() : '-'}
                       </td>
                       <td className="px-4 py-3.5 text-xs text-slate-600 dark:text-slate-400">
-                        {record.duration_ms ? `${(record.duration_ms / 1000).toFixed(1)}s` : '-'}
+                        {formatDuration(record.duration_ms)}
                       </td>
                       <td className="px-4 py-3.5 text-right">
                         <div className="flex justify-end gap-2">
@@ -295,7 +309,7 @@ export default function Reports() {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <Clock className="h-3 w-3" />
-                        <span>{record.duration_ms ? `${(record.duration_ms / 1000).toFixed(1)}s` : '-'}</span>
+                        <span>{formatDuration(record.duration_ms)}</span>
                       </div>
                     </div>
                   </div>

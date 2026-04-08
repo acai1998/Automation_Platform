@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
-import { MoreVertical, Loader2, Filter, RefreshCw } from "lucide-react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import { MoreVertical, Loader2, Filter, RefreshCw, FileText, ExternalLink } from "lucide-react";
 import { useLocation } from "wouter";
 import { dashboardApi } from "@/api";
 import type { DashboardResponse, TestStatusFilter, RecentRun, TestStatus } from "@/types/dashboard";
@@ -150,6 +150,65 @@ function getInitials(name: string): string {
   }
   // 处理英文名字
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+}
+
+// 三点操作菜单
+function ActionMenu({ run, onNavigate }: { run: RecentRun; onNavigate: (path: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭菜单
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        aria-label={`${run.suiteName}的更多操作`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(v => !v)}
+        className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded p-1"
+      >
+        <MoreVertical className="h-5 w-5" aria-hidden="true" />
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 z-50 mt-1 w-40 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1"
+          role="menu"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => { setOpen(false); onNavigate(`/reports/${run.id}`); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          >
+            <FileText className="h-4 w-4 shrink-0" />
+            查看详情
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => { setOpen(false); onNavigate('/reports'); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          >
+            <ExternalLink className="h-4 w-4 shrink-0" />
+            运行记录
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // 响应式Grid模板Hook
@@ -434,13 +493,7 @@ export function RecentTests({ data, initialData, statusFilter = 'all', lastRefre
                   )}
                   {/* 操作列 */}
                   <div className="px-4 py-3 flex justify-end" role="cell">
-                    <button
-                      type="button"
-                      aria-label={`${run.suiteName}的更多操作`}
-                      className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
-                    >
-                      <MoreVertical className="h-5 w-5" aria-hidden="true" />
-                    </button>
+                    <ActionMenu run={run} onNavigate={setLocation} />
                   </div>
                 </div>
               ))}
