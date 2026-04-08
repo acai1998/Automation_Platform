@@ -242,7 +242,8 @@ pipeline {
             script {
                 // post.always 必须显式指定 node；用 master 确保 docker 命令可用
                 // Agent-node-2 可能未安装 docker，不在 post 里用 EXEC_NODE
-                node('master') {
+                // 用 EXEC_NODE 或 built-in 兜底；Jenkins 2.307+ master 节点改名为 built-in
+                node(env.EXEC_NODE ?: 'built-in') {
                     sh 'docker logout docker.cnb.cool || true'
                     // 保留 test-repo（增量更新缓存），清理其余产物
                     cleanWs(patterns: [
