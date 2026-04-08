@@ -18,10 +18,8 @@ pipeline {
         // 测试执行镜像：包含 Python + Chrome + ChromeDriver + 基础依赖
         // 测试代码在运行时 git clone，不打包进镜像
         TEST_RUNNER_IMAGE = 'docker.cnb.cool/imacaiy/seleniumbase-ci:latest'
-        // 运行时动态选择的执行节点（默认 master）
-        EXEC_NODE         = 'master'
-        // master 等待超时时间（秒），超时后自动切换到 Agent-node-2
-        NODE_SWITCH_TIMEOUT_SECONDS = '20'
+        // 执行节点 label，Stage 1 中设置为 'test-runner'，Jenkins 自动负载均衡
+        EXEC_NODE         = 'test-runner'
     }
 
     options {
@@ -33,34 +31,26 @@ pipeline {
             artifactDaysToKeepStr:'7'
         ))
         timeout(time: 60, unit: 'MINUTES')
-        disableConcurrentBuilds()
-        // 每次构建前清理 workspace，确保拉取最新 Jenkinsfile
-        skipDefaultCheckout(false)
+        // ❌ 移除 disableConcurrentBuilds()：
+        // 该选项把同一 Job 的所有构建全局串行，导致任务全部堆积在队列里，
+        // Agent-node-2 永远空闲。多构建并发由"项目配置 → 并发构建数"控制即可。
+        skipDefaultCheckout(true)  // 优化：禁用默认 checkout，仅在执行节点按需 checkout
     }
 
     stages {
 
         // ── Stage 1: 选择执行节点 ─────────────────────────────────────────────
+        // 新策略：不再手动抢占节点，使用 label 让 Jenkins 调度器自动分配空闲节点
+        // 前提：在 Jenkins 节点管理中为 master 和 Agent-node-2 均添加标签 "test-runner"
+        //   管理 Jenkins → 节点管理 → 对应节点 → 标签 (Labels) 填入: test-runner
         stage('选择执行节点') {
             agent none
             steps {
                 script {
-                    def preferredNode = 'master'
-                    def fallbackNode  = 'Agent-node-2'
-                    def timeoutSec    = (env.NODE_SWITCH_TIMEOUT_SECONDS ?: '20') as Integer
-
-                    env.EXEC_NODE = preferredNode
-                    try {
-                        timeout(time: timeoutSec, unit: 'SECONDS') {
-                            node(preferredNode) {
-                                echo "✅ master 节点可用，将优先在 master 执行"
-                            }
-                        }
-                    } catch (Throwable t) {
-                        echo "⚠️ master 在 ${timeoutSec}s 内不可用，切换到 ${fallbackNode}: ${t.message}"
-                        env.EXEC_NODE = fallbackNode
-                    }
-                    echo "本次流水线执行节点: ${env.EXEC_NODE}"
+                    // 使用 label 表达式：任一拥有 test-runner 标签的节点即可承接
+                    // Jenkins 调度器会自动分配空闲节点，实现真正的负载均衡
+                    env.EXEC_NODE = 'test-runner'
+                    echo "本次构建将被调度到任意可用的 test-runner 节点（master / Agent-node-2）"
                 }
             }
         }
@@ -78,8 +68,8 @@ pipeline {
         stage('执行测试') {
             agent { label "${env.EXEC_NODE}" }
             steps {
-                // 清理旧 workspace，确保 checkout 到最新代码
-                cleanWs()
+                // skipDefaultCheckout(true) 后需手动 checkout
+                // Git 增量更新：有变化才真正传输，没变化几乎零耗时
                 checkout scm
                 script {
                     if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
@@ -216,21 +206,8 @@ pipeline {
             agent { label "${env.EXEC_NODE}" }
             steps {
                 script {
-                    // 清理 Docker 悬空资源，释放磁盘空间
-                    sh '''
-                        echo "🧹 清理 Docker 悬空镜像（dangling）..."
-                        docker image prune -f || true
-
-                        echo "🧹 清理已停止的容器..."
-                        docker container prune -f || true
-
-                        echo "🧹 清理未使用的 Docker 构建缓存..."
-                        docker builder prune -f --filter until=24h || true
-
-                        echo "📊 Docker 磁盘占用:"
-                        docker system df || true
-                    '''
-                    // 清理 workspace，避免残留文件堆积
+                    // 只清理 workspace，不在构建中执行耗时的 docker prune
+                    // docker 资源清理建议配置独立的定时 Job（每天凌晨 docker system prune -f）
                     cleanWs()
                     echo "✅ 工作空间清理完成"
                 }
