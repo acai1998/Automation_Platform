@@ -211,6 +211,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         `Failed to execute ${operation}`,
         error instanceof Error ? error : new Error(String(error)),
         500,
+        'DATA_ACCESS_ERROR',
         { operation, context }
       );
     }
@@ -406,6 +407,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         'Failed to get dashboard stats',
         error instanceof Error ? error : new Error(String(error)),
         500,
+        'DATA_ACCESS_ERROR',
         { method: 'getStats' }
       );
     }
@@ -457,6 +459,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         'Failed to get today execution stats',
         error instanceof Error ? error : new Error(String(error)),
         500,
+        'DATA_ACCESS_ERROR',
         { method: 'getTodayExecutions' }
       );
     }
@@ -767,6 +770,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         'Failed to fetch recent runs',
         error instanceof Error ? error : new Error(String(error)),
         500,
+        'DATA_ACCESS_ERROR',
         { limit }
       );
     }
@@ -924,6 +928,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         'Failed to calculate comparison data',
         error instanceof Error ? error : new Error(String(error)),
         500,
+        'DATA_ACCESS_ERROR',
         { days }
       );
     }
@@ -998,6 +1003,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         'Failed to get today execution stats',
         error instanceof Error ? error : new Error(String(error)),
         500,
+        'DATA_ACCESS_ERROR',
         { method: 'getTodayExecution' }
       );
     }
@@ -1093,6 +1099,7 @@ export class DashboardRepository extends BaseRepository<TestCase> {
         'Failed to refresh daily summary',
         error instanceof Error ? error : new Error(String(error)),
         500,
+        'DATA_ACCESS_ERROR',
         { date }
       );
     }

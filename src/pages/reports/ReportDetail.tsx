@@ -89,13 +89,25 @@ function isFailedStatus(status: string): boolean {
   return status === "failed" || status === "error";
 }
 
+/** 运行终态集合 */
+const TERMINAL_RUN_STATUSES = new Set(['success', 'failed', 'aborted']);
+
 /**
  * 判断用例是否是「执行中」的占位记录（整体运行中且用例状态为 error）
  * 触发执行时会预先创建 error 占位记录，等 Jenkins 回调后才更新为真实状态。
  * 若此时用户进入详情页，应将这些占位 error 显示为「执行中」而非真实错误。
+ * 注意：若 run 已是终态（success/failed/aborted），则 error 状态不再是占位符而是实际失败。
  */
 function isRunningPlaceholder(status: string, runStatus?: string): boolean {
   return status === "error" && (runStatus === "running" || runStatus === "pending");
+}
+
+/**
+ * 判断用例是否是终态 run 中未收到 Jenkins 回调的占位记录
+ * 这种状态应展示为 FAILED，语义上表示该用例未能成功执行
+ */
+function isTerminalErrorPlaceholder(status: string, runStatus?: string): boolean {
+  return status === "error" && runStatus !== undefined && TERMINAL_RUN_STATUSES.has(runStatus);
 }
 
 /**
@@ -103,6 +115,8 @@ function isRunningPlaceholder(status: string, runStatus?: string): boolean {
  */
 function getStatusLabel(status: TestRunResult['status'], runStatus?: string): string {
   if (isRunningPlaceholder(status, runStatus)) return '执行中';
+  // 终态 run 中的 error 占位符：Jenkins 未上报结果，语义上算作失败
+  if (isTerminalErrorPlaceholder(status, runStatus)) return 'FAILED';
   return STATUS_LABEL_MAP[status] ?? 'UNKNOWN';
 }
 
@@ -731,7 +745,7 @@ export default function ReportDetail() {
                                     : "text-slate-500 dark:text-slate-400",
                             )}
                           >
-                            {item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5" /> : failed ? <XCircle className="h-3.5 w-3.5" /> : placeholder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MinusCircle className="h-3.5 w-3.5" />}
+                            {item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5" /> : failed ? <XCircle className="h-3.5 w-3.5" /> : placeholder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isTerminalErrorPlaceholder(item.status, run?.status) ? <XCircle className="h-3.5 w-3.5" /> : <MinusCircle className="h-3.5 w-3.5" />}
                             {statusText}
                           </div>
                         </td>

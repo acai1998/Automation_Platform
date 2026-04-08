@@ -1359,6 +1359,20 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
           { runId, resultsCount: results.results?.length ?? 0 },
           LOG_CONTEXTS.REPOSITORY
         );
+
+        // 【兜底修复】resolvedExecutionId 无法从 TaskExecution 表获取时，
+        // 尝试直接从 Auto_TestRunResults 表通过已有占位记录反查 executionId，
+        // 确保 ERROR 占位符依然能被清理，避免用例状态永久卡在 error
+        const fallbackExecId = await this.resolveExecutionIdFromRunResults(runId);
+        if (fallbackExecId) {
+          logger.info(
+            `completeBatch: fallback executionId resolved from TestRunResults, will cleanup error placeholders`,
+            { runId, fallbackExecId },
+            LOG_CONTEXTS.REPOSITORY
+          );
+          await this.updateSummaryOnlyResults(runId, fallbackExecId, results);
+          await this.performFinalErrorCleanup(fallbackExecId, results);
+        }
       }
 
       // 【安全防护】无论采用哪个更新路径，都执行最后的全局清理
@@ -1878,6 +1892,60 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     // 降级到时间窗口反查
     const fallbackId = await this.findExecutionIdByRunId(runId);
     return fallbackId || undefined;
+  }
+
+  /**
+   * 兜底策略：通过 Auto_TestRunResults 表中已有的占位记录反查 executionId
+   *
+   * 背景：triggerExecution 事务中会将 executionId 回填到 Auto_TestRun.execution_id，
+   * 同时也将 executionId 写入 Auto_TestRunResults 的每条预创建记录。
+   * 若 Auto_TestRun.execution_id 字段 null（旧数据），时间窗口反查也失败时，
+   * 可以从 Auto_TestRunResults 里找到该 runId 对应的 executionId。
+   *
+   * 实现：通过 Auto_TestRun.id 的创建时间找到在同时间段内插入的 TestRunResults，
+   * 从中读取 execution_id 作为 fallback。
+   */
+  private async resolveExecutionIdFromRunResults(runId: number): Promise<number | undefined> {
+    try {
+      // 先查该 runId 对应的 TestRun 创建时间
+      const runRows = await this.testRunRepository.query(
+        `SELECT id, created_at FROM Auto_TestRun WHERE id = ? LIMIT 1`,
+        [runId]
+      ) as Array<{ id: number; created_at: Date }>;
+
+      if (!runRows || runRows.length === 0) return undefined;
+
+      const createdAt = runRows[0].created_at;
+
+      // 在 TestRun 创建时间 ±120 秒内，查找 Auto_TestRunResults 中存在的 execution_id
+      // triggerExecution 事务中同一批次的 TestRunResults 会在 TestRun 创建后立即插入
+      const resultRows = await this.testRunResultRepository.query(
+        `SELECT DISTINCT execution_id
+         FROM Auto_TestRunResults
+         WHERE created_at BETWEEN DATE_SUB(?, INTERVAL 120 SECOND)
+                               AND DATE_ADD(?, INTERVAL 120 SECOND)
+           AND execution_id IS NOT NULL
+         ORDER BY id ASC
+         LIMIT 1`,
+        [createdAt, createdAt]
+      ) as Array<{ execution_id: number }>;
+
+      if (resultRows && resultRows.length > 0 && resultRows[0].execution_id) {
+        logger.debug('resolveExecutionIdFromRunResults: found executionId via TestRunResults time-window', {
+          runId,
+          executionId: resultRows[0].execution_id,
+        }, LOG_CONTEXTS.REPOSITORY);
+        return resultRows[0].execution_id;
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.debug('resolveExecutionIdFromRunResults: query failed', {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      }, LOG_CONTEXTS.REPOSITORY);
+      return undefined;
+    }
   }
 
   /**
