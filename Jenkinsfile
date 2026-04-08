@@ -9,7 +9,7 @@ pipeline {
         string(name: 'MARKER',       description: 'Pytest marker标记',  defaultValue: '')
         string(name: 'REPO_URL',     description: '测试用例仓库URL',    defaultValue: '')
         string(name: 'REPO_BRANCH',  description: '测试用例仓库分支',   defaultValue: 'master')
-        string(name: 'PARALLEL_WORKERS', description: '并发进程数（0=禁用串行执行，auto=按CPU核数，N=指定数量）', defaultValue: 'auto')
+        string(name: 'PARALLEL_WORKERS', description: '并发进程数（N=指定数量，0或空=串行）headless2模式下每Chrome约250MB，建议master填3，Agent-node-2填4', defaultValue: '3')
         booleanParam(name: 'FORCE_PULL_IMAGE', description: '强制重新拉取测试镜像（镜像有更新时勾选）', defaultValue: false)
     }
 
@@ -79,29 +79,42 @@ pipeline {
 
                     def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
                     def reportDir   = "${env.WORKSPACE}/reports"
+                    def repoDir     = "${env.WORKSPACE}/test-repo"
+                    def repoBranch  = params.REPO_BRANCH ?: 'master'
+                    def repoUrl     = params.REPO_URL ?: ''
+
                     sh "mkdir -p ${reportDir}"
+
+                    // ── 宿主机增量同步测试仓库（替代容器内 git clone，节省 10~30s）──
+                    // 首次：git clone；后续：git fetch + reset，秒级完成
+                    if (repoUrl) {
+                        sh """
+                            if [ -d "${repoDir}/.git" ]; then
+                                echo "📦 增量更新测试仓库..."
+                                git -C "${repoDir}" fetch --depth=1 origin ${repoBranch}
+                                git -C "${repoDir}" reset --hard origin/${repoBranch}
+                            else
+                                echo "📦 首次克隆测试仓库..."
+                                git clone --depth=1 -b ${repoBranch} ${repoUrl} "${repoDir}"
+                            fi
+                        """
+                    }
 
                     // 登录制品库（拉取私有镜像）
                     // CNB_DOCKER_TOKEN：Jenkins → Manage Jenkins → Credentials → 添加 Secret text，ID 填 CNB_DOCKER_TOKEN
                     // 使用 binding plugin 检测凭据是否存在，避免 withCredentials 找不到凭据时直接终止 stage
-                    def hasDockerToken = false
+                    // 直接用 withCredentials + optional=true（Jenkins 2.359+）
+                    // 凭据不存在时静默跳过，无需调用被沙箱拦截的 Jenkins.getInstance()
                     try {
-                        // Jenkins 中判断凭据是否存在：尝试 lookup，失败则跳过
-                        def cred = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
-                            com.cloudbees.plugins.credentials.common.StandardCredentials,
-                            Jenkins.instance, null, null
-                        ).find { it.id == 'CNB_DOCKER_TOKEN' }
-                        hasDockerToken = (cred != null)
-                    } catch (Exception e) {
-                        echo "⚠️ 凭据检测异常，跳过: ${e.message}"
-                    }
-
-                    if (hasDockerToken) {
-                        withCredentials([string(credentialsId: 'CNB_DOCKER_TOKEN', variable: 'CNB_TOKEN')]) {
-                            sh 'echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin'
+                        withCredentials([string(credentialsId: 'CNB_DOCKER_TOKEN', variable: 'CNB_TOKEN', optional: true)]) {
+                            if (env.CNB_TOKEN) {
+                                sh 'echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin'
+                            } else {
+                                echo "⚠️ 凭据 CNB_DOCKER_TOKEN 未配置，跳过制品库登录"
+                            }
                         }
-                    } else {
-                        echo "⚠️ 凭据 CNB_DOCKER_TOKEN 未配置，跳过制品库登录（如镜像为私有请先添加凭据）"
+                    } catch (Exception e) {
+                        echo "⚠️ Docker 登录跳过: ${e.message}"
                     }
 
                     // ── 镜像预热：本地已有则跳过 pull；FORCE_PULL_IMAGE=true 时强制更新 ──
@@ -128,19 +141,24 @@ pipeline {
                     // --env-file 方式：每行 KEY=VALUE，docker 原生支持，完全规避 shell 展开
                     def envFile = "${reportDir}/.docker_env"
                     // writeFile 写入 Groovy 字符串，不经过 shell，值中的特殊字符不会被展开
+                    // REPO_PRELOADED=true 时，entrypoint.sh 跳过 git clone，直接用 /repo 目录
+                    def repoPreloaded = (repoUrl && new File(repoDir + "/.git").exists()) ? 'true' : 'false'
                     writeFile file: envFile, text: [
                         "RUN_ID=${params.RUN_ID}",
                         "PLATFORM_URL=${env.PLATFORM_API_URL}",
-                        "REPO_URL=${params.REPO_URL ?: ''}",
-                        "REPO_BRANCH=${params.REPO_BRANCH ?: 'master'}",
+                        "REPO_URL=${repoUrl}",
+                        "REPO_BRANCH=${repoBranch}",
                         "SCRIPT_PATHS=${params.SCRIPT_PATHS ?: ''}",
                         "MARKER=${params.MARKER ?: ''}",
                         "PARALLEL_WORKERS=${params.PARALLEL_WORKERS ?: 'auto'}",
                         "CALLBACK_URL=${callbackUrl}",
+                        "REPO_PRELOADED=${repoPreloaded}",
                     ].join('\n') + '\n'
 
                     echo "[${new Date().format('HH:mm:ss')}] docker-run start"
                     def testExitCode = 1
+                    // 若宿主机已预加载测试仓库，挂载 repoDir 到容器 /repo，entrypoint 可跳过 clone
+                    def repoMount = (repoUrl) ? "-v ${repoDir}:/repo" : ''
                     try {
                         testExitCode = sh(
                             script: """
@@ -148,6 +166,7 @@ pipeline {
                                     --shm-size=2g \\
                                     --env-file "${envFile}" \\
                                     -v ${reportDir}:/workspace \\
+                                    ${repoMount} \\
                                     ${TEST_RUNNER_IMAGE}
                             """,
                             returnStatus: true
@@ -206,10 +225,13 @@ pipeline {
             agent { label "${env.EXEC_NODE}" }
             steps {
                 script {
-                    // 只清理 workspace，不在构建中执行耗时的 docker prune
-                    // docker 资源清理建议配置独立的定时 Job（每天凌晨 docker system prune -f）
-                    cleanWs()
-                    echo "✅ 工作空间清理完成"
+                    // 保留 test-repo 目录（下次构建增量 git fetch，节省 clone 时间）
+                    // 只清理 reports/、Automation_Platform 代码等本次构建产物
+                    cleanWs(patterns: [
+                        [pattern: 'test-repo/**', type: 'EXCLUDE'],
+                        [pattern: 'test-repo',    type: 'EXCLUDE'],
+                    ])
+                    echo "✅ 工作空间清理完成（test-repo 已保留用于下次增量更新）"
                 }
             }
         }
@@ -218,11 +240,15 @@ pipeline {
     post {
         always {
             script {
-                // post.always 在 agent none 下没有默认 node，需显式指定节点才能执行 sh
-                node(env.EXEC_NODE ?: 'master') {
+                // post.always 必须显式指定 node；用 master 确保 docker 命令可用
+                // Agent-node-2 可能未安装 docker，不在 post 里用 EXEC_NODE
+                node('master') {
                     sh 'docker logout docker.cnb.cool || true'
-                    // 无论成功失败，都清理 workspace 避免磁盘堆积
-                    cleanWs()
+                    // 保留 test-repo（增量更新缓存），清理其余产物
+                    cleanWs(patterns: [
+                        [pattern: 'test-repo/**', type: 'EXCLUDE'],
+                        [pattern: 'test-repo',    type: 'EXCLUDE'],
+                    ])
                 }
                 // entrypoint.sh 已在容器内完成平台回调
                 // 若容器异常崩溃导致回调丢失，平台侧的 ExecutionMonitorService + fallback sync 会兜底
