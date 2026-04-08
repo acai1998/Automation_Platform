@@ -54,14 +54,14 @@ function validateTypes() {
   const passedCount: number = execution.passed;
   const suiteName: string | undefined = run.suiteName;
   const statusCode: number = businessError.statusCode;
-  const errorMessage: string = errorResponse.error;
-  const errorTimestamp: string = errorResponse.timestamp;
+  const errorMessage: string = errorResponse.error.message;
+  const errorCode: string = errorResponse.error.code;
 
   console.log('✅ 所有类型定义验证通过');
   console.log('Stats:', { totalCases, successRate });
   console.log('Execution:', { passedCount });
   console.log('Run:', { suiteName });
-  console.log('Error:', { statusCode, errorMessage, errorTimestamp });
+  console.log('Error:', { statusCode, errorMessage, errorCode });
 }
 
 // 运行类型验证
