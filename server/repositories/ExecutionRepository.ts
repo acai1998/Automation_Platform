@@ -168,7 +168,8 @@ export interface TestRunStatusInfo {
 
 /** completeBatch 方法接收的单条用例结果 */
 interface BatchCaseResult {
-  caseId: number;
+  /** caseId 可为空（如 pytest 等不携带 ID 的框架），此时通过 caseName fallback 匹配 */
+  caseId?: number;
   caseName: string;
   status: string;
   duration: number;
@@ -1983,7 +1984,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     executionId: number,
     caseResults: NonNullable<BatchResults['results']>
   ): Promise<void> {
-    const failedResults: Array<{ caseId: number; error: string }> = [];
+    const failedResults: Array<{ caseId?: number; error: string }> = [];
 
     for (const result of caseResults) {
       try {
@@ -2013,22 +2014,25 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         });
 
         if (!updated) {
-          await this.createTestResult({
-            executionId,
-            caseId: result.caseId,
-            caseName: result.caseName,
-            status: normalizedStatus,
-            duration: result.duration,
-            errorMessage: result.errorMessage,
-            errorStack: result.stackTrace,
-            screenshotPath: result.screenshotPath,
-            logPath: result.logPath,
-            assertionsTotal: result.assertionsTotal,
-            assertionsPassed: result.assertionsPassed,
-            responseData: result.responseData,
-            startTime,
-            endTime,
-          });
+          // 若 caseId 缺失（caseName fallback 场景），跳过 createTestResult 避免 DB NOT NULL 错误
+          if (result.caseId !== undefined) {
+            await this.createTestResult({
+              executionId,
+              caseId: result.caseId,
+              caseName: result.caseName,
+              status: normalizedStatus,
+              duration: result.duration,
+              errorMessage: result.errorMessage,
+              errorStack: result.stackTrace,
+              screenshotPath: result.screenshotPath,
+              logPath: result.logPath,
+              assertionsTotal: result.assertionsTotal,
+              assertionsPassed: result.assertionsPassed,
+              responseData: result.responseData,
+              startTime,
+              endTime,
+            });
+          }
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
