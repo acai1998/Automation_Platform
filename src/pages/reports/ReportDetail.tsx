@@ -130,7 +130,9 @@ function formatTime(value?: string | null, full = false): string {
 }
 
 function formatDuration(ms?: number | null) {
-  if (ms == null) return "-";
+  // duration 为 null/undefined 或 0 时均视为"无数据"，显示 "-"
+  // 0 表示占位符记录未收到真实耗时，而非真正的 0ms
+  if (ms == null || ms === 0) return "-";
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }

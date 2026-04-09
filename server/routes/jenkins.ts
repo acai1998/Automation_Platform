@@ -436,18 +436,25 @@ function normalizeCallbackResults(results: unknown[]): Auto_TestRunResultsInput[
 
     const caseIdRaw = toNumber(row['caseId'] ?? row['case_id']);
     const caseName = toOptionalString(row['caseName'] ?? row['case_name']);
-    
-    // 【修复】严格验证：必须有有效的 caseId，否则过滤掉
-    // caseId 是匹配占位符的唯一可靠标识，不能是 0
-    // caseName 只能作为辅助，不能单独用于新增记录
+
+    // 允许 caseId=0 的结果通过（如 pytest 等框架不携带 caseId 的场景），
+    // 由 updateTestResult 的 caseName fallback 机制完成匹配。
+    // 但若 caseId 和 caseName 同时缺失，则过滤掉（无法匹配任何占位符记录）。
     const hasValidCaseId = caseIdRaw && caseIdRaw > 0;
-    if (!hasValidCaseId) {
-      logger.warn('Filtered out test result: missing valid caseId', {
+    if (!hasValidCaseId && !caseName) {
+      logger.warn('Filtered out test result: missing both caseId and caseName', {
         row,
         caseId: caseIdRaw,
         caseName,
       });
       return [];
+    }
+
+    if (!hasValidCaseId) {
+      logger.debug('Test result has no valid caseId, will use caseName fallback matching', {
+        caseId: caseIdRaw,
+        caseName,
+      }, LOG_CONTEXTS.JENKINS);
     }
 
     const durationRaw = toNumber(row['duration'] ?? row['durationMs'] ?? row['duration_ms']);
