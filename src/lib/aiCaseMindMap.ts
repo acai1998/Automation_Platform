@@ -839,6 +839,30 @@ export function removeNodeAttachmentId(data: AiCaseMindData, nodeId: string, att
   });
 }
 
+/**
+ * 递归收集指定节点（含自身）子树中所有 kind=testcase 节点的 ID。
+ * 用于批量操作时，当选中 module/scenario 节点时能自动操作其下所有测试点。
+ */
+export function collectDescendantTestcaseIds(node: AiCaseNode): string[] {
+  const result: string[] = [];
+
+  const walk = (n: AiCaseNode): void => {
+    const kind = n.metadata?.kind;
+    if (kind === 'testcase') {
+      result.push(n.id);
+    }
+    // testcase 节点的子节点是链式描述节点（前置条件/测试步骤/预期结果），不含 testcase，跳过
+    if (kind !== 'testcase') {
+      for (const child of n.children ?? []) {
+        walk(child as AiCaseNode);
+      }
+    }
+  };
+
+  walk(node);
+  return result;
+}
+
 export function computeProgress(data: AiCaseMindData): AiCaseProgress {
   const stats: AiCaseProgress = {
     total: 0,

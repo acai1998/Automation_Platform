@@ -6,6 +6,7 @@ import {
   Tags,
   ZoomIn,
   ZoomOut,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -14,12 +15,14 @@ interface AiCaseCanvasToolbarProps {
   scalePercent: number;
   isFullscreen: boolean;
   showNodeKindTags: boolean;
+  panelOpen?: boolean;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onCenter: () => void;
   onFit: () => void;
   onToggleFullscreen: () => void;
   onToggleNodeTags: () => void;
+  onTogglePanel?: () => void;
 }
 
 function ToolbarButton({
@@ -65,12 +68,14 @@ export function AiCaseCanvasToolbar({
   scalePercent,
   isFullscreen,
   showNodeKindTags,
+  panelOpen,
   onZoomIn,
   onZoomOut,
   onCenter,
   onFit,
   onToggleFullscreen,
   onToggleNodeTags,
+  onTogglePanel,
 }: AiCaseCanvasToolbarProps) {
   return (
     <TooltipProvider delayDuration={400}>
@@ -111,6 +116,22 @@ export function AiCaseCanvasToolbar({
               <Tags className="h-3.5 w-3.5" />
             </ToolbarButton>
           </div>
+
+          {/* 面板按钮（桌端显示） */}
+          {onTogglePanel ? (
+            <>
+              <div className="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5 hidden lg:block" />
+              <div className="hidden lg:block">
+                <ToolbarButton
+                  tooltip={panelOpen ? '关闭工作台面板' : '打开工作台面板'}
+                  onClick={onTogglePanel}
+                  active={panelOpen}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                </ToolbarButton>
+              </div>
+            </>
+          ) : null}
 
           {/* 分隔线 */}
           <div className="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5" />

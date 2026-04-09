@@ -134,6 +134,22 @@ pipeline {
                     if (testExitCode != 0) {
                         currentBuild.result = 'FAILURE'
                         echo "❌ 测试执行失败，exitCode=${testExitCode}"
+                        // 主动发送失败回调：Docker 级别失败（如 exitCode=128）时 entrypoint 无法执行，
+                        // 不会自动回调，需要 Jenkinsfile 兜底通知平台更新执行状态，
+                        // 防止占位记录永久卡在 error 状态、汇总统计错乱。
+                        if (params.RUN_ID && callbackUrl) {
+                            try {
+                                sh """
+                                    curl -s --max-time 10 -X POST '${callbackUrl}' \\
+                                        -H 'Content-Type: application/json' \\
+                                        -d '{"runId":${params.RUN_ID},"status":"failed","passedCases":0,"failedCases":0,"skippedCases":0,"durationMs":0,"results":[]}' \\
+                                        || echo "⚠️ 失败回调发送失败（忽略，不影响 Pipeline）"
+                                """
+                                echo "📡 已向平台发送失败回调 (exitCode=${testExitCode})"
+                            } catch (Exception cbErr) {
+                                echo "⚠️ 发送失败回调时出错（忽略）: ${cbErr.message}"
+                            }
+                        }
                     } else {
                         echo "✅ 测试执行成功"
                     }

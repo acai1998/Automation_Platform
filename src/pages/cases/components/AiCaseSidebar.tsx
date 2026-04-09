@@ -229,10 +229,10 @@ export function AiCaseSidebar({
   }, [mindData]);
 
   return (
-    <aside className="h-full flex flex-col overflow-y-auto overflow-x-hidden bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">
+    <aside className="flex flex-col bg-white dark:bg-slate-900">
 
       {/* ══ 执行进度 ══════════════════════════════════════ */}
-      <SidebarSection title="执行进度" icon={<CheckCircle2 className="h-3.5 w-3.5" />} defaultOpen>
+      <SidebarSection title="执行进度" icon={<CheckCircle2 className="h-3.5 w-3.5" />} defaultOpen={false}>
         {progress.total === 0 ? (
           <p className="text-[11px] text-slate-400 py-1">AI 生成后此处显示进度统计</p>
         ) : (

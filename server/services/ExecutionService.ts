@@ -1001,6 +1001,51 @@ export class ExecutionService {
         // 2. 如果有详细测试结果，更新 Auto_TestRunResults
         if (jenkinsData.testResults && jenkinsData.testResults.results.length > 0) {
           await this.updateTestResultsFromJenkins(runId, jenkinsData.testResults);
+        } else {
+          // 3. 没有详细测试结果时（如 Docker 级别失败、exitCode=128、OOM、镜像不存在等
+          //    基础设施问题导致 entrypoint 未执行、JUnit 报告未生成），需要清理 error 占位符，
+          //    避免占位符永久卡在 error 状态导致统计数据错乱或前端显示混乱。
+          //
+          //    【防假阳性】Jenkins 状态为 success 但解析不到 JUnit 结果，属于异常情况
+          //    （测试应该产生报告）。此时不能相信 success 状态，保守地视为 failed 处理，
+          //    防止所有 error 占位符被错误地标记为 passed，产生虚假的"全部通过"展示。
+          const effectiveCleanupStatus = jenkinsData.status === 'success' ? 'failed' : jenkinsData.status;
+
+          try {
+            const executionId = await this.executionRepository.findExecutionIdByRunId(runId);
+            if (executionId) {
+              const cleaned = await this.executionRepository.cleanupErrorPlaceholdersForExecution(
+                executionId,
+                effectiveCleanupStatus
+              );
+              if (cleaned > 0) {
+                // 清理后重新计算统计数，用准确值覆盖第977行写入的 undefined（无 JUnit 时
+                // testResults?.passedCases 为 undefined，不会更新计数字段），确保
+                // passed_cases/failed_cases 与明细记录一致。
+                const finalCounts = await this.executionRepository.countResultsByStatus(executionId);
+                const reconciledStatus = finalCounts.failed > 0 ? 'failed' : effectiveCleanupStatus;
+                await this.executionRepository.updateTestRunStatus(runId, reconciledStatus, {
+                  passedCases: finalCounts.passed,
+                  failedCases: finalCounts.failed,
+                  skippedCases: finalCounts.skipped,
+                });
+                logger.info('Cleaned error placeholders (no JUnit results) and reconciled summary', {
+                  runId,
+                  executionId,
+                  cleaned,
+                  finalCounts,
+                  reconciledStatus,
+                  jenkinsStatus: jenkinsData.status,
+                  effectiveCleanupStatus,
+                }, LOG_CONTEXTS.EXECUTION);
+              }
+            }
+          } catch (cleanupErr) {
+            logger.warn('Failed to cleanup error placeholders after Jenkins poll (no results)', {
+              runId,
+              error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+            }, LOG_CONTEXTS.EXECUTION);
+          }
         }
       }
 

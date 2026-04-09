@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavCollapse } from "@/contexts/NavCollapseContext";
+import { useAiGeneration } from "@/contexts/AiGenerationContext";
 import {
   LayoutDashboard,
   FolderOpen,
@@ -103,10 +104,10 @@ function MiniDrawer({ item, anchorRect, onClose, location, onNavigate }: MiniDra
       ref={overlayRef}
       style={{
         position: "fixed",
-        left: 80,
+        left: 72,
         top,
         zIndex: 50,
-        minWidth: 200,
+        minWidth: 180,
       }}
       className="
         bg-white dark:bg-slate-900
@@ -186,9 +187,10 @@ interface IconOnlyItemProps {
   item: NavItem;
   location: string;
   onNavigate: (href: string) => void;
+  badge?: React.ReactNode;
 }
 
-function IconOnlyNavItem({ item, location, onNavigate }: IconOnlyItemProps) {
+function IconOnlyNavItem({ item, location, onNavigate, badge }: IconOnlyItemProps) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const { isActive } = useNavActive(item, location);
@@ -225,8 +227,12 @@ function IconOnlyNavItem({ item, location, onNavigate }: IconOnlyItemProps) {
           {item.icon}
         </span>
         {/* Active dot indicator */}
-        {isActive && (
+        {isActive && !badge && (
           <span className="absolute right-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-white/60" />
+        )}
+        {/* Badge (e.g. AI generation progress) */}
+        {badge && (
+          <span className="absolute -top-0.5 -right-0.5">{badge}</span>
         )}
       </button>
 
@@ -251,9 +257,10 @@ interface ExpandedNavItemProps {
   location: string;
   onNavigate: (href: string) => void;
   defaultExpanded?: boolean;
+  badge?: React.ReactNode;
 }
 
-function ExpandedNavItem({ item, location, onNavigate, defaultExpanded }: ExpandedNavItemProps) {
+function ExpandedNavItem({ item, location, onNavigate, defaultExpanded, badge }: ExpandedNavItemProps) {
   const { isActive } = useNavActive(item, location);
   const [expanded, setExpanded] = useState(() => defaultExpanded ?? isActive);
 
@@ -337,7 +344,8 @@ function ExpandedNavItem({ item, location, onNavigate, defaultExpanded }: Expand
       <span className={`transition-colors ${isActive ? "text-white/80" : "text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300"}`}>
         {item.icon}
       </span>
-      <span className="text-sm font-medium">{item.label}</span>
+      <span className="flex-1 text-sm font-medium text-left">{item.label}</span>
+      {badge && <span className="flex-shrink-0">{badge}</span>}
     </button>
   );
 }
@@ -352,8 +360,27 @@ interface SidebarContentProps {
   onToggle?: () => void;
 }
 
+/** AI 生成进度角标：展开模式文字 + 进度，图标模式仅显示旋转圆点 */
+function AiGeneratingBadge({ progress, mode }: { progress: number; mode: 'expanded' | 'icon-only' }) {
+  if (mode === 'expanded') {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400">
+        <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse flex-shrink-0" />
+        {progress}%
+      </span>
+    );
+  }
+  // Icon-only: 小圆点角标
+  return (
+    <span className="flex items-center justify-center w-4 h-4 rounded-full bg-indigo-500 shadow-sm shadow-indigo-500/50">
+      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+    </span>
+  );
+}
+
 function SidebarContent({ location, onNavigate, mode, onToggle }: SidebarContentProps) {
   const { user, logout } = useAuth();
+  const { isGenerating, progress } = useAiGeneration();
   const isExpanded = mode === "expanded";
 
   const handleLogout = async () => {
@@ -395,14 +422,22 @@ function SidebarContent({ location, onNavigate, mode, onToggle }: SidebarContent
       {/* ── Navigation ── */}
       <nav className={`flex-1 overflow-y-auto py-4 ${isExpanded ? "px-3" : "px-2"}`}>
         <div className={`space-y-1 ${!isExpanded ? "flex flex-col items-stretch gap-1" : ""}`}>
-          {navItems.map((item) =>
-            isExpanded ? (
+          {navItems.map((item) => {
+            // 仅对"AI 用例"菜单项在生成中时展示角标
+            const isAiCaseItem = item.label === "AI 用例";
+            const badge =
+              isAiCaseItem && isGenerating ? (
+                <AiGeneratingBadge progress={progress} mode={isExpanded ? 'expanded' : 'icon-only'} />
+              ) : undefined;
+
+            return isExpanded ? (
               <ExpandedNavItem
                 key={item.label}
                 item={item}
                 location={location}
                 onNavigate={onNavigate}
                 defaultExpanded={item.children?.some((c) => location === c.href)}
+                badge={badge}
               />
             ) : (
               <IconOnlyNavItem
@@ -410,9 +445,10 @@ function SidebarContent({ location, onNavigate, mode, onToggle }: SidebarContent
                 item={item}
                 location={location}
                 onNavigate={onNavigate}
+                badge={badge}
               />
-            )
-          )}
+            );
+          })}
         </div>
       </nav>
 
@@ -533,7 +569,7 @@ export function Sidebar() {
 
   // ── Desktop sidebar (expanded or icon-only) ──
   if (navState === "expanded" || navState === "icon-only") {
-    const w = navState === "expanded" ? 240 : 80;
+    const w = navState === "expanded" ? 200 : 72;
     return (
       <aside
         style={{

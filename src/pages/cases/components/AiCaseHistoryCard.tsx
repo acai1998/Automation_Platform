@@ -3,6 +3,7 @@ import {
   BrainCircuit, Trash2, ExternalLink, Clock,
   CheckCircle2, XCircle, AlertCircle, Circle,
   ChevronDown, ChevronUp, FileText, CloudOff, Cloud, Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -145,6 +146,26 @@ function DeleteConfirm({
   );
 }
 
+// ── AI 生成中进度条 overlay ────────────────────────────────────────
+
+/**
+ * 卡片顶部的浅色生成进度条，仅当该文档正在生成时展示。
+ * 使用绝对定位覆盖在卡片顶部，不影响卡片内部布局。
+ */
+function GeneratingOverlay({ progress }: { progress: number }) {
+  return (
+    <div className="absolute inset-x-0 top-0 z-10 pointer-events-none rounded-t-xl overflow-hidden">
+      {/* 进度条轨道 */}
+      <div className="h-1 bg-violet-100 dark:bg-violet-900/30 w-full">
+        <div
+          className="h-full bg-gradient-to-r from-violet-400 via-indigo-400 to-violet-500 transition-[width] duration-500 ease-out"
+          style={{ width: `${Math.max(2, progress)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── Main Card ─────────────────────────────────────────────────────
 
 export function AiCaseHistoryCard({
@@ -152,12 +173,18 @@ export function AiCaseHistoryCard({
   onOpen,
   onDeleted,
   currentDocId,
+  generatingDocId,
+  generationProgress = 0,
 }: {
   doc: AiCaseWorkspaceDocument;
   onOpen: (id: string) => void;
   onDeleted: (id: string) => void;
   /** 当前在脑图页面打开的文档 ID，用于标识「当前工作区」 badge */
   currentDocId?: string;
+  /** 全局 AiGenerationContext 中正在生成的文档 ID */
+  generatingDocId?: string;
+  /** 全局生成进度 0~100 */
+  generationProgress?: number;
 }) {
   const progress = useMemo(() => computeProgress(doc.mapData), [doc.mapData]);
   const modules = useMemo(() => countModules(doc), [doc]);
@@ -165,6 +192,8 @@ export function AiCaseHistoryCard({
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const isCurrent = currentDocId !== undefined && doc.id === currentDocId;
+  /** 该文档当前是否正在 AI 生成中 */
+  const isThisGenerating = generatingDocId === doc.id;
 
   const handleDelete = useCallback(async () => {
     setDeleting(true);
@@ -180,19 +209,40 @@ export function AiCaseHistoryCard({
   }, [doc.id, doc.name, onDeleted]);
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700/80 shadow-sm hover:shadow-md transition-shadow duration-200 overflow-hidden">
+    <div className={[
+      'relative bg-white dark:bg-slate-900 rounded-xl border shadow-sm transition-shadow duration-200 overflow-hidden',
+      isThisGenerating
+        ? 'border-violet-200 dark:border-violet-700/60 shadow-violet-100 dark:shadow-none'
+        : 'border-slate-200 dark:border-slate-700/80 hover:shadow-md',
+    ].join(' ')}>
+      {/* AI 生成中进度条 overlay（贴合卡片顶部） */}
+      {isThisGenerating && <GeneratingOverlay progress={generationProgress} />}
+
       {/* Header */}
       <div className="p-4 pb-3">
         <div className="flex items-start gap-3">
           {/* Icon */}
-          <div className="mt-0.5 flex-shrink-0 w-9 h-9 rounded-lg bg-gradient-to-br from-violet-500/10 to-blue-500/10 dark:from-violet-500/20 dark:to-blue-500/20 flex items-center justify-center">
-            <BrainCircuit className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+          <div className={[
+            'mt-0.5 flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center',
+            isThisGenerating
+              ? 'bg-gradient-to-br from-violet-500/20 to-indigo-500/20 dark:from-violet-500/30 dark:to-indigo-500/30'
+              : 'bg-gradient-to-br from-violet-500/10 to-blue-500/10 dark:from-violet-500/20 dark:to-blue-500/20',
+          ].join(' ')}>
+            {isThisGenerating
+              ? <Sparkles className="h-4 w-4 text-violet-500 dark:text-violet-400 animate-pulse" />
+              : <BrainCircuit className="h-4 w-4 text-violet-600 dark:text-violet-400" />}
           </div>
           {/* Title row */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{doc.name}</h3>
-              {isCurrent && (
+              {isThisGenerating && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 font-medium flex-shrink-0 flex items-center gap-1">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  AI 生成中 {generationProgress > 0 ? `${generationProgress}%` : ''}
+                </span>
+              )}
+              {!isThisGenerating && isCurrent && (
                 <span className="text-xs px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 font-medium flex-shrink-0">
                   当前工作区
                 </span>
@@ -202,7 +252,7 @@ export function AiCaseHistoryCard({
               <span className="flex items-center gap-1 text-xs text-slate-400">
                 <Clock className="h-3 w-3" />{formatRelativeTime(doc.updatedAt)}
               </span>
-              <SyncBadge doc={doc} />
+              {!isThisGenerating && <SyncBadge doc={doc} />}
             </div>
           </div>
           {/* Actions */}
@@ -212,6 +262,7 @@ export function AiCaseHistoryCard({
               className="h-7 w-7 p-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
               onClick={() => { setExpanded((v) => !v); setConfirmDel(false); }}
               title={expanded ? '收起' : '展开详情'}
+              disabled={isThisGenerating}
             >
               {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             </Button>
@@ -220,25 +271,44 @@ export function AiCaseHistoryCard({
               className="h-7 w-7 p-0 text-slate-400 hover:text-red-500"
               onClick={() => setConfirmDel((v) => !v)}
               title="删除"
+              disabled={isThisGenerating}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
-            <Button size="sm" className="h-7 px-2.5 text-xs gap-1" onClick={() => onOpen(doc.id)}>
-              <ExternalLink className="h-3 w-3" />打开
+            <Button
+              size="sm"
+              className={[
+                'h-7 px-2.5 text-xs gap-1',
+                isThisGenerating ? 'opacity-60 cursor-not-allowed' : '',
+              ].join(' ')}
+              onClick={() => !isThisGenerating && onOpen(doc.id)}
+              disabled={isThisGenerating}
+              title={isThisGenerating ? 'AI 正在生成，请稍候…' : undefined}
+            >
+              {isThisGenerating
+                ? <><Loader2 className="h-3 w-3 animate-spin" />生成中</>
+                : <><ExternalLink className="h-3 w-3" />打开</>}
             </Button>
           </div>
         </div>
 
-        {/* Stats row */}
-        <div className="mt-3 flex items-center gap-3 text-xs text-slate-500 flex-wrap">
-          <span className="flex items-center gap-1"><FileText className="h-3 w-3" />{modules} 个模块</span>
-          <span className="text-slate-200 dark:text-slate-700">|</span>
-          <span>{progress.total} 条用例</span>
-          <PriorityBadges doc={doc} />
-        </div>
+        {/* Stats row / 生成中占位 */}
+        {isThisGenerating ? (
+          <div className="mt-3 flex items-center gap-2 text-xs text-violet-500 dark:text-violet-400">
+            <Sparkles className="h-3 w-3" />
+            <span>AI 正在分析需求并构建测试用例脑图，完成后将自动出现在列表…</span>
+          </div>
+        ) : (
+          <div className="mt-3 flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+            <span className="flex items-center gap-1"><FileText className="h-3 w-3" />{modules} 个模块</span>
+            <span className="text-slate-200 dark:text-slate-700">|</span>
+            <span>{progress.total} 条用例</span>
+            <PriorityBadges doc={doc} />
+          </div>
+        )}
 
-        {/* Progress bar */}
-        <div className="mt-3"><ProgressBar progress={progress} /></div>
+        {/* Progress bar（生成中时不展示用例进度条，避免骨架数据误导） */}
+        {!isThisGenerating && <div className="mt-3"><ProgressBar progress={progress} /></div>}
 
         {/* Inline delete confirm (collapsed) */}
         {confirmDel && !expanded && (

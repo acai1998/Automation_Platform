@@ -1,11 +1,13 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-elixir';
 import 'mind-elixir/style.css';
-import { BrainCircuit, History, Loader2, Menu, X, FileText, Bot } from 'lucide-react';
+import { BrainCircuit, History, Loader2, Menu, X, FileText, Bot, GripHorizontal } from 'lucide-react';
 import { useLocation } from 'wouter';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import { useAiGeneration } from '@/contexts/AiGenerationContext';
 import { AiCaseSidebar } from './components/AiCaseSidebar';
 import { AiCaseCanvasToolbar } from './components/AiCaseCanvasToolbar';
+import { AiCaseBatchActionToolbar } from './components/AiCaseBatchActionToolbar';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -23,6 +25,7 @@ import {
 import { Button } from '@/components/ui/button';
 import {
   appendNodeAttachmentId,
+  collectDescendantTestcaseIds,
   computeProgress,
   createInitialMindData,
   expandImportedCaseNodesFromNote,
@@ -87,6 +90,77 @@ const CANVAS_SCALE_STEP = 0.1;
 const NODE_TAG_VISIBILITY_STORAGE_KEY = 'ai-case-node-tags-visible';
 const WAIT_COPY_MAGIC = 'MIND-ELIXIR-WAIT-COPY';
 const SIDEBAR_WIDTH = 320;
+const FLOAT_PANEL_WIDTH = 300;
+const FLOAT_PANEL_DEFAULT_RIGHT = 16;
+const FLOAT_PANEL_DEFAULT_TOP = 8;
+
+/**
+ * 浮动面板拖拽 hook
+ * 返回面板位置、重置位置函数、拖拽把手事件处理函数
+ */
+function useDraggablePanel(containerRef: React.RefObject<HTMLElement | null>, panelOpen: boolean) {
+  const PANEL_W = FLOAT_PANEL_WIDTH;
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const dragging = useRef(false);
+  const startPointer = useRef({ x: 0, y: 0 });
+  const startPanel = useRef({ x: 0, y: 0 });
+
+  // 每次打开面板时重置到右上角默认位置
+  useEffect(() => {
+    if (panelOpen) {
+      setPos(null);
+    }
+  }, [panelOpen]);
+
+  /** 计算边界限制后的实际位置 */
+  const clamp = useCallback((x: number, y: number): { x: number; y: number } => {
+    const el = containerRef.current;
+    if (!el) return { x, y };
+    const { width, height } = el.getBoundingClientRect();
+    // 面板高度用概估值（最大 80% 容器高）和最小展示高度
+    const panelH = Math.min(height * 0.8, height - 16);
+    const minX = 0;
+    const maxX = width - PANEL_W;
+    const minY = 0;
+    const maxY = height - panelH;
+    return {
+      x: Math.max(minX, Math.min(maxX, x)),
+      y: Math.max(minY, Math.min(maxY, y)),
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerRef]);
+
+  const onPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    // 只响应主键
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragging.current = true;
+    startPointer.current = { x: e.clientX, y: e.clientY };
+    // 获取面板父元素，用于计算当前面板 left/top
+    const panel = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-float-panel]');
+    if (panel) {
+      startPanel.current = { x: panel.offsetLeft, y: panel.offsetTop };
+    }
+  }, []);
+
+  const onPointerMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragging.current) return;
+    e.preventDefault();
+    const dx = e.clientX - startPointer.current.x;
+    const dy = e.clientY - startPointer.current.y;
+    setPos(clamp(startPanel.current.x + dx, startPanel.current.y + dy));
+  }, [clamp]);
+
+  const onPointerUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  }, []);
+
+  return { pos, onPointerDown, onPointerMove, onPointerUp };
+}
 
 function readNodeTagVisibilityPreference(): boolean {
   if (typeof window === 'undefined') {
@@ -195,6 +269,8 @@ function mergeRemoteWorkspaceToDoc(
 
 function AiCasesInner() {
   const [location, setLocation] = useLocation();
+  // 全局 AI 生成状态：用于切换页面后仍能显示进度角标、弹跨页通知
+  const { notifyStart, notifyProgress, notifyDone } = useAiGeneration();
 
   // 从 URL 参数读取要打开的文档 ID；未指定时回退到固定的默认工作区
   // 使用 state 而非 useMemo，确保 URL 变化时能响应式更新
@@ -210,8 +286,9 @@ function AiCasesInner() {
     setActiveDocId((prev) => (prev !== newDocId ? newDocId : prev));
   }, [location]);
 
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const canvasSectionRef = useRef<HTMLElement | null>(null);
+const mapContainerRef = useRef<HTMLDivElement | null>(null);
+const canvasSectionRef = useRef<HTMLElement | null>(null);
+const canvasDivRef = useRef<HTMLDivElement | null>(null);
   const mindRef = useRef<MindElixirInstance | null>(null);
   const docRef = useRef<AiCaseWorkspaceDocument | null>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -259,8 +336,12 @@ function AiCasesInner() {
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
   const [showNodeKindTags, setShowNodeKindTags] = useState<boolean>(() => readNodeTagVisibilityPreference());
   const [isImportingMindNodes, setIsImportingMindNodes] = useState(false);
-  // 移动端侧边栏抽屉
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+// 移动端侧边栏抽屉
+const [sidebarOpen, setSidebarOpen] = useState(false);
+// 浮动面板（桌端）
+const [panelOpen, setPanelOpen] = useState(false);
+// 浮动面板拖拽
+const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMove, onPointerUp: panelDragUp } = useDraggablePanel(canvasDivRef, panelOpen);
   // 需求编辑弹窗
   const [isRequirementDialogOpen, setIsRequirementDialogOpen] = useState(false);
 
@@ -527,17 +608,25 @@ function AiCasesInner() {
             }, 100);
           }
         } else {
-          const initialData = normalizeMindData(createInitialMindData('AI Testcase Workspace'), {
+          // 文档在 localStorage 中不存在（新建场景）
+          // 从 URL 参数读取 initName / initReq（由 AICaseCreate 传过来），
+          // 这里负责创建文档并写入 localStorage（不再由 AICaseCreate 提前写入）
+          const searchParamsForInit = new URLSearchParams(window.location.search);
+          const initName = searchParamsForInit.get('initName')?.trim() || 'AI Testcase Workspace';
+          const initReq = searchParamsForInit.get('initReq')?.trim() || '';
+
+          const initialData = normalizeMindData(createInitialMindData(initName), {
             showNodeKindTags: showNodeKindTagsRef.current,
           });
+          const now = Date.now();
           const initialDoc: AiCaseWorkspaceDocument = {
             id: activeDocId,
-            name: 'AI Testcase Workspace',
-            requirement: '',
+            name: initName,
+            requirement: initReq,
             mapData: initialData,
             version: 1,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
+            createdAt: now,
+            updatedAt: now,
             lastSelectedNodeId: initialData.nodeData.id,
             syncMode: 'local',
             remoteWorkspaceId: null,
@@ -546,15 +635,39 @@ function AiCasesInner() {
             lastRemoteSyncedAt: null,
           };
 
-          await saveWorkspaceDocument(initialDoc);
+          // 注意：此处不立即写入 localStorage。
+          // 当 autoGenerate=true 时，生成完成后 setDataAndSync 会在保存真实 AI 数据时首次写入，
+          // 从而保证列表页只在生成完成后才看到记录，消除歧义感。
+          // 当 autoGenerate 为 false（手动导航）时，也在用户编辑后才写入。
           if (!active) return;
 
           remoteSyncMetaRef.current = resolveRemoteSyncMeta(initialDoc);
           setRemoteSyncMeta(remoteSyncMetaRef.current);
           docRef.current = initialDoc;
           setMindData(initialData);
+          setWorkspaceName(initName);
+          setRequirementText(initReq);
+          if (initName !== 'AI Testcase Workspace') {
+            isWorkspaceNameUserEditedRef.current = true;
+          }
           setSelectedNodeId(initialDoc.lastSelectedNodeId);
           setSaveState('saved');
+
+          // 新文档也需要检查是否需要自动生成
+          const searchParamsAutoGen = new URLSearchParams(window.location.search);
+          if (searchParamsAutoGen.get('autoGenerate') === 'true') {
+            // 移除 URL 参数避免刷新重复触发
+            window.history.replaceState({}, '', window.location.pathname);
+            // 立即进入"生成中"状态，避免短暂闪出默认脑图
+            setIsGenerating(true);
+            setGenerationProgress(2);
+            setGenerationStageText('正在连接后端流式通道...');
+            // 延迟一点执行，确保 MindElixir 实例已挂载
+            autoGenerateTimerRef.current = window.setTimeout(() => {
+              autoGenerateTimerRef.current = null;
+              handleGenerateRef.current?.();
+            }, 100);
+          }
         }
       } catch (error) {
         console.error('[AICases] bootstrap failed', error);
@@ -730,13 +843,19 @@ function AiCasesInner() {
   // 多选时：只要有任意一个选中节点是 testcase 就允许操作
   const canEditSelectedNode = selectedNode?.metadata?.kind === 'testcase';
 
-  // 所有选中节点中 kind=testcase 的节点 ID 列表（批量操作实际作用对象）
+  // 所有选中节点（含其子树）中 kind=testcase 的节点 ID 列表（批量操作实际作用对象）
+  // 支持递归：选中 module/scenario 时自动收集其下所有 testcase 子节点
   const selectedTestcaseNodeIds = useMemo(() => {
     if (!mindData || selectedNodeIds.length === 0) return [];
-    return selectedNodeIds.filter((id) => {
+    const idSet = new Set<string>();
+    for (const id of selectedNodeIds) {
       const node = findNodeById(mindData.nodeData, id);
-      return node?.metadata?.kind === 'testcase';
-    });
+      if (!node) continue;
+      for (const tcId of collectDescendantTestcaseIds(node)) {
+        idSet.add(tcId);
+      }
+    }
+    return Array.from(idSet);
   }, [mindData, selectedNodeIds]);
 
   // 是否有可批量操作的 testcase 节点（用于按钮 disabled 判断）
@@ -864,33 +983,53 @@ function AiCasesInner() {
       clearGenerateProgressTimers();
       setGenerationProgress(2);
       setGenerationStageText(initialStage);
+      // 同步通知全局 Context，供 Sidebar 角标和跨页通知使用。
+      // 传入当前文档 ID，使列表页能准确识别哪张卡片正在生成。
+      notifyStart(docRef.current?.id ?? null);
+      notifyProgress(2, initialStage);
     },
-    [clearGenerateProgressTimers]
+    [clearGenerateProgressTimers, notifyStart, notifyProgress]
   );
 
   const applyGenerateProgress = useCallback((event: { progress?: unknown; stage?: unknown }) => {
+    let nextProgress = -1;
+    let nextStage = '';
+
     if (typeof event.progress === 'number' && Number.isFinite(event.progress)) {
-      const nextProgress = Math.max(0, Math.min(99, Math.round(event.progress)));
+      nextProgress = Math.max(0, Math.min(99, Math.round(event.progress)));
       setGenerationProgress((prev) => Math.max(prev, nextProgress));
     }
 
     if (typeof event.stage === 'string' && event.stage.trim()) {
-      setGenerationStageText(event.stage.trim());
+      nextStage = event.stage.trim();
+      setGenerationStageText(nextStage);
     }
-  }, []);
+
+    // 同步通知全局 Context
+    if (nextProgress >= 0 || nextStage) {
+      notifyProgress(
+        nextProgress >= 0 ? nextProgress : -1,
+        nextStage,
+      );
+    }
+  }, [notifyProgress]);
 
   const finishGenerateProgress = useCallback(
     (nextStageText: string) => {
       clearGenerateProgressTimers();
       setGenerationStageText(nextStageText);
       setGenerationProgress(100);
+      // 通知全局 Context 进度达到 100%
+      notifyProgress(100, nextStageText);
 
       generateProgressResetTimerRef.current = window.setTimeout(() => {
         setGenerationProgress(0);
         setGenerationStageText('');
+        // 延迟后通知全局 Context 生成已结束（状态清零）
+        notifyDone();
       }, 900);
     },
-    [clearGenerateProgressTimers]
+    [clearGenerateProgressTimers, notifyProgress, notifyDone]
   );
 
   const streamGenerateFromBackend = useCallback(async (): Promise<StreamGenerateResultPayload> => {
@@ -1534,12 +1673,27 @@ function AiCasesInner() {
       await cleanupStaleAttachments(expanded.data);
       setAttachmentReloadSeed((value) => value + 1);
       finishGenerateProgress(generated.source === 'llm' ? 'AI 生成完成' : '模板生成完成');
-      toast.success(`AI 用例脑图生成完成（${generated.source === 'llm' ? '大模型' : '回退模板'}）`);
+
+      // 判断用户是否已离开 AI 用例页，若已离开则弹跨页面 toast
+      const isOnAiPage = window.location.pathname === '/cases/ai';
+      if (isOnAiPage) {
+        toast.success(`AI 用例脑图生成完成（${generated.source === 'llm' ? '大模型' : '回退模板'}）`);
+      } else {
+        toast.success('AI 用例生成完成，点击返回查看', {
+          duration: 8000,
+          action: {
+            label: '返回查看',
+            onClick: () => setLocation('/cases/ai'),
+          },
+        });
+      }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error('[AICases] remote stream generate failed, fallback local', error);
       setGenerationProgress(68);
       setGenerationStageText('远端流式生成失败，正在切换本地模板...');
+      // 通知全局 Context 进度更新（用于 Sidebar 角标）
+      notifyProgress(68, '远端流式生成失败，正在切换本地模板...');
 
       const generated = generateMindDataFromRequirement(requirementText, workspaceName);
       const expanded = expandImportedCaseNodesFromNote(generated, {
@@ -1560,12 +1714,22 @@ function AiCasesInner() {
         errMsg.includes('无效或过期的令牌') ||
         errMsg.includes('HTTP 401') ||
         errMsg.includes('未认证');
+
+      const isOnAiPageOnError = window.location.pathname === '/cases/ai';
       if (isAuthError) {
         toast.warning('登录状态已过期，AI 生成已切换至本地模板。请重新登录后再试', {
           duration: 6000,
           action: {
             label: '去登录',
             onClick: () => window.location.replace('/login'),
+          },
+        });
+      } else if (!isOnAiPageOnError) {
+        toast.warning('AI 生成失败，已使用本地模板，点击返回查看', {
+          duration: 8000,
+          action: {
+            label: '返回查看',
+            onClick: () => setLocation('/cases/ai'),
           },
         });
       } else {
@@ -1582,6 +1746,8 @@ function AiCasesInner() {
     finishGenerateProgress,
     setDataAndSync,
     cleanupStaleAttachments,
+    notifyProgress,
+    setLocation,
   ]);
 
   useEffect(() => {
@@ -1812,6 +1978,20 @@ function AiCasesInner() {
     }
   }, [mindData, selectedNodeId, setDataAndSync]);
 
+  /** 关闭画布浮层工具栏：清除 MindElixir 选中状态并同步 React 状态 */
+  const handleDismissBatchToolbar = useCallback(() => {
+    if (mindRef.current) {
+      try {
+        mindRef.current.clearSelection();
+      } catch {
+        // clearSelection 不存在时的保险处理
+      }
+    }
+    setSelectedNodeId(null);
+    setSelectedNodeIds([]);
+    selectedNodeIdsRef.current = [];
+  }, []);
+
   // ─── 辅助变量 ──────────────────────────────────────────────────────────────
 
   if (isBootstrapping || !mindData) {
@@ -1879,70 +2059,50 @@ function AiCasesInner() {
       {/* 主体：左侧边栏 + 右侧画布 */}
       <div className="flex-1 min-h-0 flex relative">
 
-        {/* 提取 AiCaseSidebar 公共 props，桌端 / 移动端共享同一份，避免两处维护 */}
-        {(() => {
-          const sidebarProps = {
-            isGenerating,
-            generationProgress,
-            generationStageText,
-            onGenerate: () => setIsRequirementDialogOpen(true),
-            progress,
-            selectedNode,
-            selectedNodeStatus,
-            canEditSelectedNode,
-            // 多选相关 props
-            isMultiSelect,
-            selectedTestcaseCount: selectedTestcaseNodeIds.length,
-            canEditAnySelectedNode,
-            isUpdatingNodeStatus,
-            onStatusChange: handleStatusChange,
-            attachments,
-            isUploading,
-            onUploadAttachment: handleUploadAttachment,
-            onDeleteAttachment: handleDeleteAttachment,
-            isRemoteLinked,
-            remoteWorkspaceId: remoteSyncMeta.remoteWorkspaceId ?? null,
-            isPublishingRemote,
-            isSyncingRemote,
-            onPublishRemote: handlePublishRemote,
-            onSyncFromRemote: handleSyncFromRemote,
-            onResetTemplate: handleResetTemplate,
-            onLoadHistoryWorkspace: handleLoadHistoryWorkspace,
-            mindData,
-          };
-
-          return (
-            <>
-              {/* 桌端侧边栏（全屏时隐藏） */}
-              {!isCanvasFullscreen ? (
-                <div
-                  className="hidden lg:block shrink-0 h-full overflow-hidden"
-                  style={{ width: SIDEBAR_WIDTH }}
-                >
-                  <AiCaseSidebar {...sidebarProps} />
-                </div>
-              ) : null}
-
-              {/* 移动端侧边栏 Drawer（全屏时隐藏） */}
-              {!isCanvasFullscreen && sidebarOpen ? (
-                <div className="lg:hidden absolute inset-0 z-40 flex">
-                  {/* 遮罩 */}
-                  <div
-                    className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-                    onClick={() => setSidebarOpen(false)}
-                  />
-                  {/* 侧边栏内容 */}
-                  <div
-                    className="relative z-50 h-full overflow-hidden bg-white dark:bg-slate-900 shadow-2xl"
-                    style={{ width: SIDEBAR_WIDTH }}
-                  >
-                    <AiCaseSidebar {...sidebarProps} />
-                  </div>
-                </div>
-              ) : null}
-            </>
-          );
-        })()}
+        {/* 移动端侧边栏 Drawer（全屏时隐藏） */}
+        {!isCanvasFullscreen && sidebarOpen ? (
+          <div className="lg:hidden absolute inset-0 z-40 flex">
+            {/* 遮罩 */}
+            <div
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              onClick={() => setSidebarOpen(false)}
+            />
+            {/* 侧边栏内容 */}
+            <div
+              className="relative z-50 h-full overflow-y-auto overflow-x-hidden bg-white dark:bg-slate-900 shadow-2xl"
+              style={{ width: SIDEBAR_WIDTH }}
+            >
+              <AiCaseSidebar
+                isGenerating={isGenerating}
+                generationProgress={generationProgress}
+                generationStageText={generationStageText}
+                onGenerate={() => setIsRequirementDialogOpen(true)}
+                progress={progress}
+                selectedNode={selectedNode}
+                selectedNodeStatus={selectedNodeStatus}
+                canEditSelectedNode={canEditSelectedNode}
+                isMultiSelect={isMultiSelect}
+                selectedTestcaseCount={selectedTestcaseNodeIds.length}
+                canEditAnySelectedNode={canEditAnySelectedNode}
+                isUpdatingNodeStatus={isUpdatingNodeStatus}
+                onStatusChange={handleStatusChange}
+                attachments={attachments}
+                isUploading={isUploading}
+                onUploadAttachment={handleUploadAttachment}
+                onDeleteAttachment={handleDeleteAttachment}
+                isRemoteLinked={isRemoteLinked}
+                remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
+                isPublishingRemote={isPublishingRemote}
+                isSyncingRemote={isSyncingRemote}
+                onPublishRemote={handlePublishRemote}
+                onSyncFromRemote={handleSyncFromRemote}
+                onResetTemplate={handleResetTemplate}
+                onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
+                mindData={mindData}
+              />
+            </div>
+          </div>
+        ) : null}
 
         {/* 右侧画布区域 */}
         <section
@@ -1955,20 +2115,88 @@ function AiCasesInner() {
             scalePercent={canvasScalePercent}
             isFullscreen={isCanvasFullscreen}
             showNodeKindTags={showNodeKindTags}
+            panelOpen={panelOpen}
             onZoomIn={handleZoomIn}
             onZoomOut={handleZoomOut}
             onCenter={handleCenterCanvas}
             onFit={handleFitCanvas}
             onToggleFullscreen={() => void handleToggleCanvasFullscreen()}
             onToggleNodeTags={handleToggleNodeKindTags}
+            onTogglePanel={() => setPanelOpen((v) => !v)}
           />
 
-          <div className="relative flex-1 min-h-0 [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none">
+          <div
+            ref={canvasDivRef}
+            className="relative flex-1 min-h-0 [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none"
+          >
             <div ref={mapContainerRef} className="h-full w-full" />
+
+            {/* 画布浮层批量操作工具栏 */}
+            <AiCaseBatchActionToolbar
+              visible={selectedNodeIds.length > 0}
+              targetCount={selectedTestcaseNodeIds.length}
+              isUpdating={isUpdatingNodeStatus}
+              onStatusChange={handleStatusChange}
+              onDismiss={handleDismissBatchToolbar}
+            />
+
+            {/* 桌端浮动面板（全屏时隐藏，在 XMind 画布内可拖拽） */}
+            {!isCanvasFullscreen && panelOpen ? (
+              <div
+                data-float-panel
+                className="hidden lg:flex absolute z-40 flex-col rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden select-none"
+                style={
+                  panelPos
+                    ? { width: FLOAT_PANEL_WIDTH, maxHeight: 'calc(100% - 16px)', left: panelPos.x, top: panelPos.y }
+                    : { width: FLOAT_PANEL_WIDTH, maxHeight: 'calc(100% - 16px)', right: FLOAT_PANEL_DEFAULT_RIGHT, top: FLOAT_PANEL_DEFAULT_TOP }
+                }
+              >
+                {/* 拖拽把手 */}
+                <div
+                  className="shrink-0 flex items-center justify-center h-7 cursor-grab active:cursor-grabbing bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  onPointerDown={panelDragDown}
+                  onPointerMove={panelDragMove}
+                  onPointerUp={panelDragUp}
+                >
+                  <GripHorizontal className="h-3.5 w-3.5 text-slate-400" />
+                </div>
+                {/* 面板内容 */}
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+                  <AiCaseSidebar
+                    isGenerating={isGenerating}
+                    generationProgress={generationProgress}
+                    generationStageText={generationStageText}
+                    onGenerate={() => setIsRequirementDialogOpen(true)}
+                    progress={progress}
+                    selectedNode={selectedNode}
+                    selectedNodeStatus={selectedNodeStatus}
+                    canEditSelectedNode={canEditSelectedNode}
+                    isMultiSelect={isMultiSelect}
+                    selectedTestcaseCount={selectedTestcaseNodeIds.length}
+                    canEditAnySelectedNode={canEditAnySelectedNode}
+                    isUpdatingNodeStatus={isUpdatingNodeStatus}
+                    onStatusChange={handleStatusChange}
+                    attachments={attachments}
+                    isUploading={isUploading}
+                    onUploadAttachment={handleUploadAttachment}
+                    onDeleteAttachment={handleDeleteAttachment}
+                    isRemoteLinked={isRemoteLinked}
+                    remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
+                    isPublishingRemote={isPublishingRemote}
+                    isSyncingRemote={isSyncingRemote}
+                    onPublishRemote={handlePublishRemote}
+                    onSyncFromRemote={handleSyncFromRemote}
+                    onResetTemplate={handleResetTemplate}
+                    onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
+                    mindData={mindData}
+                  />
+                </div>
+              </div>
+            ) : null}
 
             {/* AI 生成进度覆盖层 */}
             {isGenerating && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/85 dark:bg-slate-900/85 backdrop-blur-sm">
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white dark:bg-slate-900">
                 <div className="flex flex-col items-center gap-5 max-w-xs w-full px-8">
                   {/* 动效图标 */}
                   <div className="relative flex items-center justify-center">
