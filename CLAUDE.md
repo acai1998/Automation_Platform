@@ -819,6 +819,7 @@ systemctl start nginx
 | 日期选择器 | `react-day-picker` | 已集成，直接复用 |
 | 图表 | `recharts` | 折线/柱状/饼图/甜甜圈，**禁止**用 SVG 手写 |
 | 虚拟滚动 | `@tanstack/react-virtual` | 列表超 100 条时必须使用 |
+| 脑图可视化 | `mind-elixir` | AI 用例脑图编辑器，已有封装，**勿重复实现**脑图逻辑 |
 | 服务端状态 | `@tanstack/react-query` | 所有 API 请求走 TanStack Query，禁止裸 fetch + useState |
 | UI 组件 | `shadcn/ui` + `radix-ui` | Button/Dialog/Select 等基础组件直接用，路径 `src/components/ui/` |
 | 通知 Toast | `sonner` | `toast.success / toast.error`，禁止自写 Toast |

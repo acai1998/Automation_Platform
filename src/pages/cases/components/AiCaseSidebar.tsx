@@ -190,7 +190,14 @@ export interface AiCaseSidebarProps {
   isGenerating: boolean; generationProgress: number; generationStageText: string; onGenerate: () => void;
   progress: AiCaseProgress;
   selectedNode: AiCaseNode | null; selectedNodeStatus: AiCaseNodeStatus;
-  canEditSelectedNode: boolean; isUpdatingNodeStatus: boolean; onStatusChange: (status: AiCaseNodeStatus) => void;
+  canEditSelectedNode: boolean;
+  /** 多选模式：是否有选中的 testcase 节点（决定按钮是否 disabled） */
+  canEditAnySelectedNode: boolean;
+  /** 是否处于多选状态（选中了 2 个以上节点） */
+  isMultiSelect: boolean;
+  /** 多选中可操作的 testcase 节点数量 */
+  selectedTestcaseCount: number;
+  isUpdatingNodeStatus: boolean; onStatusChange: (status: AiCaseNodeStatus) => void;
   attachments: AiCaseAttachmentPreview[]; isUploading: boolean;
   onUploadAttachment: (event: ChangeEvent<HTMLInputElement>) => void; onDeleteAttachment: (id: string) => void;
   isRemoteLinked: boolean; remoteWorkspaceId: number | null;
@@ -202,7 +209,9 @@ export interface AiCaseSidebarProps {
 
 export function AiCaseSidebar({
   isGenerating, generationProgress, generationStageText, onGenerate, progress,
-  selectedNode, selectedNodeStatus, canEditSelectedNode, isUpdatingNodeStatus, onStatusChange,
+  selectedNode, selectedNodeStatus, canEditSelectedNode,
+  canEditAnySelectedNode, isMultiSelect, selectedTestcaseCount,
+  isUpdatingNodeStatus, onStatusChange,
   attachments, isUploading, onUploadAttachment, onDeleteAttachment,
   isRemoteLinked, remoteWorkspaceId, isPublishingRemote, isSyncingRemote,
   onPublishRemote, onSyncFromRemote, onResetTemplate, onLoadHistoryWorkspace, mindData,
@@ -244,7 +253,19 @@ export function AiCaseSidebar({
       <SidebarSection title="节点操作" icon={<Circle className="h-3.5 w-3.5" />} defaultOpen={hasSelectedNode} highlight={hasSelectedNode}>
         <div className="space-y-3">
           <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2.5">
-            <div className="text-[10px] uppercase tracking-wide text-slate-400 font-medium mb-1">当前选中节点</div>
+            {/* 多选提示 banner */}
+            {isMultiSelect ? (
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold">多选模式</span>
+                <span className="text-[10px] text-slate-500">
+                  {selectedTestcaseCount > 0
+                    ? `${selectedTestcaseCount} 个测试点可批量操作`
+                    : '当前选中节点无测试点'}
+                </span>
+              </div>
+            ) : (
+              <div className="text-[10px] uppercase tracking-wide text-slate-400 font-medium mb-1">当前选中节点</div>
+            )}
             {hasSelectedNode ? (
               <>
                 <p className="text-sm font-medium text-slate-800 dark:text-white break-words leading-snug">{selectedNodeLabel}</p>
@@ -254,10 +275,10 @@ export function AiCaseSidebar({
                     if (!a) return null;
                     return <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded border ${a.activeClass}`}>{a.icon}{a.label}</span>;
                   })()}
-                  {!canEditSelectedNode ? <span className="text-[10px] text-slate-400">（仅测试点可切换状态）</span> : null}
+                  {!canEditSelectedNode && !isMultiSelect ? <span className="text-[10px] text-slate-400">（仅测试点可切换状态）</span> : null}
                 </div>
-                {/* 展示 testcase 的链式子节点（前置条件→测试步骤→预期结果） */}
-                {canEditSelectedNode ? (() => {
+                {/* 展示 testcase 的链式子节点（前置条件→测试步骤→预期结果），仅单选时显示 */}
+                {canEditSelectedNode && !isMultiSelect ? (() => {
                   // 新链式格式：testcase → 前置条件 → 测试步骤 → 预期结果（每级1个子节点）
                   const preconditionNode = (selectedNode?.children as AiCaseNode[] | undefined)?.[0];
                   const stepsNode = (preconditionNode?.children as AiCaseNode[] | undefined)?.[0];
@@ -320,11 +341,14 @@ export function AiCaseSidebar({
           </div>
           <div className="grid grid-cols-3 gap-1.5">
             {STATUS_ACTIONS.map((item) => {
-              const isActive = hasSelectedNode && selectedNodeStatus === item.status;
+              // 单选：主选中节点状态匹配时高亮；多选：无单一高亮状态（显示各节点的实际状态不一）
+              const isActive = !isMultiSelect && hasSelectedNode && selectedNodeStatus === item.status;
+              // 多选时只要有可操作 testcase 就允许，单选时仅 testcase 可操作
+              const isDisabled = !(isMultiSelect ? canEditAnySelectedNode : canEditSelectedNode) || isUpdatingNodeStatus;
               return (
                 <button key={item.status} type="button"
                   onClick={() => void onStatusChange(item.status)}
-                  disabled={!canEditSelectedNode || isUpdatingNodeStatus}
+                  disabled={isDisabled}
                   className={`h-8 rounded-md border text-xs font-medium flex items-center justify-center gap-1 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${isActive ? `${item.activeClass} ring-2 ring-inset ring-indigo-300 dark:ring-indigo-600` : item.idleClass}`}>
                   {isUpdatingNodeStatus && isActive ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : item.icon}
                   {item.label}
@@ -332,6 +356,13 @@ export function AiCaseSidebar({
               );
             })}
           </div>
+          {/* 多选批量操作加载提示 */}
+          {isMultiSelect && isUpdatingNodeStatus && (
+            <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>正在批量更新节点状态...</span>
+            </div>
+          )}
         </div>
       </SidebarSection>
 

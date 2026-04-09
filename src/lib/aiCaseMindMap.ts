@@ -102,10 +102,9 @@ function createDefaultMetadata(kind: AiCaseNodeKind): AiCaseNodeMetadata {
 }
 
 function resolveNodeKindTags(kind: AiCaseNodeKind, showNodeKindTags: boolean): AiCaseNode['tags'] | undefined {
-  // scenario / testcase 节点不添加节点类型标签：
-  // - scenario：语义已通过节点名称和上下文清晰表达
-  // - testcase：是链式结构起始节点，位置和上下文已足够表达语义；类型标签在每行重复出现视觉冗余
-  if (!showNodeKindTags || kind === 'root' || kind === 'scenario' || kind === 'testcase') {
+  // scenario 节点不添加节点类型标签：语义已通过节点名称和上下文清晰表达
+  // testcase / module 节点显示对应类型标签，帮助用户直观识别节点层级
+  if (!showNodeKindTags || kind === 'root' || kind === 'scenario') {
     return undefined;
   }
 

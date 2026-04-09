@@ -216,6 +216,7 @@ function AiCasesInner() {
   const docRef = useRef<AiCaseWorkspaceDocument | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const selectedNodeIdRef = useRef<string | null>(null);
+  const selectedNodeIdsRef = useRef<string[]>([]);
   const mindDataRef = useRef<AiCaseMindData | null>(null);
   const isUploadingRef = useRef(false);
   const showNodeKindTagsRef = useRef(readNodeTagVisibilityPreference());
@@ -241,6 +242,8 @@ function AiCasesInner() {
   const [requirementText, setRequirementText] = useState('');
   const [mindData, setMindData] = useState<AiCaseMindData | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  // 多选节点 ID 列表（MindElixir 支持 Ctrl/Shift 多选）
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
@@ -264,6 +267,10 @@ function AiCasesInner() {
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
   }, [selectedNodeId]);
+
+  useEffect(() => {
+    selectedNodeIdsRef.current = selectedNodeIds;
+  }, [selectedNodeIds]);
 
   useEffect(() => {
     mindDataRef.current = mindData;
@@ -509,7 +516,11 @@ function AiCasesInner() {
             // 移除 URL 参数避免刷新重复触发
             const newUrl = window.location.pathname;
             window.history.replaceState({}, '', newUrl);
-            // 延迟一点执行，确保状态已更新
+            // 立即进入"生成中"状态，避免短暂闪出默认脑图
+            setIsGenerating(true);
+            setGenerationProgress(2);
+            setGenerationStageText('正在连接后端流式通道...');
+            // 延迟一点执行，确保 MindElixir 实例已挂载
             autoGenerateTimerRef.current = window.setTimeout(() => {
               autoGenerateTimerRef.current = null;
               handleGenerateRef.current?.();
@@ -657,36 +668,42 @@ function AiCasesInner() {
       }
     };
 
-    const onSelectNodes = (nodes: Array<{ id: string }>) => {
-      const nextSelected = nodes[0]?.id ?? null;
-      setSelectedNodeId(nextSelected);
+        const onSelectNodes = (nodes: Array<{ id: string }>) => {
+          // 保留完整多选列表，first ID 作为"主选中节点"（用于单选场景，如附件）
+          const allIds = nodes.map((n) => n.id).filter(Boolean);
+          const nextSelected = allIds[0] ?? null;
+          setSelectedNodeId(nextSelected);
+          setSelectedNodeIds(allIds);
+          selectedNodeIdsRef.current = allIds;
 
-      if (!mindRef.current) {
-        return;
-      }
+          if (!mindRef.current) {
+            return;
+          }
 
-      const snapshot = normalizeMindData(mindRef.current.getData() as AiCaseMindData, {
-        showNodeKindTags: showNodeKindTagsRef.current,
-      });
-      setMindData(snapshot);
-      mindDataRef.current = snapshot;
-      schedulePersistRef.current(snapshot, nextSelected);
-    };
+          const snapshot = normalizeMindData(mindRef.current.getData() as AiCaseMindData, {
+            showNodeKindTags: showNodeKindTagsRef.current,
+          });
+          setMindData(snapshot);
+          mindDataRef.current = snapshot;
+          schedulePersistRef.current(snapshot, nextSelected);
+        };
 
-    const onUnselectNodes = () => {
-      setSelectedNodeId(null);
+        const onUnselectNodes = () => {
+          setSelectedNodeId(null);
+          setSelectedNodeIds([]);
+          selectedNodeIdsRef.current = [];
 
-      if (!mindRef.current) {
-        return;
-      }
+          if (!mindRef.current) {
+            return;
+          }
 
-      const snapshot = normalizeMindData(mindRef.current.getData() as AiCaseMindData, {
-        showNodeKindTags: showNodeKindTagsRef.current,
-      });
-      setMindData(snapshot);
-      mindDataRef.current = snapshot;
-      schedulePersistRef.current(snapshot, null);
-    };
+          const snapshot = normalizeMindData(mindRef.current.getData() as AiCaseMindData, {
+            showNodeKindTags: showNodeKindTagsRef.current,
+          });
+          setMindData(snapshot);
+          mindDataRef.current = snapshot;
+          schedulePersistRef.current(snapshot, null);
+        };
 
     instance.bus.addListener('operation', onOperation);
     instance.bus.addListener('selectNodes', onSelectNodes);
@@ -709,7 +726,23 @@ function AiCasesInner() {
   }, [mindData, selectedNodeId]);
 
   const selectedNodeStatus = selectedNode?.metadata?.status ?? 'todo';
+  // 单选时：选中节点是 testcase 才可操作
+  // 多选时：只要有任意一个选中节点是 testcase 就允许操作
   const canEditSelectedNode = selectedNode?.metadata?.kind === 'testcase';
+
+  // 所有选中节点中 kind=testcase 的节点 ID 列表（批量操作实际作用对象）
+  const selectedTestcaseNodeIds = useMemo(() => {
+    if (!mindData || selectedNodeIds.length === 0) return [];
+    return selectedNodeIds.filter((id) => {
+      const node = findNodeById(mindData.nodeData, id);
+      return node?.metadata?.kind === 'testcase';
+    });
+  }, [mindData, selectedNodeIds]);
+
+  // 是否有可批量操作的 testcase 节点（用于按钮 disabled 判断）
+  const canEditAnySelectedNode = selectedTestcaseNodeIds.length > 0;
+  // 多选模式：选中了多个节点
+  const isMultiSelect = selectedNodeIds.length > 1;
 
   const progress = useMemo(() => {
     if (!mindData) {
@@ -1652,7 +1685,14 @@ function AiCasesInner() {
   }, [workspaceName, setDataAndSync, cleanupStaleAttachments]);
 
   const handleStatusChange = useCallback(async (status: AiCaseNodeStatus) => {
-    if (!mindData || !selectedNodeId || !canEditSelectedNode) {
+    if (!mindData || !canEditAnySelectedNode) {
+      toast.error('请先选中一个可执行测试节点');
+      return;
+    }
+
+    // 实际要操作的节点 ID 列表：所有选中节点中 kind=testcase 的
+    const targetIds = selectedTestcaseNodeIds;
+    if (targetIds.length === 0) {
       toast.error('请先选中一个可执行测试节点');
       return;
     }
@@ -1661,61 +1701,67 @@ function AiCasesInner() {
     if (remoteId) {
       setIsUpdatingNodeStatus(true);
       try {
-        // 先尝试直接更新节点状态
-        let response;
-        try {
-          response = await aiCasesApi.updateNodeStatus(remoteId, {
-            nodeId: selectedNodeId,
-            status,
-            meta: {
-              source: 'frontend_click',
-              localUpdatedAt: Date.now(),
-            },
-          });
-        } catch (firstError) {
-          // 如果是"未找到指定 nodeId"，说明本地 mapData 与远端不同步
-          // 自动先将最新 mapData 同步到远端，然后重试
-          const msg = firstError instanceof Error ? firstError.message : '';
-          if (msg.includes('未找到指定 nodeId')) {
-            console.warn('[AICases] nodeId not found on remote, auto-syncing mapData then retrying...');
-            const workspaceNameValue = workspaceName.trim() || 'AI Testcase Workspace';
-            // 注意：此处不传 expectedVersion，强制以本地数据覆盖远端
-            // 因为本地节点比远端新（远端版本可能落后），版本校验会阻塞标记流程
-            const syncResp = await aiCasesApi.updateWorkspace(remoteId, {
-              name: workspaceNameValue,
-              requirementText: requirementText.trim(),
-              mapData: mindData,
-              syncSource: 'mixed',
-              status: remoteSyncMetaRef.current.remoteStatus ?? 'draft',
-            });
-            if (syncResp.data) {
-              // 更新本地 remoteSyncMeta 版本
-              updateRemoteSyncMeta({
-                remoteVersion: syncResp.data.version,
-                remoteStatus: syncResp.data.status,
-                lastRemoteSyncedAt: Date.now(),
-              });
-            }
-            // 重试状态更新
-            response = await aiCasesApi.updateNodeStatus(remoteId, {
-              nodeId: selectedNodeId,
+        // 远端模式：串行更新每个 testcase 节点（API 每次只处理一个节点）
+        let latestWorkspace = null;
+        // 首次尝试前先做一次同步检查（只在第一个节点时处理 nodeId not found 问题）
+        let needsSync = false;
+
+        for (const nodeId of targetIds) {
+          try {
+            const resp = await aiCasesApi.updateNodeStatus(remoteId, {
+              nodeId,
               status,
-              meta: {
-                source: 'frontend_click',
-                localUpdatedAt: Date.now(),
-              },
+              meta: { source: 'frontend_click', localUpdatedAt: Date.now() },
             });
-          } else {
-            throw firstError;
+            if (resp.data?.workspace) {
+              latestWorkspace = resp.data.workspace;
+            }
+          } catch (firstError) {
+            const msg = firstError instanceof Error ? firstError.message : '';
+            if (msg.includes('未找到指定 nodeId') && !needsSync) {
+              // 首次遇到"未找到 nodeId"：同步 mapData 到远端后，重试当前节点
+              needsSync = true;
+              console.warn('[AICases] nodeId not found on remote, auto-syncing mapData then retrying...');
+              const workspaceNameValue = workspaceName.trim() || 'AI Testcase Workspace';
+              const syncResp = await aiCasesApi.updateWorkspace(remoteId, {
+                name: workspaceNameValue,
+                requirementText: requirementText.trim(),
+                mapData: mindData,
+                syncSource: 'mixed',
+                status: remoteSyncMetaRef.current.remoteStatus ?? 'draft',
+              });
+              if (syncResp.data) {
+                updateRemoteSyncMeta({
+                  remoteVersion: syncResp.data.version,
+                  remoteStatus: syncResp.data.status,
+                  lastRemoteSyncedAt: Date.now(),
+                });
+              }
+              // 同步后重试
+              const retryResp = await aiCasesApi.updateNodeStatus(remoteId, {
+                nodeId,
+                status,
+                meta: { source: 'frontend_click', localUpdatedAt: Date.now() },
+              });
+              if (retryResp.data?.workspace) {
+                latestWorkspace = retryResp.data.workspace;
+              }
+            } else {
+              throw firstError;
+            }
           }
         }
 
-        if (!response.data?.workspace) {
+        if (!latestWorkspace) {
           throw new Error('远端未返回工作台数据');
         }
 
-        applyWorkspaceDetail(response.data.workspace, { keepSelection: true });
-        toast.success('节点状态已同步到远端');
+        applyWorkspaceDetail(latestWorkspace, { keepSelection: true });
+        toast.success(
+          targetIds.length > 1
+            ? `已同步 ${targetIds.length} 个节点状态到远端`
+            : '节点状态已同步到远端'
+        );
       } catch (error) {
         console.error('[AICases] update remote node status failed', error);
         toast.error(error instanceof Error ? error.message : '节点状态同步失败');
@@ -1725,12 +1771,20 @@ function AiCasesInner() {
       return;
     }
 
-    const next = setNodeStatus(mindData, selectedNodeId, status);
+    // 本地模式：一次性批量更新所有 testcase 节点状态
+    let next = mindData;
+    for (const nodeId of targetIds) {
+      next = setNodeStatus(next, nodeId, status);
+    }
     setDataAndSync(next, {
+      // 保留当前主选中节点
       selectedId: selectedNodeId,
       refreshMind: true,
     });
-  }, [mindData, selectedNodeId, canEditSelectedNode, workspaceName, requirementText, applyWorkspaceDetail, updateRemoteSyncMeta, setDataAndSync]);
+    if (targetIds.length > 1) {
+      toast.success(`已批量更新 ${targetIds.length} 个节点状态`);
+    }
+  }, [mindData, canEditAnySelectedNode, selectedTestcaseNodeIds, selectedNodeId, workspaceName, requirementText, applyWorkspaceDetail, updateRemoteSyncMeta, setDataAndSync]);
 
   const handleUploadAttachment = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -1836,6 +1890,10 @@ function AiCasesInner() {
             selectedNode,
             selectedNodeStatus,
             canEditSelectedNode,
+            // 多选相关 props
+            isMultiSelect,
+            selectedTestcaseCount: selectedTestcaseNodeIds.length,
+            canEditAnySelectedNode,
             isUpdatingNodeStatus,
             onStatusChange: handleStatusChange,
             attachments,
@@ -1905,8 +1963,47 @@ function AiCasesInner() {
             onToggleNodeTags={handleToggleNodeKindTags}
           />
 
-          <div className="flex-1 min-h-0 [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none">
+          <div className="relative flex-1 min-h-0 [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none">
             <div ref={mapContainerRef} className="h-full w-full" />
+
+            {/* AI 生成进度覆盖层 */}
+            {isGenerating && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/85 dark:bg-slate-900/85 backdrop-blur-sm">
+                <div className="flex flex-col items-center gap-5 max-w-xs w-full px-8">
+                  {/* 动效图标 */}
+                  <div className="relative flex items-center justify-center">
+                    <div className="absolute w-16 h-16 rounded-full bg-indigo-500/15 animate-ping" />
+                    <div className="relative w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                      <Bot className="h-6 w-6 text-white" />
+                    </div>
+                  </div>
+
+                  {/* 文字区域 */}
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-semibold text-slate-800 dark:text-white">
+                      AI 正在生成测试用例...
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 min-h-[1.25rem]">
+                      {generationStageText || '正在分析需求内容'}
+                    </p>
+                  </div>
+
+                  {/* 进度条 */}
+                  <div className="w-full space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                      <span>生成进度</span>
+                      <span className="font-medium tabular-nums">{generationProgress}%</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500 ease-out"
+                        style={{ width: `${generationProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </div>
