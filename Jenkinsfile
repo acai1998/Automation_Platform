@@ -14,7 +14,7 @@ pipeline {
     }
 
     environment {
-        PLATFORM_API_URL  = 'https://autotest.wiac.xyz'
+        PLATFORM_API_URL  = 'https://autotest.wiac.xyz'  // 必须用 HTTPS，避免 nginx 301 导致 curl POST 回调丢失
         TEST_RUNNER_IMAGE = 'docker.cnb.cool/imacaiy/seleniumbase-ci:latest'
         EXEC_NODE         = 'test-runner'  // 拥有该标签的节点均可承接构建
     }
@@ -109,6 +109,11 @@ pipeline {
                         "REPO_PRELOADED=${repoPreloaded}",
                     ].join('\n') + '\n'
 
+                    // 清理容器内 /workspace/repo 的宿主机映射路径（即 reportDir/repo）
+                    // 避免 entrypoint.sh 在容器内 git clone /workspace/repo 时报 "already exists"
+                    // 原因：cleanWs 保留 test-repo（宿主机增量缓存），但 /workspace 挂载的 reports/ 下的 repo 子目录不会被清理
+                    sh "rm -rf '${reportDir}/repo' || true"
+
                     echo "[${new Date().format('HH:mm:ss')}] docker-run start"
                     def testExitCode = 1
                     def repoMount = repoUrl ? "-v ${repoDir}:/repo" : ''
@@ -139,8 +144,9 @@ pipeline {
                         // 防止占位记录永久卡在 error 状态、汇总统计错乱。
                         if (params.RUN_ID && callbackUrl) {
                             try {
+                                // -L：跟随 301/302 重定向（HTTP → HTTPS），避免回调因 nginx 重定向而丢失
                                 sh """
-                                    curl -s --max-time 10 -X POST '${callbackUrl}' \\
+                                    curl -s -L --max-time 10 -X POST '${callbackUrl}' \\
                                         -H 'Content-Type: application/json' \\
                                         -d '{"runId":${params.RUN_ID},"status":"failed","passedCases":0,"failedCases":0,"skippedCases":0,"durationMs":0,"results":[]}' \\
                                         || echo "⚠️ 失败回调发送失败（忽略，不影响 Pipeline）"

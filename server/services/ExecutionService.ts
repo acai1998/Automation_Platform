@@ -114,6 +114,9 @@ export class ExecutionService {
     BATCH_NOT_FOUND: (id: number) => `Batch not found: ${id}`,
   } as const;
 
+  // 终态状态集合（幂等判断复用）
+  private static readonly FINAL_STATUSES = ['success', 'failed', 'cancelled', 'aborted'] as const;
+
   constructor() {
     this.executionRepository = new ExecutionRepository(AppDataSource);
     // 初始化缓存清理任务（每小时清理一次1小时前的条目）
@@ -125,25 +128,35 @@ export class ExecutionService {
    * 使用 LRU 策略：保持最新的运行记录，删除最旧的
    */
   private initializeCacheCleanup() {
-    // 每10分钟检查一次，清理超过限制的缓存
+    const MAX_CACHE_SIZE = 10000;
+    const KEEP_SIZE = 5000;
+    const CHECK_INTERVAL = 10 * 60 * 1000;
+
     this.cacheCleanupTimer = setInterval(() => {
-      if (this.runIdToExecutionIdCache.size > 10000) {
-        logger.warn('RunId cache size exceeds 10000, clearing oldest entries using LRU', {
-          cacheSize: this.runIdToExecutionIdCache.size,
-        }, LOG_CONTEXTS.EXECUTION);
-        
-        // LRU 策略：保持最新的 5000 条，删除最旧的 5000 条
-        // Map 保证插入顺序，所以最早插入的条目在前面
-        const allKeys = Array.from(this.runIdToExecutionIdCache.keys());
-        const keysToDelete = allKeys.slice(0, allKeys.length - 5000);
-        keysToDelete.forEach(key => this.runIdToExecutionIdCache.delete(key));
-        
-        logger.debug('Cache cleanup completed', {
-          deleted: keysToDelete.length,
-          remaining: this.runIdToExecutionIdCache.size,
-        }, LOG_CONTEXTS.EXECUTION);
-      }
-    }, 10 * 60 * 1000);
+      if (this.runIdToExecutionIdCache.size <= MAX_CACHE_SIZE) return;
+
+      logger.warn('RunId cache size exceeds 10000, clearing oldest entries using LRU', {
+        cacheSize: this.runIdToExecutionIdCache.size,
+      }, LOG_CONTEXTS.EXECUTION);
+
+      const allKeys = Array.from(this.runIdToExecutionIdCache.keys());
+      allKeys.slice(0, allKeys.length - KEEP_SIZE).forEach(key => this.runIdToExecutionIdCache.delete(key));
+
+      logger.debug('Cache cleanup completed', {
+        deleted: allKeys.length - KEEP_SIZE,
+        remaining: this.runIdToExecutionIdCache.size,
+      }, LOG_CONTEXTS.EXECUTION);
+    }, CHECK_INTERVAL);
+  }
+
+  /**
+   * 解析时间戳为 Date 对象
+   * 优先使用 Jenkins 回传的时间，无效时返回 undefined
+   */
+  private parseTimestamp(value: string | number | undefined): Date | undefined {
+    if (!value) return undefined;
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? undefined : d;
   }
 
   /**
@@ -198,28 +211,16 @@ export class ExecutionService {
 
       // 2. 使用 TypeORM 事务处理回调
       await this.executionRepository.runInTransaction(async (queryRunner) => {
-        // 2.1 统计结果
-        let passedCases = 0;
-        let failedCases = 0;
-        let skippedCases = 0;
-
-        for (const result of input.results) {
-          if (result.status === TEST_RESULT_STATUS.PASSED) passedCases++;
-          else if (result.status === TEST_RESULT_STATUS.FAILED) failedCases++;
-          else skippedCases++;
-        }
+        // 2.1 统计结果（先做初步统计，后续会根据数据库实际值覆盖）
+        let passedCases = input.results.filter(r => r.status === TEST_RESULT_STATUS.PASSED).length;
+        let failedCases = input.results.filter(r => r.status === TEST_RESULT_STATUS.FAILED).length;
+        let skippedCases = input.results.length - passedCases - failedCases;
 
         // 2.2 更新或插入用例结果记录（先尝试更新预创建记录，再新增，避免重复）
         if (input.results.length > 0) {
           for (const result of input.results) {
-            // 优先使用 Jenkins 回传的时间，降级为当前时间
-            const resolveTime = (v: string | number | undefined): Date | undefined => {
-              if (!v) return undefined;
-              const d = typeof v === 'number' ? new Date(v) : new Date(v);
-              return isNaN(d.getTime()) ? undefined : d;
-            };
-            const startTime = resolveTime(result.startTime) ?? undefined;
-            const endTime   = resolveTime(result.endTime)   ?? new Date();
+            const startTime = this.parseTimestamp(result.startTime);
+            const endTime   = this.parseTimestamp(result.endTime) ?? new Date();
 
             const updated = await this.executionRepository.updateTestResult(input.executionId, result.caseId, {
               status: result.status,
@@ -533,8 +534,7 @@ export class ExecutionService {
       logger.warn(`markExecutionAborted: execution not found (runId=${runId})`, {}, LOG_CONTEXTS.EXECUTION);
       return;
     }
-    const finalStatuses = ['success', 'failed', 'aborted', 'cancelled'];
-    if (finalStatuses.includes(execution.status)) {
+    if (ExecutionService.FINAL_STATUSES.includes(execution.status as any)) {
       logger.debug(`markExecutionAborted: already in final status (runId=${runId}, status=${execution.status}), skipping`, {}, LOG_CONTEXTS.EXECUTION);
       return;
     }
@@ -605,11 +605,10 @@ export class ExecutionService {
       // 2. 幂等性检查：仅跳过“无结果载荷”的空重复回调
       // 场景：Jenkins 轮询/手动同步可能先把 TestRun 标记为终态，随后回调才携带详细 results 到达。
       // 该场景必须继续执行回写，否则会残留预创建的 error 占位记录。
-      const finalStatuses = ['success', 'failed', 'cancelled', 'aborted'];
       const hasDetailedResults = Array.isArray(results.results) && results.results.length > 0;
       const hasSummaryCounts = (results.passedCases + results.failedCases + results.skippedCases) > 0;
 
-      if (finalStatuses.includes(execution.status)) {
+      if (ExecutionService.FINAL_STATUSES.includes(execution.status as any)) {
         if (!hasDetailedResults && !hasSummaryCounts) {
           logger.warn('Execution already completed, skipping empty duplicate callback', {
             runId,
@@ -678,10 +677,9 @@ export class ExecutionService {
 
       // 5. 触发每日汇总数据刷新（异步后台任务，不影响主流程）
       // 使用 setImmediate 避免阻塞当前事件循环
-      setImmediate(async () => {
+        setImmediate(async () => {
         try {
-          const now = new Date();
-          const executionDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const executionDate = new Date().toISOString().slice(0, 10);
           await dashboardService.refreshDailySummary(executionDate);
           logger.debug('Daily summary refreshed after execution completion', {
             runId,
@@ -1168,58 +1166,24 @@ export class ExecutionService {
       let updatedCount = 0;
 
       // 使用并发处理，限制并发数为 5 以避免过载
-      const concurrencyLimit = 5;
-      
-      for (let i = 0; i < runningExecutions.length; i += concurrencyLimit) {
-        const batch = runningExecutions.slice(i, i + concurrencyLimit);
-        
-        // 并发处理一个批次
-        const results = await Promise.allSettled(
-          batch.map(async (execution) => {
-            try {
-              // 先尝试从 Jenkins 同步状态
-              const syncResult = await this.syncExecutionStatusFromJenkins(execution.id);
+      const CONCURRENCY = 5;
 
-              if (syncResult.success && syncResult.updated) {
-                logger.info(`Execution updated from Jenkins during timeout check (runId=${execution.id})`, {
-                  runId: execution.id,
-                  message: syncResult.message,
-                  updateSource: 'jenkins_poll',
-                }, LOG_CONTEXTS.EXECUTION);
-                return { type: 'updated' as const, runId: execution.id };
-              }
+      for (let i = 0; i < runningExecutions.length; i += CONCURRENCY) {
+        const batch = runningExecutions.slice(i, i + CONCURRENCY);
 
-              // 如果同步失败或没有更新，且确实超时，标记为超时
-              if (!syncResult.success) {
-                await this.markExecutionAsTimedOut(execution.id);
-                logger.warn('Execution marked as timed out during timeout check', {
-                  runId: execution.id,
-                  message: syncResult.message,
-                  updateSource: 'timeout',
-                }, LOG_CONTEXTS.EXECUTION);
-                return { type: 'timedOut' as const, runId: execution.id };
-              }
-
-              return { type: 'none' as const, runId: execution.id };
-            } catch (error) {
-              logger.error('Failed to handle timeout for execution', {
-                runId: execution.id,
-                error: error instanceof Error ? error.message : String(error)
-              }, LOG_CONTEXTS.EXECUTION);
-              return { type: 'error' as const, runId: execution.id, error };
-            }
-          })
+        const outcomes = await Promise.allSettled(
+          batch.map((execution) => this.handleSingleTimeout(execution.id))
         );
 
-        // 统计本批次的结果
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            if (result.value.type === 'updated') updatedCount++;
-            else if (result.value.type === 'timedOut') timedOutCount++;
-          } else {
+        for (const outcome of outcomes) {
+          if (outcome.status === 'rejected') {
             logger.error('Promise rejected during timeout check', {
-              reason: result.reason instanceof Error ? result.reason.message : String(result.reason)
+              reason: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
             }, LOG_CONTEXTS.EXECUTION);
+          } else if (outcome.value === 'updated') {
+            updatedCount++;
+          } else if (outcome.value === 'timedOut') {
+            timedOutCount++;
           }
         }
       }
@@ -1250,6 +1214,43 @@ export class ExecutionService {
       runId,
       updateSource: 'timeout',
     }, LOG_CONTEXTS.EXECUTION);
+  }
+
+  /**
+   * 处理单个超时执行：先尝试从 Jenkins 同步状态，失败则标记超时
+   * @returns 'updated' | 'timedOut' | 'none'
+   */
+  private async handleSingleTimeout(runId: number): Promise<'updated' | 'timedOut' | 'none'> {
+    try {
+      const syncResult = await this.syncExecutionStatusFromJenkins(runId);
+
+      if (syncResult.success && syncResult.updated) {
+        logger.info(`Execution updated from Jenkins during timeout check (runId=${runId})`, {
+          runId,
+          message: syncResult.message,
+          updateSource: 'jenkins_poll',
+        }, LOG_CONTEXTS.EXECUTION);
+        return 'updated';
+      }
+
+      if (!syncResult.success) {
+        await this.markExecutionAsTimedOut(runId);
+        logger.warn('Execution marked as timed out during timeout check', {
+          runId,
+          message: syncResult.message,
+          updateSource: 'timeout',
+        }, LOG_CONTEXTS.EXECUTION);
+        return 'timedOut';
+      }
+
+      return 'none';
+    } catch (error) {
+      logger.error('Failed to handle timeout for execution', {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      }, LOG_CONTEXTS.EXECUTION);
+      return 'none';
+    }
   }
 
   /**

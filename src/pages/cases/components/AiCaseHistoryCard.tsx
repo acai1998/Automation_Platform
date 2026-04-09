@@ -187,7 +187,9 @@ export function AiCaseHistoryCard({
   generationProgress?: number;
 }) {
   const progress = useMemo(() => computeProgress(doc.mapData), [doc.mapData]);
-  const modules = useMemo(() => countModules(doc), [doc]);
+  // 收窄依赖到 doc.mapData：仅当 mapData 引用变化时才重新遍历节点树计算模块数，
+  // 避免因 doc 对象（如 name/updatedAt）更新导致不必要的重算。
+  const modules = useMemo(() => countModules(doc), [doc.mapData]);
   const [expanded, setExpanded] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);

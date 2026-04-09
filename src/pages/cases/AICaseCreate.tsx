@@ -63,7 +63,8 @@ function SummaryStats({ docs }: { docs: AiCaseWorkspaceDocument[] }) {
     };
   }, [docs]);
 
-  const cards = [
+  // 将 cards 数组纳入 useMemo，避免每次组件重渲染都创建新的数组对象
+  const cards = useMemo(() => [
     {
       label: '生成记录', value: docs.length, unit: '条',
       c: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-50 dark:bg-violet-900/20',
@@ -84,7 +85,7 @@ function SummaryStats({ docs }: { docs: AiCaseWorkspaceDocument[] }) {
       c: 'text-sky-600 dark:text-sky-400', bg: 'bg-sky-50 dark:bg-sky-900/20',
       border: 'border-sky-100 dark:border-sky-800/30',
     },
-  ];
+  ], [docs.length, s.totalCases, s.passRate, s.syncedDocs]);
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -148,6 +149,8 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
     } catch (error) {
       console.error('[AICaseCreate] failed to navigate', error);
       toast.error('跳转失败，请重试');
+    } finally {
+      // 无论成功还是失败都重置提交状态，避免 Sheet 在不卸载场景下按钮永久禁用
       setIsSubmitting(false);
     }
   };
@@ -363,17 +366,18 @@ export default function AICaseCreate() {
 
           {/* 右侧：操作区 */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* 刷新：图标按钮，鼠标悬停显示 tooltip */}
-            <button
-              type="button"
+            {/* 刷新：使用 Button 组件保证 focus-visible / disabled 样式与全局一致 */}
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={load}
               disabled={loading}
               title="刷新列表"
               aria-label="刷新列表"
-              className="h-8 w-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:text-slate-300 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              className="h-8 w-8 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </button>
+            </Button>
 
             {/* 主 CTA：新增需求 */}
             <Button

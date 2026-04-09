@@ -265,17 +265,15 @@ export class ExecutionMonitorService {
    * Schedule the next monitoring check
    */
   private scheduleNextCheck(): void {
-    if (!this.isRunning) {
-      return;
-    }
+    if (!this.isRunning) return;
 
-    this.timer = setTimeout(() => {
-      this.checkCycle().then(() => {
-        this.scheduleNextCheck();
-      }).catch((error) => {
+    this.timer = setTimeout(async () => {
+      try {
+        await this.checkCycle();
+      } catch (error) {
         logger.errorLog(error, 'Monitor cycle failed unexpectedly', { context: LOG_CONTEXTS.MONITOR });
-        this.scheduleNextCheck(); // Continue monitoring even after error
-      });
+      }
+      this.scheduleNextCheck();
     }, this.config.checkInterval);
   }
 
@@ -349,8 +347,7 @@ export class ExecutionMonitorService {
         compilationFailures: 0,
       };
 
-      // Track updated executions for batch logging
-      const updatedExecutions: number[] = [];
+      const updatedRunIds: number[] = [];
 
       for (const execution of stuckExecutions) {
         try {
@@ -358,9 +355,7 @@ export class ExecutionMonitorService {
 
           if (syncResult.updated) {
             results.updated++;
-            updatedExecutions.push(execution.id);
-
-            // Check if it's a quick failure (compilation/config error)
+            updatedRunIds.push(execution.id);
             if (syncResult.jenkinsStatus && this.isQuickFail(execution, syncResult.jenkinsStatus)) {
               results.compilationFailures++;
             }
@@ -378,12 +373,10 @@ export class ExecutionMonitorService {
         }
       }
 
-      // Batch log updated executions
-      if (updatedExecutions.length > 0) {
+      if (updatedRunIds.length > 0) {
         logger.info('Batch updated executions', {
-          count: updatedExecutions.length,
-          runIds: updatedExecutions.slice(0, 10), // Log first 10 IDs
-          totalCount: updatedExecutions.length,
+          count: updatedRunIds.length,
+          runIds: updatedRunIds.slice(0, 10),
         }, LOG_CONTEXTS.MONITOR);
       }
 
@@ -417,13 +410,9 @@ export class ExecutionMonitorService {
    * Get stuck executions from database
    */
   private async getStuckExecutions(): Promise<StuckExecution[]> {
+    const thresholdSeconds = Math.floor(this.config.compilationCheckWindow / 1000);
     try {
-      const thresholdSeconds = Math.floor(this.config.compilationCheckWindow / 1000);
-
-      const executions = await this.executionRepository.getPotentiallyStuckExecutions(thresholdSeconds, this.config.batchSize);
-
-      return executions;
-
+      return await this.executionRepository.getPotentiallyStuckExecutions(thresholdSeconds, this.config.batchSize);
     } catch (error) {
       logger.errorLog(error, 'Failed to query stuck executions', {});
       return [];
