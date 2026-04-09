@@ -142,7 +142,12 @@ pipeline {
                     def envFile = "${reportDir}/.docker_env"
                     // writeFile 写入 Groovy 字符串，不经过 shell，值中的特殊字符不会被展开
                     // REPO_PRELOADED=true 时，entrypoint.sh 跳过 git clone，直接用 /repo 目录
-                    def repoPreloaded = (repoUrl && new File(repoDir + "/.git").exists()) ? 'true' : 'false'
+                    // 用 sh 检测目录是否存在，避免 new File() 被 Jenkins 沙箱拦截
+                    def repoPreloaded = 'false'
+                    if (repoUrl) {
+                        def gitDirExists = sh(script: "test -d '${repoDir}/.git' && echo 'true' || echo 'false'", returnStdout: true).trim()
+                        repoPreloaded = gitDirExists
+                    }
                     writeFile file: envFile, text: [
                         "RUN_ID=${params.RUN_ID}",
                         "PLATFORM_URL=${env.PLATFORM_API_URL}",
