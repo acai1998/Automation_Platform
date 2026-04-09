@@ -112,7 +112,8 @@ pipeline {
                     // 清理容器内 /workspace/repo 的宿主机映射路径（即 reportDir/repo）
                     // 避免 entrypoint.sh 在容器内 git clone /workspace/repo 时报 "already exists"
                     // 原因：cleanWs 保留 test-repo（宿主机增量缓存），但 /workspace 挂载的 reports/ 下的 repo 子目录不会被清理
-                    sh "rm -rf '${reportDir}/repo' || true"
+                    // 注意：必须使用双引号 sh""" """ 以展开 Groovy 变量；单引号 sh'' 不会展开 ${reportDir}
+                    sh """rm -rf "${reportDir}/repo" || true"""
 
                     echo "[${new Date().format('HH:mm:ss')}] docker-run start"
                     def testExitCode = 1
