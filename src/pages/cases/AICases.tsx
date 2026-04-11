@@ -7,7 +7,6 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import { useAiGeneration } from '@/contexts/AiGenerationContext';
 import { AiCaseSidebar } from './components/AiCaseSidebar';
 import { AiCaseCanvasToolbar } from './components/AiCaseCanvasToolbar';
-import { AiCaseBatchActionToolbar } from './components/AiCaseBatchActionToolbar';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -1978,20 +1977,6 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
     }
   }, [mindData, selectedNodeId, setDataAndSync]);
 
-  /** 关闭画布浮层工具栏：清除 MindElixir 选中状态并同步 React 状态 */
-  const handleDismissBatchToolbar = useCallback(() => {
-    if (mindRef.current) {
-      try {
-        mindRef.current.clearSelection();
-      } catch {
-        // clearSelection 不存在时的保险处理
-      }
-    }
-    setSelectedNodeId(null);
-    setSelectedNodeIds([]);
-    selectedNodeIdsRef.current = [];
-  }, []);
-
   // ─── 辅助变量 ──────────────────────────────────────────────────────────────
 
   if (isBootstrapping || !mindData) {
@@ -2131,17 +2116,8 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
           >
             <div ref={mapContainerRef} className="h-full w-full" />
 
-            {/* 画布浮层批量操作工具栏 */}
-            <AiCaseBatchActionToolbar
-              visible={selectedNodeIds.length > 0}
-              targetCount={selectedTestcaseNodeIds.length}
-              isUpdating={isUpdatingNodeStatus}
-              onStatusChange={handleStatusChange}
-              onDismiss={handleDismissBatchToolbar}
-            />
-
-            {/* 桌端浮动面板（全屏时隐藏，在 XMind 画布内可拖拽） */}
-            {!isCanvasFullscreen && panelOpen ? (
+            {/* 桌端浮动面板（全屏时也可显示，在 XMind 画布内可拖拽） */}
+            {panelOpen ? (
               <div
                 data-float-panel
                 className="hidden lg:flex absolute z-40 flex-col rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden select-none"
