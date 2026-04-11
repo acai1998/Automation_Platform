@@ -71,6 +71,14 @@ interface CleanupStaleResponse {
   stalePendingMinutes: number;
 }
 
+export interface JenkinsHealthStatus {
+  connected: boolean;
+  message: string;
+  checkedAt: string;
+  version?: string;
+  statusCode?: number;
+}
+
 export interface TestRunFilters {
   triggerType?: string[];
   status?: string[];
@@ -140,6 +148,32 @@ export function useCleanupStaleExecutions() {
       queryClient.invalidateQueries({ queryKey: ['test-runs'] });
       queryClient.invalidateQueries({ queryKey: ['stale-execution-summary'] });
     },
+  });
+}
+
+export function useJenkinsHealthStatus() {
+  return useQuery<JenkinsHealthStatus>({
+    queryKey: ['jenkins-health'],
+    queryFn: async () => {
+      try {
+        const result = await request<{ connected?: boolean; version?: string; status?: number }>('/jenkins/health');
+        return {
+          connected: Boolean(result.data?.connected),
+          message: result.message || 'Jenkins is healthy',
+          checkedAt: new Date().toISOString(),
+          version: result.data?.version,
+          statusCode: result.data?.status,
+        };
+      } catch (error) {
+        return {
+          connected: false,
+          message: error instanceof Error ? error.message : 'Jenkins health check failed',
+          checkedAt: new Date().toISOString(),
+        };
+      }
+    },
+    refetchInterval: 30 * 1000,
+    staleTime: 10 * 1000,
   });
 }
 

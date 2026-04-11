@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { executionService } from '../services/ExecutionService';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
-import { authenticate, requireAdmin } from '../middleware/auth';
+import { authenticate, requireTester } from '../middleware/auth';
 
 const router = Router();
 
@@ -200,7 +200,7 @@ router.get('/stale-summary', authenticate, async (req, res) => {
  * POST /api/executions/cleanup-stale
  * 一次性清理历史卡住执行（pending/running -> aborted）
  */
-router.post('/cleanup-stale', authenticate, requireAdmin, async (req, res) => {
+router.post('/cleanup-stale', authenticate, requireTester, async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const dryRun = typeof body.dryRun === 'boolean' ? body.dryRun : false;

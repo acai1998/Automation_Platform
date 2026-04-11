@@ -22,9 +22,10 @@ import { Badge } from '@/components/ui/badge';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
-import { useCleanupStaleExecutions, useStaleExecutionSummary, useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
+import { useCleanupStaleExecutions, useJenkinsHealthStatus, useStaleExecutionSummary, useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 /**
  * 将毫秒时长格式化为可读字符串（与仪表盘口径一致）
@@ -68,8 +69,11 @@ export default function Reports() {
     { value: 'aborted', label: '已中止' },
   ];
 
+  const { user } = useAuth();
+
   // 获取运行记录
   const { data, isLoading, error, refetch } = useTestRuns(page, pageSize, filters);
+  const { data: jenkinsHealth } = useJenkinsHealthStatus();
 
   // 历史等待中治理（默认阈值与后端 monitor 一致）
   const stalePendingMinutes = 10;
@@ -109,10 +113,16 @@ export default function Reports() {
   // 是否有活跃筛选
   const hasActiveFilters = !!((filters.triggerType?.length ?? 0) || (filters.status?.length ?? 0) || filters.startDate || filters.endDate);
   const showStaleHint = (staleSummary?.totalStaleCount ?? 0) > 0;
+  const canCleanupStale = ['admin', 'tester', 'developer'].includes(user?.role ?? '');
 
   const handleCleanupStale = async () => {
     const total = staleSummary?.totalStaleCount ?? 0;
     if (total <= 0) return;
+
+    if (!canCleanupStale) {
+      toast.error('没有权限执行此操作', { description: '请联系管理员或测试负责人处理历史记录清理' });
+      return;
+    }
 
     const confirmed = window.confirm(`确认清理 ${total} 条历史等待中/卡住记录吗？清理后状态会更新为“已中止”。`);
     if (!confirmed) return;
@@ -157,6 +167,22 @@ export default function Reports() {
             </div>
           </div>
 
+        </div>
+      </div>
+
+      {/* Jenkins 健康状态 */}
+      <div className="px-3 sm:px-4 py-2 border-b border-slate-200/80 dark:border-slate-700/60 bg-slate-50/70 dark:bg-slate-900/30 flex items-center justify-between gap-3">
+        <div className="text-xs text-slate-500 dark:text-slate-400">Jenkins 状态</div>
+        <div className="flex items-center gap-2">
+          <Badge
+            variant={!jenkinsHealth ? 'outline' : (jenkinsHealth.connected ? 'success' : 'destructive')}
+            className="text-[10px] px-2 py-0.5"
+          >
+            {!jenkinsHealth ? '检测中' : (jenkinsHealth.connected ? '可用' : '不可用')}
+          </Badge>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400 max-w-[560px] truncate" title={jenkinsHealth?.message || '状态检查中...'}>
+            {jenkinsHealth?.message || '状态检查中...'}
+          </span>
         </div>
       </div>
 
@@ -217,8 +243,9 @@ export default function Reports() {
             size="sm"
             variant="outline"
             className="h-7 ml-auto"
-            disabled={cleanupStaleMutation.isPending}
+            disabled={cleanupStaleMutation.isPending || !canCleanupStale}
             onClick={handleCleanupStale}
+            title={canCleanupStale ? '清理历史卡住记录' : '当前账号无清理权限'}
           >
             {cleanupStaleMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '一键清理'}
           </Button>
