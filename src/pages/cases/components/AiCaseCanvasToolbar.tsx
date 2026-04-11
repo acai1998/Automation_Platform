@@ -7,14 +7,24 @@ import {
   ZoomIn,
   ZoomOut,
   SlidersHorizontal,
+  Palette,
+  Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { AI_CASE_MIND_THEMES, type AiCaseMindThemeId } from '@/lib/aiCaseMindMap';
 
 interface AiCaseCanvasToolbarProps {
   scalePercent: number;
   isFullscreen: boolean;
   showNodeKindTags: boolean;
+  mindThemeId: AiCaseMindThemeId;
   panelOpen?: boolean;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -22,6 +32,7 @@ interface AiCaseCanvasToolbarProps {
   onFit: () => void;
   onToggleFullscreen: () => void;
   onToggleNodeTags: () => void;
+  onChangeMindTheme: (themeId: AiCaseMindThemeId) => void;
   onTogglePanel?: () => void;
 }
 
@@ -64,10 +75,26 @@ function ToolbarButton({
   );
 }
 
+/** 主题色块预览点 */
+function ThemeDot({ colors }: { colors: string[] }) {
+  return (
+    <span className="flex items-center gap-0.5 flex-shrink-0">
+      {colors.slice(0, 4).map((c, i) => (
+        <span
+          key={i}
+          className="inline-block w-2 h-2 rounded-full"
+          style={{ background: c }}
+        />
+      ))}
+    </span>
+  );
+}
+
 export function AiCaseCanvasToolbar({
   scalePercent,
   isFullscreen,
   showNodeKindTags,
+  mindThemeId,
   panelOpen,
   onZoomIn,
   onZoomOut,
@@ -75,6 +102,7 @@ export function AiCaseCanvasToolbar({
   onFit,
   onToggleFullscreen,
   onToggleNodeTags,
+  onChangeMindTheme,
   onTogglePanel,
 }: AiCaseCanvasToolbarProps) {
   return (
@@ -115,6 +143,45 @@ export function AiCaseCanvasToolbar({
             >
               <Tags className="h-3.5 w-3.5" />
             </ToolbarButton>
+
+            {/* 主题切换下拉 */}
+            <Tooltip>
+              <DropdownMenu>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      aria-label="切换脑图主题"
+                      className="h-8 w-8 p-0 transition-colors"
+                    >
+                      <Palette className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  {AI_CASE_MIND_THEMES.map((preset) => (
+                    <DropdownMenuItem
+                      key={preset.id}
+                      onClick={() => onChangeMindTheme(preset.id)}
+                      className="flex items-center justify-between gap-2 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <ThemeDot colors={preset.light.palette} />
+                        <span className="text-xs truncate">{preset.label}</span>
+                      </div>
+                      {mindThemeId === preset.id && (
+                        <Check className="h-3 w-3 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                      )}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <TooltipContent side="bottom">
+                <span className="text-xs">切换脑图主题</span>
+              </TooltipContent>
+            </Tooltip>
           </div>
 
           {/* 面板按钮（桌端显示） */}

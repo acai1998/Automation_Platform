@@ -3,6 +3,7 @@ import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-e
 import 'mind-elixir/style.css';
 import { BrainCircuit, History, Loader2, Menu, X, FileText, Bot, GripHorizontal } from 'lucide-react';
 import { useLocation } from 'wouter';
+import { useTheme } from '@/contexts/ThemeContext';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { useAiGeneration } from '@/contexts/AiGenerationContext';
 import { AiCaseSidebar } from './components/AiCaseSidebar';
@@ -34,6 +35,10 @@ import {
   normalizeMindData,
   removeNodeAttachmentId,
   setNodeStatus,
+  readMindThemePreference,
+  resolveMindTheme,
+  MIND_THEME_STORAGE_KEY,
+  type AiCaseMindThemeId,
 } from '@/lib/aiCaseMindMap';
 import {
   deleteNodeAttachment,
@@ -270,6 +275,8 @@ function AiCasesInner() {
   const [location, setLocation] = useLocation();
   // 全局 AI 生成状态：用于切换页面后仍能显示进度角标、弹跨页通知
   const { notifyStart, notifyProgress, notifyDone } = useAiGeneration();
+  // 获取全局 dark/light 模式，用于联动脑图主题
+  const { resolvedTheme } = useTheme();
 
   // 从 URL 参数读取要打开的文档 ID；未指定时回退到固定的默认工作区
   // 使用 state 而非 useMemo，确保 URL 变化时能响应式更新
@@ -296,6 +303,7 @@ const canvasDivRef = useRef<HTMLDivElement | null>(null);
   const mindDataRef = useRef<AiCaseMindData | null>(null);
   const isUploadingRef = useRef(false);
   const showNodeKindTagsRef = useRef(readNodeTagVisibilityPreference());
+  const mindThemeIdRef = useRef<AiCaseMindThemeId>(readMindThemePreference());
   const generateProgressResetTimerRef = useRef<number | null>(null);
   // 流式请求的 AbortController：用于组件卸载或重新生成时取消未完成的请求
   const streamAbortControllerRef = useRef<AbortController | null>(null);
@@ -334,6 +342,7 @@ const canvasDivRef = useRef<HTMLDivElement | null>(null);
   const [canvasScalePercent, setCanvasScalePercent] = useState(100);
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
   const [showNodeKindTags, setShowNodeKindTags] = useState<boolean>(() => readNodeTagVisibilityPreference());
+  const [mindThemeId, setMindThemeId] = useState<AiCaseMindThemeId>(() => readMindThemePreference());
   const [isImportingMindNodes, setIsImportingMindNodes] = useState(false);
 // 移动端侧边栏抽屉
 const [sidebarOpen, setSidebarOpen] = useState(false);

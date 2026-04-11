@@ -113,17 +113,6 @@ pipeline {
                         "REPO_PRELOADED=${repoPreloaded}",
                     ].join('\n') + '\n'
 
-                    // 清理容器内 /workspace/repo 的宿主机映射路径（即 reportDir/repo）
-                    // 避免 entrypoint.sh 在容器内 git clone /workspace/repo 时报 "already exists"
-                    // 若目录被历史 root 容器污染，宿主机 rm 可能失败；此时回退到临时容器做 root 清理。
-                    sh """
-                        rm -rf "${reportDir}/repo" || true
-                        if [ -d "${reportDir}/repo" ]; then
-                            echo "⚠️ 宿主机清理 ${reportDir}/repo 失败，尝试容器内 root 清理"
-                            docker run --rm -v "${reportDir}:/workspace" alpine:3.20 rm -rf /workspace/repo
-                        fi
-                    """
-
                     echo "[${new Date().format('HH:mm:ss')}] docker-run start"
                     def testExitCode = 1
                     def repoMount = repoUrl ? "-v ${repoDir}:/repo" : ''
