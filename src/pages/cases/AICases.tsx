@@ -372,6 +372,23 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
     }
   }, [showNodeKindTags]);
 
+  // 持久化脑图主题偏好，并在实例已创建时即时应用
+  useEffect(() => {
+    mindThemeIdRef.current = mindThemeId;
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(MIND_THEME_STORAGE_KEY, mindThemeId);
+    }
+    if (mindRef.current) {
+      mindRef.current.changeTheme(resolveMindTheme(mindThemeId, resolvedTheme === 'dark'));
+    }
+  }, [mindThemeId, resolvedTheme]);
+
+  // 当全局 dark/light 模式切换时，同步更新脑图主题
+  useEffect(() => {
+    if (mindRef.current) {
+      mindRef.current.changeTheme(resolveMindTheme(mindThemeIdRef.current, resolvedTheme === 'dark'));
+    }
+  }, [resolvedTheme]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -747,6 +764,7 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
       allowUndo: true,
       locale: 'zh_CN',
       overflowHidden: false,
+      theme: resolveMindTheme(mindThemeIdRef.current, resolvedTheme === 'dark'),
     });
 
     const initError = instance.init(initialData as MindElixirData);
@@ -1305,10 +1323,15 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
       });
     }
 
-    toast.success(nextVisible ? '已开启节点标签展示' : '已隐藏节点标签');
-  }, [setDataAndSync]);
+toast.success(nextVisible ? '已开启节点标签展示' : '已隐藏节点标签');
+}, [setDataAndSync]);
 
-  const applyWorkspaceDetail = useCallback(
+const handleChangeMindTheme = useCallback((themeId: AiCaseMindThemeId) => {
+  mindThemeIdRef.current = themeId;
+  setMindThemeId(themeId);
+}, []);
+
+const applyWorkspaceDetail = useCallback(
     (workspace: AiCaseWorkspaceDetail, options?: { keepSelection?: boolean }) => {
       const now = Date.now();
       const fallbackDoc: AiCaseWorkspaceDocument = {
@@ -2105,19 +2128,21 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
             isCanvasFullscreen ? 'fixed inset-0 z-50 bg-white dark:bg-slate-900' : ''
           }`}
         >
-          <AiCaseCanvasToolbar
-            scalePercent={canvasScalePercent}
-            isFullscreen={isCanvasFullscreen}
-            showNodeKindTags={showNodeKindTags}
-            panelOpen={panelOpen}
-            onZoomIn={handleZoomIn}
-            onZoomOut={handleZoomOut}
-            onCenter={handleCenterCanvas}
-            onFit={handleFitCanvas}
-            onToggleFullscreen={() => void handleToggleCanvasFullscreen()}
-            onToggleNodeTags={handleToggleNodeKindTags}
-            onTogglePanel={() => setPanelOpen((v) => !v)}
-          />
+<AiCaseCanvasToolbar
+scalePercent={canvasScalePercent}
+isFullscreen={isCanvasFullscreen}
+showNodeKindTags={showNodeKindTags}
+mindThemeId={mindThemeId}
+panelOpen={panelOpen}
+onZoomIn={handleZoomIn}
+onZoomOut={handleZoomOut}
+onCenter={handleCenterCanvas}
+onFit={handleFitCanvas}
+onToggleFullscreen={() => void handleToggleCanvasFullscreen()}
+onToggleNodeTags={handleToggleNodeKindTags}
+onChangeMindTheme={handleChangeMindTheme}
+onTogglePanel={() => setPanelOpen((v) => !v)}
+/>
 
           <div
             ref={canvasDivRef}
