@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { request } from '../api';
 
@@ -51,6 +51,26 @@ interface TestRunsResponse {
   total: number;
 }
 
+export interface StaleExecutionSummary {
+  stalePendingNoStartCount: number;
+  staleStartedCount: number;
+  totalStaleCount: number;
+  latestStalePendingCreatedAt: string | null;
+  maxAgeHours: number;
+  stalePendingMinutes: number;
+}
+
+interface CleanupStaleResponse {
+  dryRun: boolean;
+  affectedCount: number;
+  stalePendingNoStartCount: number;
+  staleStartedCount: number;
+  totalStaleCount: number;
+  latestStalePendingCreatedAt: string | null;
+  maxAgeHours: number;
+  stalePendingMinutes: number;
+}
+
 export interface TestRunFilters {
   triggerType?: string[];
   status?: string[];
@@ -86,6 +106,42 @@ export function useTestRuns(page = 1, pageSize = 10, filters: TestRunFilters = {
 }
 
 const TERMINAL_STATUSES = new Set(['success', 'failed', 'aborted']);
+
+export function useStaleExecutionSummary(maxAgeHours = 24, stalePendingMinutes = 10) {
+  return useQuery<{ success: boolean; data?: StaleExecutionSummary }>({
+    queryKey: ['stale-execution-summary', maxAgeHours, stalePendingMinutes],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        maxAgeHours: String(maxAgeHours),
+        stalePendingMinutes: String(stalePendingMinutes),
+      });
+      return request<StaleExecutionSummary>(`/executions/stale-summary?${params.toString()}`);
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useCleanupStaleExecutions() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload?: { maxAgeHours?: number; stalePendingMinutes?: number; dryRun?: boolean }) => {
+      const result = await request<CleanupStaleResponse>('/executions/cleanup-stale', {
+        method: 'POST',
+        body: JSON.stringify({
+          maxAgeHours: payload?.maxAgeHours ?? 24,
+          stalePendingMinutes: payload?.stalePendingMinutes ?? 10,
+          dryRun: payload?.dryRun ?? false,
+        }),
+      });
+      return result.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
+      queryClient.invalidateQueries({ queryKey: ['stale-execution-summary'] });
+    },
+  });
+}
 
 export function useTestRunDetail(id: number) {
   const queryClient = useQueryClient();

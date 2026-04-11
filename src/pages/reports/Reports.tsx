@@ -10,6 +10,7 @@ import {
   XCircle, 
   Clock, 
   AlertCircle,
+  AlertTriangle,
   ExternalLink,
   FileText,
   History,
@@ -21,8 +22,9 @@ import { Badge } from '@/components/ui/badge';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
-import { useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
+import { useCleanupStaleExecutions, useStaleExecutionSummary, useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 /**
  * 将毫秒时长格式化为可读字符串（与仪表盘口径一致）
@@ -69,6 +71,13 @@ export default function Reports() {
   // 获取运行记录
   const { data, isLoading, error, refetch } = useTestRuns(page, pageSize, filters);
 
+  // 历史等待中治理（默认阈值与后端 monitor 一致）
+  const stalePendingMinutes = 10;
+  const maxAgeHours = 24;
+  const { data: staleSummaryResp, refetch: refetchStaleSummary } = useStaleExecutionSummary(maxAgeHours, stalePendingMinutes);
+  const cleanupStaleMutation = useCleanupStaleExecutions();
+  const staleSummary = staleSummaryResp?.data;
+
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
   const startIndex = (page - 1) * pageSize + 1;
   const endIndex = Math.min(page * pageSize, data?.total || 0);
@@ -99,6 +108,29 @@ export default function Reports() {
 
   // 是否有活跃筛选
   const hasActiveFilters = !!((filters.triggerType?.length ?? 0) || (filters.status?.length ?? 0) || filters.startDate || filters.endDate);
+  const showStaleHint = (staleSummary?.totalStaleCount ?? 0) > 0;
+
+  const handleCleanupStale = async () => {
+    const total = staleSummary?.totalStaleCount ?? 0;
+    if (total <= 0) return;
+
+    const confirmed = window.confirm(`确认清理 ${total} 条历史等待中/卡住记录吗？清理后状态会更新为“已中止”。`);
+    if (!confirmed) return;
+
+    try {
+      const result = await cleanupStaleMutation.mutateAsync({
+        stalePendingMinutes,
+        maxAgeHours,
+      });
+      toast.success('清理完成', {
+        description: `已处理 ${result?.affectedCount ?? 0} 条历史记录`,
+      });
+      await Promise.all([refetch(), refetchStaleSummary()]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '未知错误';
+      toast.error('清理失败', { description: message });
+    }
+  };
 
   // 状态主题配置
   const theme = {
@@ -172,6 +204,26 @@ export default function Reports() {
           )}
         </div>
       </div>
+
+      {showStaleHint && (
+        <div className="px-3 sm:px-4 py-2 border-b border-amber-200/80 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-900/20 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300 text-xs">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            <span>
+              检测到 <span className="font-semibold">{staleSummary?.totalStaleCount ?? 0}</span> 条历史等待中/卡住记录（等待中无 start_time: {staleSummary?.stalePendingNoStartCount ?? 0} 条）
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 ml-auto"
+            disabled={cleanupStaleMutation.isPending}
+            onClick={handleCleanupStale}
+          >
+            {cleanupStaleMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '一键清理'}
+          </Button>
+        </div>
+      )}
 
       {/* 列表内容区 */}
       <div className="flex-1 min-h-0 overflow-hidden bg-white dark:bg-slate-900 rounded-b-xl shadow-sm border border-t-0 border-slate-200/80 dark:border-slate-700/50">

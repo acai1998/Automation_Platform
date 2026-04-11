@@ -144,6 +144,16 @@ export interface StuckExecution {
 }
 
 /**
+ * 历史卡住执行汇总
+ */
+export interface StaleExecutionSummary {
+  stalePendingNoStartCount: number;
+  staleStartedCount: number;
+  totalStaleCount: number;
+  latestStalePendingCreatedAt: Date | null;
+}
+
+/**
  * 测试运行基本信息接口
  */
 export interface TestRunBasicInfo {
@@ -1140,6 +1150,62 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     ) as { affectedRows?: number; changedRows?: number };
 
     return result?.affectedRows ?? 0;
+  }
+
+  /**
+   * 汇总历史卡住记录（用于运行记录页提示条）
+   */
+  async getStaleExecutionSummary(maxAgeHours: number = 24, stuckPendingMinutes: number = 10): Promise<StaleExecutionSummary> {
+    const rows = await this.testRunRepository.query(
+      `SELECT
+         SUM(
+           CASE
+             WHEN status = 'pending'
+              AND start_time IS NULL
+              AND created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)
+             THEN 1 ELSE 0
+           END
+         ) AS stale_pending_no_start_count,
+         SUM(
+           CASE
+             WHEN status IN ('pending', 'running')
+              AND start_time IS NOT NULL
+              AND start_time < DATE_SUB(NOW(), INTERVAL ? HOUR)
+             THEN 1 ELSE 0
+           END
+         ) AS stale_started_count,
+         MAX(
+           CASE
+             WHEN status = 'pending'
+              AND start_time IS NULL
+              AND created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)
+             THEN created_at ELSE NULL
+           END
+         ) AS latest_stale_pending_created_at
+       FROM Auto_TestRun
+       WHERE status IN ('pending', 'running')`,
+      [stuckPendingMinutes, maxAgeHours, stuckPendingMinutes]
+    ) as Array<{
+      stale_pending_no_start_count: number | string | null;
+      stale_started_count: number | string | null;
+      latest_stale_pending_created_at: Date | string | null;
+    }>;
+
+    const row = rows[0] ?? {
+      stale_pending_no_start_count: 0,
+      stale_started_count: 0,
+      latest_stale_pending_created_at: null,
+    };
+
+    const stalePendingNoStartCount = Number(row.stale_pending_no_start_count ?? 0);
+    const staleStartedCount = Number(row.stale_started_count ?? 0);
+
+    return {
+      stalePendingNoStartCount,
+      staleStartedCount,
+      totalStaleCount: stalePendingNoStartCount + staleStartedCount,
+      latestStalePendingCreatedAt: row.latest_stale_pending_created_at ? new Date(row.latest_stale_pending_created_at) : null,
+    };
   }
 
   /**

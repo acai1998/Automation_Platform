@@ -758,6 +758,36 @@ export class ExecutionService {
   }
 
   /**
+   * 获取历史卡住执行汇总（用于运行记录页提示条）
+   */
+  async getStaleExecutionSummary(maxAgeHours = 24, stalePendingMinutes = 10) {
+    return this.executionRepository.getStaleExecutionSummary(maxAgeHours, stalePendingMinutes);
+  }
+
+  /**
+   * 一次性清理历史卡住执行（pending/running -> aborted）
+   */
+  async cleanupStaleExecutions(maxAgeHours = 24, stalePendingMinutes = 10, dryRun = false) {
+    const summary = await this.executionRepository.getStaleExecutionSummary(maxAgeHours, stalePendingMinutes);
+
+    if (dryRun) {
+      return {
+        dryRun: true,
+        affectedCount: 0,
+        ...summary,
+      };
+    }
+
+    const affectedCount = await this.executionRepository.markOldStuckExecutionsAsAbandoned(maxAgeHours, stalePendingMinutes);
+
+    return {
+      dryRun: false,
+      affectedCount,
+      ...summary,
+    };
+  }
+
+  /**
    * 获取测试运行的用例列表（供 Jenkins 使用）
    * 注意：由于没有远程 tasks 表，改为从 Auto_TestRun 获取关联的用例
    */

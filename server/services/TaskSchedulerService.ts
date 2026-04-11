@@ -822,7 +822,7 @@ export class TaskSchedulerService {
       SELECT t.id, t.name, t.cron_expression, t.case_ids, t.project_id,
              t.environment_id, t.status,
              t.max_retries, t.retry_delay_ms,
-             (SELECT MAX(start_time) FROM Auto_TestCaseTaskExecutions WHERE task_id = t.id) as last_run_at
+             (SELECT MAX(created_at) FROM Auto_TestCaseTaskExecutions WHERE task_id = t.id) as last_run_at
       FROM Auto_TestCaseTasks t
       WHERE t.trigger_type = 'scheduled'
         AND t.status IN ('active', 'paused')
@@ -877,7 +877,7 @@ export class TaskSchedulerService {
     const row = await queryOne<TaskRow>(
       `SELECT t.id, t.name, t.cron_expression, t.case_ids, t.project_id, t.environment_id,
               t.status, t.max_retries, t.retry_delay_ms, t.trigger_type,
-              (SELECT MAX(start_time) FROM Auto_TestCaseTaskExecutions WHERE task_id = t.id) as last_run_at
+              (SELECT MAX(created_at) FROM Auto_TestCaseTaskExecutions WHERE task_id = t.id) as last_run_at
        FROM Auto_TestCaseTasks t WHERE t.id = ?`,
       [taskId]
     );
@@ -1420,10 +1420,12 @@ export class TaskSchedulerService {
           try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
 
           // Bug Fix: 新任务也需要查 DB 获取 lastRunAt，否则会错误跳过漏触发补偿
+          // 使用 created_at 而非 start_time：start_time 在 Jenkins 未启动时为 null，
+          // 导致调度器误认为「从未执行」并在每次重启时重复补偿触发
           let lastRunAt: Date | null = null;
           try {
             const lastRunRow = await queryOne<{ last_run_at: string | null }>(
-              `SELECT MAX(start_time) as last_run_at FROM Auto_TestCaseTaskExecutions WHERE task_id = ?`,
+              `SELECT MAX(created_at) as last_run_at FROM Auto_TestCaseTaskExecutions WHERE task_id = ?`,
               [row.id]
             );
             lastRunAt = lastRunRow?.last_run_at ? new Date(lastRunRow.last_run_at) : null;
@@ -1459,10 +1461,12 @@ export class TaskSchedulerService {
             try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
 
             // Bug Fix: 从 DB 查询上次执行时间，防止 lastRunAt=null 导致跳过漏触发补偿检测
+            // 使用 created_at 而非 start_time：start_time 在 Jenkins 未启动时为 null，
+            // 导致调度器误认为「从未执行」并在每次重启时重复补偿触发
             let lastRunAt: Date | null = null;
             try {
               const lastRunRow = await queryOne<{ last_run_at: string | null }>(
-                `SELECT MAX(start_time) as last_run_at FROM Auto_TestCaseTaskExecutions WHERE task_id = ?`,
+                `SELECT MAX(created_at) as last_run_at FROM Auto_TestCaseTaskExecutions WHERE task_id = ?`,
                 [row.id]
               );
               lastRunAt = lastRunRow?.last_run_at ? new Date(lastRunRow.last_run_at) : null;
