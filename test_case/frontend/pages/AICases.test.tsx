@@ -105,6 +105,19 @@ vi.mock('sonner', () => ({
   },
 }));
 
+vi.mock('@/contexts/AiGenerationContext', () => ({
+  useAiGeneration: vi.fn(() => ({
+    isGenerating: false,
+    progress: 0,
+    stageText: '',
+    generatingDocId: null,
+    notifyStart: vi.fn(),
+    notifyProgress: vi.fn(),
+    notifyDone: vi.fn(),
+  })),
+  AiGenerationProvider: ({ children }: { children: ReactNode }) => children,
+}));
+
 function findFirstTestcaseNodeId(root: AiCaseNode): string | null {
   const stack: AiCaseNode[] = [root];
 
@@ -197,19 +210,26 @@ describe('AICases', () => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
     });
 
-    const requirementInput = screen.getByPlaceholderText(/粘贴 PRD/);
+    // 需求信息 Dialog 中含有 PRD 输入框和 AI 生成按钮，先点击顶栏"需求信息"按钮打开弹窗
+    const requirementBtn = screen.getByRole('button', { name: /需求信息/i });
+    fireEvent.click(requirementBtn);
+
+    const requirementInput = await screen.findByPlaceholderText(/粘贴 PRD/);
     fireEvent.change(requirementInput, {
       target: { value: '登录流程支持手机号 + 验证码，需覆盖异常和权限场景' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /AI 生成/ }));
+    fireEvent.click(screen.getByRole('button', { name: /AI 生成测试用例/i }));
 
     await waitFor(() => {
       expect(aiCaseStorage.deleteStaleWorkspaceAttachments).toHaveBeenCalledTimes(1);
     });
 
-    // 重置模板按钮在"工作台操作" section（默认关闭），需要先展开
-    const opsSectionBtn = screen.getByRole('button', { name: /工作台操作/i });
+    // 重置模板按钮在浮动面板的"工作台操作" section，先打开面板
+    const panelToggleBtn = screen.getByRole('button', { name: /工作台面板|打开工作台面板/i });
+    fireEvent.click(panelToggleBtn);
+
+    const opsSectionBtn = await screen.findByRole('button', { name: /工作台操作/i });
     fireEvent.click(opsSectionBtn);
 
     const resetBtn = await screen.findByRole('button', { name: /重置模板/ });
@@ -241,7 +261,10 @@ describe('AICases', () => {
     const saveWorkspaceDocumentMock = vi.mocked(aiCaseStorage.saveWorkspaceDocument);
     saveWorkspaceDocumentMock.mockClear();
 
-    const nameInput = screen.getByPlaceholderText('输入工作台标题');
+    // 工作台名称输入框在顶栏 需求信息 Dialog 中，先打开弹窗
+    const requirementBtn = screen.getByRole('button', { name: /需求信息/i });
+    fireEvent.click(requirementBtn);
+    const nameInput = await screen.findByPlaceholderText('输入工作台标题');
     fireEvent.change(nameInput, { target: { value: '新的工作台名称' } });
 
     await act(async () => {
@@ -350,7 +373,7 @@ describe('AICases – 新双栏布局', () => {
     vi.mocked(aiCaseStorage.deleteStaleWorkspaceAttachments).mockResolvedValue(0);
   });
 
-  it('渲染后应同时显示顶部标题栏和左侧侧边栏的 AI 生成按钮（双栏布局）', async () => {
+  it('渲染后应显示顶部标题栏且点击需求信息可打开对话框', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
     render(<AICases />);
 
@@ -358,11 +381,13 @@ describe('AICases – 新双栏布局', () => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
     });
 
-    // 侧边栏中的 AI 生成按钮
-    expect(screen.getByRole('button', { name: /AI 生成测试用例/i })).toBeInTheDocument();
-    // 侧边栏中的需求输入框
+    // 顶栏中的需求信息按钮
+    expect(screen.getByRole('button', { name: /需求信息/i })).toBeInTheDocument();
+    // 点击打开对话框后应能看到 AI 生成按钮
+    fireEvent.click(screen.getByRole('button', { name: /需求信息/i }));
+    expect(await screen.findByRole('button', { name: /AI 生成测试用例/i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/粘贴 PRD/)).toBeInTheDocument();
-    // 画布工具栏中的缩放百分比（可能有多个百分比元素，如进度圆环）
+    // 画布工具栏中的缩放百分比
     expect(screen.getAllByText(/\d+%/).length).toBeGreaterThan(0);
   });
 
@@ -385,8 +410,9 @@ describe('AICases – 新双栏布局', () => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
     });
 
-    // 侧边栏工作台名称输入框应有默认值
-    const nameInput = screen.getByPlaceholderText('输入工作台标题') as HTMLInputElement;
+    // 工作台名称输入框在需求信息 Dialog 中，先打开弹窗
+    fireEvent.click(screen.getByRole('button', { name: /需求信息/i }));
+    const nameInput = await screen.findByPlaceholderText('输入工作台标题') as HTMLInputElement;
     expect(nameInput.value).toBe('AI Testcase Workspace');
   });
 
@@ -413,8 +439,12 @@ describe('AICases – 新双栏布局', () => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
     });
 
+    // 历史工作台 section 在浮动面板中，需先打开面板
+    const panelBtn = screen.getByRole('button', { name: /工作台面板|打开工作台面板/i });
+    fireEvent.click(panelBtn);
+
     // 展开历史工作台 section
-    const historySectionBtn = screen.getByRole('button', { name: /历史工作台/i });
+    const historySectionBtn = await screen.findByRole('button', { name: /历史工作台/i });
     fireEvent.click(historySectionBtn);
 
     // 模拟 API 返回历史列表
@@ -422,7 +452,7 @@ describe('AICases – 新双栏布局', () => {
       data: [{ id: 88, name: '历史工作台 X', status: 'published', version: 5, counters: { totalCases: 3 } }],
     } as any);
 
-    const expandLink = screen.getByText('查看历史工作台记录');
+    const expandLink = await screen.findByText('查看历史工作台记录');
     fireEvent.click(expandLink);
 
     await waitFor(() => {
@@ -439,8 +469,9 @@ describe('AICases – 新双栏布局', () => {
       expect(toast.success).toHaveBeenCalledWith('已加载工作台：历史工作台 X');
     });
 
-    // 需求文本应被更新为远端数据
-    const requirementTextarea = screen.getByPlaceholderText(/粘贴 PRD/) as HTMLTextAreaElement;
+    // 需求文本应被更新为远端数据，打开 Dialog 查看
+    fireEvent.click(screen.getByRole('button', { name: /需求信息/i }));
+    const requirementTextarea = await screen.findByPlaceholderText(/粘贴 PRD/) as HTMLTextAreaElement;
     expect(requirementTextarea.value).toBe('历史需求内容');
   });
 
@@ -453,14 +484,18 @@ describe('AICases – 新双栏布局', () => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
     });
 
-    const historySectionBtn = screen.getByRole('button', { name: /历史工作台/i });
+    // 历史工作台 section 在浮动面板中，需先打开面板
+    const panelBtn = screen.getByRole('button', { name: /工作台面板|打开工作台面板/i });
+    fireEvent.click(panelBtn);
+
+    const historySectionBtn = await screen.findByRole('button', { name: /历史工作台/i });
     fireEvent.click(historySectionBtn);
 
     vi.mocked(aiCasesApi.listWorkspaces).mockResolvedValue({
       data: [{ id: 100, name: '失败工作台', status: 'draft', version: 1, counters: { totalCases: 0 } }],
     } as any);
 
-    fireEvent.click(screen.getByText('查看历史工作台记录'));
+    fireEvent.click(await screen.findByText('查看历史工作台记录'));
 
     await waitFor(() => {
       expect(screen.getByText('失败工作台')).toBeInTheDocument();
@@ -484,7 +519,9 @@ describe('AICases – 新双栏布局', () => {
     const saveDocMock = vi.mocked(aiCaseStorage.saveWorkspaceDocument);
     saveDocMock.mockClear();
 
-    const nameInput = screen.getByPlaceholderText('输入工作台标题');
+    // 工作台名称输入框在 Dialog 中，先打开
+    fireEvent.click(screen.getByRole('button', { name: /需求信息/i }));
+    const nameInput = await screen.findByPlaceholderText('输入工作台标题');
     fireEvent.change(nameInput, { target: { value: '修改后的名称' } });
 
     await waitFor(
@@ -506,8 +543,10 @@ describe('AICases – 新双栏布局', () => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
     });
 
-    // 展开工作台操作 section
-    const opsSectionBtn = screen.getByRole('button', { name: /工作台操作/i });
+    // 工作台操作 section 在浮动面板中，先打开面板
+    const panelBtn = screen.getByRole('button', { name: /工作台面板|打开工作台面板/i });
+    fireEvent.click(panelBtn);
+    const opsSectionBtn = await screen.findByRole('button', { name: /工作台操作/i });
     fireEvent.click(opsSectionBtn);
 
     const exportBtn = await screen.findByRole('button', { name: /导出 Markdown/i });
@@ -548,7 +587,10 @@ describe('AICases – 新双栏布局', () => {
       { timeout: 3000 }
     );
 
-    // 执行进度 section 的标题按钮应存在（无论是否展开）
-    expect(screen.getByRole('button', { name: /执行进度/i })).toBeInTheDocument();
+    // 执行进度 section 在浮动面板中，先打开面板
+    const panelBtn = screen.getByRole('button', { name: /工作台面板|打开工作台面板/i });
+    fireEvent.click(panelBtn);
+    // 面板内的执行进度 section 标题按钮应存在
+    expect(await screen.findByRole('button', { name: /执行进度/i })).toBeInTheDocument();
   });
 });

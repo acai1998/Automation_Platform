@@ -9,6 +9,7 @@ import {
   type AiCaseGenerationProgressEvent,
   type AiCaseGenerationNodeEvent,
 } from '../services/AiCaseGenerationService';
+import { caseKnowledgeRetrievalService } from '../services/CaseKnowledgeRetrievalService';
 import type { AiCaseNodeStatus } from '../services/aiCaseMapBuilder';
 import type {
   AiCaseStorageProvider,
@@ -545,6 +546,56 @@ router.delete('/attachments/:attachmentId', async (req, res) => {
     res.json({ success: true, message: '附件已删除' });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '删除附件失败';
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
+  }
+});
+
+/**
+ * POST /api/ai-cases/workspaces/:id/knowledge-base
+ * 将工作台标记为知识库（同时生成 Embedding，供后续 AI 生成参考）
+ * body: { qualityScore?: number }
+ */
+router.post('/workspaces/:id/knowledge-base', async (req, res) => {
+  try {
+    const workspaceId = parseId(req.params.id, 'workspaceId');
+    const qualityScore = toNumberOrUndefined(req.body?.qualityScore) ?? 60;
+
+    const success = await caseKnowledgeRetrievalService.addToKnowledgeBase(workspaceId, qualityScore);
+
+    if (!success) {
+      return res.status(400).json({
+        success: false,
+        message: '标记失败：工作台不存在或 Embedding 服务未配置',
+      });
+    }
+
+    res.json({ success: true, message: '工作台已加入知识库，向量正在生成中' });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '标记失败';
+    res.status(resolveErrorStatus(error)).json({ success: false, message });
+  }
+});
+
+/**
+ * DELETE /api/ai-cases/workspaces/:id/knowledge-base
+ * 将工作台从知识库中移除
+ */
+router.delete('/workspaces/:id/knowledge-base', async (req, res) => {
+  try {
+    const workspaceId = parseId(req.params.id, 'workspaceId');
+
+    const success = await caseKnowledgeRetrievalService.removeFromKnowledgeBase(workspaceId);
+
+    if (!success) {
+      return res.status(404).json({
+        success: false,
+        message: '移除失败：工作台不存在',
+      });
+    }
+
+    res.json({ success: true, message: '工作台已从知识库中移除' });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '移除失败';
     res.status(resolveErrorStatus(error)).json({ success: false, message });
   }
 });

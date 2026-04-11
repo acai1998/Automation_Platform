@@ -29,6 +29,29 @@ export class AiCaseWorkspace {
   @Column({ type: 'longtext', name: 'requirement_text', nullable: true })
   requirementText: string | null;
 
+  /**
+   * 需求文本的向量表示（JSON 编码的 float[]）
+   * 用于知识库语义检索，由 EmbeddingService 生成
+   * 格式：JSON 序列化的数字数组，如 "[0.123, -0.456, ...]"
+   */
+  @Column({ type: 'longtext', name: 'requirement_embedding', nullable: true })
+  requirementEmbedding: string | null;
+
+  /**
+   * 是否加入知识库（0 = 否，1 = 是）
+   * 用户可手动标记优质用例集加入知识库，供后续 AI 生成参考
+   */
+  @Column({ type: 'tinyint', name: 'is_knowledge_base', default: 0 })
+  isKnowledgeBase: number;
+
+  /**
+   * 用例质量评分（0-100）
+   * 0 = 未评分，1-100 = 人工或自动评分
+   * 检索时优先返回高分用例
+   */
+  @Column({ type: 'int', name: 'quality_score', default: 0 })
+  qualityScore: number;
+
   @Column({ type: 'longtext', name: 'map_data' })
   mapData: string;
 

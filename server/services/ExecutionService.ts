@@ -1004,10 +1004,18 @@ export class ExecutionService {
           //    基础设施问题导致 entrypoint 未执行、JUnit 报告未生成），需要清理 error 占位符，
           //    避免占位符永久卡在 error 状态导致统计数据错乱或前端显示混乱。
           //
-          //    【防假阳性】Jenkins 状态为 success 但解析不到 JUnit 结果，属于异常情况
-          //    （测试应该产生报告）。此时不能相信 success 状态，保守地视为 failed 处理，
-          //    防止所有 error 占位符被错误地标记为 passed，产生虚假的"全部通过"展示。
-          const effectiveCleanupStatus = jenkinsData.status === 'success' ? 'failed' : jenkinsData.status;
+          //    【修复：不再在轮询路径中将 success 降级为 failed】
+          //    原策略将 Jenkins success + 无 JUnit 结果 保守处理为 failed，但这会导致
+          //    当 Jenkins 回调随后到达（携带 passedCases:N）时，error 占位符已被改为 failed，
+          //    回调路径的 updateSummaryOnlyResults 找不到 error 占位符可更新，造成：
+          //      - Auto_TestRunResults 中的用例状态卡在 failed
+          //      - Auto_TestRun.passed_cases 被回调汇总数覆盖为 N
+          //    两张表数据不一致，前端显示"全部通过"但用例列表却显示 FAILED。
+          //
+          //    正确策略：轮询路径直接信任 Jenkins 状态映射结果，尊重其 success 判断。
+          //    如果 Jenkins 真的误报（exitCode=0 但测试失败），回调携带的详细结果会在
+          //    completeBatch 中正确更新明细状态并触发最终一致性校正覆盖。
+          const effectiveCleanupStatus = jenkinsData.status;
 
           try {
             const executionId = await this.executionRepository.findExecutionIdByRunId(runId);

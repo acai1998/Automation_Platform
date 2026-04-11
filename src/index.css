@@ -286,3 +286,34 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ============================================
+ * Mind-Elixir 节点标签外置样式
+ *
+ * 将 .tags 绝对定位到 me-tpc 左上角外侧上方，
+ * 使标签不再占用节点内部高度，节点视觉更紧凑。
+ *
+ * 关键约束：
+ *   - 不修改 me-parent 的 padding/margin，避免影响 mind-elixir SVG 连线坐标计算
+ *   - 标签悬浮在节点上方 me-parent 的 padding 区域内（默认 6px），
+ *     可能与上方节点有微小视觉重叠，但不影响连线准确性
+ * ============================================ */
+.map-container me-parent me-tpc {
+  overflow: visible;
+}
+
+.map-container me-parent me-tpc .tags {
+  position: absolute;
+  /* 贴 me-tpc 顶边，向上平移自身高度 → 悬浮在节点上方 */
+  top: 0;
+  left: 0;
+  transform: translateY(-100%);
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+  white-space: nowrap;
+}

@@ -128,14 +128,12 @@ describe('AiCaseSidebar – 执行进度', () => {
   });
 });
 
-// ─── 节点操作区 ───────────────────────────────────────────────────────────────
+// ─── 节点操作区（已合并入执行进度 section） ────────────────────────────────────
 
 describe('AiCaseSidebar – 节点操作', () => {
-  it('未选中节点时应显示提示文字', () => {
+  it('未选中节点时节点说明卡片应显示提示文字', () => {
     render(<AiCaseSidebar {...buildDefaultProps({ selectedNode: null })} />);
-    // 节点操作 section 在 hasSelectedNode=false 时默认关闭，需要先展开
-    const sectionTrigger = screen.getByRole('button', { name: /节点操作/i });
-    fireEvent.click(sectionTrigger);
+    // 节点说明已合并到执行进度 section，且该 section 默认展开，无需额外点击
     expect(screen.getByText('请在脑图中点击一个节点')).toBeInTheDocument();
   });
 
@@ -365,13 +363,13 @@ describe('AiCaseSidebar – 历史工作台', () => {
   });
 });
 
-// ─── 截图证据区 ──────────────────────────────────────────────────────────────
+// ─── 执行记录区（原截图证据，已改名） ─────────────────────────────────────────
 
-describe('AiCaseSidebar – 截图证据', () => {
+describe('AiCaseSidebar – 执行记录', () => {
   it('无附件时应显示"当前节点暂无截图"', () => {
     render(<AiCaseSidebar {...buildDefaultProps({ attachments: [] })} />);
-    // 展开截图证据 section（默认关闭）
-    const trigger = screen.getByRole('button', { name: /截图证据/i });
+    // 展开执行记录 section（默认关闭）
+    const trigger = screen.getByRole('button', { name: /执行记录/i });
     fireEvent.click(trigger);
     expect(screen.getByText('当前节点暂无截图')).toBeInTheDocument();
   });
@@ -391,7 +389,7 @@ describe('AiCaseSidebar – 截图证据', () => {
 
     render(<AiCaseSidebar {...buildDefaultProps({ attachments })} />);
 
-    const trigger = screen.getByRole('button', { name: /截图证据/i });
+    const trigger = screen.getByRole('button', { name: /执行记录/i });
     fireEvent.click(trigger);
 
     expect(screen.getByText('screenshot.png')).toBeInTheDocument();
@@ -414,7 +412,7 @@ describe('AiCaseSidebar – 截图证据', () => {
 
     render(<AiCaseSidebar {...buildDefaultProps({ attachments, onDeleteAttachment })} />);
 
-    const trigger = screen.getByRole('button', { name: /截图证据/i });
+    const trigger = screen.getByRole('button', { name: /执行记录/i });
     fireEvent.click(trigger);
 
     const deleteBtn = screen.getByRole('button', { name: /删除截图/i });
@@ -422,7 +420,7 @@ describe('AiCaseSidebar – 截图证据', () => {
     expect(onDeleteAttachment).toHaveBeenCalledWith('att-del');
   });
 
-  it('截图证据 Section 的徽章应显示附件数量', () => {
+  it('执行记录 Section 的徽章应显示附件数量', () => {
     const attachments = Array.from({ length: 3 }, (_, i) => ({
       id: `att-${i}`,
       docId: 'ws-1',
@@ -442,7 +440,7 @@ describe('AiCaseSidebar – 截图证据', () => {
 
   it('isUploading=true 时上传按钮应显示加载状态', () => {
     render(<AiCaseSidebar {...buildDefaultProps({ isUploading: true })} />);
-    const trigger = screen.getByRole('button', { name: /截图证据/i });
+    const trigger = screen.getByRole('button', { name: /执行记录/i });
     fireEvent.click(trigger);
     expect(screen.getByText('上传中...')).toBeInTheDocument();
   });

@@ -1389,6 +1389,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         if (fallbackExecId) {
           await this.updateSummaryOnlyResults(runId, fallbackExecId, results);
           await this.performFinalErrorCleanup(fallbackExecId, results);
+          // 【修复3】兜底路径也要做最终一致性校正，确保 Auto_TestRun 统计与明细一致
+          await this.reconcileBatchSummary(runId, fallbackExecId, mappedStatus);
         }
       }
 
@@ -1396,44 +1398,55 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       // 防止在特殊场景（既无详细结果也无汇总统计）下 ERROR 占位符残留
       if (resolvedExecutionId) {
         await this.performFinalErrorCleanup(resolvedExecutionId, results);
-
-        // 最终一致性校正：以结果表为准回填批次汇总，避免“汇总 success 但明细仍 error”
-        const finalCounts = await this.countResultsByStatus(resolvedExecutionId);
-        if (finalCounts.total > 0) {
-          let reconciledRunStatus = mappedStatus;
-          if (finalCounts.failed > 0) {
-            reconciledRunStatus = 'failed';
-          } else if (finalCounts.passed > 0) {
-            reconciledRunStatus = 'success';
-          }
-
-          await this.testRunRepository.update(runId, {
-            status: reconciledRunStatus,
-            passedCases: finalCounts.passed,
-            failedCases: finalCounts.failed,
-            skippedCases: finalCounts.skipped,
-          });
-
-          const reconciledTaskStatus: 'success' | 'failed' | 'cancelled' =
-            reconciledRunStatus === 'aborted' ? 'cancelled'
-              : reconciledRunStatus === 'success' ? 'success'
-              : 'failed';
-
-          await this.repository.update(resolvedExecutionId, {
-            status: reconciledTaskStatus,
-            passedCases: finalCounts.passed,
-            failedCases: finalCounts.failed,
-            skippedCases: finalCounts.skipped,
-          });
-
-          logger.info('Reconciled batch summary from result rows', {
-            runId,
-            executionId: resolvedExecutionId,
-            reconciledRunStatus,
-            finalCounts,
-          }, LOG_CONTEXTS.REPOSITORY);
-        }
+        // 最终一致性校正：以结果表为准回填批次汇总，避免"汇总 success 但明细仍 error"
+        await this.reconcileBatchSummary(runId, resolvedExecutionId, mappedStatus);
       }
+  }
+
+  /**
+   * 最终一致性校正：以 Auto_TestRunResults 结果表为准，回填 Auto_TestRun 和 Auto_TestCaseTaskExecutions 的汇总统计
+   * 确保两张表数据一致，避免"汇总通过但明细失败"或相反的情况
+   */
+  private async reconcileBatchSummary(
+    runId: number,
+    executionId: number,
+    mappedStatus: 'pending' | 'running' | 'success' | 'failed' | 'aborted'
+  ): Promise<void> {
+    const finalCounts = await this.countResultsByStatus(executionId);
+    if (finalCounts.total > 0) {
+      let reconciledRunStatus = mappedStatus;
+      if (finalCounts.failed > 0) {
+        reconciledRunStatus = 'failed';
+      } else if (finalCounts.passed > 0) {
+        reconciledRunStatus = 'success';
+      }
+
+      await this.testRunRepository.update(runId, {
+        status: reconciledRunStatus,
+        passedCases: finalCounts.passed,
+        failedCases: finalCounts.failed,
+        skippedCases: finalCounts.skipped,
+      });
+
+      const reconciledTaskStatus: 'success' | 'failed' | 'cancelled' =
+        reconciledRunStatus === 'aborted' ? 'cancelled'
+          : reconciledRunStatus === 'success' ? 'success'
+          : 'failed';
+
+      await this.repository.update(executionId, {
+        status: reconciledTaskStatus,
+        passedCases: finalCounts.passed,
+        failedCases: finalCounts.failed,
+        skippedCases: finalCounts.skipped,
+      });
+
+      logger.info('Reconciled batch summary from result rows', {
+        runId,
+        executionId,
+        reconciledRunStatus,
+        finalCounts,
+      }, LOG_CONTEXTS.REPOSITORY);
+    }
   }
 
   /**
@@ -2241,6 +2254,21 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         ORDER BY id ASC
       `, [executionId]) as Array<{ id: number }>;
 
+      const now = new Date();
+      const batchUpdate = async (ids: number[], status: 'passed' | 'failed' | 'skipped') => {
+        if (ids.length === 0) return;
+        // 只更新 status 和 end_time，不填充 start_time 和 duration：
+        // 没有真实执行数据时，保留 NULL 让前端显示 "-"
+        const placeholders = ids.map(() => '?').join(', ');
+        await this.testRunResultRepository.query(
+          `UPDATE Auto_TestRunResults
+           SET status = ?,
+               end_time = COALESCE(end_time, ?)
+           WHERE id IN (${placeholders})`,
+          [status, now, ...ids]
+        );
+      };
+
       if (preCreatedResults.length > 0) {
         const passedEnd = results.passedCases;
         const failedEnd = passedEnd + results.failedCases;
@@ -2249,21 +2277,6 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         const passedIds  = preCreatedResults.slice(0,        passedEnd).map(r => r.id);
         const failedIds  = preCreatedResults.slice(passedEnd, failedEnd).map(r => r.id);
         const skippedIds = preCreatedResults.slice(failedEnd).map(r => r.id);
-
-        const now = new Date();
-        const batchUpdate = async (ids: number[], status: 'passed' | 'failed' | 'skipped') => {
-          if (ids.length === 0) return;
-          // 只更新 status 和 end_time，不填充 start_time 和 duration：
-          // 没有真实执行数据时，保留 NULL 让前端显示 "-"
-          const placeholders = ids.map(() => '?').join(', ');
-          await this.testRunResultRepository.query(
-            `UPDATE Auto_TestRunResults
-             SET status = ?,
-                 end_time = COALESCE(end_time, ?)
-             WHERE id IN (${placeholders})`,
-            [status, now, ...ids]
-          );
-        };
 
         logger.info(
           `updateSummaryOnlyResults: distributing status to error placeholders`,
@@ -2292,6 +2305,92 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
           { runId, executionId, updatedCount: preCreatedResults.length },
           LOG_CONTEXTS.REPOSITORY
         );
+      } else {
+        // 【修复】当 error 占位符已被轮询路径提前清理（改为 failed/passed）时，
+        // 若此次回调汇总数据与数据库明细记录不一致，需要重新修正以保持数据同步。
+        // 场景：轮询路径在无 JUnit 结果时将占位符改为 failed，随后回调到达告知 passedCases>0。
+        // 此时需要将 failed 记录中多余的（按顺序）重新分配为 passed。
+        const currentCounts = await this.testRunResultRepository.query(`
+          SELECT
+            SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) AS passed,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+            SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+            COUNT(*) AS total
+          FROM Auto_TestRunResults
+          WHERE execution_id = ?
+        `, [executionId]) as Array<{ passed: string; failed: string; skipped: string; total: string }>;
+
+        if (currentCounts.length > 0) {
+          const dbPassed  = Number(currentCounts[0].passed  ?? 0);
+          const dbFailed  = Number(currentCounts[0].failed  ?? 0);
+          const dbTotal   = Number(currentCounts[0].total   ?? 0);
+
+          const expectedPassed  = results.passedCases;
+          const expectedFailed  = results.failedCases;
+
+          // 只在汇总数据与数据库明细不一致时进行修正（避免覆盖正确数据）
+          const needsReconcile = dbTotal > 0 && (dbPassed !== expectedPassed || dbFailed !== expectedFailed);
+
+          if (needsReconcile) {
+            logger.info(
+              `updateSummaryOnlyResults: no error placeholders but counts mismatch, reconciling`,
+              {
+                runId,
+                executionId,
+                dbPassed,
+                dbFailed,
+                dbTotal,
+                expectedPassed,
+                expectedFailed,
+                summaryPassed: results.passedCases,
+                summaryFailed: results.failedCases,
+              },
+              LOG_CONTEXTS.REPOSITORY
+            );
+
+            // 若回调说全部通过（passedCases == total），但 DB 里全是 failed，
+            // 则将所有非 passed 记录按序重新分配为 passed
+            if (expectedPassed > 0 && dbPassed < expectedPassed) {
+              // 查出多余的 failed 记录，按顺序将前 (expectedPassed - dbPassed) 条改为 passed
+              const needMorePassed = expectedPassed - dbPassed;
+              const failedRecords = await this.testRunResultRepository.query(`
+                SELECT id FROM Auto_TestRunResults
+                WHERE execution_id = ? AND status = 'failed'
+                ORDER BY id ASC
+                LIMIT ?
+              `, [executionId, needMorePassed]) as Array<{ id: number }>;
+
+              if (failedRecords.length > 0) {
+                const ids = failedRecords.map(r => r.id);
+                await batchUpdate(ids, 'passed');
+                logger.info(
+                  `updateSummaryOnlyResults: reconciled failed→passed records`,
+                  { runId, executionId, reconciled: ids.length, expectedPassed, dbPassed },
+                  LOG_CONTEXTS.REPOSITORY
+                );
+              }
+            } else if (expectedFailed > 0 && dbFailed < expectedFailed) {
+              // 反向场景：DB 里 passed 多，但 Jenkins 说有 failed
+              const needMoreFailed = expectedFailed - dbFailed;
+              const passedRecords = await this.testRunResultRepository.query(`
+                SELECT id FROM Auto_TestRunResults
+                WHERE execution_id = ? AND status = 'passed'
+                ORDER BY id DESC
+                LIMIT ?
+              `, [executionId, needMoreFailed]) as Array<{ id: number }>;
+
+              if (passedRecords.length > 0) {
+                const ids = passedRecords.map(r => r.id);
+                await batchUpdate(ids, 'failed');
+                logger.info(
+                  `updateSummaryOnlyResults: reconciled passed→failed records`,
+                  { runId, executionId, reconciled: ids.length, expectedFailed, dbFailed },
+                  LOG_CONTEXTS.REPOSITORY
+                );
+              }
+            }
+          }
+        }
       }
     } else {
       // 统计数全为0，且没有详细 results 数组
