@@ -176,7 +176,8 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     }
 
     if (message.includes('Jenkins 当前不可用')) {
-      return 'Jenkins 暂时不可用，请稍后重试';
+      // 优先透传后端给出的具体失败原因（如 timeout / 401 / DNS）
+      return message;
     }
 
     return '请检查 Jenkins 连接或稍后重试';

@@ -30,7 +30,7 @@ const DEFAULT_JENKINS_URL = 'http://jenkins.wiac.xyz:8080/';
 /** Jenkins 健康检查默认用户 */
 const DEFAULT_JENKINS_USER = 'root';
 /** 触发前 Jenkins 预检查默认超时（毫秒） */
-const DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS = 3_000;
+const DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS = 8_000;
 /** 触发前 Jenkins 预检查超时（毫秒） */
 const TRIGGER_PRECHECK_TIMEOUT_MS = Math.max(
   1_000,
@@ -38,6 +38,16 @@ const TRIGGER_PRECHECK_TIMEOUT_MS = Math.max(
     process.env.JENKINS_TRIGGER_PRECHECK_TIMEOUT_MS ?? String(DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS),
     10
   ) || DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS
+);
+/** 触发前 Jenkins 预检查重试次数（总尝试次数 = 1 + retries） */
+const TRIGGER_PRECHECK_RETRIES = Math.max(
+  0,
+  Math.min(3, Number.parseInt(process.env.JENKINS_TRIGGER_PRECHECK_RETRIES ?? '1', 10) || 1)
+);
+/** 触发前 Jenkins 预检查重试间隔（毫秒） */
+const TRIGGER_PRECHECK_RETRY_DELAY_MS = Math.max(
+  200,
+  Number.parseInt(process.env.JENKINS_TRIGGER_PRECHECK_RETRY_DELAY_MS ?? '600', 10) || 600
 );
 /** 是否启用触发前 Jenkins 预检查 */
 const TRIGGER_PRECHECK_ENABLED = (process.env.JENKINS_TRIGGER_PRECHECK_ENABLED ?? 'true') !== 'false';
@@ -228,52 +238,87 @@ async function runJenkinsTriggerPrecheck(source: 'run-case' | 'run-batch'): Prom
     return { ok: true };
   }
 
-  let timeoutId: NodeJS.Timeout | undefined;
-  try {
-    const timeoutPromise = new Promise<{ connected: false; message: string }>((resolve) => {
-      timeoutId = setTimeout(() => {
-        resolve({
-          connected: false,
-          message: `Jenkins precheck timeout after ${TRIGGER_PRECHECK_TIMEOUT_MS}ms`,
-        });
-      }, TRIGGER_PRECHECK_TIMEOUT_MS);
-      timeoutId.unref?.();
-    });
+  const maxAttempts = 1 + TRIGGER_PRECHECK_RETRIES;
+  const reasons: string[] = [];
 
-    const checkResult = await Promise.race([
-      jenkinsService.testConnection(),
-      timeoutPromise,
-    ]);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let timeoutId: NodeJS.Timeout | undefined;
 
-    if (checkResult.connected) {
-      return { ok: true };
+    try {
+      const timeoutPromise = new Promise<{ connected: false; message: string }>((resolve) => {
+        timeoutId = setTimeout(() => {
+          resolve({
+            connected: false,
+            message: `Jenkins precheck timeout after ${TRIGGER_PRECHECK_TIMEOUT_MS}ms`,
+          });
+        }, TRIGGER_PRECHECK_TIMEOUT_MS);
+        timeoutId.unref?.();
+      });
+
+      const checkResult = await Promise.race([
+        jenkinsService.testConnection(),
+        timeoutPromise,
+      ]);
+
+      if (checkResult.connected) {
+        if (attempt > 1) {
+          logger.info('[trigger-precheck] Jenkins precheck recovered after retry', {
+            source,
+            attempt,
+            maxAttempts,
+          }, LOG_CONTEXTS.JENKINS);
+        }
+        return { ok: true };
+      }
+
+      const reason = checkResult.message || 'Jenkins unavailable';
+      reasons.push(reason);
+
+      // 配置缺失属于确定性失败，无需重试
+      if (reason.includes('not configured')) {
+        break;
+      }
+
+      logger.warn('[trigger-precheck] Jenkins unavailable in attempt', {
+        source,
+        attempt,
+        maxAttempts,
+        reason,
+        timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
+      }, LOG_CONTEXTS.JENKINS);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      reasons.push(reason);
+      logger.warn('[trigger-precheck] Jenkins precheck attempt failed with exception', {
+        source,
+        attempt,
+        maxAttempts,
+        reason,
+        timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
+      }, LOG_CONTEXTS.JENKINS);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
 
-    logger.warn('[trigger-precheck] Jenkins unavailable, rejecting trigger request', {
-      source,
-      reason: checkResult.message,
-      timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
-    }, LOG_CONTEXTS.JENKINS);
-
-    return {
-      ok: false,
-      reason: checkResult.message || 'Jenkins unavailable',
-    };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    logger.warn('[trigger-precheck] Jenkins precheck failed with exception', {
-      source,
-      reason,
-      timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
-    }, LOG_CONTEXTS.JENKINS);
-
-    return {
-      ok: false,
-      reason,
-    };
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    if (attempt < maxAttempts) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => resolve(), TRIGGER_PRECHECK_RETRY_DELAY_MS);
+        timer.unref?.();
+      });
+    }
   }
+
+  const reason = reasons[reasons.length - 1] || 'Jenkins unavailable';
+  logger.warn('[trigger-precheck] Jenkins unavailable, rejecting trigger request after retries', {
+    source,
+    maxAttempts,
+    reason,
+    reasons,
+    timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
+    retryDelayMs: TRIGGER_PRECHECK_RETRY_DELAY_MS,
+  }, LOG_CONTEXTS.JENKINS);
+
+  return { ok: false, reason };
 }
 
 /**
@@ -624,7 +669,7 @@ router.post('/run-case', [
     if (!precheck.ok) {
       return res.status(503).json({
         success: false,
-        message: 'Jenkins 当前不可用，请稍后重试',
+        message: `Jenkins 当前不可用，请稍后重试（${precheck.reason}）`,
         details: {
           reason: precheck.reason,
           source: 'run-case-precheck',
@@ -811,7 +856,7 @@ router.post('/run-batch', [
     if (!precheck.ok) {
       return res.status(503).json({
         success: false,
-        message: 'Jenkins 当前不可用，请稍后重试',
+        message: `Jenkins 当前不可用，请稍后重试（${precheck.reason}）`,
         details: {
           reason: precheck.reason,
           source: 'run-batch-precheck',
