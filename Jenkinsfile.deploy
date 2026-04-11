@@ -87,9 +87,7 @@ pipeline {
                     // 检查项目目录
                     sh """
                         if [ ! -d "${PROJECT_DIR}" ]; then
-                            echo "错误: 项目目录不存在: ${PROJECT_DIR}"
-                            echo "请先运行初始安装脚本"
-                            exit 1
+                            echo "警告: 项目目录不存在: ${PROJECT_DIR}，将在下一步自动创建"
                         fi
                     """
                     

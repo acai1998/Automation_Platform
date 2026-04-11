@@ -120,7 +120,7 @@ pipeline {
                         rm -rf "${reportDir}/repo" || true
                         if [ -d "${reportDir}/repo" ]; then
                             echo "⚠️ 宿主机清理 ${reportDir}/repo 失败，尝试容器内 root 清理"
-                            docker run --rm -v "${reportDir}:/workspace" alpine:3.20 sh -c 'rm -rf /workspace/repo'
+                            docker run --rm -v "${reportDir}:/workspace" alpine:3.20 rm -rf /workspace/repo
                         fi
                     """
 
