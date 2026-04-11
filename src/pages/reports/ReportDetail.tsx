@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { useTestRunDetail, useTestRunResults, TestRunResultStatus } from "@/hooks/useExecutions";
+import { useTestRunDetail, useTestRunResults, useTestRunSchedulerLogs, TestRunResultStatus } from "@/hooks/useExecutions";
 import type { TestRunResult, TestRunRecord } from "@/hooks/useExecutions";
 
 type SortBy = "failed_first" | "default" | "duration_desc";
@@ -135,6 +135,19 @@ function formatDuration(ms?: number | null) {
   if (ms == null || ms === 0) return "-";
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function buildLogMetaPreview(metadata: Record<string, unknown>): string {
+  const keys = ['traceId', 'triggerReason', 'source', 'windowStart', 'dedupeReason', 'runId', 'executionId'];
+  const parts: string[] = [];
+  for (const key of keys) {
+    const value = metadata[key];
+    if (value !== undefined && value !== null && String(value).length > 0) {
+      parts.push(`${key}=${String(value)}`);
+    }
+    if (parts.length >= 3) break;
+  }
+  return parts.join(' | ');
 }
 
 // ─── 按分组视图组件 ───────────────────────────────────────────────────────────
@@ -294,6 +307,7 @@ export default function ReportDetail() {
 
   // ✅ 所有 Hook 必须在任何条件 return 之前调用，保证 Hook 调用顺序稳定
   const { data: run, isLoading: runLoading, error, refetch } = useTestRunDetail(runId);
+  const { data: schedulerLogs, isLoading: schedulerLogsLoading } = useTestRunSchedulerLogs(runId);
 
   const [activeTab, setActiveTab] = useState<"cases" | "groups">("cases");
   const [search, setSearch] = useState("");
@@ -599,6 +613,59 @@ export default function ReportDetail() {
             </button>
           </div>
         )}
+
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm mb-6">
+          <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">调度日志</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">用于排查定时触发、补偿触发与重复触发问题</p>
+            </div>
+            <span className="text-xs text-slate-400">{schedulerLogs?.length ?? 0} 条</span>
+          </div>
+          <div className="max-h-72 overflow-auto">
+            {schedulerLogsLoading ? (
+              <div className="px-6 py-8 flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                正在加载调度日志...
+              </div>
+            ) : !schedulerLogs || schedulerLogs.length === 0 ? (
+              <div className="px-6 py-8 text-sm text-slate-500">暂无调度日志（可能是历史运行记录，尚未采集）</div>
+            ) : (
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800/70">
+                  <tr className="text-slate-500 dark:text-slate-300">
+                    <th className="px-6 py-2">时间</th>
+                    <th className="px-6 py-2">事件</th>
+                    <th className="px-6 py-2">来源</th>
+                    <th className="px-6 py-2">备注</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {schedulerLogs.map((log) => {
+                    const metaPreview = buildLogMetaPreview(log.metadata);
+                    return (
+                      <tr key={log.id}>
+                        <td className="px-6 py-2 font-mono text-slate-500">{formatTime(log.createdAt, true)}</td>
+                        <td className="px-6 py-2 text-slate-700 dark:text-slate-200 font-medium">{log.message}</td>
+                        <td className="px-6 py-2">
+                          <span className={cn(
+                            "inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold",
+                            log.source === 'audit'
+                              ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+                              : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                          )}>
+                            {log.source === 'audit' ? '审计' : '运行'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-2 text-slate-500">{metaPreview || '-'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
 
         <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
           <div className="flex border-b border-slate-200 dark:border-slate-800 px-6">

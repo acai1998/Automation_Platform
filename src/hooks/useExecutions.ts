@@ -232,12 +232,35 @@ export interface TestRunResultsOptions {
   keyword?: string;
 }
 
+export interface SchedulerTraceLogItem {
+  id: string;
+  source: 'run' | 'audit';
+  action: string;
+  createdAt: string | null;
+  operatorId: number | null;
+  operatorName: string | null;
+  message: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface TestRunResultsResponse {
   success: boolean;
   data: TestRunResult[];
   total: number;
   page: number;
   pageSize: number;
+}
+
+export function useTestRunSchedulerLogs(id: number) {
+  return useQuery<SchedulerTraceLogItem[]>({
+    queryKey: ['test-run-scheduler-logs', id],
+    queryFn: async () => {
+      const result = await request<SchedulerTraceLogItem[]>(`/executions/test-runs/${id}/scheduler-logs`);
+      return result.data ?? [];
+    },
+    enabled: !!id,
+    staleTime: 10 * 1000,
+  });
 }
 
 export function useTestRunResults(id: number, options: TestRunResultsOptions = {}) {

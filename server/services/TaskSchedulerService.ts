@@ -216,6 +216,12 @@ export class TaskSchedulerService {
   /** 内存中缓存的任务配置 */
   private taskCache: Map<number, ScheduledTask> = new Map();
 
+  /**
+   * 最近一次已触发的 cron 窗口（taskId -> windowStartMs）
+   * 用于防止“补偿触发 + 正常定时触发”在同一窗口内重复创建运行记录。
+   */
+  private recentScheduledWindowByTaskId: Map<number, number> = new Map();
+
   /** 是否已启动 */
   private started = false;
 
@@ -459,6 +465,7 @@ export class TaskSchedulerService {
       this.timers.delete(taskId);
     }
     this.taskCache.delete(taskId);
+    this.recentScheduledWindowByTaskId.delete(taskId);
     // [P1] 从等待队列中也清除，并取消队列超时 timer
     const removedItems = this.waitQueue.filter(item => item.taskId === taskId);
     for (const item of removedItems) {
@@ -954,9 +961,17 @@ export class TaskSchedulerService {
     });
 
     // 异步触发，不阻塞启动
-    setImmediate(() => this.dispatchTask(task.id, 'scheduled').catch(err => {
-      logger.errorLog(err, `Compensation dispatch failed for task ${task.id}`, {});
-    }));
+    setImmediate(() => {
+      logger.info(`Task ${task.id} compensation dispatch enqueued`, {
+        taskId: task.id,
+        source: 'missed_fire_compensation',
+        prevShouldRun: prevShouldRun.toISOString(),
+        lastRunAt: task.lastRunAt?.toISOString() ?? null,
+      }, LOG_CONTEXTS.EXECUTION);
+      this.dispatchTask(task.id, 'scheduled').catch(err => {
+        logger.errorLog(err, `Compensation dispatch failed for task ${task.id}`, {});
+      });
+    });
   }
 
   /**
@@ -987,6 +1002,11 @@ export class TaskSchedulerService {
 
       const freshTask = this.taskCache.get(task.id);
       if (!freshTask || freshTask.status !== 'active') return;
+
+      logger.info(`Task ${task.id} timer fired, dispatching scheduled execution`, {
+        taskId: task.id,
+        dueAt: next.toISOString(),
+      }, LOG_CONTEXTS.EXECUTION);
 
       await this.dispatchTask(task.id, 'scheduled').catch(err => {
         logger.errorLog(err, `Scheduled dispatch failed for task ${task.id}`, {});
@@ -1104,6 +1124,43 @@ export class TaskSchedulerService {
   }
 
   /**
+   * 判断当前 scheduled 触发是否与最近窗口重复（补偿 + 定时并发场景防重）
+   */
+  private async isDuplicateScheduledWindow(taskId: number, cronExpression: string): Promise<{ duplicated: boolean; windowStart: Date | null; reason?: string }> {
+    const now = new Date();
+    const windowStart = getPrevCronTime(cronExpression, new Date(now.getTime() + 1000));
+    if (!windowStart) {
+      return { duplicated: false, windowStart: null, reason: 'window_unavailable' };
+    }
+
+    const windowStartMs = windowStart.getTime();
+    const inMemoryWindow = this.recentScheduledWindowByTaskId.get(taskId);
+    if (inMemoryWindow === windowStartMs) {
+      return { duplicated: true, windowStart, reason: 'memory_guard' };
+    }
+
+    const lastExecution = await queryOne<{ id: number; created_at: string | null }>(
+      `SELECT id, created_at
+       FROM Auto_TestCaseTaskExecutions
+       WHERE task_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [taskId]
+    );
+
+    if (lastExecution?.created_at) {
+      const lastCreatedAt = new Date(lastExecution.created_at).getTime();
+      if (!Number.isNaN(lastCreatedAt) && lastCreatedAt >= windowStartMs) {
+        this.recentScheduledWindowByTaskId.set(taskId, windowStartMs);
+        return { duplicated: true, windowStart, reason: 'db_guard' };
+      }
+    }
+
+    this.recentScheduledWindowByTaskId.set(taskId, windowStartMs);
+    return { duplicated: false, windowStart };
+  }
+
+  /**
    * 实际执行任务：创建运行记录 + 触发 Jenkins
    */
   private async executeTask(taskId: number, triggerReason: string, operatorId?: number): Promise<void> {
@@ -1123,8 +1180,31 @@ export class TaskSchedulerService {
       return;
     }
 
+    const traceId = `scheduler_${taskId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
     let caseIds: number[] = [];
     try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
+
+    if (triggerReason === 'scheduled') {
+      const dedupe = await this.isDuplicateScheduledWindow(taskId, row.cron_expression);
+      if (dedupe.duplicated) {
+        logger.warn(`Task ${taskId} duplicate scheduled trigger skipped`, {
+          taskId,
+          cronExpression: row.cron_expression,
+          triggerReason,
+          traceId,
+          dedupeReason: dedupe.reason,
+          windowStart: dedupe.windowStart?.toISOString() ?? null,
+        }, LOG_CONTEXTS.EXECUTION);
+        await this.recordAuditLog(taskId, 'duplicate_scheduled_skipped', SCHEDULER_USER_ID, {
+          triggerReason,
+          traceId,
+          dedupeReason: dedupe.reason,
+          windowStart: dedupe.windowStart?.toISOString() ?? null,
+        });
+        return;
+      }
+    }
 
     if (caseIds.length === 0) {
       logger.warn(`Task ${taskId} has no caseIds, skipping`, {}, LOG_CONTEXTS.EXECUTION);
@@ -1144,6 +1224,8 @@ export class TaskSchedulerService {
       logger.warn(`Task ${taskId} has no script paths (all caseIds have empty scriptPath), skipping execution`, {
         taskId,
         caseIds,
+        triggerReason,
+        traceId,
       }, LOG_CONTEXTS.EXECUTION);
       // ⚠️ Bug Fix: 即使跳过执行，也必须更新内存中的 lastRunAt
       // 否则 compensateMissedFires 每次都会误判为"漏触发"并额外再 dispatch 一次，
@@ -1197,6 +1279,9 @@ export class TaskSchedulerService {
       taskId,
       runId: execution.runId,
       executionId: execution.executionId,
+      triggerReason,
+      traceId,
+      cronExpression: row.cron_expression,
     }, LOG_CONTEXTS.EXECUTION);
 
     // 记录审计日志：手动触发时使用实际操作者 ID，调度/重试时使用系统用户
@@ -1208,6 +1293,9 @@ export class TaskSchedulerService {
       runId: execution.runId,
       executionId: execution.executionId,
       caseCount: caseIds.length,
+      traceId,
+      cronExpression: row.cron_expression,
+      source: triggerReason === 'manual' ? 'manual_api' : triggerReason === 'retry' ? 'retry_timer' : 'scheduler',
     });
 
     // 2. 触发 Jenkins
@@ -1226,6 +1314,7 @@ export class TaskSchedulerService {
             runId: capturedRunId,
             buildId,
             buildUrl,
+            traceId,
           }, LOG_CONTEXTS.EXECUTION);
           await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
         },
@@ -1235,6 +1324,7 @@ export class TaskSchedulerService {
             taskId,
             runId: capturedRunId,
             reason,
+            traceId,
           }, LOG_CONTEXTS.EXECUTION);
           try {
             await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);

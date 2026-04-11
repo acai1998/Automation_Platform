@@ -240,6 +240,28 @@ router.get("/test-runs/:runId/results", async (req, res) => {
 });
 
 /**
+ * GET /api/executions/test-runs/:runId/scheduler-logs
+ * 获取运行记录关联的调度追踪日志（用于排障）
+ */
+router.get('/test-runs/:runId/scheduler-logs', async (req, res) => {
+  try {
+    const runId = parseInt(req.params.runId);
+    if (Number.isNaN(runId) || runId <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid runId' });
+    }
+
+    const logs = await executionService.getSchedulerTraceLogs(runId);
+    res.json({ success: true, data: logs });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    if (message.includes('not found')) {
+      return res.status(404).json({ success: false, message });
+    }
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
  * GET /api/executions/:id/results
  * 获取运行批次的用例结果列表，:id 为 Auto_TestRun.id（runId）
  * 内部通过 execution_id 字段（优先）或时间窗口反查 executionId，再取用例结果
