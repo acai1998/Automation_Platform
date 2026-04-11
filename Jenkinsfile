@@ -45,7 +45,11 @@ pipeline {
                         return
                     }
 
-                    def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
+                    def callbackUrl = (params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback").trim()
+                    // 兼容历史配置：平台域名优先使用 HTTPS，避免回调走 301 或被策略拦截。
+                    if (callbackUrl.startsWith('http://autotest.wiac.xyz')) {
+                        callbackUrl = callbackUrl.replace('http://', 'https://')
+                    }
                     def reportDir   = "${env.WORKSPACE}/reports"
                     def repoDir     = "${env.WORKSPACE}/test-repo"
                     def repoBranch  = params.REPO_BRANCH ?: 'master'
@@ -111,9 +115,14 @@ pipeline {
 
                     // 清理容器内 /workspace/repo 的宿主机映射路径（即 reportDir/repo）
                     // 避免 entrypoint.sh 在容器内 git clone /workspace/repo 时报 "already exists"
-                    // 原因：cleanWs 保留 test-repo（宿主机增量缓存），但 /workspace 挂载的 reports/ 下的 repo 子目录不会被清理
-                    // 注意：必须使用双引号 sh""" """ 以展开 Groovy 变量；单引号 sh'' 不会展开 ${reportDir}
-                    sh """rm -rf "${reportDir}/repo" || true"""
+                    // 若目录被历史 root 容器污染，宿主机 rm 可能失败；此时回退到临时容器做 root 清理。
+                    sh """
+                        rm -rf "${reportDir}/repo" || true
+                        if [ -d "${reportDir}/repo" ]; then
+                            echo "⚠️ 宿主机清理 ${reportDir}/repo 失败，尝试容器内 root 清理"
+                            docker run --rm -v "${reportDir}:/workspace" alpine:3.20 sh -c 'rm -rf /workspace/repo'
+                        fi
+                    """
 
                     echo "[${new Date().format('HH:mm:ss')}] docker-run start"
                     def testExitCode = 1
@@ -123,6 +132,7 @@ pipeline {
                             script: """
                                 docker run --rm \\
                                     --shm-size=2g \\
+                                    --user "$(id -u):$(id -g)" \\
                                     --env-file "${envFile}" \\
                                     -v ${reportDir}:/workspace \\
                                     ${repoMount} \\
@@ -146,13 +156,23 @@ pipeline {
                         if (params.RUN_ID && callbackUrl) {
                             try {
                                 // -L：跟随 301/302 重定向（HTTP → HTTPS），避免回调因 nginx 重定向而丢失
-                                sh """
-                                    curl -s -L --max-time 10 -X POST '${callbackUrl}' \\
-                                        -H 'Content-Type: application/json' \\
-                                        -d '{"runId":${params.RUN_ID},"status":"failed","passedCases":0,"failedCases":0,"skippedCases":0,"durationMs":0,"results":[]}' \\
-                                        || echo "⚠️ 失败回调发送失败（忽略，不影响 Pipeline）"
-                                """
-                                echo "📡 已向平台发送失败回调 (exitCode=${testExitCode})"
+                                def callbackStatus = sh(
+                                    script: """
+                                        set +e
+                                        http_code=$(curl -sS -L --max-time 10 -o /tmp/callback_body.txt -w '%{http_code}' -X POST '${callbackUrl}' \\
+                                            -H 'Content-Type: application/json' \\
+                                            -d '{"runId":${params.RUN_ID},"status":"failed","passedCases":0,"failedCases":0,"skippedCases":0,"durationMs":0,"results":[]}')
+                                        curl_exit=$?
+                                        echo "${curl_exit}:${http_code}"
+                                        exit 0
+                                    """,
+                                    returnStdout: true
+                                ).trim()
+                                if (callbackStatus.startsWith('0:2')) {
+                                    echo "📡 已向平台发送失败回调 (exitCode=${testExitCode})"
+                                } else {
+                                    echo "⚠️ 失败回调发送异常，status=${callbackStatus}，详见 /tmp/callback_body.txt（不影响 Pipeline）"
+                                }
                             } catch (Exception cbErr) {
                                 echo "⚠️ 发送失败回调时出错（忽略）: ${cbErr.message}"
                             }
