@@ -23,7 +23,8 @@ import AICases from "./pages/cases/AICases";
 import AICaseCreate from "./pages/cases/AICaseCreate";
 import Reports from "./pages/reports/Reports";
 import ReportDetail from "./pages/reports/ReportDetail";
-import { Settings, User } from "lucide-react";
+import SystemSettings from "./pages/settings/SystemSettings";
+import { User } from "lucide-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
@@ -49,13 +50,7 @@ function ReportDetailPage() {
 }
 
 function SettingsPage() {
-  return (
-    <ComingSoon
-      title="系统设置"
-      description="系统配置、Jenkins 集成和通知设置功能正在开发中"
-      icon={<Settings className="h-10 w-10 text-blue-500" />}
-    />
-  );
+  return <SystemSettings />;
 }
 
 function ProfilePage() {
