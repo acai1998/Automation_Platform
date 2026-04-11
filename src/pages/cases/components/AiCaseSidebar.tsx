@@ -232,7 +232,7 @@ export function AiCaseSidebar({
     <aside className="flex flex-col bg-white dark:bg-slate-900">
 
       {/* ══ 执行进度 ══════════════════════════════════════ */}
-      <SidebarSection title="执行进度" icon={<CheckCircle2 className="h-3.5 w-3.5" />} defaultOpen={false}>
+      <SidebarSection title="执行进度" icon={<CheckCircle2 className="h-3.5 w-3.5" />} defaultOpen={true}>
         {progress.total === 0 ? (
           <p className="text-[11px] text-slate-400 py-1">AI 生成后此处显示进度统计</p>
         ) : (
@@ -247,11 +247,33 @@ export function AiCaseSidebar({
             </div>
           </div>
         )}
-      </SidebarSection>
 
-      {/* ══ 节点操作 ══════════════════════════════════════ */}
-      <SidebarSection title="节点操作" icon={<Circle className="h-3.5 w-3.5" />} defaultOpen={hasSelectedNode} highlight={hasSelectedNode}>
-        <div className="space-y-3">
+        {/* ── 状态操作按钮 ── */}
+        <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+          <div className="grid grid-cols-3 gap-1.5">
+            {STATUS_ACTIONS.map((item) => {
+              const isActive = !isMultiSelect && hasSelectedNode && selectedNodeStatus === item.status;
+              const isDisabled = !(isMultiSelect ? canEditAnySelectedNode : canEditSelectedNode) || isUpdatingNodeStatus;
+              return (
+                <button key={item.status} type="button"
+                  onClick={() => void onStatusChange(item.status)}
+                  disabled={isDisabled}
+                  className={`h-8 rounded-md border text-xs font-medium flex items-center justify-center gap-1 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${isActive ? `${item.activeClass} ring-2 ring-inset ring-indigo-300 dark:ring-indigo-600` : item.idleClass}`}>
+                  {isUpdatingNodeStatus && isActive ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : item.icon}
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+          {/* 多选批量操作加载提示 */}
+          {isMultiSelect && isUpdatingNodeStatus && (
+            <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>正在批量更新节点状态...</span>
+            </div>
+          )}
+
+          {/* ── 节点说明 ── */}
           <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-2.5">
             {/* 多选提示 banner */}
             {isMultiSelect ? (
@@ -264,7 +286,7 @@ export function AiCaseSidebar({
                 </span>
               </div>
             ) : (
-              <div className="text-[10px] uppercase tracking-wide text-slate-400 font-medium mb-1">当前选中节点</div>
+              <div className="text-[10px] uppercase tracking-wide text-slate-400 font-medium mb-1">节点说明</div>
             )}
             {hasSelectedNode ? (
               <>
@@ -279,7 +301,6 @@ export function AiCaseSidebar({
                 </div>
                 {/* 展示 testcase 的链式子节点（前置条件→测试步骤→预期结果），仅单选时显示 */}
                 {canEditSelectedNode && !isMultiSelect ? (() => {
-                  // 新链式格式：testcase → 前置条件 → 测试步骤 → 预期结果（每级1个子节点）
                   const preconditionNode = (selectedNode?.children as AiCaseNode[] | undefined)?.[0];
                   const stepsNode = (preconditionNode?.children as AiCaseNode[] | undefined)?.[0];
                   const expectedNode = (stepsNode?.children as AiCaseNode[] | undefined)?.[0];
@@ -339,35 +360,11 @@ export function AiCaseSidebar({
               <p className="text-[11px] text-slate-400">请在脑图中点击一个节点</p>
             )}
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {STATUS_ACTIONS.map((item) => {
-              // 单选：主选中节点状态匹配时高亮；多选：无单一高亮状态（显示各节点的实际状态不一）
-              const isActive = !isMultiSelect && hasSelectedNode && selectedNodeStatus === item.status;
-              // 多选时只要有可操作 testcase 就允许，单选时仅 testcase 可操作
-              const isDisabled = !(isMultiSelect ? canEditAnySelectedNode : canEditSelectedNode) || isUpdatingNodeStatus;
-              return (
-                <button key={item.status} type="button"
-                  onClick={() => void onStatusChange(item.status)}
-                  disabled={isDisabled}
-                  className={`h-8 rounded-md border text-xs font-medium flex items-center justify-center gap-1 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${isActive ? `${item.activeClass} ring-2 ring-inset ring-indigo-300 dark:ring-indigo-600` : item.idleClass}`}>
-                  {isUpdatingNodeStatus && isActive ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : item.icon}
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-          {/* 多选批量操作加载提示 */}
-          {isMultiSelect && isUpdatingNodeStatus && (
-            <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span>正在批量更新节点状态...</span>
-            </div>
-          )}
         </div>
       </SidebarSection>
 
-      {/* ══ 截图证据 ══════════════════════════════════════ */}
-      <SidebarSection title="截图证据" icon={<ImageIcon className="h-3.5 w-3.5" />} defaultOpen={false} badge={attachments.length} highlight={attachments.length > 0}>
+      {/* ══ 执行记录 ══════════════════════════════════════ */}
+      <SidebarSection title="执行记录" icon={<ImageIcon className="h-3.5 w-3.5" />} defaultOpen={false} badge={attachments.length} highlight={attachments.length > 0}>
         <div className="space-y-2.5">
           <label className={`flex items-center gap-2 cursor-pointer ${!canEditSelectedNode || isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
             <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-dashed border-slate-300 dark:border-slate-600 px-3 text-xs text-slate-600 dark:text-slate-400 hover:border-indigo-400 hover:text-indigo-600 transition-colors">
