@@ -81,7 +81,7 @@ pipeline {
                     // 检查 Docker
                     sh '''
                         docker --version
-                        docker-compose --version
+                        docker compose version
                     '''
                     
                     // 检查项目目录
@@ -197,7 +197,7 @@ COMPOSE_EOF
                     echo "停止旧容器..."
                     sh """
                         cd ${PROJECT_DIR}
-                        docker-compose down || true
+                        docker compose down || true
                     """
                 }
             }
@@ -231,10 +231,10 @@ COMPOSE_EOF
                     echo "启动新容器..."
                     sh """
                         cd ${PROJECT_DIR}
-                        docker-compose up -d
+                        docker compose up -d
                         
                         # 显示容器状态
-                        docker-compose ps
+                        docker compose ps
                     """
                 }
             }
@@ -346,7 +346,7 @@ COMPOSE_EOF
                 // 显示容器日志（容错处理）
                 sh """
                     cd ${PROJECT_DIR} 2>/dev/null || true
-                    docker-compose logs --tail=100 2>/dev/null || true
+                    docker compose logs --tail=100 2>/dev/null || true
                 """
                 
                 // 尝试回滚
@@ -356,8 +356,8 @@ COMPOSE_EOF
                     if [ -f ${PROJECT_DIR}/docker-compose.yml.backup ]; then
                         cd ${PROJECT_DIR}
                         mv docker-compose.yml.backup docker-compose.yml
-                        docker-compose down || true
-                        docker-compose up -d || true
+                        docker compose down || true
+                        docker compose up -d || true
                         echo "回滚完成"
                     else
                         echo "未找到备份配置，跳过回滚"
