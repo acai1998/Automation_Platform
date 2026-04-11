@@ -114,6 +114,7 @@ pipeline {
                                 touch "${ENV_FILE}"
                                 echo "[WARN] 已创建空 ${ENV_FILE}，请登录服务器补全配置后重新部署"
                             fi
+                            chmod 600 "${ENV_FILE}"
                         fi
 
                         # 始终覆写 docker-compose.yml，确保 env_file 使用绝对路径 ${ENV_FILE}
@@ -182,8 +183,16 @@ COMPOSE_EOF
                     echo "备份当前版本..."
                     sh """
                         BACKUP_TAG="backup-\$(date +%Y%m%d-%H%M%S)"
-                        docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:\$BACKUP_TAG || true
-                        echo "备份标签: \$BACKUP_TAG"
+                        CURRENT_IMAGE=\$(docker inspect --format='{{.Config.Image}}' automation-platform 2>/dev/null || echo "")
+                        
+                        if [ -n "\$CURRENT_IMAGE" ]; then
+                            docker tag "\$CURRENT_IMAGE" ${IMAGE_NAME}:\$BACKUP_TAG || true
+                            echo "备份标签: \$BACKUP_TAG (来自当前运行镜像: \$CURRENT_IMAGE)"
+                        else
+                            echo "未找到运行中的容器，尝试备份 latest 标签..."
+                            docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:\$BACKUP_TAG || true
+                            echo "备份标签: \$BACKUP_TAG (来自 latest)"
+                        fi
                     """
                 }
             }
