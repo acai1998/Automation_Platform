@@ -86,46 +86,17 @@ export default function SystemSettings() {
     <div className="h-full overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
       <div className="mx-auto max-w-7xl space-y-5">
         <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-white via-white to-slate-50/70 shadow-sm dark:border-slate-800 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900/80">
-          <CardContent className="flex flex-col gap-4 p-5 sm:p-6">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <CardContent className="flex flex-col gap-3 p-5 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">系统设置</h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 dark:text-slate-400">
                   统一管理系统级配置入口。当前已接入 Jenkins 可用性监控，后续可在此扩展通知、治理策略和系统变量等能力。
                 </p>
               </div>
-
-              <div className="inline-flex w-fit items-center rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-xs text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
-                最近检测：{checkedAt}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="rounded-xl border border-slate-200/90 bg-white/90 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
-                <div className="text-xs text-slate-500 dark:text-slate-400">核心集成</div>
-                <div className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">Jenkins</div>
-              </div>
-              <div className="rounded-xl border border-slate-200/90 bg-white/90 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
-                <div className="text-xs text-slate-500 dark:text-slate-400">当前状态</div>
-                <div className="mt-1 inline-flex items-center gap-2">
-                  <span
-                    className={cn(
-                      'inline-block h-2.5 w-2.5 rounded-full',
-                      statusTone === 'success' && 'bg-emerald-500',
-                      statusTone === 'danger' && 'bg-rose-500',
-                      statusTone === 'neutral' && 'bg-amber-500',
-                    )}
-                    aria-hidden="true"
-                  />
-                  <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{statusText}</span>
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-200/90 bg-white/90 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
-                <div className="text-xs text-slate-500 dark:text-slate-400">扩展模块</div>
-                <div className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  {RESERVED_MODULES.length} 项规划中
-                </div>
-              </div>
+              <Badge variant="outline" className="border-slate-300/90 bg-white/90 text-slate-700 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
+                {RESERVED_MODULES.length + 1} 个设置模块
+              </Badge>
             </div>
           </CardContent>
         </Card>

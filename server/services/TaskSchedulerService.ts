@@ -1113,6 +1113,8 @@ export class TaskSchedulerService {
     try {
       // [P1] executeTask 内部会在 Jenkins 触发成功后注册 slot，失败时不注册（不占用槽位）
       await this.executeTask(taskId, triggerReason, operatorId);
+      // 触发成功后清理历史重试状态，避免后续误判
+      this.clearRetryState(taskId);
     } catch (err) {
       logger.errorLog(err, `Task ${taskId} execution error`, { taskId });
       await this.handleTaskFailure(taskId, err);
@@ -1390,6 +1392,18 @@ export class TaskSchedulerService {
   }
 
   /**
+   * 清理任务重试状态（含定时器）
+   */
+  private clearRetryState(taskId: number): void {
+    const state = this.retryStates.get(taskId);
+    if (state?.timer) {
+      clearTimeout(state.timer);
+      state.timer = undefined;
+    }
+    this.retryStates.delete(taskId);
+  }
+
+  /**
    * 失败重试处理
    */
   private async handleTaskFailure(taskId: number, err: unknown): Promise<void> {
@@ -1422,8 +1436,17 @@ export class TaskSchedulerService {
         error: err instanceof Error ? err.message : String(err),
       });
 
+      if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = undefined;
+      }
+
       const retryTimer = setTimeout(async () => {
-        this.retryStates.delete(taskId);
+        // 注意：不要在重试前删除 retryState，否则 attempt 会被重置为 1，导致无限重试
+        const latestState = this.retryStates.get(taskId);
+        if (latestState) {
+          latestState.timer = undefined;
+        }
         await this.dispatchTask(taskId, 'retry').catch(retryErr => {
           logger.errorLog(retryErr, `Task ${taskId} retry dispatch failed`, {});
         });
@@ -1441,7 +1464,7 @@ export class TaskSchedulerService {
         error: err instanceof Error ? err.message : String(err),
       });
 
-      this.retryStates.delete(taskId);
+      this.clearRetryState(taskId);
     }
   }
 

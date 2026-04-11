@@ -214,27 +214,6 @@ export default function Reports() {
         </div>
       </div>
 
-      {showStaleHint && (
-        <div className="px-3 sm:px-4 py-2 border-b border-amber-200/80 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-900/20 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300 text-xs">
-            <AlertTriangle className="h-3.5 w-3.5" />
-            <span>
-              检测到 <span className="font-semibold">{staleSummary?.totalStaleCount ?? 0}</span> 条历史等待中/卡住记录（等待中无 start_time: {staleSummary?.stalePendingNoStartCount ?? 0} 条）
-            </span>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 ml-auto"
-            disabled={cleanupStaleMutation.isPending || !canCleanupStale}
-            onClick={handleCleanupStale}
-            title={canCleanupStale ? '清理历史卡住记录' : '当前账号无清理权限'}
-          >
-            {cleanupStaleMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '一键清理'}
-          </Button>
-        </div>
-      )}
-
       {/* 列表内容区 */}
       <div className="flex-1 min-h-0 overflow-hidden bg-white dark:bg-slate-900 rounded-b-xl shadow-sm border border-t-0 border-slate-200/80 dark:border-slate-700/50">
         {isLoading ? (

@@ -132,7 +132,7 @@ pipeline {
                             script: """
                                 docker run --rm \\
                                     --shm-size=2g \\
-                                    --user "$(id -u):$(id -g)" \\
+                                    --user "\$(id -u):\$(id -g)" \\
                                     --env-file "${envFile}" \\
                                     -v ${reportDir}:/workspace \\
                                     ${repoMount} \\
@@ -159,11 +159,11 @@ pipeline {
                                 def callbackStatus = sh(
                                     script: """
                                         set +e
-                                        http_code=$(curl -sS -L --max-time 10 -o /tmp/callback_body.txt -w '%{http_code}' -X POST '${callbackUrl}' \\
+                                        http_code=\$(curl -sS -L --max-time 10 -o /tmp/callback_body.txt -w '%{http_code}' -X POST '${callbackUrl}' \\
                                             -H 'Content-Type: application/json' \\
                                             -d '{"runId":${params.RUN_ID},"status":"failed","passedCases":0,"failedCases":0,"skippedCases":0,"durationMs":0,"results":[]}')
-                                        curl_exit=$?
-                                        echo "${curl_exit}:${http_code}"
+                                        curl_exit=\$?
+                                        echo "\${curl_exit}:\${http_code}"
                                         exit 0
                                     """,
                                     returnStdout: true
