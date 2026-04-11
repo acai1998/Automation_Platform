@@ -113,6 +113,16 @@ pipeline {
                         "REPO_PRELOADED=${repoPreloaded}",
                     ].join('\n') + '\n'
 
+                    // 清理上次构建遗留的 /workspace/repo（可能由旧镜像以 root 身份写入）
+                    // 新镜像（REPO_PRELOADED=true 时走 /repo 挂载）不再写此目录，此块可在镜像更新后删除
+                    sh """
+                        rm -rf "${reportDir}/repo" 2>/dev/null || \
+                        docker run --rm --entrypoint sh \
+                            -v "${reportDir}:/workspace" \
+                            ${TEST_RUNNER_IMAGE} \
+                            -c 'rm -rf /workspace/repo' || true
+                    """
+
                     echo "[${new Date().format('HH:mm:ss')}] docker-run start"
                     def testExitCode = 1
                     def repoMount = repoUrl ? "-v ${repoDir}:/repo" : ''

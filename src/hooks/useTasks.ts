@@ -404,7 +404,7 @@ export function useSchedulerStatus() {
       if (!response.ok) throw new Error(result.message || '获取调度器状态失败');
       return result.data as SchedulerStatus;
     },
-    refetchInterval: 10_000,          // 每10秒刷新一次
+    refetchInterval: 30_000,          // 每30秒刷新一次
     refetchIntervalInBackground: false, // 切换到后台标签页时停止轮询，节省请求
   });
 }
