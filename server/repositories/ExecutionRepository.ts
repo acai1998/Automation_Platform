@@ -1331,6 +1331,22 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       // 2. 多策略解析 executionId
       const resolvedExecutionId = await this.resolveExecutionIdForBatch(runId, executionId);
 
+      // 【诊断日志】记录 executionId 解析结果，便于追踪「汇总 passed 但明细 FAILED」问题
+      logger.info(
+        'completeBatch: executionId resolution result',
+        {
+          runId,
+          cachedExecutionId: executionId,
+          resolvedExecutionId,
+          hasResults: !!(results.results && results.results.length > 0),
+          resultsCount: results.results?.length ?? 0,
+          summaryPassed: results.passedCases,
+          summaryFailed: results.failedCases,
+          summarySkipped: results.skippedCases,
+        },
+        LOG_CONTEXTS.REPOSITORY
+      );
+
       // 3. 同步 TaskExecution 状态（与 TestRun 保持一致）
       if (resolvedExecutionId) {
         await this.syncTaskExecutionStatus(resolvedExecutionId, results);
@@ -1357,7 +1373,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       } else {
         logger.warn(
           `Could not determine executionId for runId, skipping detailed result updates`,
-          { runId, resultsCount: results.results?.length ?? 0 },
+          { runId, resultsCount: results.results?.length ?? 0, cachedExecutionId: executionId },
           LOG_CONTEXTS.REPOSITORY
         );
 
@@ -1365,12 +1381,12 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         // 尝试直接从 Auto_TestRunResults 表通过已有占位记录反查 executionId，
         // 确保 ERROR 占位符依然能被清理，避免用例状态永久卡在 error
         const fallbackExecId = await this.resolveExecutionIdFromRunResults(runId);
+        logger.info(
+          `completeBatch: fallback executionId lookup result`,
+          { runId, fallbackExecId: fallbackExecId ?? null, found: !!fallbackExecId },
+          LOG_CONTEXTS.REPOSITORY
+        );
         if (fallbackExecId) {
-          logger.info(
-            `completeBatch: fallback executionId resolved from TestRunResults, will cleanup error placeholders`,
-            { runId, fallbackExecId },
-            LOG_CONTEXTS.REPOSITORY
-          );
           await this.updateSummaryOnlyResults(runId, fallbackExecId, results);
           await this.performFinalErrorCleanup(fallbackExecId, results);
         }
@@ -2013,6 +2029,21 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
           caseName: result.caseName,  // 无 caseId 时按 caseName fallback 匹配
         });
 
+        // 【诊断日志】记录每条用例的匹配结果，便于追踪明细写入失败的原因
+        logger.debug(
+          `updateDetailedCaseResults: case update result`,
+          {
+            executionId,
+            runId,
+            caseId: result.caseId,
+            caseName: result.caseName,
+            status: normalizedStatus,
+            matched: updated,
+            action: updated ? 'updated' : (result.caseId !== undefined ? 'will_create' : 'skipped_no_caseId'),
+          },
+          LOG_CONTEXTS.REPOSITORY
+        );
+
         if (!updated) {
           // 若 caseId 缺失（caseName fallback 场景），跳过 createTestResult 避免 DB NOT NULL 错误
           if (result.caseId !== undefined) {
@@ -2202,10 +2233,11 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         LOG_CONTEXTS.REPOSITORY
       );
 
-      // 获取该 executionId 下所有预创建的 error 状态记录（按 id 排序保证顺序稳定）
+      // 【修复】只获取仍处于 error 状态的占位记录，避免覆盖已被 updateDetailedCaseResults 写入的真实结果
+      // 原查询无 status 过滤，在并发/重试场景下会把已正确更新的记录重置为错误状态
       const preCreatedResults = await this.testRunResultRepository.query(`
         SELECT id FROM Auto_TestRunResults
-        WHERE execution_id = ?
+        WHERE execution_id = ? AND status = 'error'
         ORDER BY id ASC
       `, [executionId]) as Array<{ id: number }>;
 
@@ -2232,6 +2264,22 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
             [status, now, ...ids]
           );
         };
+
+        logger.info(
+          `updateSummaryOnlyResults: distributing status to error placeholders`,
+          {
+            runId,
+            executionId,
+            totalErrorPlaceholders: preCreatedResults.length,
+            passedIds: passedIds.length,
+            failedIds: failedIds.length,
+            skippedIds: skippedIds.length,
+            summaryPassed: results.passedCases,
+            summaryFailed: results.failedCases,
+            summarySkipped: results.skippedCases,
+          },
+          LOG_CONTEXTS.REPOSITORY
+        );
 
         await Promise.all([
           batchUpdate(passedIds,  'passed'),
