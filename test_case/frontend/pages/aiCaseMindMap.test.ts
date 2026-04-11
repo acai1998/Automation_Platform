@@ -46,11 +46,8 @@ function makeNode(
 function makeMindData(root: AiCaseNode): AiCaseMindData {
   return {
     nodeData: root,
-    linkData: {},
     theme: null as unknown as AiCaseMindData['theme'],
     direction: 2,
-    locale: 'zh_CN',
-    overflowHidden: false,
   };
 }
 

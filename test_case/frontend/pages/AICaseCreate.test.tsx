@@ -65,6 +65,7 @@ function makeDoc(id: string, name: string): AiCaseWorkspaceDocument {
     version: 1,
     createdAt: Date.now() - 10_000,
     updatedAt: Date.now() - 5_000,
+    lastSelectedNodeId: null,
   };
 }
 

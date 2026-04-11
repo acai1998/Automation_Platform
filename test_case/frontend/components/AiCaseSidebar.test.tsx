@@ -1,8 +1,10 @@
 /**
  * AiCaseSidebar 组件测试
- * 覆盖：需求输入、AI 生成进度条、执行进度、节点操作、截图证据、工作台操作、Markdown 导出、历史工作台
+ * 覆盖：执行进度、节点操作、截图证据、工作台操作、Markdown 导出、历史工作台
+ *
+ * 注：workspaceName / requirementText / onWorkspaceNameChange / onRequirementTextChange
+ * 等属性已从 AiCaseSidebarProps 中移除，相关测试已相应更新或移除。
  */
-import type { ChangeEvent } from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AiCaseSidebar, type AiCaseSidebarProps } from '@/pages/cases/components/AiCaseSidebar';
@@ -68,10 +70,6 @@ function makeTestcaseNode(): AiCaseNode {
 
 function buildDefaultProps(overrides: Partial<AiCaseSidebarProps> = {}): AiCaseSidebarProps {
   return {
-    workspaceName: '测试工作台',
-    requirementText: '',
-    onWorkspaceNameChange: vi.fn(),
-    onRequirementTextChange: vi.fn(),
     isGenerating: false,
     generationProgress: 0,
     generationStageText: '',
@@ -83,6 +81,9 @@ function buildDefaultProps(overrides: Partial<AiCaseSidebarProps> = {}): AiCaseS
     selectedNode: null,
     selectedNodeStatus: 'todo',
     canEditSelectedNode: false,
+    canEditAnySelectedNode: false,
+    isMultiSelect: false,
+    selectedTestcaseCount: 0,
     isUpdatingNodeStatus: false,
     onStatusChange: vi.fn(),
     attachments: [],
@@ -101,52 +102,6 @@ function buildDefaultProps(overrides: Partial<AiCaseSidebarProps> = {}): AiCaseS
     ...overrides,
   };
 }
-
-// ─── 需求输入区 ───────────────────────────────────────────────────────────────
-
-describe('AiCaseSidebar – 需求输入', () => {
-  it('应渲染工作台名称输入框，并显示当前值', () => {
-    render(<AiCaseSidebar {...buildDefaultProps({ workspaceName: '我的工作台' })} />);
-    const input = screen.getByPlaceholderText('输入工作台标题') as HTMLInputElement;
-    expect(input.value).toBe('我的工作台');
-  });
-
-  it('修改工作台名称时应调用 onWorkspaceNameChange', () => {
-    const onWorkspaceNameChange = vi.fn();
-    render(<AiCaseSidebar {...buildDefaultProps({ onWorkspaceNameChange })} />);
-    const input = screen.getByPlaceholderText('输入工作台标题');
-    fireEvent.change(input, { target: { value: '新名称' } });
-    expect(onWorkspaceNameChange).toHaveBeenCalledWith('新名称');
-  });
-
-  it('点击 AI 生成按钮应调用 onGenerate', () => {
-    const onGenerate = vi.fn();
-    render(<AiCaseSidebar {...buildDefaultProps({ onGenerate })} />);
-    fireEvent.click(screen.getByRole('button', { name: /AI 生成测试用例/i }));
-    expect(onGenerate).toHaveBeenCalledTimes(1);
-  });
-
-  it('生成中时 AI 生成按钮应显示加载状态且不可点击', () => {
-    render(<AiCaseSidebar {...buildDefaultProps({ isGenerating: true })} />);
-    const btn = screen.getByRole('button', { name: /AI 生成中/i });
-    expect(btn).toBeDisabled();
-  });
-
-  it('当 generationProgress > 0 时应显示进度条', () => {
-    render(<AiCaseSidebar {...buildDefaultProps({
-      isGenerating: false,
-      generationProgress: 42,
-      generationStageText: '正在分析需求...',
-    })} />);
-    expect(screen.getByText('正在分析需求...')).toBeInTheDocument();
-    expect(screen.getByText('42%')).toBeInTheDocument();
-  });
-
-  it('generationProgress = 0 且未生成中时不应显示进度条', () => {
-    render(<AiCaseSidebar {...buildDefaultProps({ generationProgress: 0, isGenerating: false })} />);
-    expect(screen.queryByText('正在处理...')).not.toBeInTheDocument();
-  });
-});
 
 // ─── 执行进度区 ───────────────────────────────────────────────────────────────
 
@@ -246,7 +201,6 @@ describe('AiCaseSidebar – Markdown 导出', () => {
   it('点击"导出 Markdown"按钮时应调用 exportMindDataToMarkdown 和 downloadTextFile', async () => {
     const mindData = createInitialMindData('工作台');
     render(<AiCaseSidebar {...buildDefaultProps({
-      workspaceName: '我的用例',
       mindData,
     })} />);
 
@@ -274,25 +228,6 @@ describe('AiCaseSidebar – Markdown 导出', () => {
     const exportBtn = await screen.findByRole('button', { name: /导出 Markdown/i });
     // mindData=null 时按钮应被 disable
     expect(exportBtn).toBeDisabled();
-  });
-
-  it('导出的文件名应包含工作台名称（特殊字符替换为下划线）', async () => {
-    const mindData = createInitialMindData('工作台');
-    render(<AiCaseSidebar {...buildDefaultProps({
-      workspaceName: '用户 登录/注册',
-      mindData,
-    })} />);
-
-    const sectionTrigger = screen.getByRole('button', { name: /工作台操作/i });
-    fireEvent.click(sectionTrigger);
-
-    const exportBtn = await screen.findByRole('button', { name: /导出 Markdown/i });
-    fireEvent.click(exportBtn);
-
-    expect(aiCaseStorage.downloadTextFile).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.stringMatching(/用户_登录_注册\.md$/)
-    );
   });
 });
 

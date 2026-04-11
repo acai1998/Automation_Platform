@@ -1,6 +1,6 @@
 import { type ChangeEvent, type ReactNode, useCallback, useEffect, useState } from 'react';
 import {
-  Bot, CheckCircle2, ChevronDown, Circle, Clock3, Download,
+  CheckCircle2, ChevronDown, Circle, Clock3, Download,
   FileText, History, ImageIcon, Loader2, PauseCircle,
   RotateCcw, ShieldAlert, Upload, XCircle,
 } from 'lucide-react';
@@ -208,7 +208,7 @@ export interface AiCaseSidebarProps {
 }
 
 export function AiCaseSidebar({
-  isGenerating, generationProgress, generationStageText, onGenerate, progress,
+  isGenerating, generationProgress: _generationProgress, generationStageText: _generationStageText, onGenerate: _onGenerate, progress,
   selectedNode, selectedNodeStatus, canEditSelectedNode,
   canEditAnySelectedNode, isMultiSelect, selectedTestcaseCount,
   isUpdatingNodeStatus, onStatusChange,

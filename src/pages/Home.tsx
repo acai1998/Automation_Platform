@@ -36,12 +36,13 @@ export default function Home() {
       ]);
 
       if (dashboardResponse.success && dashboardResponse.data) {
+        const data = dashboardResponse.data;
         setDashboardData((prev) => ({
-          ...dashboardResponse.data,
+          ...data,
           recentRuns: recentRunsResponse.success
             ? (recentRunsResponse.data || [])
             : (prev?.recentRuns || []),
-        }));
+        } as DashboardDataWithRuns));
         setLastRefreshAt(new Date());
       }
     } catch (error) {

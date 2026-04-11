@@ -1189,14 +1189,14 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
         // 更新进度提示
         const progressPercent = Math.round(((moduleIndex + 1) / totalModules) * 40) + 55;
         setGenerationStageText(
-          `正在生成功能模块 ${moduleIndex + 1}/${totalModules}：${String(moduleNode.topic ?? '').slice(0, 20)}`
+          `正在生成功能模块 ${moduleIndex + 1}/${totalModules}：${String((moduleNode as Record<string, unknown>).topic ?? '').slice(0, 20)}`
         );
         setGenerationProgress(Math.min(95, progressPercent));
         return;
       }
 
       if (eventName === 'result') {
-        finalPayload = payload?.data ?? null;
+        finalPayload = (payload?.data ?? null) as StreamGenerateResultPayload | null;
 
         // 流式渲染结束时，立即用 AI 生成的 workspaceName 更新骨架脑图根节点 topic
         if (finalPayload !== null && typeof finalPayload === 'object') {

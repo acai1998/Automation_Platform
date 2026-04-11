@@ -62,11 +62,8 @@ function makeTestMindData(): AiCaseMindData {
 
   return {
     nodeData: root,
-    linkData: {},
     theme: null as unknown as AiCaseMindData['theme'],
     direction: 2,
-    locale: 'zh_CN',
-    overflowHidden: false,
   };
 }
 
@@ -124,11 +121,8 @@ describe('exportMindDataToMarkdown', () => {
     const emptyRoot = makeNode('root', '空工作台', 'root', []);
     const data: AiCaseMindData = {
       nodeData: emptyRoot,
-      linkData: {},
       theme: null as unknown as AiCaseMindData['theme'],
       direction: 2,
-      locale: 'zh_CN',
-      overflowHidden: false,
     };
     expect(() => exportMindDataToMarkdown(data)).not.toThrow();
     const md = exportMindDataToMarkdown(data);
@@ -140,11 +134,8 @@ describe('exportMindDataToMarkdown', () => {
     const root = makeNode('root', '根节点', 'root', [emptyTopicNode]);
     const data: AiCaseMindData = {
       nodeData: root,
-      linkData: {},
       theme: null as unknown as AiCaseMindData['theme'],
       direction: 2,
-      locale: 'zh_CN',
-      overflowHidden: false,
     };
     const md = exportMindDataToMarkdown(data);
     // 空 topic 节点不应出现空列表项
@@ -157,11 +148,8 @@ describe('exportMindDataToMarkdown', () => {
     const root = makeNode('root', '根', 'root', [tc]);
     const data: AiCaseMindData = {
       nodeData: root,
-      linkData: {},
       theme: null as unknown as AiCaseMindData['theme'],
       direction: 2,
-      locale: 'zh_CN',
-      overflowHidden: false,
     };
     const md = exportMindDataToMarkdown(data);
     // 链式第一个子节点作为前置条件展示
@@ -176,11 +164,8 @@ describe('exportMindDataToMarkdown', () => {
     const root = makeNode('root', '根', 'root', [tc]);
     const data: AiCaseMindData = {
       nodeData: root,
-      linkData: {},
       theme: null as unknown as AiCaseMindData['theme'],
       direction: 2,
-      locale: 'zh_CN',
-      overflowHidden: false,
     };
     const md = exportMindDataToMarkdown(data);
     // 链式三个节点应分别展示
@@ -206,11 +191,8 @@ describe('exportMindDataToMarkdown', () => {
     const root = makeNode('root', '根', 'root', [tc]);
     const data: AiCaseMindData = {
       nodeData: root,
-      linkData: {},
       theme: null as unknown as AiCaseMindData['theme'],
       direction: 2,
-      locale: 'zh_CN',
-      overflowHidden: false,
     };
     const md = exportMindDataToMarkdown(data);
     expect(md).toMatch(/- \[ \] \*\*优先级测试\*\* \[P0\]/);
@@ -233,11 +215,8 @@ describe('exportMindDataToMarkdown', () => {
     const root = makeNode('root', '根', 'root', [tc]);
     const data: AiCaseMindData = {
       nodeData: root,
-      linkData: {},
       theme: null as unknown as AiCaseMindData['theme'],
       direction: 2,
-      locale: 'zh_CN',
-      overflowHidden: false,
     };
     const md = exportMindDataToMarkdown(data);
     expect(md).toMatch(/- \[ \] \*\*失败用例\*\*.*\(failed\)/);
@@ -260,8 +239,8 @@ describe('downloadTextFile', () => {
     mockCreateObjectURL = vi.fn(() => 'blob:mock-url-123');
     mockRevokeObjectURL = vi.fn();
 
-    vi.spyOn(URL, 'createObjectURL').mockImplementation(mockCreateObjectURL);
-    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(mockRevokeObjectURL);
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(mockCreateObjectURL as (obj: Blob | MediaSource) => string);
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(mockRevokeObjectURL as (url: string) => void);
 
     // 使用 Object.defineProperty 替换 document.createElement，
     // 避免 vi.spyOn + mockImplementation 可能引发的无限递归
