@@ -6,7 +6,7 @@ import cors from 'cors';
 import path from 'path';
 import rateLimit from 'express-rate-limit';
 import { testConnection, initializeDataSource } from './config/database';
-import { initializeLogging, LOG_CONTEXTS } from './config/logging';
+import { initializeLogging, LOG_CONTEXTS, LOG_EVENTS } from './config/logging';
 import { requestLoggingMiddleware, errorLoggingMiddleware } from './middleware/RequestLoggingMiddleware';
 import logger from './utils/logger';
 import dashboardRoutes from './routes/dashboard';
@@ -46,10 +46,10 @@ app.use(express.json({ limit: '10mb' }));
 app.use(requestLoggingMiddleware);
 
 // 初始化 MariaDB
-logger.info('Initializing MariaDB connection...', {}, LOG_CONTEXTS.DATABASE);
+logger.info('Initializing MariaDB connection...', { event: LOG_EVENTS.SERVER_DB_INIT_STARTED }, LOG_CONTEXTS.DATABASE);
 testConnection().then(async (connected) => {
   if (connected) {
-    logger.info('MariaDB connected successfully', {}, LOG_CONTEXTS.DATABASE);
+    logger.info('MariaDB connected successfully', { event: LOG_EVENTS.SERVER_DB_INIT_COMPLETED }, LOG_CONTEXTS.DATABASE);
     try {
       await initializeDataSource();
 
@@ -60,11 +60,11 @@ testConnection().then(async (connected) => {
       await initializeDailySummaryData();
 
     } catch (err) {
-      logger.errorLog(err, LOG_CONTEXTS.DATABASE, { message: 'TypeORM DataSource initialization failed' });
+      logger.errorLog(err, 'TypeORM DataSource initialization failed', { event: LOG_EVENTS.SERVER_DB_INIT_FAILED }, LOG_CONTEXTS.DATABASE);
       process.exit(1);
     }
   } else {
-    logger.error('MariaDB connection failed!', {}, LOG_CONTEXTS.DATABASE);
+    logger.error('MariaDB connection failed!', { event: LOG_EVENTS.SERVER_DB_INIT_FAILED }, LOG_CONTEXTS.DATABASE);
     process.exit(1);
   }
 });
@@ -75,7 +75,7 @@ testConnection().then(async (connected) => {
  */
 async function initializeDailySummaryData(): Promise<void> {
   try {
-    logger.info('Initializing daily summary data...', {}, LOG_CONTEXTS.DATABASE);
+    logger.info('Initializing daily summary data...', { event: LOG_EVENTS.SCHEDULER_STARTED }, LOG_CONTEXTS.DATABASE);
 
     // 启动每日汇总调度器
     dailySummaryScheduler.start();
@@ -86,6 +86,7 @@ async function initializeDailySummaryData(): Promise<void> {
 
     if (shouldBackfill) {
       logger.info('Starting historical daily summary backfill (incremental mode)', {
+        event: LOG_EVENTS.SERVER_BACKFILL_STARTED,
         days: backfillDays,
         mode: 'incremental',
       }, LOG_CONTEXTS.DATABASE);
@@ -102,6 +103,7 @@ async function initializeDailySummaryData(): Promise<void> {
 
           const duration = Date.now() - startTime;
           logger.info('Historical daily summary backfill completed', {
+            event: LOG_EVENTS.SERVER_BACKFILL_COMPLETED,
             totalDays: result.totalDays,
             processedDays: result.successCount,
             skippedDays: result.skippedCount || 0,
@@ -113,6 +115,7 @@ async function initializeDailySummaryData(): Promise<void> {
 
           if (result.errors.length > 0) {
             logger.warn('Some historical summaries failed to generate', {
+              event: LOG_EVENTS.SERVER_BACKFILL_PARTIAL_FAILURE,
               failedDates: result.errors.map(e => e.date),
               sampleErrors: result.errors.slice(0, 3).map(e => ({ date: e.date, error: e.error })),
             }, LOG_CONTEXTS.DATABASE);
@@ -120,18 +123,20 @@ async function initializeDailySummaryData(): Promise<void> {
 
         } catch (error) {
           logger.errorLog(error, 'Historical daily summary backfill failed', {
+            event: LOG_EVENTS.SERVER_BACKFILL_FAILED,
             backfillDays,
           });
         }
       });
     } else {
       logger.info('Daily summary backfill disabled by configuration', {
+        event: LOG_EVENTS.SERVER_BACKFILL_DISABLED,
         enableFlag: 'ENABLE_DAILY_SUMMARY_BACKFILL',
       }, LOG_CONTEXTS.DATABASE);
     }
 
   } catch (error) {
-    logger.errorLog(error, 'Failed to initialize daily summary data', {});
+    logger.errorLog(error, 'Failed to initialize daily summary data', { event: LOG_EVENTS.SERVER_DB_INIT_FAILED });
     // 不中断服务器启动，但记录错误
   }
 }
@@ -419,6 +424,7 @@ function startServer(port: number, attempt: number = 1): void {
 
   const server = httpServer.listen(port, () => {
     logger.info(`Server started successfully`, {
+      event: LOG_EVENTS.SERVER_STARTED,
       port,
       url: `http://localhost:${port}`,
       apiUrl: `http://localhost:${port}/api`,
@@ -433,7 +439,7 @@ function startServer(port: number, attempt: number = 1): void {
 
     // 启动任务定时调度引擎（Cron 引擎，支持漏触发补偿）
     taskSchedulerService.start().catch(err => {
-      logger.errorLog(err, 'TaskSchedulerService failed to start', {});
+      logger.errorLog(err, 'TaskSchedulerService failed to start', { event: LOG_EVENTS.SCHEDULER_STARTED });
     });
   });
 
@@ -442,6 +448,7 @@ function startServer(port: number, attempt: number = 1): void {
       if (attempt < MAX_PORT_ATTEMPTS) {
         const nextPort = BASE_PORT + attempt;
         logger.warn(`Port ${port} is in use, trying port ${nextPort}...`, {
+          event: LOG_EVENTS.SERVER_PORT_RETRY,
           currentPort: port,
           nextPort,
           attempt,
@@ -450,6 +457,7 @@ function startServer(port: number, attempt: number = 1): void {
         startServer(nextPort, attempt + 1);
       } else {
         logger.error(`Failed to find available port after ${MAX_PORT_ATTEMPTS} attempts`, {
+          event: LOG_EVENTS.SERVER_PORT_EXHAUSTED,
           basePort: BASE_PORT,
           maxAttempts: MAX_PORT_ATTEMPTS,
           lastAttemptPort: port,
@@ -458,6 +466,7 @@ function startServer(port: number, attempt: number = 1): void {
       }
     } else {
       logger.errorLog(err, 'Server startup error', {
+        event: LOG_EVENTS.SERVER_STARTUP_ERROR,
         port,
         attempt,
         errorCode: err.code,
@@ -472,6 +481,7 @@ startServer(BASE_PORT);
 // 优雅关闭
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully...', {
+    event: LOG_EVENTS.SERVER_SHUTTING_DOWN,
     signal: 'SIGTERM',
     uptime: process.uptime(),
   }, LOG_CONTEXTS.HTTP);
@@ -484,6 +494,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully...', {
+    event: LOG_EVENTS.SERVER_SHUTTING_DOWN,
     signal: 'SIGINT',
     uptime: process.uptime(),
   }, LOG_CONTEXTS.HTTP);

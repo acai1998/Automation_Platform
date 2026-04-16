@@ -1,6 +1,6 @@
 import rateLimit from 'express-rate-limit';
 import { Request, Response } from 'express';
-import { logger, LOG_CONTEXTS } from '../config/logging';
+import { logger, LOG_CONTEXTS, LOG_EVENTS } from '../config/logging';
 
 /**
  * Authentication Rate Limiter Middleware
@@ -23,12 +23,12 @@ const baseConfig = {
   handler: (req: Request, res: Response) => {
     // Log security violation for monitoring and analysis
     logger.warn('Rate limit exceeded', {
-      context: LOG_CONTEXTS.SECURITY,
+      event: LOG_EVENTS.SECURITY_RATE_LIMIT_EXCEEDED,
       ip: req.ip,
       path: req.path,
       method: req.method,
       userAgent: req.headers['user-agent'],
-    });
+    }, LOG_CONTEXTS.SECURITY);
 
     // Return consistent 429 response with retry information
     res.status(429).json({

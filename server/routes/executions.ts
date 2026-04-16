@@ -327,11 +327,17 @@ router.post('/:id/sync', async (req, res) => {
       });
     }
 
-    console.log(`[MANUAL-SYNC] Starting manual sync for execution ${id}`);
+    logger.info('Manual sync started', { executionId: id }, LOG_CONTEXTS.MANUAL_SYNC);
 
     const syncResult = await executionService.syncExecutionStatusFromJenkins(id);
 
-    console.log(`[MANUAL-SYNC] Sync result for execution ${id}:`, syncResult);
+    logger.info('Manual sync completed', {
+      executionId: id,
+      success: syncResult.success,
+      updated: syncResult.updated,
+      currentStatus: syncResult.currentStatus,
+      jenkinsStatus: syncResult.jenkinsStatus,
+    }, LOG_CONTEXTS.MANUAL_SYNC);
 
     res.json({
       success: syncResult.success,
@@ -345,7 +351,10 @@ router.post('/:id/sync', async (req, res) => {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[MANUAL-SYNC] Failed to sync execution %s:', req.params.id, message);
+    logger.errorLog(error, 'Manual sync failed', {
+      executionId: req.params.id,
+      message,
+    });
     res.status(500).json({ success: false, message });
   }
 });
@@ -362,12 +371,20 @@ router.post('/sync-stuck', async (req, res) => {
     const maxExecutions = typeof rawMaxExecutions === 'number' ? rawMaxExecutions : 20;
     const timeoutMs = timeoutMinutes * 60 * 1000;
 
-    console.log(`[BULK-SYNC] Starting bulk sync for stuck executions (timeout: ${timeoutMinutes}min, max: ${maxExecutions})`);
+    logger.info('Bulk sync for stuck executions started', {
+      timeoutMinutes,
+      maxExecutions,
+    }, LOG_CONTEXTS.BULK_SYNC);
 
     // Use the existing timeout check method with custom parameters
     const result = await executionService.checkAndHandleTimeouts(timeoutMs);
 
-    console.log(`[BULK-SYNC] Bulk sync completed:`, result);
+    logger.info('Bulk sync for stuck executions completed', {
+      checked: result.checked,
+      timedOut: result.timedOut,
+      updated: result.updated,
+      timeoutMinutes,
+    }, LOG_CONTEXTS.BULK_SYNC);
 
     res.json({
       success: true,
@@ -381,7 +398,7 @@ router.post('/sync-stuck', async (req, res) => {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[BULK-SYNC] Failed to perform bulk sync:`, message);
+    logger.errorLog(error, 'Bulk sync for stuck executions failed', { message });
     res.status(500).json({ success: false, message });
   }
 });
@@ -428,7 +445,10 @@ router.get('/stuck', async (req, res) => {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[STUCK-QUERY] Failed to query stuck executions:`, message);
+    logger.errorLog(error, 'Query stuck executions failed', {
+      timeout: req.query.timeout,
+      message,
+    });
     res.status(500).json({ success: false, message });
   }
 });

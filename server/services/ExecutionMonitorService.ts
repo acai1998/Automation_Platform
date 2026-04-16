@@ -1,5 +1,5 @@
 import logger from '../utils/logger';
-import { LOG_CONTEXTS, createTimer } from '../config/logging';
+import { LOG_CONTEXTS, LOG_EVENTS, createTimer } from '../config/logging';
 import { executionService } from './ExecutionService';
 import { ExecutionRepository } from '../repositories/ExecutionRepository';
 import { AppDataSource } from '../config/database';
@@ -86,6 +86,7 @@ export class ExecutionMonitorService {
     const validation = validateMonitoringConfig();
     if (!validation.valid) {
       logger.error('[ExecutionMonitorService] Invalid configuration:', {
+        event: LOG_EVENTS.MONITOR_STARTED,
         errors: validation.errors,
       }, LOG_CONTEXTS.MONITOR);
       throw new Error(`Invalid monitoring configuration: ${validation.errors.join(', ')}`);
@@ -140,16 +141,17 @@ export class ExecutionMonitorService {
    */
   start(): void {
     if (!this.config.enabled) {
-      logger.info('Execution monitor is disabled', {}, LOG_CONTEXTS.MONITOR);
+      logger.info('Execution monitor is disabled', { event: LOG_EVENTS.MONITOR_STARTED }, LOG_CONTEXTS.MONITOR);
       return;
     }
 
     if (this.isRunning) {
-      logger.info('Execution monitor is already running', {}, LOG_CONTEXTS.MONITOR);
+      logger.info('Execution monitor is already running', { event: LOG_EVENTS.MONITOR_STARTED }, LOG_CONTEXTS.MONITOR);
       return;
     }
 
     logger.info('Starting execution monitor...', {
+      event: LOG_EVENTS.MONITOR_STARTED,
       config: this.config,
     }, LOG_CONTEXTS.MONITOR);
 
@@ -162,6 +164,7 @@ export class ExecutionMonitorService {
     this.scheduleCleanup();
 
     logger.info('Execution monitor started successfully', {
+      event: LOG_EVENTS.MONITOR_STARTED,
       checkInterval: `${this.config.checkInterval}ms`,
       compilationCheckWindow: `${this.config.compilationCheckWindow}ms`,
     }, LOG_CONTEXTS.MONITOR);
@@ -171,7 +174,7 @@ export class ExecutionMonitorService {
    * Stop the execution monitor
    */
   stop(): void {
-    logger.info('Stopping execution monitor...', {}, LOG_CONTEXTS.MONITOR);
+    logger.info('Stopping execution monitor...', { event: LOG_EVENTS.MONITOR_STOPPED }, LOG_CONTEXTS.MONITOR);
     this.isRunning = false;
 
     if (this.timer) {
@@ -185,6 +188,7 @@ export class ExecutionMonitorService {
     }
 
     logger.info('Execution monitor stopped', {
+      event: LOG_EVENTS.MONITOR_STOPPED,
       finalStats: this.getStats(),
     }, LOG_CONTEXTS.MONITOR);
   }
@@ -271,7 +275,7 @@ export class ExecutionMonitorService {
       try {
         await this.checkCycle();
       } catch (error) {
-        logger.errorLog(error, 'Monitor cycle failed unexpectedly', { context: LOG_CONTEXTS.MONITOR });
+        logger.errorLog(error, 'Monitor cycle failed unexpectedly', { event: LOG_EVENTS.MONITOR_CYCLE_COMPLETED });
       }
       this.scheduleNextCheck();
     }, this.config.checkInterval);
@@ -295,6 +299,7 @@ export class ExecutionMonitorService {
 
         if (abandonedCount > 0) {
           logger.info('Cleaned up old stuck executions', {
+            event: LOG_EVENTS.MONITOR_CLEANUP_COMPLETED,
             abandonedCount,
             maxAgeHours,
           }, LOG_CONTEXTS.MONITOR);
@@ -302,7 +307,7 @@ export class ExecutionMonitorService {
 
         this.lastCleanupTime = new Date();
       } catch (error) {
-        logger.errorLog(error, 'Failed to cleanup old stuck executions', {});
+        logger.errorLog(error, 'Failed to cleanup old stuck executions', { event: LOG_EVENTS.MONITOR_CLEANUP_COMPLETED });
       }
 
       // 继续调度下一次清理
@@ -315,7 +320,7 @@ export class ExecutionMonitorService {
    */
   private async checkCycle(): Promise<void> {
     if (this.isProcessing) {
-      logger.warn('Previous monitor cycle still running, skipping...', {}, LOG_CONTEXTS.MONITOR);
+      logger.warn('Previous monitor cycle still running, skipping...', { event: LOG_EVENTS.MONITOR_CYCLE_SKIPPED }, LOG_CONTEXTS.MONITOR);
       return;
     }
 
@@ -328,13 +333,15 @@ export class ExecutionMonitorService {
       const stuckExecutions = await this.getStuckExecutions();
 
       if (stuckExecutions.length === 0) {
-        logger.debug('No stuck executions found', {
-          checkWindow: `${this.config.compilationCheckWindow}ms`,
-        }, LOG_CONTEXTS.MONITOR);
+      logger.debug('No stuck executions found', {
+        event: LOG_EVENTS.MONITOR_CYCLE_STARTED,
+        checkWindow: `${this.config.compilationCheckWindow}ms`,
+      }, LOG_CONTEXTS.MONITOR);
         return;
       }
 
       logger.debug('Monitor cycle started', {
+        event: LOG_EVENTS.MONITOR_CYCLE_STARTED,
         count: stuckExecutions.length,
         checkWindow: `${this.config.compilationCheckWindow}ms`,
       }, LOG_CONTEXTS.MONITOR);
@@ -367,6 +374,7 @@ export class ExecutionMonitorService {
         } catch (error) {
           results.failed++;
           logger.warn('Failed to process execution', {
+            event: LOG_EVENTS.MONITOR_EXECUTION_FIX_FAILED,
             runId: execution.id,
             error: error instanceof Error ? error.message : String(error),
           }, LOG_CONTEXTS.MONITOR);
@@ -375,6 +383,7 @@ export class ExecutionMonitorService {
 
       if (updatedRunIds.length > 0) {
         logger.info('Batch updated executions', {
+          event: LOG_EVENTS.MONITOR_EXECUTION_FIXED,
           count: updatedRunIds.length,
           runIds: updatedRunIds.slice(0, 10),
         }, LOG_CONTEXTS.MONITOR);
@@ -391,6 +400,7 @@ export class ExecutionMonitorService {
 
       // 4. Log results
       logger.info('Monitor cycle completed', {
+        event: LOG_EVENTS.MONITOR_CYCLE_COMPLETED,
         ...results,
         durationMs: this.stats.lastCycleDuration,
       }, LOG_CONTEXTS.MONITOR);
@@ -398,6 +408,7 @@ export class ExecutionMonitorService {
     } catch (error) {
       this.stats.totalErrors++;
       logger.errorLog(error, 'Monitor cycle failed', {
+        event: LOG_EVENTS.MONITOR_CYCLE_COMPLETED,
         durationMs: timer(),
       });
     } finally {
@@ -414,7 +425,7 @@ export class ExecutionMonitorService {
     try {
       return await this.executionRepository.getPotentiallyStuckExecutions(thresholdSeconds, this.config.batchSize);
     } catch (error) {
-      logger.errorLog(error, 'Failed to query stuck executions', {});
+      logger.errorLog(error, 'Failed to query stuck executions', { event: LOG_EVENTS.MONITOR_EXECUTION_STUCK_DETECTED });
       return [];
     }
   }
@@ -434,6 +445,7 @@ export class ExecutionMonitorService {
       const NO_BUILD_ID_TIMEOUT_SECONDS = EXECUTION_MONITOR_CONFIG.EARLY_STUCK_THRESHOLD_SECONDS; // 默认 120s
       if (!execution.jenkinsBuildId && execution.durationSeconds !== null && execution.durationSeconds > NO_BUILD_ID_TIMEOUT_SECONDS) {
         logger.warn('Execution has no jenkinsBuildId after threshold, marking as aborted', {
+          event: LOG_EVENTS.MONITOR_EXECUTION_STUCK_DETECTED,
           runId,
           durationSeconds: execution.durationSeconds,
           thresholdSeconds: NO_BUILD_ID_TIMEOUT_SECONDS,
@@ -448,6 +460,7 @@ export class ExecutionMonitorService {
 
       if (syncResult.success && syncResult.updated) {
         logger.info(`Execution status updated via monitor (runId=${runId})`, {
+          event: LOG_EVENTS.MONITOR_EXECUTION_FIXED,
           runId,
           previousStatus: syncResult.currentStatus,
           newStatus: syncResult.jenkinsStatus,
@@ -468,6 +481,7 @@ export class ExecutionMonitorService {
             });
 
             logger.warn('Quick fail detected and alert pushed', {
+              event: LOG_EVENTS.MONITOR_QUICK_FAIL_DETECTED,
               runId,
               duration: `${elapsedTimeMs}ms`,
               status: syncResult.jenkinsStatus,
@@ -488,6 +502,7 @@ export class ExecutionMonitorService {
     } catch (error) {
       // Log error but don't rethrow - let caller handle it uniformly
       logger.error('Error processing execution', {
+        event: LOG_EVENTS.MONITOR_EXECUTION_FIX_FAILED,
         runId,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,

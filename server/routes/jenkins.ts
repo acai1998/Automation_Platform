@@ -9,7 +9,7 @@ import { requestValidator } from '../middleware/RequestValidator';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import { optionalAuth } from '../middleware/auth';
 import logger from '../utils/logger';
-import { LOG_CONTEXTS, createTimer } from '../config/logging';
+import { LOG_CONTEXTS, LOG_EVENTS, createTimer } from '../config/logging';
 import { AppDataSource } from '../config/database';
 import { TestCase } from '../entities/TestCase';
 
@@ -127,6 +127,7 @@ callbackQueue.register(async (payload: CallbackPayload) => {
         }
       } catch (parseError) {
         logger.error('Failed to parse build results in lightweight callback', {
+          event: LOG_EVENTS.JENKINS_CALLBACK_PARSE_FAILED,
           runId: payload.runId,
           buildNumber: payload.buildNumber,
           error: parseError instanceof Error ? parseError.message : String(parseError),
@@ -367,6 +368,7 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
 
   // 记录详细错误信息到服务器日志
   logger.error(`${context} - Detailed error info`, {
+    event: LOG_EVENTS.JENKINS_TRIGGER_FAILED,
     message: originalMessage,
     stack: error instanceof Error ? error.stack : undefined,
     timestamp: new Date().toISOString(),
@@ -491,7 +493,7 @@ function normalizeCallbackResults(results: unknown[]): Auto_TestRunResultsInput[
         row,
         caseId: caseIdRaw,
         caseName,
-      });
+      }, LOG_CONTEXTS.JENKINS);
       return [];
     }
 
@@ -583,6 +585,7 @@ router.post('/trigger', generalAuthRateLimiter, optionalAuth, rateLimitMiddlewar
           caseIds = parsedCaseIds as number[];
         } catch (err) {
           logger.error('Failed to parse task case_ids', {
+            event: LOG_EVENTS.JENKINS_TRIGGER_FAILED,
             taskId,
             case_ids: task.case_ids,
             error: err instanceof Error ? err.message : String(err),
@@ -1028,6 +1031,10 @@ router.get('/tasks/:taskId/cases', generalAuthRateLimiter, optionalAuth, rateLim
       data: cases
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get task cases', {
+      event: LOG_EVENTS.JENKINS_TRIGGER_FAILED,
+      taskId: req.params.taskId,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -1075,6 +1082,10 @@ router.get('/status/:executionId', generalAuthRateLimiter, optionalAuth, rateLim
       }
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get execution status', {
+      event: LOG_EVENTS.JENKINS_TRIGGER_FAILED,
+      executionId: req.params.executionId,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -1203,6 +1214,7 @@ router.post('/callback', [
     // 队列已满：返回 429 让 Jenkins 稍后重试
     rateLimitMiddleware.increment429Count();
     logger.error('Callback queue full, returning 429', {
+      event: LOG_EVENTS.JENKINS_CALLBACK_QUEUE_FULL,
       runId,
       queueMetrics: callbackQueue.getMetrics(),
     }, LOG_CONTEXTS.JENKINS);
@@ -1264,6 +1276,10 @@ router.get('/batch/:runId', generalAuthRateLimiter, optionalAuth, rateLimitMiddl
       }
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get batch execution', {
+      event: LOG_EVENTS.JENKINS_CALLBACK_FAILED,
+      runId: req.params.runId,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -1379,6 +1395,7 @@ router.post('/callback/test', [
         const processingTime = Date.now() - startTime;
 
         logger.error(`Failed to process real callback test data for runId ${runId}`, {
+          event: LOG_EVENTS.JENKINS_CALLBACK_TEST_FAILED,
           runId,
           error: errorMessage,
           stack: processError instanceof Error ? processError.stack : undefined,
@@ -1430,6 +1447,7 @@ router.post('/callback/test', [
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Test callback failed`, {
+      event: LOG_EVENTS.JENKINS_CALLBACK_FAILED,
       error: message,
       stack: error instanceof Error ? error.stack : undefined,
       timestamp: new Date().toISOString()
@@ -1586,6 +1604,7 @@ router.post('/callback/manual-sync/:runId', [
     const errorDetails = error instanceof Error ? error.stack : undefined;
 
     logger.error(`Failed to complete manual sync for execution`, {
+      event: LOG_EVENTS.JENKINS_MANUAL_SYNC_FAILED,
       runId: req.params.runId,
       error: message,
       stack: errorDetails,
@@ -1704,6 +1723,7 @@ router.post('/callback/diagnose',
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Callback diagnostic failed`, {
+      event: LOG_EVENTS.JENKINS_DIAGNOSE_FAILED,
       error: message,
     }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
@@ -2083,6 +2103,7 @@ router.get('/diagnose',
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Execution diagnosis failed`, {
+      event: LOG_EVENTS.JENKINS_DIAGNOSE_FAILED,
       error: message,
     }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
@@ -2147,6 +2168,7 @@ router.get('/monitoring/stats', generalAuthRateLimiter, rateLimitMiddleware.limi
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Failed to get monitoring statistics`, {
+      event: LOG_EVENTS.JENKINS_MONITORING_STATS_FAILED,
       error: message,
     }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
@@ -2215,6 +2237,7 @@ router.post('/monitoring/fix-stuck', generalAuthRateLimiter, rateLimitMiddleware
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Failed to fix stuck executions`, {
+      event: LOG_EVENTS.JENKINS_FIX_STUCK_FAILED,
       error: message,
     }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
@@ -2261,6 +2284,7 @@ router.get('/monitor/status', generalAuthRateLimiter, rateLimitMiddleware.limit,
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     logger.error('Failed to get monitor status', {
+      event: LOG_EVENTS.JENKINS_MONITOR_STATUS_FAILED,
       error: message,
     }, LOG_CONTEXTS.MONITOR);
     res.status(500).json({

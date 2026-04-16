@@ -1,4 +1,6 @@
 import { JenkinsConfig } from './JenkinsService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 /**
  * Jenkins构建状态
@@ -82,7 +84,9 @@ export class JenkinsStatusService {
 
     const token = getSecretOrEnv('JENKINS_TOKEN');
     if (!token) {
-      console.warn('JENKINS_TOKEN environment variable is required for Jenkins authentication. Jenkins integration may not work.');
+      logger.warn('JENKINS_TOKEN is required for Jenkins authentication', {
+        event: 'JENKINS_TOKEN_MISSING',
+      }, LOG_CONTEXTS.JENKINS);
     }
 
     this.config = {
@@ -134,7 +138,14 @@ export class JenkinsStatusService {
       try {
         const url = `${this.config.baseUrl}/job/${jobName}/${buildId}/api/json`;
 
-        console.log(`Querying build status (attempt ${attempt}/${retryCount}): ${url}`);
+        logger.debug('Querying Jenkins build status', {
+          event: 'JENKINS_BUILD_STATUS_QUERY',
+          attempt,
+          retryCount,
+          jobName,
+          buildId,
+          url,
+        }, LOG_CONTEXTS.JENKINS);
 
         const response = await this.fetchWithTimeout(url, {
           method: 'GET',
@@ -146,13 +157,25 @@ export class JenkinsStatusService {
 
         if (!response.ok) {
           if (response.status === 404) {
-            console.warn(`Build not found: ${jobName}/${buildId}`);
+            logger.warn('Jenkins build not found', {
+              event: 'JENKINS_BUILD_NOT_FOUND',
+              jobName,
+              buildId,
+            }, LOG_CONTEXTS.JENKINS);
             return null;
           }
 
           // For server errors (5xx), retry; for client errors (4xx), don't retry
           if (response.status >= 500 && attempt < retryCount) {
-            console.warn(`Server error ${response.status}, retrying in ${attempt * 1000}ms...`);
+            logger.warn('Jenkins server error when querying build status, retrying', {
+              event: 'JENKINS_BUILD_STATUS_SERVER_ERROR_RETRY',
+              jobName,
+              buildId,
+              status: response.status,
+              retryDelayMs: attempt * 1000,
+              attempt,
+              retryCount,
+            }, LOG_CONTEXTS.JENKINS);
             await new Promise(resolve => setTimeout(resolve, attempt * 1000));
             continue;
           }
@@ -164,17 +187,25 @@ export class JenkinsStatusService {
 
         // Validate essential fields
         if (typeof data.building !== 'boolean') {
-          console.warn(`Invalid building status for ${jobName}/${buildId}: ${data.building}`);
+          logger.warn('Invalid Jenkins building status, fallback to false', {
+            event: 'JENKINS_BUILD_STATUS_INVALID_BUILDING',
+            jobName,
+            buildId,
+            building: data.building,
+          }, LOG_CONTEXTS.JENKINS);
           data.building = false; // Default to not building
         }
 
         // Log status for debugging
-        console.log(`Build status for ${jobName}/${buildId}:`, {
+        logger.info('Jenkins build status fetched', {
+          event: 'JENKINS_BUILD_STATUS_FETCHED',
+          jobName,
+          buildId,
           building: data.building,
           result: data.result,
           number: data.number,
-          duration: data.duration
-        });
+          duration: data.duration,
+        }, LOG_CONTEXTS.JENKINS);
 
         return {
           building: data.building,
@@ -189,18 +220,38 @@ export class JenkinsStatusService {
         };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        console.error(`Failed to get build status for ${jobName}/${buildId} (attempt ${attempt}):`, lastError.message);
+        logger.error('Failed to get Jenkins build status', {
+          event: 'JENKINS_BUILD_STATUS_FAILED',
+          jobName,
+          buildId,
+          attempt,
+          retryCount,
+          error: lastError.message,
+        }, LOG_CONTEXTS.JENKINS);
 
         // If this is not the last attempt, wait before retrying
         if (attempt < retryCount) {
           const delay = Math.min(attempt * 2000, 10000); // Exponential backoff, max 10s
-          console.log(`Retrying in ${delay}ms...`);
+          logger.debug('Retrying Jenkins build status query', {
+            event: 'JENKINS_BUILD_STATUS_RETRY',
+            jobName,
+            buildId,
+            delay,
+            nextAttempt: attempt + 1,
+            retryCount,
+          }, LOG_CONTEXTS.JENKINS);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
 
-    console.error(`All ${retryCount} attempts failed for ${jobName}/${buildId}. Last error:`, lastError?.message);
+    logger.error('All attempts failed when querying Jenkins build status', {
+      event: 'JENKINS_BUILD_STATUS_ALL_RETRIES_FAILED',
+      jobName,
+      buildId,
+      retryCount,
+      lastError: lastError?.message,
+    }, LOG_CONTEXTS.JENKINS);
     return null;
   }
 
@@ -211,7 +262,11 @@ export class JenkinsStatusService {
     try {
       const url = `${this.config.baseUrl}/queue/item/${queueId}/api/json`;
 
-      console.log(`Querying queue status: ${url}`);
+      logger.debug('Querying Jenkins queue status', {
+        event: 'JENKINS_QUEUE_STATUS_QUERY',
+        queueId,
+        url,
+      }, LOG_CONTEXTS.JENKINS);
 
       const response = await this.fetchWithTimeout(url, {
         method: 'GET',
@@ -223,7 +278,10 @@ export class JenkinsStatusService {
 
       if (!response.ok) {
         if (response.status === 404) {
-          console.warn(`Queue item not found: ${queueId}`);
+          logger.warn('Jenkins queue item not found', {
+            event: 'JENKINS_QUEUE_ITEM_NOT_FOUND',
+            queueId,
+          }, LOG_CONTEXTS.JENKINS);
           return null;
         }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -247,7 +305,10 @@ export class JenkinsStatusService {
         params: data.params
       };
     } catch (error) {
-      console.error(`Failed to get queue status for ${queueId}:`, error);
+      logger.errorLog(error, 'Failed to get Jenkins queue status', {
+        event: 'JENKINS_QUEUE_STATUS_FAILED',
+        queueId,
+      });
       return null;
     }
   }
@@ -274,7 +335,10 @@ export class JenkinsStatusService {
       const data = await response.json();
       return data.number || null;
     } catch (error) {
-      console.error(`Failed to get latest build number for ${jobName}:`, error);
+      logger.errorLog(error, 'Failed to get latest Jenkins build number', {
+        event: 'JENKINS_LATEST_BUILD_NUMBER_FAILED',
+        jobName,
+      });
       return null;
     }
   }
@@ -311,7 +375,12 @@ export class JenkinsStatusService {
         size
       };
     } catch (error) {
-      console.error(`Failed to get build log for ${jobName}/${buildId}:`, error);
+      logger.errorLog(error, 'Failed to get Jenkins build log', {
+        event: 'JENKINS_BUILD_LOG_FAILED',
+        jobName,
+        buildId,
+        start,
+      });
       return null;
     }
   }
@@ -338,7 +407,11 @@ export class JenkinsStatusService {
       // 3. 如果无法获取详细测试结果，基于构建状态生成基本结果
       return this.generateBasicResults(buildStatus);
     } catch (error) {
-      console.error(`Failed to parse build results for ${jobName}/${buildId}:`, error);
+      logger.errorLog(error, 'Failed to parse Jenkins build results', {
+        event: 'JENKINS_PARSE_BUILD_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
   }
@@ -368,7 +441,11 @@ export class JenkinsStatusService {
 
       return null;
     } catch (error) {
-      console.error('Failed to extract test results:', error);
+      logger.errorLog(error, 'Failed to extract Jenkins test results', {
+        event: 'JENKINS_EXTRACT_TEST_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
   }
@@ -423,7 +500,11 @@ export class JenkinsStatusService {
         results
       };
     } catch (error) {
-      console.error('Failed to get JUnit results:', error);
+      logger.errorLog(error, 'Failed to get Jenkins JUnit results', {
+        event: 'JENKINS_JUNIT_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
   }
@@ -486,7 +567,11 @@ export class JenkinsStatusService {
       // 根据文件格式解析结果
       return this.parseResultFile(resultData);
     } catch (error) {
-      console.error('Failed to get artifact results:', error);
+      logger.errorLog(error, 'Failed to get Jenkins artifact results', {
+        event: 'JENKINS_ARTIFACT_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
   }
@@ -587,7 +672,16 @@ export class JenkinsStatusService {
           const skippedCases = isNaN(skipped) ? 0 : skipped;
           const totalCases = total != null && !isNaN(total) ? total : passedCases + failedCases + skippedCases;
 
-          console.log(`Found test results using [${name}] pattern:`, { totalCases, passedCases, failedCases, skippedCases });
+          logger.info('Parsed Jenkins test results from build log', {
+            event: 'JENKINS_LOG_RESULTS_PARSED',
+            pattern: name,
+            totalCases,
+            passedCases,
+            failedCases,
+            skippedCases,
+            jobName,
+            buildId,
+          }, LOG_CONTEXTS.JENKINS);
 
           return {
             totalCases,
@@ -602,7 +696,11 @@ export class JenkinsStatusService {
 
       return null;
     } catch (error) {
-      console.error('Failed to parse log results:', error);
+      logger.errorLog(error, 'Failed to parse Jenkins log results', {
+        event: 'JENKINS_PARSE_LOG_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
   }
@@ -702,7 +800,9 @@ export class JenkinsStatusService {
 
       return null;
     } catch (error) {
-      console.error('Failed to parse result file:', error);
+      logger.errorLog(error, 'Failed to parse Jenkins result file', {
+        event: 'JENKINS_PARSE_RESULT_FILE_FAILED',
+      });
       return null;
     }
   }

@@ -44,7 +44,7 @@ function evictCacheIfNeeded(): void {
       break;
     }
   }
-  logger.debug('EmbeddingService: cache eviction completed', { remainingSize: embeddingCache.size });
+  logger.debug('EmbeddingService: cache eviction completed', { remainingSize: embeddingCache.size }, LOG_CONTEXTS.CASES);
 }
 
 /**
@@ -96,14 +96,14 @@ export class EmbeddingService {
    */
   async embed(text: string): Promise<number[] | null> {
     if (!this.config.enabled) {
-      logger.debug('EmbeddingService is disabled, skipping embedding');
+      logger.debug('EmbeddingService is disabled, skipping embedding', {}, LOG_CONTEXTS.CASES);
       return null;
     }
 
     const cacheKey = text.trim();
     const cached = embeddingCache.get(cacheKey);
     if (cached) {
-      logger.debug('EmbeddingService: cache hit', { textLength: cacheKey.length });
+      logger.debug('EmbeddingService: cache hit', { textLength: cacheKey.length }, LOG_CONTEXTS.CASES);
       return cached;
     }
 
@@ -115,7 +115,7 @@ export class EmbeddingService {
     } catch (error) {
       logger.warn('EmbeddingService: API call failed', {
         error: error instanceof Error ? error.message : String(error),
-      });
+      }, LOG_CONTEXTS.CASES);
       return null;
     }
   }
@@ -183,7 +183,7 @@ export class EmbeddingService {
         textLength: text.length,
         vectorDimensions: embedding.length,
         model: this.config.model,
-      });
+      }, LOG_CONTEXTS.CASES);
 
       return embedding;
     } finally {

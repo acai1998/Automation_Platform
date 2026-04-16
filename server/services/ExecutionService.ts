@@ -560,7 +560,7 @@ export class ExecutionService {
    * - 使用缓存作为第一层 fallback，数据库查询作为第二层 fallback
    * - 使用事务确保数据一致性
    * - 批量更新提升性能
-   * - 使用日志库替代 console.log
+   * - 使用统一日志库输出
    * - 自动将 'cancelled' 状态映射为 'aborted'（以支持数据库枚举）
    * 
    * @param runId 运行批次ID

@@ -1,4 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 /**
  * IP 白名单验证中间件
@@ -22,11 +24,15 @@ export class IPWhitelistMiddleware {
       .filter(ip => ip.length > 0);
 
     if (allowedIPs.length > 0) {
-      console.log(`✅ Jenkins IP 白名单已启用 (${allowedIPs.length} 条规则):`);
-      allowedIPs.forEach(ip => console.log(`   - ${ip}`));
+      logger.info('Jenkins IP whitelist enabled', {
+        event: 'JENKINS_IP_WHITELIST_ENABLED',
+        ruleCount: allowedIPs.length,
+        rules: allowedIPs,
+      }, LOG_CONTEXTS.SECURITY);
     } else {
-      console.warn('⚠️  警告：未配置 JENKINS_ALLOWED_IPS，将允许所有 IP 访问 Jenkins 回调接口');
-      console.warn('   建议配置 IP 白名单以提高安全性');
+      logger.warn('JENKINS_ALLOWED_IPS not configured, allowing all callback IPs', {
+        event: 'JENKINS_IP_WHITELIST_DISABLED',
+      }, LOG_CONTEXTS.SECURITY);
     }
 
     return allowedIPs;
@@ -62,16 +68,17 @@ export class IPWhitelistMiddleware {
     const clientIP = ipStr.split(',')[0].trim();
 
     if (process.env.NODE_ENV === 'development' && process.env.JENKINS_DEBUG_IP === 'true') {
-      // 使用固定格式字符串作为第一参数，防止 clientIP 中包含 %s/%d 等格式说明符被解析（format string injection）
-      console.debug('[IP-DETECTION] Detected IP: %s', clientIP, {
+      logger.debug('Jenkins callback client IP detected', {
+        event: 'JENKINS_IP_DETECTED',
+        clientIP,
         sources: {
           forwarded: Array.isArray(forwarded) ? forwarded[0] : forwarded,
           xRealIp,
           cfConnectingIp,
           xClientIp,
           socketAddress,
-        }
-      });
+        },
+      }, LOG_CONTEXTS.SECURITY);
     }
 
     return clientIP.toLowerCase();
@@ -89,7 +96,11 @@ export class IPWhitelistMiddleware {
 
       const prefixLength = parseInt(prefixLengthStr, 10);
       if (Number.isNaN(prefixLength) || prefixLength < 0 || prefixLength > 32) {
-        console.warn(`Invalid CIDR prefix length: ${prefixLengthStr}`);
+        logger.warn('Invalid CIDR prefix length', {
+          event: 'JENKINS_IP_CIDR_INVALID',
+          prefixLength: prefixLengthStr,
+          cidr,
+        }, LOG_CONTEXTS.SECURITY);
         return false;
       }
 
@@ -133,7 +144,10 @@ export class IPWhitelistMiddleware {
 
       return true;
     } catch (error) {
-      console.error(`Error checking CIDR ${cidr}:`, error);
+      logger.errorLog(error, 'Jenkins CIDR check failed', {
+        event: 'JENKINS_IP_CIDR_CHECK_FAILED',
+        cidr,
+      });
       return false;
     }
   }
@@ -163,8 +177,11 @@ export class IPWhitelistMiddleware {
     });
 
     if (!isAllowed) {
-      // 使用固定格式字符串，将 clientIP 作为数据参数传入，防止格式字符串注入
-      console.warn('[Jenkins callback] IP %s not in allowed list:', clientIP, this.allowedIPs);
+      logger.warn('Jenkins callback IP not in allowed list', {
+        event: 'JENKINS_IP_DENIED',
+        clientIP,
+        allowedIPs: this.allowedIPs,
+      }, LOG_CONTEXTS.SECURITY);
     }
 
     return isAllowed;
@@ -189,16 +206,20 @@ export class IPWhitelistMiddleware {
       }
 
       const clientIP = this.getClientIP(req);
-      // 使用固定格式字符串，将 clientIP 作为数据参数传入，防止格式字符串注入
-      console.log('[Jenkins IP Whitelist] ✅ Access allowed from IP: %s', clientIP, {
+      logger.info('Jenkins callback IP verified', {
+        event: 'JENKINS_IP_ALLOWED',
+        clientIP,
         endpoint: `${req.method} ${req.path}`,
         timestamp: new Date().toISOString(),
-      });
+      }, LOG_CONTEXTS.SECURITY);
 
       next();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      console.error('IP whitelist middleware error:', message);
+      logger.errorLog(error, 'Jenkins IP whitelist middleware error', {
+        event: 'JENKINS_IP_MIDDLEWARE_ERROR',
+        message,
+      });
       res.status(500).json({
         error: 'Verification error',
         message: 'Internal server error during IP verification',
@@ -210,7 +231,9 @@ export class IPWhitelistMiddleware {
    * 清理资源（用于服务器关闭时）
    */
   public cleanup(): void {
-    console.log('IPWhitelistMiddleware cleaned up');
+    logger.info('IPWhitelistMiddleware cleaned up', {
+      event: 'JENKINS_IP_MIDDLEWARE_CLEANUP',
+    }, LOG_CONTEXTS.SECURITY);
   }
 }
 
@@ -356,7 +379,10 @@ export class RateLimitMiddleware {
     }
 
     if (cleanedCount > 0) {
-      console.debug(`Rate limit: Cleaned up ${cleanedCount} expired records`);
+      logger.debug('Rate limit cleaned expired records', {
+        event: 'JENKINS_RATE_LIMIT_CLEANUP',
+        cleanedCount,
+      }, LOG_CONTEXTS.SECURITY);
     }
   }
 
@@ -367,7 +393,9 @@ export class RateLimitMiddleware {
     clearInterval(this.cleanupInterval);
     clearInterval(this.rate429Timer);
     this.requestCounts.clear();
-    console.log('RateLimitMiddleware cleaned up');
+    logger.info('RateLimitMiddleware cleaned up', {
+      event: 'JENKINS_RATE_LIMIT_MIDDLEWARE_CLEANUP',
+    }, LOG_CONTEXTS.SECURITY);
   }
 }
 

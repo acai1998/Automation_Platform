@@ -5,7 +5,7 @@ import { authenticate, optionalAuth } from '../middleware/auth';
 import { taskSchedulerService, getNextCronTime } from '../services/TaskSchedulerService';
 import { executionService } from '../services/ExecutionService';
 import logger from '../utils/logger';
-import { LOG_CONTEXTS } from '../config/logging';
+import { LOG_CONTEXTS, LOG_EVENTS } from '../config/logging';
 import { TaskExecutionStatus } from '../../shared/types/execution';
 
 const router = Router();
@@ -28,7 +28,7 @@ async function writeAuditLog(
     );
   } catch (err) {
     // 审计日志写入失败不影响主流程
-    logger.errorLog(err, 'Failed to write audit log', { taskId, action });
+    logger.errorLog(err, 'Failed to write audit log', { event: LOG_EVENTS.TASKS_ROUTE_ERROR, taskId, action });
   }
 }
 
@@ -145,6 +145,7 @@ router.get('/scheduler/status', async (_req, res) => {
     const status = taskSchedulerService.getStatus();
     res.json({ success: true, data: status });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get scheduler status', { event: LOG_EVENTS.TASKS_ROUTE_ERROR }, LOG_CONTEXTS.SCHEDULER);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -341,6 +342,7 @@ router.get('/', async (req, res) => {
       }
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get task list', { event: LOG_EVENTS.TASKS_ROUTE_ERROR }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -384,6 +386,7 @@ router.get('/:id', async (req, res) => {
       } catch (parseErr) {
         // case_ids 字段存储了非法 JSON，记录 warn 日志以便追踪数据异常
         logger.warn(`Task ${id} has invalid case_ids JSON, returning empty cases`, {
+      event: LOG_EVENTS.TASKS_ROUTE_ERROR,
           rawValue: task.case_ids,
           err: parseErr instanceof Error ? parseErr.message : String(parseErr),
         }, LOG_CONTEXTS.DATABASE);
@@ -421,6 +424,7 @@ LIMIT 5
       },
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get task detail', { event: LOG_EVENTS.TASKS_ROUTE_ERROR, taskId: req.params.id }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -514,7 +518,7 @@ router.post('/', generalAuthRateLimiter, authenticate, async (req, res) => {
     // 若为定时任务，注册到调度引擎
     if (triggerType === 'scheduled') {
       taskSchedulerService.registerTask(newTaskId).catch(err => {
-        logger.errorLog(err, `Failed to register task ${newTaskId} in scheduler`, {});
+        logger.errorLog(err, `Failed to register task ${newTaskId} in scheduler`, { event: LOG_EVENTS.TASKS_ROUTE_ERROR });
       });
     }
 
@@ -524,6 +528,7 @@ router.post('/', generalAuthRateLimiter, authenticate, async (req, res) => {
       message: '任务创建成功',
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to create task', { event: LOG_EVENTS.TASKS_ROUTE_ERROR }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -658,12 +663,13 @@ router.put('/:id', generalAuthRateLimiter, authenticate, async (req, res) => {
     // 若涉及 cron/status/triggerType 变更，通知调度引擎更新
     if (triggerType !== undefined || cronExpression !== undefined || status !== undefined) {
       taskSchedulerService.registerTask(id).catch(err => {
-        logger.errorLog(err, `Failed to update task ${id} in scheduler`, {});
+        logger.errorLog(err, `Failed to update task ${id} in scheduler`, { event: LOG_EVENTS.TASKS_ROUTE_ERROR });
       });
     }
 
     res.json({ success: true, message: '任务更新成功' });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to update task', { event: LOG_EVENTS.TASKS_ROUTE_ERROR, taskId: req.params.id }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -697,6 +703,7 @@ router.delete('/:id', generalAuthRateLimiter, authenticate, async (req, res) => 
 
     res.json({ success: true, message: '任务已删除' });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to delete task', { event: LOG_EVENTS.TASKS_ROUTE_ERROR, taskId: req.params.id }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -744,7 +751,7 @@ router.patch('/:id/status', generalAuthRateLimiter, authenticate, async (req, re
     // 调度引擎响应（暂停/归档时注销，恢复 active 时重新注册）
     if (status === 'active') {
       taskSchedulerService.registerTask(id).catch(err => {
-        logger.errorLog(err, `Failed to re-register task ${id} after status change`, {});
+        logger.errorLog(err, `Failed to re-register task ${id} after status change`, { event: LOG_EVENTS.TASKS_ROUTE_ERROR });
       });
     } else {
       taskSchedulerService.unregisterTask(id);
@@ -752,6 +759,7 @@ router.patch('/:id/status', generalAuthRateLimiter, authenticate, async (req, re
 
     res.json({ success: true, message: '状态更新成功' });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to update task status', { event: LOG_EVENTS.TASKS_ROUTE_ERROR, taskId: req.params.id }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -782,6 +790,7 @@ router.get('/:id/executions', async (req, res) => {
 
     res.json({ success: true, data });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get task executions', { event: LOG_EVENTS.TASKS_ROUTE_ERROR, taskId: req.params.id }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -828,6 +837,7 @@ router.post('/:id/executions/:execId/cancel', generalAuthRateLimiter, authentica
 
     res.json({ success: true, message: '执行已取消' });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to cancel execution', { event: LOG_EVENTS.TASKS_ROUTE_ERROR, taskId: req.params.id, execId: req.params.execId }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -871,11 +881,12 @@ router.post('/:id/run', generalAuthRateLimiter, authenticate, async (req, res) =
 
     // 通过调度引擎分发（享受并发保护），传入实际操作者ID以便记录正确的触发用户
     taskSchedulerService.dispatchTask(id, 'manual', operatorId).catch(err => {
-      logger.errorLog(err, `Manual dispatch failed for task ${id}`, {});
+      logger.errorLog(err, `Manual dispatch failed for task ${id}`, { event: LOG_EVENTS.TASKS_MANUAL_RUN_FAILED });
     });
 
     res.json({ success: true, message: '任务已提交执行队列' });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to trigger task run', { event: LOG_EVENTS.TASKS_MANUAL_RUN_FAILED, taskId: req.params.id }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -996,6 +1007,7 @@ router.get('/:id/stats', async (req, res) => {
       },
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get task stats', { event: LOG_EVENTS.TASKS_ROUTE_ERROR, taskId: req.params.id }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }
@@ -1051,7 +1063,7 @@ router.get('/:id/audit-logs', async (req, res) => {
 
     res.json({
       success: true,
-      data: logs.map(l => ({
+      data: logs.map((l) => ({
         id: l.id,
         action: l.action,
         operatorId: l.operator_id,
@@ -1062,6 +1074,7 @@ router.get('/:id/audit-logs', async (req, res) => {
       total: countResult[0]?.total ?? 0,
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get task audit logs', { event: LOG_EVENTS.TASKS_ROUTE_ERROR, taskId: req.params.id }, LOG_CONTEXTS.TASKS);
     const message = error instanceof Error ? error.message : '服务器内部错误';
     res.status(500).json({ success: false, message });
   }

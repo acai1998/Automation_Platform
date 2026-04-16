@@ -1,7 +1,7 @@
 import { Server as SocketIOServer } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import logger from '../utils/logger';
-import { LOG_CONTEXTS } from '../config/logging';
+import { LOG_CONTEXTS, LOG_EVENTS } from '../config/logging';
 import { WEBSOCKET_CONFIG } from '../config/monitoring';
 
 /**
@@ -29,7 +29,7 @@ export class WebSocketService {
     this.enabled = WEBSOCKET_CONFIG.ENABLED;
 
     if (!this.enabled) {
-      logger.info('[WebSocket] WebSocket is disabled', {}, LOG_CONTEXTS.WEBSOCKET);
+      logger.info('[WebSocket] WebSocket is disabled', { event: LOG_EVENTS.WS_DISABLED }, LOG_CONTEXTS.WEBSOCKET);
       // Create empty SocketIOServer to avoid null pointer
       this.io = new SocketIOServer(httpServer, { serveClient: false });
       return;
@@ -49,6 +49,7 @@ export class WebSocketService {
     this.setupEventHandlers();
 
     logger.info('[WebSocket] WebSocket service initialized', {
+      event: LOG_EVENTS.WS_INITIALIZED,
       path: WEBSOCKET_CONFIG.PATH,
       frontendUrl: WEBSOCKET_CONFIG.FRONTEND_URL,
       transports: ['websocket', 'polling'],
@@ -62,6 +63,7 @@ export class WebSocketService {
 
     this.io.on('connection', (socket) => {
       logger.info('[WebSocket] Client connected', {
+        event: LOG_EVENTS.WS_CLIENT_CONNECTED,
         socketId: socket.id,
         transport: socket.conn.transport.name
       }, LOG_CONTEXTS.WEBSOCKET);
@@ -77,6 +79,7 @@ export class WebSocketService {
         this.executionRooms.get(runId)!.add(socket.id);
 
         logger.debug('[WebSocket] Client subscribed to execution', {
+          event: LOG_EVENTS.WS_CLIENT_SUBSCRIBED,
           runId,
           socketId: socket.id,
           subscriberCount: this.executionRooms.get(runId)?.size || 0
@@ -90,6 +93,7 @@ export class WebSocketService {
 
         this.executionRooms.get(runId)?.delete(socket.id);
         logger.debug('[WebSocket] Client unsubscribed from execution', {
+          event: LOG_EVENTS.WS_CLIENT_UNSUBSCRIBED,
           runId,
           socketId: socket.id
         }, LOG_CONTEXTS.WEBSOCKET);
@@ -98,6 +102,7 @@ export class WebSocketService {
       // 传输升级事件
       socket.conn.on('upgrade', (transport) => {
         logger.debug('[WebSocket] Transport upgraded', {
+          event: LOG_EVENTS.WS_TRANSPORT_UPGRADED,
           socketId: socket.id,
           from: socket.conn.transport.name,
           to: transport.name
@@ -107,6 +112,7 @@ export class WebSocketService {
       // 断开连接
       socket.on('disconnect', (reason) => {
         logger.info('[WebSocket] Client disconnected', {
+          event: LOG_EVENTS.WS_CLIENT_DISCONNECTED,
           socketId: socket.id,
           reason
         }, LOG_CONTEXTS.WEBSOCKET);
@@ -122,6 +128,7 @@ export class WebSocketService {
       // 错误处理
       socket.on('error', (error) => {
         logger.error('[WebSocket] Socket error', {
+          event: LOG_EVENTS.WS_PUSH_FAILED,
           socketId: socket.id,
           error: error.message
         }, LOG_CONTEXTS.WEBSOCKET);
@@ -131,6 +138,7 @@ export class WebSocketService {
     // 连接错误
     this.io.engine.on('connection_error', (err) => {
       logger.error('[WebSocket] Connection error', {
+        event: LOG_EVENTS.WS_PUSH_FAILED,
         code: err.code,
         message: err.message,
         context: err.context
@@ -156,6 +164,7 @@ export class WebSocketService {
 
     if (subscriberCount === 0) {
       logger.debug('[WebSocket] No subscribers for execution update', {
+        event: LOG_EVENTS.WS_STATUS_PUSHED,
         runId
       }, LOG_CONTEXTS.WEBSOCKET);
       return;
@@ -168,6 +177,7 @@ export class WebSocketService {
     });
 
     logger.info('[WebSocket] Execution update pushed', {
+      event: LOG_EVENTS.WS_STATUS_PUSHED,
       runId,
       status: data.status,
       source: data.source,
@@ -190,6 +200,7 @@ export class WebSocketService {
 
     if (subscriberCount === 0) {
       logger.debug('[WebSocket] No subscribers for quick fail alert', {
+        event: LOG_EVENTS.WS_PUSH_FAILED,
         runId
       }, LOG_CONTEXTS.WEBSOCKET);
       return;
@@ -202,6 +213,7 @@ export class WebSocketService {
     });
 
     logger.warn('[WebSocket] Quick fail alert pushed', {
+      event: LOG_EVENTS.WS_STATUS_PUSHED,
       runId,
       errorType: data.errorType,
       duration: `${data.duration}ms`,
@@ -228,7 +240,7 @@ export class WebSocketService {
   close() {
     if (this.io) {
       this.io.close();
-      logger.info('[WebSocket] WebSocket service closed', {}, LOG_CONTEXTS.WEBSOCKET);
+      logger.info('[WebSocket] WebSocket service closed', { event: LOG_EVENTS.WS_DISABLED }, LOG_CONTEXTS.WEBSOCKET);
     }
   }
 }
@@ -238,6 +250,7 @@ export let webSocketService: WebSocketService | null = null;
 export function initializeWebSocketService(httpServer: HttpServer) {
   webSocketService = new WebSocketService(httpServer);
   logger.info('[WebSocket] WebSocket service ready', {
+    event: LOG_EVENTS.WS_INITIALIZED,
     enabled: WEBSOCKET_CONFIG.ENABLED
   }, LOG_CONTEXTS.WEBSOCKET);
   return webSocketService;

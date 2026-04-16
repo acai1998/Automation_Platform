@@ -502,7 +502,10 @@ export class HybridSyncService {
       };
 
     } catch (error) {
-      console.error(`Manual sync failed for runId: ${runId}:`, error);
+      logger.errorLog(error, 'Hybrid manual sync failed', {
+        event: 'HYBRID_MANUAL_SYNC_FAILED',
+        runId,
+      });
       return {
         success: false,
         message: `Manual sync failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -518,23 +521,34 @@ export class HybridSyncService {
   private startConsistencyCheck(): void {
     const checkConsistency = async () => {
       try {
-        console.log('Running scheduled consistency check...');
+        logger.debug('Running scheduled consistency check', {
+          event: 'HYBRID_CONSISTENCY_CHECK_STARTED',
+        }, LOG_CONTEXTS.HYBRID_SYNC);
 
         // 1. 检查状态一致性
         const consistencyResult = await this.verifyStatusConsistency();
 
         if (consistencyResult.inconsistent.length > 0) {
-          console.log(`Found ${consistencyResult.inconsistent.length} inconsistent executions`);
+          logger.warn('Found inconsistent executions during scheduled check', {
+            event: 'HYBRID_CONSISTENCY_INCONSISTENT_FOUND',
+            inconsistentCount: consistencyResult.inconsistent.length,
+          }, LOG_CONTEXTS.HYBRID_SYNC);
 
           // 2. 尝试修复不一致的状态
           for (const inconsistent of consistencyResult.inconsistent) {
             try {
               const syncResult = await this.manualSync(inconsistent.runId);
               if (syncResult.success && syncResult.updated) {
-                console.log(`Fixed inconsistent status for runId: ${inconsistent.runId}`);
+                logger.info('Fixed inconsistent execution status', {
+                  event: 'HYBRID_CONSISTENCY_FIXED',
+                  runId: inconsistent.runId,
+                }, LOG_CONTEXTS.HYBRID_SYNC);
               }
             } catch (error) {
-              console.error(`Failed to fix inconsistent status for runId: ${inconsistent.runId}:`, error);
+              logger.errorLog(error, 'Failed to fix inconsistent execution status', {
+                event: 'HYBRID_CONSISTENCY_FIX_FAILED',
+                runId: inconsistent.runId,
+              });
             }
           }
         }
@@ -542,11 +556,18 @@ export class HybridSyncService {
         // 3. 检查并处理超时执行
         const timeoutResult = await executionService.checkAndHandleTimeouts();
         if (timeoutResult.checked > 0) {
-          console.log(`Timeout check: checked ${timeoutResult.checked}, timed out ${timeoutResult.timedOut}, updated ${timeoutResult.updated}`);
+          logger.info('Timeout check completed', {
+            event: 'HYBRID_TIMEOUT_CHECK_COMPLETED',
+            checked: timeoutResult.checked,
+            timedOut: timeoutResult.timedOut,
+            updated: timeoutResult.updated,
+          }, LOG_CONTEXTS.HYBRID_SYNC);
         }
 
       } catch (error) {
-        console.error('Consistency check failed:', error);
+        logger.errorLog(error, 'Scheduled consistency check failed', {
+          event: 'HYBRID_CONSISTENCY_CHECK_FAILED',
+        });
       }
 
       // 安排下次检查
@@ -585,7 +606,10 @@ export class HybridSyncService {
    */
   updateConfig(newConfig: Partial<MonitoringConfig>): void {
     this.config = { ...this.config, ...newConfig };
-    console.log('Monitoring config updated:', this.config);
+    logger.info('Hybrid monitoring config updated', {
+      event: 'HYBRID_CONFIG_UPDATED',
+      config: this.config,
+    }, LOG_CONTEXTS.HYBRID_SYNC);
   }
 
   /**

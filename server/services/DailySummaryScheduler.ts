@@ -1,6 +1,6 @@
 import { dashboardService } from './DashboardService';
 import logger from '../utils/logger';
-import { LOG_CONTEXTS } from '../config/logging';
+import { LOG_CONTEXTS, LOG_EVENTS } from '../config/logging';
 
 /**
  * 每日汇总数据调度器
@@ -26,24 +26,24 @@ export class DailySummaryScheduler {
    */
   start(): void {
     if (this.isRunning) {
-      logger.info('Daily summary scheduler is already running', {}, LOG_CONTEXTS.SCHEDULER);
+      logger.info('Daily summary scheduler is already running', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED }, LOG_CONTEXTS.SCHEDULER);
       return;
     }
 
-    logger.info('Starting daily summary scheduler...', {}, LOG_CONTEXTS.SCHEDULER);
+    logger.info('Starting daily summary scheduler...', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED }, LOG_CONTEXTS.SCHEDULER);
     this.isRunning = true;
 
     // 计算到下一个午夜 00:05 的时间
     this.scheduleNextExecution();
 
-    logger.info('Daily summary scheduler started successfully', {}, LOG_CONTEXTS.SCHEDULER);
+    logger.info('Daily summary scheduler started successfully', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED }, LOG_CONTEXTS.SCHEDULER);
   }
 
   /**
    * 停止每日汇总调度器
    */
   stop(): void {
-    logger.info('Stopping daily summary scheduler...', {}, LOG_CONTEXTS.SCHEDULER);
+    logger.info('Stopping daily summary scheduler...', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_COMPLETED }, LOG_CONTEXTS.SCHEDULER);
     this.isRunning = false;
 
     if (this.dailyTimer) {
@@ -51,7 +51,7 @@ export class DailySummaryScheduler {
       this.dailyTimer = null;
     }
 
-    logger.info('Daily summary scheduler stopped', {}, LOG_CONTEXTS.SCHEDULER);
+    logger.info('Daily summary scheduler stopped', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_COMPLETED }, LOG_CONTEXTS.SCHEDULER);
   }
 
   /**
@@ -66,6 +66,7 @@ export class DailySummaryScheduler {
     const timeUntilNextRun = tomorrow.getTime() - now.getTime();
 
     logger.debug('Scheduling next daily summary execution', {
+      event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED,
       currentTime: now.toISOString(),
       nextRunTime: tomorrow.toISOString(),
       delayMs: timeUntilNextRun,
@@ -87,6 +88,7 @@ export class DailySummaryScheduler {
       const yesterdayStr = this.formatLocalDate(yesterday);
 
       logger.info('Starting daily summary generation', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED,
         targetDate: yesterdayStr,
         executionTime: new Date().toISOString(),
       }, LOG_CONTEXTS.SCHEDULER);
@@ -94,12 +96,14 @@ export class DailySummaryScheduler {
       await dashboardService.refreshDailySummary(yesterdayStr);
 
       logger.info('Daily summary generation completed successfully', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_COMPLETED,
         targetDate: yesterdayStr,
         completedAt: new Date().toISOString(),
       }, LOG_CONTEXTS.SCHEDULER);
 
     } catch (error) {
       logger.errorLog(error, 'Failed to generate daily summary', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_FAILED,
         scheduledTime: new Date().toISOString(),
       });
     } finally {
@@ -122,6 +126,7 @@ export class DailySummaryScheduler {
     })();
 
     logger.info('Manual daily summary generation triggered', {
+      event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED,
       targetDate,
       triggeredAt: new Date().toISOString(),
     }, LOG_CONTEXTS.SCHEDULER);
@@ -129,11 +134,13 @@ export class DailySummaryScheduler {
     try {
       await dashboardService.refreshDailySummary(targetDate);
       logger.info('Manual daily summary generation completed', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_COMPLETED,
         targetDate,
         completedAt: new Date().toISOString(),
       }, LOG_CONTEXTS.SCHEDULER);
     } catch (error) {
       logger.errorLog(error, 'Manual daily summary generation failed', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_FAILED,
         targetDate,
         failedAt: new Date().toISOString(),
       });
@@ -182,6 +189,7 @@ export class DailySummaryScheduler {
     mode: 'incremental' | 'full';
   }> {
     logger.info('Starting historical daily summaries backfill (batch mode)', {
+      event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_STARTED,
       days,
       startTime: new Date().toISOString(),
       mode: onlyMissingDates ? 'incremental' : 'full',
@@ -214,6 +222,7 @@ export class DailySummaryScheduler {
       }
       
       logger.info('Historical daily summaries backfill completed (batch mode)', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_COMPLETED,
         ...result,
         completedAt: new Date().toISOString(),
         processedDates: batchResult.processedDates.length,
@@ -228,6 +237,7 @@ export class DailySummaryScheduler {
     } catch (error) {
       // 如果批量处理失败，回退到逐个处理模式
       logger.warn('Batch backfill failed, falling back to individual mode', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_FAILED,
         error: error instanceof Error ? error.message : String(error),
       }, LOG_CONTEXTS.SCHEDULER);
 
@@ -240,6 +250,7 @@ export class DailySummaryScheduler {
 
         try {
           logger.debug('Generating historical summary (fallback mode)', {
+            event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_STARTED,
             date: dateStr,
             progress: `${i}/${days}`,
           }, LOG_CONTEXTS.SCHEDULER);
@@ -258,6 +269,7 @@ export class DailySummaryScheduler {
           result.errors.push({ date: dateStr, error: errorMessage });
 
           logger.warn('Failed to generate historical summary', {
+            event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_FAILED,
             date: dateStr,
             error: errorMessage,
             progress: `${i}/${days}`,
@@ -266,6 +278,7 @@ export class DailySummaryScheduler {
       }
 
       logger.info('Historical daily summaries backfill completed (fallback mode)', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_COMPLETED,
         ...result,
         completedAt: new Date().toISOString(),
       }, LOG_CONTEXTS.SCHEDULER);

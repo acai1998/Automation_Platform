@@ -1,6 +1,6 @@
 import { DataSource, Repository, QueryRunner, SelectQueryBuilder, ObjectLiteral, EntityTarget } from 'typeorm';
 import logger from '../utils/logger';
-import { LOG_CONTEXTS } from '../config/logging';
+import { createTimer } from '../config/logging';
 
 /**
  * 基础 Repository 类
@@ -22,18 +22,27 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
     callback: (queryRunner: QueryRunner) => Promise<R>
   ): Promise<R> {
     const queryRunner = this.dataSource.createQueryRunner();
+    const timer = createTimer();
+    const repositoryName = this.repository.metadata?.name ?? 'UnknownRepository';
     await queryRunner.connect();
 
     try {
       await queryRunner.startTransaction();
       const result = await callback(queryRunner);
       await queryRunner.commitTransaction();
+
+      logger.performanceLog('Database transaction completed', timer(), {
+        repository: repositoryName,
+        status: 'committed',
+      });
+
       return result;
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      logger.error('Transaction failed and rolled back:', {
-        error: error instanceof Error ? error.message : String(error),
-      }, LOG_CONTEXTS.DATABASE);
+      logger.errorLog(error, 'Database transaction failed and rolled back', {
+        repository: repositoryName,
+        duration: `${timer()}ms`,
+      });
       throw error;
     } finally {
       await queryRunner.release();
@@ -54,7 +63,25 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
     entities: T[],
     chunkSize: number = 50
   ): Promise<void> {
-    await this.repository.insert(entities);
+    const timer = createTimer();
+    const repositoryName = this.repository.metadata?.name ?? 'UnknownRepository';
+
+    try {
+      await this.repository.insert(entities);
+      logger.performanceLog('Repository batch insert completed', timer(), {
+        repository: repositoryName,
+        rows: entities.length,
+        chunkSize,
+      });
+    } catch (error) {
+      logger.errorLog(error, 'Repository batch insert failed', {
+        repository: repositoryName,
+        rows: entities.length,
+        chunkSize,
+        duration: `${timer()}ms`,
+      });
+      throw error;
+    }
   }
 
   /**

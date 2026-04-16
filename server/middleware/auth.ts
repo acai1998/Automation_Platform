@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { authService } from '../services/AuthService';
-import logger from '../utils/logger';
+import logger, { Logger } from '../utils/logger';
 import { LOG_CONTEXTS } from '../config/logging';
 
 // 扩展 Request 类型以包含用户信息
@@ -59,6 +59,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
   }, LOG_CONTEXTS.AUTH);
 
   req.user = decoded;
+  Logger.setContext({ userId: String(decoded.id) });
   next();
 }
 
@@ -71,6 +72,7 @@ export function optionalAuth(req: Request, res: Response, next: NextFunction): v
     const decoded = authService.verifyToken(token);
     if (decoded) {
       req.user = decoded;
+      Logger.setContext({ userId: String(decoded.id) });
     }
   }
 

@@ -9,6 +9,8 @@ import {
   refreshRateLimiter,
   generalAuthRateLimiter,
 } from '../middleware/authRateLimiter';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 const router = Router();
 
@@ -57,7 +59,11 @@ router.post('/register', registerRateLimiter, async (req: Request, res: Response
     const result = await authService.register(email, password, username);
     res.status(result.success ? 201 : 400).json(result);
   } catch (error) {
-    console.error('Register route error:', error);
+    logger.errorLog(error, 'Register route error', {
+      event: 'AUTH_REGISTER_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -69,7 +75,11 @@ router.get('/public-key', async (_req: Request, res: Response) => {
     res.set('Cache-Control', 'no-store');
     res.json({ success: true, ...keyInfo });
   } catch (error) {
-    console.error('Get login public key route error:', error);
+    logger.errorLog(error, 'Get login public key route error', {
+      event: 'AUTH_PUBLIC_KEY_ROUTE_ERROR',
+      endpoint: '/api/auth/public-key',
+      method: 'GET',
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -102,7 +112,11 @@ router.post('/login', loginRateLimiter, async (req: Request, res: Response) => {
     const result = await authService.login(email, password, remember);
     res.status(result.success ? 200 : 401).json(result);
   } catch (error) {
-    console.error('Login route error:', error);
+    logger.errorLog(error, 'Login route error', {
+      event: 'AUTH_LOGIN_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -119,7 +133,12 @@ router.post('/logout', generalAuthRateLimiter, authenticate, async (req: Request
     const result = await authService.logout(req.user.id);
     res.json(result);
   } catch (error) {
-    console.error('Logout route error:', error);
+    logger.errorLog(error, 'Logout route error', {
+      event: 'AUTH_LOGOUT_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+      userId: req.user?.id,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -138,7 +157,11 @@ router.post('/forgot-password', forgotPasswordRateLimiter, async (req: Request, 
     const result = await authService.forgotPassword(email);
     res.json(result);
   } catch (error) {
-    console.error('Forgot password route error:', error);
+    logger.errorLog(error, 'Forgot password route error', {
+      event: 'AUTH_FORGOT_PASSWORD_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -163,7 +186,11 @@ router.post('/reset-password', resetPasswordRateLimiter, async (req: Request, re
     const result = await authService.resetPassword(token, password);
     res.status(result.success ? 200 : 400).json(result);
   } catch (error) {
-    console.error('Reset password route error:', error);
+    logger.errorLog(error, 'Reset password route error', {
+      event: 'AUTH_RESET_PASSWORD_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -185,7 +212,12 @@ router.get('/me', generalAuthRateLimiter, authenticate, async (req: Request, res
 
     res.json({ success: true, user });
   } catch (error) {
-    console.error('Get current user route error:', error);
+    logger.errorLog(error, 'Get current user route error', {
+      event: 'AUTH_ME_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+      userId: req.user?.id,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -208,7 +240,11 @@ router.post('/refresh', refreshRateLimiter, async (req: Request, res: Response) 
       res.status(401).json({ success: false, message: result.message });
     }
   } catch (error) {
-    console.error('Refresh token route error:', error);
+    logger.errorLog(error, 'Refresh token route error', {
+      event: 'AUTH_REFRESH_TOKEN_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

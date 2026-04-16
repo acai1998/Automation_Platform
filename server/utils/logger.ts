@@ -29,6 +29,8 @@ interface LogContext {
 const asyncLocalStorage = new AsyncLocalStorage<LogContext>();
 
 // 日志配置接口
+type LogOutputFormat = 'text' | 'json';
+
 interface LoggerConfig {
   level: LogLevel;
   enableRequestDetails: boolean;
@@ -37,6 +39,7 @@ interface LoggerConfig {
   enableSensitiveData: boolean;
   enableTimestamp: boolean;
   enableColors: boolean;
+  outputFormat: LogOutputFormat;
 }
 
 // 默认配置
@@ -48,6 +51,7 @@ const DEFAULT_CONFIG: LoggerConfig = {
   enableSensitiveData: false,
   enableTimestamp: true,
   enableColors: true,
+  outputFormat: 'text',
 };
 
 // 颜色代码 (仅在开发环境使用)
@@ -84,6 +88,8 @@ class Logger {
   private loadConfig(): LoggerConfig {
     const levelStr = process.env.LOG_LEVEL?.toUpperCase() || 'INFO';
     const level = LogLevel[levelStr as keyof typeof LogLevel] ?? LogLevel.INFO;
+    const outputFormatEnv = process.env.LOG_OUTPUT_FORMAT?.toLowerCase();
+    const outputFormat: LogOutputFormat = outputFormatEnv === 'json' ? 'json' : DEFAULT_CONFIG.outputFormat;
 
     return {
       level,
@@ -93,6 +99,7 @@ class Logger {
       enableSensitiveData: process.env.LOG_SENSITIVE_DATA === 'true',
       enableTimestamp: process.env.LOG_TIMESTAMP !== 'false',
       enableColors: process.env.NODE_ENV !== 'production' && process.env.LOG_COLORS !== 'false',
+      outputFormat,
     };
   }
 
@@ -166,72 +173,100 @@ class Logger {
     return data;
   }
 
+  private compactObject(obj: Record<string, unknown>): Record<string, unknown> {
+    const compacted: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        compacted[key] = value;
+      }
+    }
+
+    return compacted;
+  }
+
+  private writeLog(level: LogLevel, logMessage: string, data?: unknown): void {
+    switch (level) {
+      case LogLevel.DEBUG:
+        if (data !== undefined) {
+          console.debug('%s', logMessage, data);
+        } else {
+          console.debug('%s', logMessage);
+        }
+        break;
+      case LogLevel.INFO:
+        if (data !== undefined) {
+          console.info('%s', logMessage, data);
+        } else {
+          console.info('%s', logMessage);
+        }
+        break;
+      case LogLevel.WARN:
+        if (data !== undefined) {
+          console.warn('%s', logMessage, data);
+        } else {
+          console.warn('%s', logMessage);
+        }
+        break;
+      case LogLevel.ERROR:
+        if (data !== undefined) {
+          console.error('%s', logMessage, data);
+        } else {
+          console.error('%s', logMessage);
+        }
+        break;
+    }
+  }
+
   // 核心日志记录方法
   private log(level: LogLevel, message: string, data?: unknown, context?: string): void {
     if (!this.shouldLog(level)) {
       return;
     }
 
+    // 注意：使用固定字面量 '%s' 作为格式字符串，将 logMessage 作为数据参数传入，
+    // 防止外部输入（如用户提供的 message）中包含 %s/%d/%o 等格式说明符被解析（format string injection）
+    const sanitizedData = data !== undefined ? this.sanitizeData(data) : undefined;
+    const requestContext = Logger.getContext();
+
+    if (this.config.outputFormat === 'json') {
+      const payload = this.compactObject({
+        timestamp: this.config.enableTimestamp ? this.formatTimestamp() : undefined,
+        level: LOG_LEVEL_NAMES[level],
+        message,
+        context,
+        requestId: requestContext.requestId,
+        userId: requestContext.userId,
+        ip: requestContext.ip,
+        userAgent: requestContext.userAgent,
+        data: sanitizedData,
+      });
+
+      this.writeLog(level, JSON.stringify(payload));
+      return;
+    }
+
     const parts: string[] = [];
 
-    // 时间戳
     if (this.config.enableTimestamp) {
       parts.push(this.formatTimestamp());
     }
 
-    // 日志级别
     parts.push(this.formatLevel(level));
 
-    // 请求上下文
     const contextStr = this.formatContext();
     if (contextStr) {
       parts.push(contextStr);
     }
 
-    // 自定义上下文前缀
     if (context) {
       parts.push(`[${context}]`);
     }
 
-    // 消息
     parts.push(message);
 
     const logMessage = parts.join(' ');
-
-    // 根据级别选择输出方法
-    // 注意：使用固定字面量 '%s' 作为格式字符串，将 logMessage 作为数据参数传入，
-    // 防止外部输入（如用户提供的 message）中包含 %s/%d/%o 等格式说明符被解析（format string injection）
-    const sanitizedData = data ? this.sanitizeData(data) : undefined;
-    switch (level) {
-      case LogLevel.DEBUG:
-        if (sanitizedData !== undefined) {
-          console.debug('%s', logMessage, sanitizedData);
-        } else {
-          console.debug('%s', logMessage);
-        }
-        break;
-      case LogLevel.INFO:
-        if (sanitizedData !== undefined) {
-          console.info('%s', logMessage, sanitizedData);
-        } else {
-          console.info('%s', logMessage);
-        }
-        break;
-      case LogLevel.WARN:
-        if (sanitizedData !== undefined) {
-          console.warn('%s', logMessage, sanitizedData);
-        } else {
-          console.warn('%s', logMessage);
-        }
-        break;
-      case LogLevel.ERROR:
-        if (sanitizedData !== undefined) {
-          console.error('%s', logMessage, sanitizedData);
-        } else {
-          console.error('%s', logMessage);
-        }
-        break;
-    }
+    this.writeLog(level, logMessage, sanitizedData);
   }
 
   // 公共日志方法

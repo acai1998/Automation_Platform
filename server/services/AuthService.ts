@@ -6,6 +6,8 @@ import { UserRepository } from '../repositories/UserRepository';
 import { AppDataSource } from '../config/database';
 import { User } from '../entities/User';
 import { sendPasswordResetEmail } from './EmailService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 // JWT 密钥配置 - 从 Docker Secrets 或环境变量读取
 const JWT_SECRET = getSecretOrEnv('JWT_SECRET', 'autotest-jwt-secret-key-2025');
@@ -29,7 +31,10 @@ function createLoginRsaKeyPair(): LoginRsaKeyPair {
   const envPrivateKey = getSecretOrEnv('AUTH_LOGIN_PRIVATE_KEY');
 
   if ((envPublicKey && !envPrivateKey) || (!envPublicKey && envPrivateKey)) {
-    console.warn('[AuthService] AUTH_LOGIN_PUBLIC_KEY/AUTH_LOGIN_PRIVATE_KEY 配置不完整，将使用临时 RSA 密钥对');
+    logger.warn('[AuthService] AUTH_LOGIN_PUBLIC_KEY/AUTH_LOGIN_PRIVATE_KEY 配置不完整，将使用临时 RSA 密钥对', {
+      hasPublicKey: Boolean(envPublicKey),
+      hasPrivateKey: Boolean(envPrivateKey),
+    }, LOG_CONTEXTS.AUTH);
   }
 
   if (envPublicKey && envPrivateKey) {
@@ -162,7 +167,9 @@ export class AuthService {
 
       return decrypted.toString('utf8');
     } catch (error) {
-      console.error('Decrypt login password error:', error);
+      logger.errorLog(error, 'AuthService decryptLoginPassword failed', {
+        keyId: LOGIN_RSA_KEY_PAIR.keyId,
+      });
       return null;
     }
   }
@@ -212,7 +219,10 @@ export class AuthService {
         user: this.toUserInfo(user),
       };
     } catch (error) {
-      console.error('Register error:', error);
+      logger.errorLog(error, 'AuthService register failed', {
+        email,
+        username,
+      });
       return { success: false, message: '注册失败，请稍后重试' };
     }
   }
@@ -272,7 +282,10 @@ export class AuthService {
         refreshToken,
       };
     } catch (error) {
-      console.error('Login error:', error);
+      logger.errorLog(error, 'AuthService login failed', {
+        email,
+        remember,
+      });
       return { success: false, message: '登录失败，请稍后重试' };
     }
   }
@@ -283,7 +296,7 @@ export class AuthService {
       await this.userRepository.setRememberToken(userId, null);
       return { success: true, message: '登出成功' };
     } catch (error) {
-      console.error('Logout error:', error);
+      logger.errorLog(error, 'AuthService logout failed', { userId });
       return { success: false, message: '登出失败' };
     }
   }
@@ -309,7 +322,7 @@ export class AuthService {
 
       return { success: true, message: '如果该邮箱已注册，您将收到一封密码重置邮件' };
     } catch (error) {
-      console.error('Forgot password error:', error);
+      logger.errorLog(error, 'AuthService forgotPassword failed', { email });
       return { success: false, message: '发送重置邮件失败，请稍后重试' };
     }
   }
@@ -331,7 +344,9 @@ export class AuthService {
 
       return { success: true, message: '密码重置成功' };
     } catch (error) {
-      console.error('Reset password error:', error);
+      logger.errorLog(error, 'AuthService resetPassword failed', {
+        tokenLength: token?.length,
+      });
       return { success: false, message: '密码重置失败，请稍后重试' };
     }
   }
@@ -342,7 +357,7 @@ export class AuthService {
       const user = await this.userRepository.findById(userId);
       return user ? this.toUserInfo(user) : null;
     } catch (error) {
-      console.error('Get current user error:', error);
+      logger.errorLog(error, 'AuthService getCurrentUser failed', { userId });
       return null;
     }
   }
@@ -364,7 +379,9 @@ export class AuthService {
       const newToken = this.generateToken(user);
       return { token: newToken, message: '刷新成功' };
     } catch (error) {
-      console.error('Refresh token error:', error);
+      logger.errorLog(error, 'AuthService refreshToken failed', {
+        tokenLength: refreshToken?.length,
+      });
       return { message: 'Token 刷新失败' };
     }
   }

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { dashboardService } from '../services/DashboardService';
 import { dailySummaryScheduler } from '../services/DailySummaryScheduler';
 import logger from '../utils/logger';
-import { LOG_CONTEXTS } from '../config/logging';
+import { LOG_CONTEXTS, LOG_EVENTS } from '../config/logging';
 
 const router = Router();
 
@@ -17,11 +17,15 @@ function setNoCacheHeaders(res: { set: (field: string, value: string) => unknown
  * GET /api/dashboard/stats
  * 获取核心指标卡片数据
  */
-router.get('/stats', async (req, res) => {
+router.get('/stats', async (_req, res) => {
   try {
     const stats = await dashboardService.getStats();
     res.json({ success: true, data: stats });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get dashboard stats', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
+      endpoint: '/stats',
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -38,6 +42,7 @@ router.get('/today-execution', async (req, res) => {
     // ✅ Validate response data before sending
     if (!data || typeof data !== 'object') {
       logger.warn('Invalid today execution data received', {
+        event: LOG_EVENTS.DASHBOARD_DATA_INVALID,
         data,
         endpoint: '/today-execution',
       }, LOG_CONTEXTS.DASHBOARD);
@@ -67,6 +72,7 @@ router.get('/today-execution', async (req, res) => {
     const message = error instanceof Error ? error.message : 'Unknown error';
 
     logger.errorLog(error, 'Failed to get today execution data', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
       endpoint: '/today-execution',
       errorType: error instanceof Error ? error.constructor.name : 'Unknown',
     });
@@ -97,6 +103,7 @@ router.get('/trend', async (req, res) => {
     // ✅ Validate response data before sending
     if (!Array.isArray(data)) {
       logger.warn('Invalid trend data received - not an array', {
+        event: LOG_EVENTS.DASHBOARD_DATA_INVALID,
         data,
         dataType: typeof data,
         endpoint: '/trend',
@@ -113,6 +120,7 @@ router.get('/trend', async (req, res) => {
     const validatedData = data.map((item, index) => {
       if (!item || typeof item !== 'object') {
         logger.warn('Invalid trend data item', {
+          event: LOG_EVENTS.DASHBOARD_DATA_INVALID,
           index,
           item,
           endpoint: '/trend',
@@ -150,6 +158,7 @@ router.get('/trend', async (req, res) => {
     const message = error instanceof Error ? error.message : 'Unknown error';
 
     logger.errorLog(error, 'Failed to get trend data', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
       endpoint: '/trend',
       requestedDays: req.query.days,
       errorType: error instanceof Error ? error.constructor.name : 'Unknown',
@@ -169,6 +178,11 @@ router.get('/comparison', async (req, res) => {
     const data = await dashboardService.getComparison(days);
     res.json({ success: true, data });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get dashboard comparison data', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
+      endpoint: '/comparison',
+      requestedDays: req.query.days,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -195,6 +209,7 @@ router.get('/trend-debug', async (req, res) => {
     const message = error instanceof Error ? error.message : 'Unknown error';
 
     logger.errorLog(error, 'Failed to get trend debug info', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
       endpoint: '/trend-debug',
       requestedDays: req.query.days,
       errorType: error instanceof Error ? error.constructor.name : 'Unknown',
@@ -215,6 +230,10 @@ router.get('/recent-runs', async (req, res) => {
     const data = await dashboardService.getRecentRuns(limit);
     res.json({ success: true, data });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get recent runs', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
+      endpoint: '/recent-runs',
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -319,6 +338,7 @@ router.get('/all', async (req, res) => {
     const message = error instanceof Error ? error.message : 'Unknown error';
 
     logger.errorLog(error, 'Failed to get dashboard all data', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
       endpoint: '/all',
       requestedTimeRange: req.query.timeRange,
       errorType: error instanceof Error ? error.constructor.name : 'Unknown',
@@ -338,6 +358,11 @@ router.post('/refresh-summary', async (req, res) => {
     await dashboardService.refreshDailySummary(date);
     res.json({ success: true, message: 'Summary refreshed' });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to refresh daily summary', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
+      endpoint: '/refresh-summary',
+      date: req.body?.date,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -347,7 +372,7 @@ router.post('/refresh-summary', async (req, res) => {
  * GET /api/dashboard/summary-status
  * 获取每日汇总数据状态
  */
-router.get('/summary-status', async (req, res) => {
+router.get('/summary-status', async (_req, res) => {
   try {
     // 获取调度器状态
     const schedulerStatus = dailySummaryScheduler.getStatus();
@@ -365,6 +390,10 @@ router.get('/summary-status', async (req, res) => {
       }
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get summary status', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
+      endpoint: '/summary-status',
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -383,6 +412,11 @@ router.post('/trigger-manual-summary', async (req, res) => {
       message: `Manual summary generation completed for ${date || 'yesterday'}`,
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to trigger manual summary', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
+      endpoint: '/trigger-manual-summary',
+      date: req.body?.date,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -402,6 +436,12 @@ router.post('/backfill-summaries', async (req, res) => {
       message: `Backfill completed (${onlyMissingDates ? 'incremental' : 'full'}): ${result.successCount}/${result.totalDays} days processed`,
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to backfill historical summaries', {
+      event: LOG_EVENTS.DASHBOARD_ROUTE_ERROR,
+      endpoint: '/backfill-summaries',
+      days: req.body?.days,
+      onlyMissingDates: req.body?.onlyMissingDates,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }

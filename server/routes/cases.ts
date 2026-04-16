@@ -8,6 +8,14 @@ import { LOG_CONTEXTS, createTimer } from '../config/logging';
 const router = Router();
 const testCaseRepository = new TestCaseRepository(AppDataSource);
 
+function logCasesRouteError(error: unknown, endpoint: string, method: string): void {
+  logger.errorLog(error, 'Cases route database operation failed', {
+    event: 'CASES_ROUTE_DB_ERROR',
+    endpoint,
+    method,
+  });
+}
+
 interface TestCase {
   id: number;
   case_key?: string;
@@ -148,13 +156,7 @@ router.get('/owners', async (_req, res) => {
 
     res.json({ success: true, data });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: '/api/cases/owners',
-      method: 'GET'
-    });
+    logCasesRouteError(error, '/api/cases/owners', 'GET');
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -172,13 +174,7 @@ router.get('/modules', async (_req, res) => {
 
     res.json({ success: true, data });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: '/api/cases/modules',
-      method: 'GET'
-    });
+    logCasesRouteError(error, '/api/cases/modules', 'GET');
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -217,13 +213,7 @@ router.get('/:id', async (req, res) => {
 
     res.json({ success: true, data });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -269,13 +259,7 @@ router.post('/', async (req, res) => {
       message: 'Case created successfully',
     });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -323,13 +307,7 @@ router.put('/:id', async (req, res) => {
 
     res.json({ success: true, message: 'Case updated successfully' });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -348,13 +326,7 @@ router.delete('/:id', async (req, res) => {
 
     res.json({ success: true, message: 'Case deleted successfully' });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -423,13 +395,7 @@ router.post('/:id/run', async (req, res) => {
       });
     }
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -451,10 +417,20 @@ router.post('/:id/callback', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Case not found' });
     }
 
-    // 记录执行结果（可以扩展为写入运行记录表）
-    console.log(`Case ${id} execution completed: status=${status}, duration=${duration}ms`);
+    logger.info('Case execution callback received', {
+      event: 'CASES_EXECUTION_CALLBACK_RECEIVED',
+      caseId: id,
+      status,
+      duration,
+      hasError: Boolean(errorMessage),
+    }, LOG_CONTEXTS.CASES);
+
     if (errorMessage) {
-      console.log(`Error: ${errorMessage}`);
+      logger.warn('Case execution callback contains error message', {
+        event: 'CASES_EXECUTION_CALLBACK_ERROR',
+        caseId: id,
+        errorMessage,
+      }, LOG_CONTEXTS.CASES);
     }
 
     res.json({
@@ -462,13 +438,7 @@ router.post('/:id/callback', async (req, res) => {
       message: 'Callback received successfully',
     });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });

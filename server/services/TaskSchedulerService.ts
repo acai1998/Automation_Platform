@@ -16,7 +16,7 @@
 import { Cron } from 'croner';
 import { query, queryOne, getPool } from '../config/database';
 import logger from '../utils/logger';
-import { LOG_CONTEXTS } from '../config/logging';
+import { LOG_CONTEXTS, LOG_EVENTS } from '../config/logging';
 import { jenkinsService } from './JenkinsService';
 import { executionService } from './ExecutionService';
 import { AppDataSource } from '../config/database';
@@ -249,24 +249,24 @@ export class TaskSchedulerService {
    */
   async start(): Promise<void> {
     if (this.started) {
-      logger.warn('TaskSchedulerService already started', {}, LOG_CONTEXTS.EXECUTION);
+      logger.warn('TaskSchedulerService already started', { event: LOG_EVENTS.SCHEDULER_STARTED }, LOG_CONTEXTS.EXECUTION);
       return;
     }
     this.started = true;
-    logger.info('TaskSchedulerService starting...', {}, LOG_CONTEXTS.EXECUTION);
+    logger.info('TaskSchedulerService starting...', { event: LOG_EVENTS.SCHEDULER_STARTED }, LOG_CONTEXTS.EXECUTION);
 
     // [dev-11] 服务启动时从数据库恢复"运行中"的槽位
     // 解决：服务重启或部署后，之前已触发但未回调完成的任务无法在调度器中看到
     try {
       await this.recoverRunningSlots();
     } catch (err) {
-      logger.errorLog(err, '[dev-11] Failed to recover running slots on startup', {});
+      logger.errorLog(err, '[dev-11] Failed to recover running slots on startup', { event: LOG_EVENTS.SCHEDULER_SLOT_RECOVERED });
     }
 
     try {
       await this.loadAndRegisterAllTasks();
     } catch (err) {
-      logger.errorLog(err, 'Failed to load tasks on startup', {});
+      logger.errorLog(err, 'Failed to load tasks on startup', { event: LOG_EVENTS.SCHEDULER_STARTED });
     }
 
     // 每 60 秒轮询一次，检查是否有新 scheduled 任务或任务更新
@@ -280,6 +280,7 @@ export class TaskSchedulerService {
     if (this.slotReconcileTimer.unref) this.slotReconcileTimer.unref();
 
     logger.info('TaskSchedulerService started', {
+      event: LOG_EVENTS.SCHEDULER_STARTED,
       concurrencyLimit: CONCURRENCY_LIMIT,
       slotReconcileIntervalMs: SLOT_RECONCILE_INTERVAL_MS,
     }, LOG_CONTEXTS.EXECUTION);
@@ -303,7 +304,7 @@ export class TaskSchedulerService {
     );
 
     if (activeRuns.length === 0) {
-      logger.info('[dev-11] No running slots to recover on startup', {}, LOG_CONTEXTS.EXECUTION);
+      logger.info('[dev-11] No running slots to recover on startup', { event: LOG_EVENTS.SCHEDULER_SLOT_RECOVERED }, LOG_CONTEXTS.EXECUTION);
       return;
     }
 
@@ -321,6 +322,7 @@ export class TaskSchedulerService {
         if (slot) {
           this.runningSlots.delete(runId);
           logger.warn(`[dev-11] Recovered slot for runId=${runId} auto-released after timeout`, {
+            event: LOG_EVENTS.SCHEDULER_SLOT_TIMEOUT,
             runId,
             taskId,
           }, LOG_CONTEXTS.EXECUTION);
@@ -342,6 +344,7 @@ export class TaskSchedulerService {
     }
 
     logger.info(`[dev-11] Recovered ${recovered} running slot(s) from database on startup`, {
+      event: LOG_EVENTS.SCHEDULER_SLOT_RECOVERED,
       recovered,
       runIds: activeRuns.map(r => r.id),
     }, LOG_CONTEXTS.EXECUTION);
@@ -382,6 +385,7 @@ export class TaskSchedulerService {
 
         if (releasedCount > 0) {
           logger.info(`[P1] Reconciled and released ${releasedCount} stale slot(s)`, {
+            event: LOG_EVENTS.SCHEDULER_SLOT_RECONCILED,
             scannedRunIds: runIds,
             releasedCount,
           }, LOG_CONTEXTS.EXECUTION);
@@ -389,6 +393,7 @@ export class TaskSchedulerService {
       }
     } catch (err) {
       logger.warn('[P1] Failed to reconcile running slots with DB status', {
+        event: LOG_EVENTS.SCHEDULER_SLOT_RECONCILED,
         error: err instanceof Error ? err.message : String(err),
         runningSlotCount: this.runningSlots.size,
       }, LOG_CONTEXTS.EXECUTION);
@@ -439,7 +444,7 @@ export class TaskSchedulerService {
     this.waitQueue = [];
     this.directQueue = [];
     this.started = false;
-    logger.info('TaskSchedulerService stopped', {}, LOG_CONTEXTS.EXECUTION);
+    logger.info('TaskSchedulerService stopped', { event: LOG_EVENTS.SCHEDULER_STOPPED }, LOG_CONTEXTS.EXECUTION);
   }
 
   // ─────────────────────────────────────────────
@@ -472,7 +477,7 @@ export class TaskSchedulerService {
       if (item.timeoutTimer) clearTimeout(item.timeoutTimer);
     }
     this.waitQueue = this.waitQueue.filter(item => item.taskId !== taskId);
-    logger.debug(`Task ${taskId} unregistered from scheduler`, {}, LOG_CONTEXTS.EXECUTION);
+    logger.debug(`Task ${taskId} unregistered from scheduler`, { event: LOG_EVENTS.SCHEDULER_TASK_UNREGISTERED, taskId }, LOG_CONTEXTS.EXECUTION);
   }
 
   /**
@@ -547,6 +552,7 @@ export class TaskSchedulerService {
         if (this.runningSlots.has(placeholderRunId)) {
           this.runningSlots.delete(placeholderRunId);
           logger.warn(`[Direct] Placeholder slot ${placeholderRunId} for ${label} expired (immediate path)`, {
+            event: LOG_EVENTS.SCHEDULER_SLOT_TIMEOUT,
             label,
           }, LOG_CONTEXTS.EXECUTION);
           this.drainDirectQueue();
@@ -564,12 +570,13 @@ export class TaskSchedulerService {
       });
 
       logger.debug(`[Direct] Slot pre-allocated immediately (placeholder=${placeholderRunId}) for ${label}`, {
+        event: LOG_EVENTS.SCHEDULER_SLOT_REGISTERED,
         slotsUsed: this.runningSlots.size,
         limit: CONCURRENCY_LIMIT,
       }, LOG_CONTEXTS.EXECUTION);
 
       setImmediate(() => job(placeholderRunId).catch(err => {
-        logger.errorLog(err, `[Direct] Immediate job failed for ${label}`, { label });
+        logger.errorLog(err, `[Direct] Immediate job failed for ${label}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED, label });
       }));
       return;
     }
@@ -577,6 +584,7 @@ export class TaskSchedulerService {
     // 队列深度保护
     if (this.directQueue.length >= MAX_QUEUE_DEPTH) {
       logger.warn(`[Direct] Queue full, rejecting ${label}`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_FULL,
         directQueueDepth: this.directQueue.length,
         maxQueueDepth: MAX_QUEUE_DEPTH,
       }, LOG_CONTEXTS.EXECUTION);
@@ -589,11 +597,11 @@ export class TaskSchedulerService {
       label,
       resolve: (placeholderRunId: number) => {
         job(placeholderRunId).catch(err => {
-          logger.errorLog(err, `[Direct] Queued job failed for ${label}`, { label });
+          logger.errorLog(err, `[Direct] Queued job failed for ${label}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED, label });
         });
       },
       reject: (err: Error) => {
-        logger.warn(`[Direct] Queued job rejected for ${label}: ${err.message}`, { label }, LOG_CONTEXTS.EXECUTION);
+        logger.warn(`[Direct] Queued job rejected for ${label}: ${err.message}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED, label }, LOG_CONTEXTS.EXECUTION);
       },
     };
 
@@ -603,6 +611,7 @@ export class TaskSchedulerService {
       if (idx !== -1) {
         this.directQueue.splice(idx, 1);
         logger.warn(`[Direct] Queue item timed out for ${label}`, {
+          event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_TIMEOUT,
           waitMs: Date.now() - item.enqueuedAt,
         }, LOG_CONTEXTS.EXECUTION);
         item.reject(new Error(`排队等待超时（${Math.round(QUEUE_ITEM_TIMEOUT_MS / 1000)}秒），任务已取消`));
@@ -613,6 +622,7 @@ export class TaskSchedulerService {
     this.directQueue.push(item);
 
     logger.info(`[Direct] ${label} queued (concurrency limit ${CONCURRENCY_LIMIT} reached)`, {
+      event: LOG_EVENTS.SCHEDULER_TASK_QUEUED,
       label,
       directQueuePosition: this.directQueue.length,
       slotsUsed: this.runningSlots.size,
@@ -639,6 +649,7 @@ export class TaskSchedulerService {
   async acquireDirectSlot(label: string): Promise<void> {
     if (this.runningSlots.size < CONCURRENCY_LIMIT) {
       logger.debug(`[Direct] Slot acquired immediately for ${label}`, {
+        event: LOG_EVENTS.SCHEDULER_SLOT_REGISTERED,
         slotsUsed: this.runningSlots.size,
         limit: CONCURRENCY_LIMIT,
       }, LOG_CONTEXTS.EXECUTION);
@@ -648,6 +659,7 @@ export class TaskSchedulerService {
     // 队列深度保护
     if (this.directQueue.length >= MAX_QUEUE_DEPTH) {
       logger.warn(`[Direct] Queue full, rejecting ${label}`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_FULL,
         directQueueDepth: this.directQueue.length,
         maxQueueDepth: MAX_QUEUE_DEPTH,
       }, LOG_CONTEXTS.EXECUTION);
@@ -669,9 +681,10 @@ export class TaskSchedulerService {
         if (idx !== -1) {
           this.directQueue.splice(idx, 1);
           logger.warn(`[Direct] Queue item timed out for ${label}`, {
-            waitMs: Date.now() - item.enqueuedAt,
-          }, LOG_CONTEXTS.EXECUTION);
-          reject(new Error(`排队等待超时（${Math.round(QUEUE_ITEM_TIMEOUT_MS / 1000)}秒），请稍后再试`));
+          event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_TIMEOUT,
+          waitMs: Date.now() - item.enqueuedAt,
+        }, LOG_CONTEXTS.EXECUTION);
+          reject(new Error(
         }
       }, QUEUE_ITEM_TIMEOUT_MS);
       if (item.timeoutTimer.unref) item.timeoutTimer.unref();
@@ -679,6 +692,7 @@ export class TaskSchedulerService {
       this.directQueue.push(item);
 
       logger.info(`[Direct] ${label} queued (concurrency limit ${CONCURRENCY_LIMIT} reached)`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_QUEUED,
         label,
         directQueuePosition: this.directQueue.length,
         slotsUsed: this.runningSlots.size,
@@ -708,10 +722,11 @@ export class TaskSchedulerService {
       if (slot) {
         this.runningSlots.delete(runId);
         logger.warn(`[Direct] Slot for runId=${runId} (${label}) auto-released after timeout`, {
-          runId,
-          label,
-          heldMs: SLOT_HOLD_TIMEOUT_MS,
-        }, LOG_CONTEXTS.EXECUTION);
+      event: LOG_EVENTS.SCHEDULER_SLOT_TIMEOUT,
+      runId,
+      label,
+      heldMs: SLOT_HOLD_TIMEOUT_MS,
+    }, LOG_CONTEXTS.EXECUTION);
         this.drainDirectQueue();
         this.drainQueue();
       }
@@ -728,6 +743,7 @@ export class TaskSchedulerService {
     });
 
     logger.info(`[Direct] Slot registered for runId=${runId} (${label})`, {
+      event: LOG_EVENTS.SCHEDULER_SLOT_REGISTERED,
       runId,
       label,
       slotsUsed: this.runningSlots.size,
@@ -754,9 +770,10 @@ export class TaskSchedulerService {
         // 占位超时（正常情况下 registerDirectSlot 会在几毫秒内替换掉占位）
         if (this.runningSlots.has(placeholderRunId)) {
           this.runningSlots.delete(placeholderRunId);
-          logger.warn(`[Direct] Placeholder slot ${placeholderRunId} for ${next.label} expired, releasing`, {
-            label: next.label,
-          }, LOG_CONTEXTS.EXECUTION);
+        logger.warn(`[Direct] Placeholder slot ${placeholderRunId} for ${next.label} expired, releasing`, {
+          event: LOG_EVENTS.SCHEDULER_SLOT_TIMEOUT,
+          label: next.label,
+        }, LOG_CONTEXTS.EXECUTION);
           this.drainDirectQueue();
           this.drainQueue();
         }
@@ -772,6 +789,7 @@ export class TaskSchedulerService {
       });
 
       logger.debug(`[Direct] Draining queue: slot pre-allocated (placeholder=${placeholderRunId}) for ${next.label} (waited ${Date.now() - next.enqueuedAt}ms)`, {
+        event: LOG_EVENTS.SCHEDULER_SLOT_REGISTERED,
         label: next.label,
         placeholderRunId,
         directQueueDepth: this.directQueue.length,
@@ -796,6 +814,7 @@ export class TaskSchedulerService {
     this.runningSlots.delete(runId);
 
     logger.info(`[P1] Slot released for runId=${runId} (taskId=${slot.taskId}) via ${source}`, {
+      event: LOG_EVENTS.SCHEDULER_SLOT_RELEASED,
       runId,
       taskId: slot.taskId,
       source,
@@ -835,7 +854,7 @@ export class TaskSchedulerService {
         AND t.status IN ('active', 'paused')
     `);
 
-    logger.info(`Loaded ${rows.length} scheduled tasks from DB`, {}, LOG_CONTEXTS.EXECUTION);
+    logger.info(`Loaded ${rows.length} scheduled tasks from DB`, { event: LOG_EVENTS.SCHEDULER_STARTED, count: rows.length }, LOG_CONTEXTS.EXECUTION);
 
     for (const row of rows) {
       let caseIds: number[] = [];
@@ -928,6 +947,7 @@ export class TaskSchedulerService {
     // 超出补偿窗口，跳过（防止停机过久后批量触发）
     if (elapsed > MAX_MISSED_WINDOW_MS) {
       logger.info(`Task ${task.id} (${task.name}) elapsed ${Math.floor(elapsed / 60_000)} min > MAX_MISSED_WINDOW, skip compensation`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_SKIPPED,
         taskId: task.id,
         lastRunAt: task.lastRunAt,
         elapsed,
@@ -946,6 +966,7 @@ export class TaskSchedulerService {
 
     // 有漏触发：prevShouldRun > lastRunAt，且在 MAX_MISSED_WINDOW 内
     logger.info(`Task ${task.id} (${task.name}) missed fire detected. prevShouldRun=${prevShouldRun.toISOString()}, lastRunAt=${task.lastRunAt.toISOString()}, compensating...`, {
+      event: LOG_EVENTS.SCHEDULER_TASK_MISSED_FIRE,
       taskId: task.id,
       lastRunAt: task.lastRunAt,
       prevShouldRun,
@@ -963,13 +984,14 @@ export class TaskSchedulerService {
     // 异步触发，不阻塞启动
     setImmediate(() => {
       logger.info(`Task ${task.id} compensation dispatch enqueued`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_COMPENSATION_DISPATCHED,
         taskId: task.id,
         source: 'missed_fire_compensation',
         prevShouldRun: prevShouldRun.toISOString(),
         lastRunAt: task.lastRunAt?.toISOString() ?? null,
       }, LOG_CONTEXTS.EXECUTION);
       this.dispatchTask(task.id, 'scheduled').catch(err => {
-        logger.errorLog(err, `Compensation dispatch failed for task ${task.id}`, {});
+        logger.errorLog(err, `Compensation dispatch failed for task ${task.id}`, { event: LOG_EVENTS.SCHEDULER_TASK_COMPENSATION_FAILED });
       });
     });
   }
@@ -984,9 +1006,10 @@ export class TaskSchedulerService {
     if (existingTimer) {
       clearTimeout(existingTimer);
       this.timers.delete(task.id);
-      logger.debug(`Task ${task.id} cleared existing timer before re-scheduling`, {
-        taskId: task.id,
-      }, LOG_CONTEXTS.EXECUTION);
+    logger.debug(`Task ${task.id} cleared existing timer before re-scheduling`, {
+      event: LOG_EVENTS.SCHEDULER_TASK_REGISTERED,
+      taskId: task.id,
+    }, LOG_CONTEXTS.EXECUTION);
     }
 
     const next = getNextCronTime(task.cronExpression);
@@ -1004,12 +1027,13 @@ export class TaskSchedulerService {
       if (!freshTask || freshTask.status !== 'active') return;
 
       logger.info(`Task ${task.id} timer fired, dispatching scheduled execution`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_DISPATCHED,
         taskId: task.id,
         dueAt: next.toISOString(),
       }, LOG_CONTEXTS.EXECUTION);
 
       await this.dispatchTask(task.id, 'scheduled').catch(err => {
-        logger.errorLog(err, `Scheduled dispatch failed for task ${task.id}`, {});
+        logger.errorLog(err, `Scheduled dispatch failed for task ${task.id}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED });
       });
 
       // 重新调度下次触发
@@ -1023,6 +1047,7 @@ export class TaskSchedulerService {
     this.timers.set(task.id, timer);
 
     logger.debug(`Task ${task.id} scheduled at ${next.toISOString()} (in ${Math.round(delayMs / 1000)}s)`, {
+      event: LOG_EVENTS.SCHEDULER_TASK_REGISTERED,
       taskId: task.id,
     }, LOG_CONTEXTS.EXECUTION);
   }
@@ -1045,6 +1070,7 @@ export class TaskSchedulerService {
       // [P1] 队列深度保护
       if (this.waitQueue.length >= MAX_QUEUE_DEPTH) {
         logger.warn(`Task ${taskId} dropped: queue full (depth=${this.waitQueue.length}/${MAX_QUEUE_DEPTH})`, {
+          event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_FULL,
           taskId,
           queueDepth: this.waitQueue.length,
           maxQueueDepth: MAX_QUEUE_DEPTH,
@@ -1054,7 +1080,7 @@ export class TaskSchedulerService {
 
       // [P1] 同一任务已在队列中则跳过（防重复入队）
       if (this.waitQueue.some(item => item.taskId === taskId)) {
-        logger.debug(`Task ${taskId} already in queue, skipping duplicate enqueue`, {}, LOG_CONTEXTS.EXECUTION);
+        logger.debug(`Task ${taskId} already in queue, skipping duplicate enqueue`, { event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED, taskId }, LOG_CONTEXTS.EXECUTION);
         return;
       }
 
@@ -1077,6 +1103,7 @@ export class TaskSchedulerService {
         if (idx !== -1) {
           this.waitQueue.splice(idx, 1);
           logger.warn(`Task ${taskId} queue item timed out and removed (waited ${QUEUE_ITEM_TIMEOUT_MS}ms)`, {
+            event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_TIMEOUT,
             taskId,
             waitMs: Date.now() - queueItem.enqueuedAt,
           }, LOG_CONTEXTS.EXECUTION);
@@ -1095,6 +1122,7 @@ export class TaskSchedulerService {
       }
 
       logger.info(`Task ${taskId} queued (concurrency limit ${CONCURRENCY_LIMIT} reached)`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_QUEUED,
         taskId,
         triggerReason,
         priority,
@@ -1105,7 +1133,9 @@ export class TaskSchedulerService {
     }
 
     logger.info(`Task ${taskId} dispatching (reason=${triggerReason})`, {
+      event: LOG_EVENTS.SCHEDULER_TASK_DISPATCHED,
       taskId,
+      triggerReason,
       runningSlots: this.runningSlots.size,
       limit: CONCURRENCY_LIMIT,
     }, LOG_CONTEXTS.EXECUTION);
@@ -1116,7 +1146,7 @@ export class TaskSchedulerService {
       // 触发成功后清理历史重试状态，避免后续误判
       this.clearRetryState(taskId);
     } catch (err) {
-      logger.errorLog(err, `Task ${taskId} execution error`, { taskId });
+      logger.errorLog(err, `Task ${taskId} execution error`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED, taskId });
       await this.handleTaskFailure(taskId, err);
       // 执行失败时，槽位已在 executeTask 中注册（若注册了则由超时 timer 释放）
       // 这里补充一次 drainQueue，确保失败不阻塞后续任务
@@ -1178,7 +1208,7 @@ export class TaskSchedulerService {
     );
 
     if (!row || row.status !== 'active') {
-      logger.info(`Task ${taskId} skipped (status=${row?.status ?? 'not found'})`, {}, LOG_CONTEXTS.EXECUTION);
+      logger.info(`Task ${taskId} skipped (status=${row?.status ?? 'not found'})`, { event: LOG_EVENTS.SCHEDULER_TASK_SKIPPED, taskId }, LOG_CONTEXTS.EXECUTION);
       return;
     }
 
@@ -1191,6 +1221,7 @@ export class TaskSchedulerService {
       const dedupe = await this.isDuplicateScheduledWindow(taskId, row.cron_expression);
       if (dedupe.duplicated) {
         logger.warn(`Task ${taskId} duplicate scheduled trigger skipped`, {
+          event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
           taskId,
           cronExpression: row.cron_expression,
           triggerReason,
@@ -1209,7 +1240,7 @@ export class TaskSchedulerService {
     }
 
     if (caseIds.length === 0) {
-      logger.warn(`Task ${taskId} has no caseIds, skipping`, {}, LOG_CONTEXTS.EXECUTION);
+      logger.warn(`Task ${taskId} has no caseIds, skipping`, { event: LOG_EVENTS.SCHEDULER_TASK_SKIPPED, taskId }, LOG_CONTEXTS.EXECUTION);
       return;
     }
 
@@ -1224,6 +1255,7 @@ export class TaskSchedulerService {
       // 用例均无脚本路径，无法触发 Jenkins，跳过本次执行
       // 注意：此处故意不创建运行记录，避免每次定时触发都堆积 pending 状态的无效记录
       logger.warn(`Task ${taskId} has no script paths (all caseIds have empty scriptPath), skipping execution`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_SKIPPED,
         taskId,
         caseIds,
         triggerReason,
@@ -1278,6 +1310,7 @@ export class TaskSchedulerService {
     });
 
     logger.info(`Task ${taskId} execution created (runId=${execution.runId}, execId=${execution.executionId})`, {
+      event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_CREATED,
       taskId,
       runId: execution.runId,
       executionId: execution.executionId,
@@ -1312,6 +1345,7 @@ export class TaskSchedulerService {
         async (buildNumber: number, buildUrl: string) => {
           const buildId = String(buildNumber);
           logger.info(`[dev-10] Task ${taskId} build resolved via queueId poll`, {
+            event: LOG_EVENTS.SCHEDULER_JENKINS_BUILD_RESOLVED,
             taskId,
             runId: capturedRunId,
             buildId,
@@ -1323,6 +1357,7 @@ export class TaskSchedulerService {
         async (reason: 'cancelled' | 'timeout') => {
           // [dev-11] Jenkins 队列取消/超时，主动将平台执行状态更新为 aborted 并释放槽位
           logger.warn(`[dev-11] Task ${taskId} Jenkins queue ${reason}, marking execution as aborted`, {
+            event: LOG_EVENTS.SCHEDULER_JENKINS_QUEUE_ABORTED,
             taskId,
             runId: capturedRunId,
             reason,
@@ -1332,6 +1367,7 @@ export class TaskSchedulerService {
             await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
           } catch (err) {
             logger.warn(`[dev-11] Failed to mark task execution as aborted`, {
+              event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED,
               taskId,
               runId: capturedRunId,
               error: err instanceof Error ? err.message : String(err),
@@ -1346,6 +1382,7 @@ export class TaskSchedulerService {
         this.registerRunningSlot(taskId, execution.runId);
       } else {
         logger.warn(`Jenkins trigger failed for task ${taskId}`, {
+          event: LOG_EVENTS.SCHEDULER_JENKINS_TRIGGER_FAILED,
           message: triggerResult.message,
         }, LOG_CONTEXTS.EXECUTION);
         throw new Error(`Jenkins trigger failed: ${triggerResult.message}`);
@@ -1366,6 +1403,7 @@ export class TaskSchedulerService {
       if (slot) {
         this.runningSlots.delete(runId);
         logger.warn(`[P1] Slot for runId=${runId} (taskId=${taskId}) auto-released after ${SLOT_HOLD_TIMEOUT_MS}ms timeout`, {
+          event: LOG_EVENTS.SCHEDULER_SLOT_TIMEOUT,
           runId,
           taskId,
           heldMs: SLOT_HOLD_TIMEOUT_MS,
@@ -1384,6 +1422,7 @@ export class TaskSchedulerService {
     });
 
     logger.info(`[P1] Slot registered for runId=${runId} (taskId=${taskId})`, {
+      event: LOG_EVENTS.SCHEDULER_SLOT_REGISTERED,
       runId,
       taskId,
       slotsUsed: this.runningSlots.size,
@@ -1426,6 +1465,11 @@ export class TaskSchedulerService {
     if (state.attempt <= state.maxRetries) {
       const delay = state.retryDelayMs * state.attempt; // 指数退避
       logger.warn(`Task ${taskId} failed (attempt ${state.attempt}/${state.maxRetries}), retrying in ${delay}ms`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_RETRY,
+        taskId,
+        attempt: state.attempt,
+        maxRetries: state.maxRetries,
+        delayMs: delay,
         error: err instanceof Error ? err.message : String(err),
       }, LOG_CONTEXTS.EXECUTION);
 
@@ -1448,7 +1492,7 @@ export class TaskSchedulerService {
           latestState.timer = undefined;
         }
         await this.dispatchTask(taskId, 'retry').catch(retryErr => {
-          logger.errorLog(retryErr, `Task ${taskId} retry dispatch failed`, {});
+          logger.errorLog(retryErr, `Task ${taskId} retry dispatch failed`, { event: LOG_EVENTS.SCHEDULER_TASK_RETRY });
         });
       }, delay);
 
@@ -1456,6 +1500,9 @@ export class TaskSchedulerService {
       state.timer = retryTimer;
     } else {
       logger.error(`Task ${taskId} permanently failed after ${state.maxRetries} retries`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_RETRY_EXHAUSTED,
+        taskId,
+        attempts: state.attempt,
         error: err instanceof Error ? err.message : String(err),
       }, LOG_CONTEXTS.EXECUTION);
 
@@ -1476,13 +1523,14 @@ export class TaskSchedulerService {
       if (next.timeoutTimer) clearTimeout(next.timeoutTimer);
 
       logger.debug(`Draining queue: dispatching task ${next.taskId} (priority=${next.priority}, waited=${Date.now() - next.enqueuedAt}ms)`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_DISPATCHED,
         taskId: next.taskId,
         triggerReason: next.triggerReason,
         queueDepth: this.waitQueue.length,
       }, LOG_CONTEXTS.EXECUTION);
 
       this.dispatchTask(next.taskId, next.triggerReason, next.operatorId).catch(err => {
-        logger.errorLog(err, `Queue drain dispatch failed for task ${next.taskId}`, {});
+        logger.errorLog(err, `Queue drain dispatch failed for task ${next.taskId}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED });
       });
     }
   }
@@ -1562,7 +1610,7 @@ export class TaskSchedulerService {
           // Bug Fix: 新任务也需要做漏触发补偿（与 loadAndRegisterAllTasks 和重新激活路径保持一致）
           await this.compensateMissedFires(newTask);
           this.scheduleTask(newTask);
-          logger.info(`New task ${row.id} registered by poll`, { lastRunAt }, LOG_CONTEXTS.EXECUTION);
+          logger.info(`New task ${row.id} registered by poll`, { event: LOG_EVENTS.SCHEDULER_TASK_REGISTERED, taskId: row.id, lastRunAt }, LOG_CONTEXTS.EXECUTION);
         } else if (cached && cached.status !== row.status) {
           // 状态变更
           if (row.status !== 'active') {
@@ -1615,7 +1663,7 @@ export class TaskSchedulerService {
         }
       }
     } catch (err) {
-      logger.errorLog(err, 'TaskScheduler poll failed', {});
+      logger.errorLog(err, 'TaskScheduler poll failed', { event: LOG_EVENTS.SCHEDULER_STARTED });
     }
   }
 

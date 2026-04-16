@@ -1,5 +1,7 @@
 import { hybridSyncService, MonitoringConfig } from './HybridSyncService';
 import { executionService } from './ExecutionService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 /**
  * 运行记录接口
@@ -94,7 +96,10 @@ export class ExecutionScheduler {
   };
 
   constructor() {
-    console.log('ExecutionScheduler initialized with strategies:', Object.keys(this.defaultStrategies));
+    logger.info('ExecutionScheduler initialized', {
+      event: 'SCHEDULER_INITIALIZED',
+      strategies: Object.keys(this.defaultStrategies),
+    }, LOG_CONTEXTS.SCHEDULER);
   }
 
   /**
@@ -107,7 +112,10 @@ export class ExecutionScheduler {
     message: string;
   }> {
     try {
-      console.log(`Starting monitoring for runId: ${runId}`);
+      logger.info('Execution monitoring start requested', {
+        event: 'SCHEDULER_START_MONITORING_REQUESTED',
+        runId,
+      }, LOG_CONTEXTS.SCHEDULER);
 
       // 1. 获取运行记录详情（如果没有提供）
       let executionDetails = execution;
@@ -143,7 +151,11 @@ export class ExecutionScheduler {
         consistencyCheckInterval: 5 * 60 * 1000 // 保持5分钟一致性检查
       });
 
-      console.log(`Monitoring started for runId: ${runId} with strategy: ${this.getStrategyName(strategy)}`);
+      logger.info('Execution monitoring started', {
+        event: 'SCHEDULER_MONITORING_STARTED',
+        runId,
+        strategy: this.getStrategyName(strategy),
+      }, LOG_CONTEXTS.SCHEDULER);
 
       return {
         success: true,
@@ -152,7 +164,10 @@ export class ExecutionScheduler {
       };
 
     } catch (error) {
-      console.error(`Failed to start monitoring for runId: ${runId}:`, error);
+      logger.errorLog(error, 'Failed to start execution monitoring', {
+        event: 'SCHEDULER_START_MONITORING_FAILED',
+        runId,
+      });
 
       return {
         success: false,
@@ -166,7 +181,10 @@ export class ExecutionScheduler {
    * 停止监控
    */
   async stopMonitoring(runId: number): Promise<void> {
-    console.log(`Stopping monitoring for runId: ${runId}`);
+    logger.info('Execution monitoring stop requested', {
+      event: 'SCHEDULER_STOP_MONITORING_REQUESTED',
+      runId,
+    }, LOG_CONTEXTS.SCHEDULER);
 
     // 1. 停止混合同步服务
     hybridSyncService.stopMonitoring(runId);
@@ -317,7 +335,9 @@ export class ExecutionScheduler {
       };
 
     } catch (error) {
-      console.error('Failed to get scheduler stats:', error);
+      logger.errorLog(error, 'Failed to get scheduler stats', {
+        event: 'SCHEDULER_STATS_FAILED',
+      });
       return {
         totalExecutions: 0,
         activeMonitoring: 0,
@@ -361,7 +381,11 @@ export class ExecutionScheduler {
       maxPollAttempts: task.strategy.maxPollAttempts
     });
 
-    console.log(`Strategy adjusted for runId: ${runId}`, newStrategy);
+    logger.info('Scheduler strategy adjusted', {
+      event: 'SCHEDULER_STRATEGY_ADJUSTED',
+      runId,
+      strategy: newStrategy,
+    }, LOG_CONTEXTS.SCHEDULER);
 
     return {
       success: true,
@@ -385,7 +409,11 @@ export class ExecutionScheduler {
 
     this.defaultStrategies[name] = strategy;
 
-    console.log(`Custom strategy '${name}' added:`, strategy);
+    logger.info('Custom scheduler strategy added', {
+      event: 'SCHEDULER_CUSTOM_STRATEGY_ADDED',
+      name,
+      strategy,
+    }, LOG_CONTEXTS.SCHEDULER);
 
     return {
       success: true,
@@ -410,7 +438,9 @@ export class ExecutionScheduler {
     details: Array<{ runId: number; success: boolean; message: string }>;
   }> {
     try {
-      console.log('Recovering monitoring for running executions...');
+      logger.info('Recovering monitoring for running executions', {
+        event: 'SCHEDULER_RECOVERY_STARTED',
+      }, LOG_CONTEXTS.SCHEDULER);
 
       // 查询所有运行中的执行
       const runningExecutions = await executionService.getAllTestRuns(100, 0);
@@ -418,7 +448,10 @@ export class ExecutionScheduler {
         ['pending', 'running'].includes(exec.status)
       );
 
-      console.log(`Found ${activeExecutions.length} active executions to recover`);
+      logger.info('Found active executions to recover', {
+        event: 'SCHEDULER_RECOVERY_CANDIDATES',
+        activeCount: activeExecutions.length,
+      }, LOG_CONTEXTS.SCHEDULER);
 
       const results: Array<{ runId: number; success: boolean; message: string }> = [];
       let recovered = 0;
@@ -462,12 +495,18 @@ export class ExecutionScheduler {
         }
       }
 
-      console.log(`Monitoring recovery completed: ${recovered} recovered, ${failed} failed`);
+      logger.info('Monitoring recovery completed', {
+        event: 'SCHEDULER_RECOVERY_COMPLETED',
+        recovered,
+        failed,
+      }, LOG_CONTEXTS.SCHEDULER);
 
       return { recovered, failed, details: results };
 
     } catch (error) {
-      console.error('Failed to recover monitoring:', error);
+      logger.errorLog(error, 'Failed to recover execution monitoring', {
+        event: 'SCHEDULER_RECOVERY_FAILED',
+      });
       return { recovered: 0, failed: 0, details: [] };
     }
   }

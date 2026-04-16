@@ -1,4 +1,6 @@
 import nodemailer from 'nodemailer';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 // 是否处于"开发模式"：SMTP 凭证未配置时自动降级为控制台打印
 const SMTP_USER = process.env.SMTP_USER ?? '';
@@ -112,13 +114,11 @@ export async function sendPasswordResetEmail(
 
   // SMTP 凭证未配置时降级为开发模式（控制台打印）
   if (IS_DEV_MODE) {
-    console.log('========================================');
-    console.log('开发模式 - 密码重置邮件');
-    console.log('========================================');
-    console.log(`收件人: ${email}`);
-    console.log(`用户名: ${username}`);
-    console.log(`重置链接: ${resetUrl}`);
-    console.log('========================================');
+    logger.info('Password reset email skipped in development mode', {
+      recipient: email,
+      username,
+      resetUrl,
+    }, LOG_CONTEXTS.EMAIL);
     return true;
   }
 
@@ -130,25 +130,27 @@ export async function sendPasswordResetEmail(
       html: buildResetEmailHtml(username, resetUrl),
       text: buildResetEmailText(username, resetUrl),
     });
-    console.log(`Password reset email sent to ${email}`);
+    logger.info('Password reset email sent', { recipient: email }, LOG_CONTEXTS.EMAIL);
     return true;
   } catch (error) {
-    console.error('Failed to send password reset email:', error);
+    logger.errorLog(error, 'Failed to send password reset email', {
+      recipient: email,
+    });
     return false;
   }
 }
 
 export async function testEmailConfig(): Promise<boolean> {
   if (IS_DEV_MODE) {
-    console.log('SMTP credentials not configured, running in development mode');
+    logger.info('SMTP credentials not configured, running in development mode', {}, LOG_CONTEXTS.EMAIL);
     return true;
   }
   try {
     await getTransporter().verify();
-    console.log('SMTP connection verified successfully');
+    logger.info('SMTP connection verified successfully', {}, LOG_CONTEXTS.EMAIL);
     return true;
   } catch (error) {
-    console.error('SMTP connection failed:', error);
+    logger.errorLog(error, 'SMTP connection failed');
     return false;
   }
 }

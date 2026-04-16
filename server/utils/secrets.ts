@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import logger from './logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 /**
  * 从文件中读取 Secret（Docker Secrets 支持）
@@ -13,11 +14,18 @@ function readSecretFromFile(secretPath: string): string | null {
   try {
     if (fs.existsSync(secretPath)) {
       const content = fs.readFileSync(secretPath, 'utf8').trim();
-      logger.debug(`Successfully read secret from file: ${secretPath}`);
+      logger.debug('Successfully read secret from file', {
+        event: 'SECRETS_FILE_READ_SUCCESS',
+        secretPath,
+      }, LOG_CONTEXTS.SECURITY);
       return content;
     }
   } catch (error) {
-    logger.warn(`Failed to read secret from file: ${secretPath}`, { error });
+    logger.warn('Failed to read secret from file', {
+      event: 'SECRETS_FILE_READ_FAILED',
+      secretPath,
+      error: error instanceof Error ? error.message : String(error),
+    }, LOG_CONTEXTS.SECURITY);
   }
   return null;
 }
@@ -52,22 +60,37 @@ export function getSecretOrEnv(key: string, defaultValue: string = ''): string {
   if (filePath) {
     const secretValue = readSecretFromFile(filePath);
     if (secretValue !== null) {
-      logger.debug(`Using secret from file for ${key}: ${filePath}`);
+      logger.debug('Using secret from file', {
+        event: 'SECRETS_SOURCE_FILE_USED',
+        key,
+        filePath,
+      }, LOG_CONTEXTS.SECURITY);
       return secretValue;
     }
-    logger.warn(`${fileEnvKey} is set but file not found or empty: ${filePath}`);
+    logger.warn('Secret file env var is set but file is missing or empty', {
+      event: 'SECRETS_FILE_ENV_INVALID',
+      fileEnvKey,
+      filePath,
+      key,
+    }, LOG_CONTEXTS.SECURITY);
   }
   
   // 回退到普通环境变量
   const envValue = process.env[key];
   if (envValue !== undefined) {
-    logger.debug(`Using environment variable for ${key}`);
+    logger.debug('Using secret from environment variable', {
+      event: 'SECRETS_SOURCE_ENV_USED',
+      key,
+    }, LOG_CONTEXTS.SECURITY);
     return envValue;
   }
   
   // 返回默认值
   if (defaultValue) {
-    logger.debug(`Using default value for ${key}`);
+    logger.debug('Using default secret value', {
+      event: 'SECRETS_DEFAULT_USED',
+      key,
+    }, LOG_CONTEXTS.SECURITY);
   }
   return defaultValue;
 }
@@ -80,8 +103,8 @@ export function getSecretOrEnv(key: string, defaultValue: string = ''): string {
  * 
  * @example
  * const secrets = getSecretsOrEnv(['DB_PASSWORD', 'JWT_SECRET']);
- * console.log(secrets.DB_PASSWORD);
- * console.log(secrets.JWT_SECRET);
+ * logger.info(secrets.DB_PASSWORD);
+ * logger.info(secrets.JWT_SECRET);
  */
 export function getSecretsOrEnv(keys: string[]): Record<string, string> {
   const result: Record<string, string> = {};
@@ -112,11 +135,17 @@ export function validateRequiredSecrets(keys: string[]): void {
   
   if (missing.length > 0) {
     const errorMsg = `Missing required secrets or environment variables: ${missing.join(', ')}`;
-    logger.error(errorMsg);
+    logger.error(errorMsg, {
+      event: 'SECRETS_REQUIRED_MISSING',
+      missing,
+    }, LOG_CONTEXTS.SECURITY);
     throw new Error(errorMsg);
   }
   
-  logger.info('All required secrets validated successfully');
+  logger.info('All required secrets validated successfully', {
+    event: 'SECRETS_REQUIRED_VALIDATED',
+    keys,
+  }, LOG_CONTEXTS.SECURITY);
 }
 
 /**
@@ -161,23 +190,31 @@ export function getSecretSource(key: string): {
  * @param keys 要检查的 Secret 名称列表
  */
 export function listSecretsStatus(keys: string[]): void {
-  logger.info('=== Secrets Status ===');
+  logger.info('Secrets status check started', {
+    event: 'SECRETS_STATUS_CHECK_STARTED',
+    keyCount: keys.length,
+  }, LOG_CONTEXTS.SECURITY);
   
   for (const key of keys) {
     const source = getSecretSource(key);
     const value = getSecretOrEnv(key);
     const hasValue = value ? '✓' : '✗';
     
-    logger.info(`${hasValue} ${key}:`, {
+    logger.info('Secret status item', {
+      event: 'SECRETS_STATUS_ITEM',
+      key,
+      hasValueSymbol: hasValue,
       source: source.source,
       path: source.path,
       exists: source.exists,
       hasValue: !!value,
       valueLength: value ? value.length : 0,
-    });
+    }, LOG_CONTEXTS.SECURITY);
   }
   
-  logger.info('======================');
+  logger.info('Secrets status check completed', {
+    event: 'SECRETS_STATUS_CHECK_COMPLETED',
+  }, LOG_CONTEXTS.SECURITY);
 }
 
 export default {

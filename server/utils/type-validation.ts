@@ -3,9 +3,10 @@
  * 验证修复后的类型定义是否正确
  */
 
-import { DashboardRepository } from '../repositories/DashboardRepository';
 import { ServiceError } from '../utils/ServiceError';
 import { DashboardStats, TodayExecution, RecentRun } from '../repositories/DashboardRepository';
+import logger from './logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 // 类型验证示例
 function validateTypes() {
@@ -57,11 +58,13 @@ function validateTypes() {
   const errorMessage: string = errorResponse.error.message;
   const errorCode: string = errorResponse.error.code;
 
-  console.log('✅ 所有类型定义验证通过');
-  console.log('Stats:', { totalCases, successRate });
-  console.log('Execution:', { passedCount });
-  console.log('Run:', { suiteName });
-  console.log('Error:', { statusCode, errorMessage, errorCode });
+  logger.info('Type definition validation passed', {
+    event: 'TYPE_VALIDATION_PASSED',
+    stats: { totalCases, successRate },
+    execution: { passedCount },
+    run: { suiteName },
+    error: { statusCode, errorMessage, errorCode },
+  }, LOG_CONTEXTS.PERFORMANCE);
 }
 
 // 运行类型验证

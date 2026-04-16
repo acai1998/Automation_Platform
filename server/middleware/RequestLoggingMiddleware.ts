@@ -139,6 +139,17 @@ function getUserAgent(req: Request): string {
   return (req.headers['user-agent'] as string) || 'unknown';
 }
 
+function resolveRequestId(req: Request): string {
+  const headerRequestId = req.headers['x-request-id'];
+  const requestId = Array.isArray(headerRequestId) ? headerRequestId[0] : headerRequestId;
+
+  if (typeof requestId === 'string' && requestId.trim()) {
+    return requestId.trim().slice(0, 128);
+  }
+
+  return generateRequestId();
+}
+
 /**
  * 记录请求开始日志
  */
@@ -255,9 +266,9 @@ function logRequestEnd(req: Request, res: Response): void {
  * 请求日志中间件
  */
 export function requestLoggingMiddleware(req: Request, res: Response, next: NextFunction): void {
-  // 生成请求ID
-  const requestId = generateRequestId();
+  const requestId = resolveRequestId(req);
   req.requestId = requestId;
+  res.setHeader('x-request-id', requestId);
   req.startTime = Date.now();
   req.timer = createTimer();
 
@@ -276,6 +287,9 @@ export function requestLoggingMiddleware(req: Request, res: Response, next: Next
 
   // 监听响应结束事件
   res.on('finish', () => {
+    if (req.user?.id !== undefined) {
+      Logger.setContext({ userId: String(req.user.id) });
+    }
     logRequestEnd(req, res);
   });
 
