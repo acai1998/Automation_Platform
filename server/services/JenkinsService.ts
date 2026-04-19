@@ -426,15 +426,28 @@ export class JenkinsService {
         };
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.errorLog(error, 'Exception during batch job trigger', {
+      const err = error instanceof Error ? error : new Error(String(error));
+      // 兼容当前 tsconfig：通过 unknown 中转读取 Error.cause
+      const rawCause = (err as unknown as Record<string, unknown>).cause;
+      const causeStr =
+        rawCause instanceof Error
+          ? `${rawCause.name}: ${rawCause.message}`
+          : typeof rawCause === 'string'
+            ? rawCause
+            : String(rawCause ?? '');
+      const detail = `[${err.name}] ${err.message}${causeStr ? ` | cause: ${causeStr}` : ''}`;
+      logger.errorLog(err, 'Exception during batch job trigger', {
         runId,
         caseCount: caseIds.length,
+        errorName: err.name,
+        errorMessage: err.message,
+        errorCause: causeStr || undefined,
+        triggerUrlHint: `${this.config.baseUrl}/job/${this.config.jobs.api}/buildWithParameters`,
       });
-      
+
       return {
         success: false,
-        message: `Error triggering batch job: ${errorMessage}`,
+        message: `Error triggering batch job: ${detail}`,
       };
     }
   }
