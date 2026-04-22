@@ -25,7 +25,25 @@ import { In } from 'typeorm';
 // ──────────────────────────────────────────────────────────
 // Timer type (compatible with Node.js setTimeout/setInterval)
 // ──────────────────────────────────────────────────────────
-type TimerHandle = ReturnType<typeof setTimeout> & { unref(): TimerHandle };
+interface TimerHandle {
+  ref(): this;
+  unref(): this;
+  hasRef(): boolean;
+  refresh(): this;
+  [Symbol.toPrimitive]?(): number;
+}
+declare const setTimeout: {
+  (callback: () => void, ms?: number): TimerHandle;
+  <T extends unknown[]>(callback: (...args: T) => void, ms: number, ...args: T): TimerHandle;
+};
+declare const setInterval: {
+  (callback: () => void, ms?: number): TimerHandle;
+  <T extends unknown[]>(callback: (...args: T) => void, ms: number, ...args: T): TimerHandle;
+};
+declare const clearTimeout: (timer?: TimerHandle) => void;
+declare const clearInterval: (timer?: TimerHandle) => void;
+declare function setImmediate(callback: () => void): TimerHandle;
+declare function clearImmediate(timer?: TimerHandle): void;
 
 // ──────────────────────────────────────────────────────────
 // 类型定义
@@ -1282,11 +1300,11 @@ export class TaskSchedulerService {
     }
 
     // 获取脚本路径（在创建运行记录前校验，避免产生无法执行的 pending 记录堆积）
-    const cases = await AppDataSource.getRepository(TestCase).find({
+    const cases: Array<{ id: number; scriptPath: string | null }> = await AppDataSource.getRepository(TestCase).find({
       where: { id: In(caseIds), enabled: true },
       select: ['id', 'scriptPath'],
     });
-    const scriptPaths = [...new Set(cases.map(c => c.scriptPath?.trim()).filter(Boolean))] as string[];
+    const scriptPaths = [...new Set(cases.map((c: { id: number; scriptPath: string | null }) => c.scriptPath?.trim()).filter(Boolean))] as string[];
 
     if (scriptPaths.length === 0) {
       // 用例均无脚本路径，无法触发 Jenkins，跳过本次执行
