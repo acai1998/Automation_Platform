@@ -23,6 +23,11 @@ import { AppDataSource } from '../config/database';
 import { TestCase } from '../entities/TestCase';
 import { In } from 'typeorm';
 // ──────────────────────────────────────────────────────────
+// Timer type (compatible with Node.js setTimeout/setInterval)
+// ──────────────────────────────────────────────────────────
+type TimerHandle = ReturnType<typeof setTimeout> & { unref(): TimerHandle };
+
+// ──────────────────────────────────────────────────────────
 // 类型定义
 // ──────────────────────────────────────────────────────────
 
@@ -53,7 +58,7 @@ export interface QueueItem {
   /** 优先级（数字越小优先级越高），manual > scheduled > retry */
   priority: number;
   /** 队列超时 timer handle */
-  timeoutTimer?: NodeJS.Timeout;
+  timeoutTimer?: TimerHandle;
 }
 
 /**
@@ -66,7 +71,7 @@ interface RunningSlot {
   runId: number;
   startedAt: number;
   /** 执行超时 timer handle */
-  timeoutTimer: NodeJS.Timeout;
+  timeoutTimer: TimerHandle;
   /** 直连执行标签（如 "case:123" / "batch:5,6,7"），调度执行时为 undefined */
   label?: string;
 }
@@ -81,7 +86,7 @@ interface DirectQueueItem {
   /** 标识来源（如 "case:123" / "batch:5,6,7"） */
   label: string;
   /** 队列超时 timer handle */
-  timeoutTimer?: NodeJS.Timeout;
+  timeoutTimer?: TimerHandle;
   /** resolve：槽位可用时通知等待方，传入占位 runId 供 job 替换 */
   resolve: (placeholderRunId: number) => void;
   /** reject：超时或队列满时通知等待方 */
@@ -93,7 +98,7 @@ interface RetryState {
   attempt: number;
   maxRetries: number;
   retryDelayMs: number;
-  timer?: NodeJS.Timeout;
+  timer?: TimerHandle;
 }
 
 // ──────────────────────────────────────────────────────────
@@ -190,7 +195,7 @@ function getPrevCronTime(expr: string, before: Date, maxWindowMs = MAX_MISSED_WI
 
 export class TaskSchedulerService {
   /** taskId → setInterval / setTimeout handle */
-  private timers: Map<number, NodeJS.Timeout> = new Map();
+  private timers: Map<number, TimerHandle> = new Map();
 
   /**
    * [P1] 当前运行中的槽位，key 为 runId（替代原来的 taskId Set）
@@ -218,9 +223,15 @@ export class TaskSchedulerService {
 
   /**
    * 最近一次已触发的 cron 窗口（taskId -> windowStartMs）
-   * 用于防止“补偿触发 + 正常定时触发”在同一窗口内重复创建运行记录。
+   * 用于防止"补偿触发 + 正常定时触发"在同一窗口内重复创建运行记录。
    */
   private recentScheduledWindowByTaskId: Map<number, number> = new Map();
+
+  /**
+   * 最近一次 dispatch 时间（taskId -> timestamp）
+   * 用于防止定时器重复设置导致的短时间多次触发
+   */
+  private lastDispatchTimeByTaskId: Map<number, number> = new Map();
 
   /** 是否已启动 */
   private started = false;
@@ -229,10 +240,10 @@ export class TaskSchedulerService {
   private _placeholderRunIdCounter = 0;
 
   /** 周期轮询 DB 同步任务变更的定时器 */
-  private taskPollTimer?: NodeJS.Timeout;
+  private taskPollTimer?: TimerHandle;
 
   /** [P1] 周期对账 runningSlots 与 DB 终态的定时器 */
-  private slotReconcileTimer?: NodeJS.Timeout;
+  private slotReconcileTimer?: TimerHandle;
 
   /** [P1] 避免并发执行多次槽位对账 */
   private slotReconcileInFlight = false;
@@ -1026,7 +1037,9 @@ export class TaskSchedulerService {
       const freshTask = this.taskCache.get(task.id);
       if (!freshTask || freshTask.status !== 'active') return;
 
-      logger.info(`Task ${task.id} timer fired, dispatching scheduled execution`, {
+      // DEBUG: 记录定时器触发来源
+      const stack = new Error().stack?.split('\n').slice(1, 4).join('\n') ?? 'unknown';
+      logger.info(`[DEBUG] Task ${task.id} timer fired, dispatching scheduled execution | stack=${stack}`, {
         event: LOG_EVENTS.SCHEDULER_TASK_DISPATCHED,
         taskId: task.id,
         dueAt: next.toISOString(),
@@ -1064,8 +1077,25 @@ export class TaskSchedulerService {
    * 2. 超过并发上限时，放入优先级队列（而非简单数组）
    * 3. 槽位在 executeTask 返回后**不立即释放**，而是在 Jenkins 回调/超时后释放
    * 4. 队列最大深度保护（MAX_QUEUE_DEPTH）+ 队列项超时（QUEUE_ITEM_TIMEOUT_MS）
+   * 5. 基于时间窗口的防重检查，防止定时器重复设置导致的短时间多次触发
    */
   async dispatchTask(taskId: number, triggerReason: 'scheduled' | 'manual' | 'retry' = 'scheduled', operatorId?: number): Promise<void> {
+    // [防重] 基于时间窗口的防重检查：同一任务在 10 秒内只允许一次执行
+    // 防止定时器被重复设置导致同一任务在短时间内被多次触发
+    const DISPATCH_COOLDOWN_MS = 10_000;
+    const lastDispatchTime = this.lastDispatchTimeByTaskId.get(taskId);
+    const now = Date.now();
+    if (lastDispatchTime && (now - lastDispatchTime) < DISPATCH_COOLDOWN_MS) {
+      logger.debug(`[Dedup] Task ${taskId} dispatch rejected: in cooldown (${now - lastDispatchTime}ms < ${DISPATCH_COOLDOWN_MS}ms)`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
+        taskId,
+        lastDispatchTime,
+        cooldownRemainingMs: DISPATCH_COOLDOWN_MS - (now - lastDispatchTime),
+      }, LOG_CONTEXTS.EXECUTION);
+      return;
+    }
+    this.lastDispatchTimeByTaskId.set(taskId, now);
+
     if (this.runningSlots.size >= CONCURRENCY_LIMIT) {
       // [P1] 队列深度保护
       if (this.waitQueue.length >= MAX_QUEUE_DEPTH) {
@@ -1157,6 +1187,10 @@ export class TaskSchedulerService {
 
   /**
    * 判断当前 scheduled 触发是否与最近窗口重复（补偿 + 定时并发场景防重）
+   * 
+   * 防重逻辑优化：
+   * - 只检查已终态（success/failed/cancelled）的执行记录，避免 pending 遗留记录导致误判
+   * - pending 状态的记录通常是 Jenkins 触发失败或任务排队超时遗留，不代表真正执行过
    */
   private async isDuplicateScheduledWindow(taskId: number, cronExpression: string): Promise<{ duplicated: boolean; windowStart: Date | null; reason?: string }> {
     const now = new Date();
@@ -1171,17 +1205,20 @@ export class TaskSchedulerService {
       return { duplicated: true, windowStart, reason: 'memory_guard' };
     }
 
-    const lastExecution = await queryOne<{ id: number; created_at: string | null }>(
+    // 【修复】只检查已终态（success/failed/cancelled）的执行记录
+    // pending 状态的记录可能是 Jenkins 触发失败后遗留，不代表真正执行过
+    // 这样做可以避免遗留的 pending 记录阻塞正常调度
+    const lastCompletedExecution = await queryOne<{ id: number; created_at: string | null }>(
       `SELECT id, created_at
        FROM Auto_TestCaseTaskExecutions
-       WHERE task_id = ?
+       WHERE task_id = ? AND status IN ('success', 'failed', 'cancelled')
        ORDER BY created_at DESC
        LIMIT 1`,
       [taskId]
     );
 
-    if (lastExecution?.created_at) {
-      const lastCreatedAt = new Date(lastExecution.created_at).getTime();
+    if (lastCompletedExecution?.created_at) {
+      const lastCreatedAt = new Date(lastCompletedExecution.created_at).getTime();
       if (!Number.isNaN(lastCreatedAt) && lastCreatedAt >= windowStartMs) {
         this.recentScheduledWindowByTaskId.set(taskId, windowStartMs);
         return { duplicated: true, windowStart, reason: 'db_guard' };
