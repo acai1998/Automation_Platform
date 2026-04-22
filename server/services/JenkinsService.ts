@@ -15,6 +15,25 @@ export interface JenkinsConfig {
 }
 
 /**
+ * 错误分类：用于区分应重试的错误和不应重试的错误
+ */
+export type JenkinsErrorCategory =
+  | 'none'           // 无错误（成功）
+  | 'network'        // 网络不可达（DNS失败、连接拒绝、超时等），可重试
+  | 'auth_failed'    // 认证失败（401/403），不应重试
+  | 'not_found'      // 资源不存在（Job不存在，404），不应重试
+  | 'bad_request'    // 参数错误（400），不应重试
+  | 'rate_limited'   // 被限流（429），可重试
+  | 'server_error';  // 服务端错误（5xx），可重试
+
+/**
+ * 判断某类错误是否应该触发重试
+ */
+export function isJenkinsErrorRetryable(category: JenkinsErrorCategory): boolean {
+  return category === 'network' || category === 'rate_limited' || category === 'server_error';
+}
+
+/**
  * Jenkins 触发结果
  */
 export interface JenkinsTriggerResult {
@@ -23,6 +42,8 @@ export interface JenkinsTriggerResult {
   buildUrl?: string;
   buildNumber?: number;
   message: string;
+  /** 错误分类，用于调度器判断是否需要重试 */
+  errorCategory: JenkinsErrorCategory;
 }
 
 /**
@@ -193,6 +214,7 @@ export class JenkinsService {
       return {
         success: false,
         message: 'Jenkins integration is not configured',
+        errorCategory: 'bad_request',
       };
     }
 
@@ -233,11 +255,13 @@ export class JenkinsService {
           queueId,
           buildUrl: `${this.config.baseUrl}/job/${jobName}/`,
           message: 'Job triggered successfully',
+          errorCategory: 'none',
         };
       } else {
         return {
           success: false,
           message: `Failed to trigger job: ${response.status} ${response.statusText}`,
+          errorCategory: classifyHttpError(response.status),
         };
       }
     } catch (error) {
@@ -245,6 +269,7 @@ export class JenkinsService {
       return {
         success: false,
         message: `Error triggering job: ${errorMessage}`,
+        errorCategory: error instanceof Error ? classifyNetworkError(error) : 'server_error',
       };
     }
   }
@@ -277,6 +302,7 @@ export class JenkinsService {
       return {
         success: false,
         message: 'Jenkins integration is not configured',
+        errorCategory: 'bad_request',
       };
     }
 
@@ -353,6 +379,7 @@ export class JenkinsService {
             buildUrl: undefined,
             buildNumber: undefined,
             message: 'Batch job triggered successfully (queueId unavailable)',
+            errorCategory: 'none',
           };
         }
 
@@ -410,6 +437,7 @@ export class JenkinsService {
           buildUrl: undefined,   // 尚未解析，将由 onBuildResolved 回调更新
           buildNumber: undefined,
           message: 'Batch job triggered successfully',
+          errorCategory: 'none',
         };
       } else {
         const errorText = await response.text().catch(() => 'Unable to read response');
@@ -419,10 +447,14 @@ export class JenkinsService {
           statusText: response.statusText,
           errorText: errorText.substring(0, 500), // Limit error text length
         }, 'JENKINS');
-        
+
+        // 根据 HTTP 状态码分类错误
+        const category: JenkinsErrorCategory = classifyHttpError(response.status);
+
         return {
           success: false,
           message: `Failed to trigger batch job: ${response.status} ${response.statusText}`,
+          errorCategory: category,
         };
       }
     } catch (error) {
@@ -445,9 +477,13 @@ export class JenkinsService {
         triggerUrlHint: `${this.config.baseUrl}/job/${this.config.jobs.api}/buildWithParameters`,
       });
 
+      // 根据异常类型分类网络错误
+      const category: JenkinsErrorCategory = classifyNetworkError(err);
+
       return {
         success: false,
         message: `Error triggering batch job: ${detail}`,
+        errorCategory: category,
       };
     }
   }
@@ -618,6 +654,76 @@ export class JenkinsService {
       baseUrl: this.config.baseUrl,
       jobs: this.config.jobs,
     };
+  }
+
+  /**
+   * 根据 HTTP 状态码对 Jenkins API 错误进行分类
+   *
+   * 可重试（transient）: 429 (rate limited), 5xx (server error)
+   * 不可重试（permanent）: 400 (bad request), 401/403 (auth), 404 (not found), etc.
+   */
+  private classifyHttpError(status: number): JenkinsErrorCategory {
+    if (status === 401 || status === 403) return 'auth_failed';
+    if (status === 404) return 'not_found';
+    if (status >= 400 && status < 500 && status !== 429) return 'bad_request';
+    if (status === 429) return 'rate_limited';
+    if (status >= 500) return 'server_error';
+    // fallback: unknown status, treat as retryable
+    return 'network';
+  }
+
+  /**
+   * 根据异常类型对网络错误进行分类
+   *
+   * 可重试: DNS失败、连接拒绝(ECONNREFUSED)、连接超时(ETIMEDOUT)、
+   *         连接重置(ECONNRESET)、网络中断等
+   */
+  private classifyNetworkError(err: Error): JenkinsErrorCategory {
+    const msg = err.message.toLowerCase();
+    const code = (err as NodeJS.ErrnoException).code;
+
+    // 网络层可重试错误码
+    const RETRYABLE_ERRNO_CODES = new Set([
+      'ECONNRESET',     // 连接被重置
+      'ECONNREFUSED',   // 连接被拒绝
+      'ETIMEDOUT',      // 操作超时
+      'ENOTFOUND',      // DNS 解析失败
+      'EHOSTUNREACH',   // 主机不可达
+      'ENETDOWN',       // 网络接口关闭
+      'ENETUNREACH',    // 网络不可达
+      'EAI_AGAIN',      // DNS 临时失败
+    ]);
+
+    if (code && RETRYABLE_ERRNO_CODES.has(code)) {
+      return 'network';
+    }
+
+    // 根据消息内容匹配常见网络错误模式
+    const NETWORK_PATTERNS = [
+      'network error',
+      'fetch failed',
+      'socket hang up',
+      'connection refused',
+      'connection reset',
+      'timed out',
+      'timeout',
+      'dns',
+      'enotfound',
+      'econnrefused',
+      'econnreset',
+      'etimedout',
+      'getaddrinfo',
+      'abort',          // fetch abort
+    ];
+
+    for (const pattern of NETWORK_PATTERNS) {
+      if (msg.includes(pattern)) {
+        return 'network';
+      }
+    }
+
+    // 默认归为 server_error（保守策略：未知异常倾向于重试）
+    return 'server_error';
   }
 
   /**

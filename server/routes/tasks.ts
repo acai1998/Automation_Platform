@@ -480,7 +480,7 @@ router.post('/', generalAuthRateLimiter, authenticate, async (req, res) => {
     }
 
     // maxRetries / retryDelayMs 使用默认值兜底，防止非法值写入
-    const safeMaxRetries = (typeof maxRetries === 'number' && maxRetries >= 0) ? maxRetries : 1;
+    const safeMaxRetries = (typeof maxRetries === 'number' && maxRetries >= 0) ? maxRetries : 3;
     const safeRetryDelayMs = (typeof retryDelayMs === 'number' && retryDelayMs >= 0) ? retryDelayMs : 30_000;
 
     const pool = getPool();
