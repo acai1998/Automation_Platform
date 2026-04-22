@@ -681,10 +681,10 @@ export class TaskSchedulerService {
         if (idx !== -1) {
           this.directQueue.splice(idx, 1);
           logger.warn(`[Direct] Queue item timed out for ${label}`, {
-          event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_TIMEOUT,
-          waitMs: Date.now() - item.enqueuedAt,
-        }, LOG_CONTEXTS.EXECUTION);
-          reject(new Error(
+            event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_TIMEOUT,
+            waitMs: Date.now() - item.enqueuedAt,
+          }, LOG_CONTEXTS.EXECUTION);
+          reject(new Error(`Queue item timed out for ${label}`));
         }
       }, QUEUE_ITEM_TIMEOUT_MS);
       if (item.timeoutTimer.unref) item.timeoutTimer.unref();

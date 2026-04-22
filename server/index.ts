@@ -60,7 +60,7 @@ testConnection().then(async (connected) => {
       await initializeDailySummaryData();
 
     } catch (err) {
-      logger.errorLog(err, 'TypeORM DataSource initialization failed', { event: LOG_EVENTS.SERVER_DB_INIT_FAILED }, LOG_CONTEXTS.DATABASE);
+      logger.errorLog(err, 'TypeORM DataSource initialization failed', { event: LOG_EVENTS.SERVER_DB_INIT_FAILED, context: LOG_CONTEXTS.DATABASE });
       process.exit(1);
     }
   } else {
