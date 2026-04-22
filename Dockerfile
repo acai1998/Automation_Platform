@@ -1,40 +1,32 @@
-# =========================================================
-# Stage 1: 构建阶段
-# =========================================================
+# 构建阶段
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# 优先复制依赖文件，利用 Docker 层缓存
-# 只有 package*.json 变化时才重新 npm install
+# 复制 package 文件
 COPY package*.json ./
 
-RUN npm ci --ignore-scripts
+# 安装依赖（包含 devDependencies 用于构建）
+RUN npm ci
 
-# 复制源码（.dockerignore 会排除 node_modules / dist 等）
+# 复制源代码
 COPY . .
 
-# 构建前端（输出到 dist/）
-RUN npm run build
+# 构建前端和后端
+RUN npm run build && npm run server:build
 
-# 编译后端（输出到 dist/server/）
-RUN npm run server:build
-
-# =========================================================
-# Stage 2: 生产运行阶段
-# =========================================================
+# 生产阶段
 FROM node:20-alpine
 
 WORKDIR /app
 
-# 只复制生产依赖（不含 devDependencies）
-COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts
-
-# 从构建阶段复制编译产物
+# 复制构建产物和必要文件
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./
 
+# 暴露端口
 EXPOSE 3000
 
-# 启动后端服务（同时静态托管前端 dist/ 目录）
+# 启动服务
 CMD ["node", "dist/server/server/index.js"]

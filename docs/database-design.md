@@ -471,9 +471,77 @@ LIMIT 20;
 
 ---
 
+## 完整表清单（当前版本）
+
+| 表名 | 说明 |
+|------|------|
+| `Auto_Users` | 用户表 |
+| `Auto_TestCaseProjects` | 测试用例项目表 |
+| `Auto_TestCase` | 测试用例资产表 |
+| `Auto_TestCaseTasks` | 测试任务表（含 max_retries/retry_delay_ms 字段，v1.3.0 新增） |
+| `Auto_TestEnvironments` | 测试环境配置表 |
+| `Auto_TestRun` | 测试执行批次表（含 execution_id 关联字段，v1.1.0 新增） |
+| `Auto_TestRunResults` | 测试用例执行结果表 |
+| `Auto_TestCaseTaskExecutions` | 测试任务执行记录表 |
+| `Auto_TestCaseDailySummaries` | 每日统计汇总表 |
+| `Auto_TaskAuditLogs` | 任务操作审计日志表（v1.3.0 新增，记录10种操作行为） |
+| `Auto_AiCaseWorkspaces` | AI 用例工作台主表（v1.5.0 新增） |
+| `Auto_AiCaseNodeExecutions` | AI 用例节点状态流水表（v1.5.0 新增） |
+| `Auto_AiCaseNodeAttachments` | AI 用例节点附件表（v1.5.0 新增） |
+| `Auto_RepositoryConfigs` | Git 仓库配置表 |
+| `Auto_RepositoryScriptMappings` | 仓库脚本映射表 |
+| `Auto_SyncLogs` | 仓库同步日志表 |
+
+## 表关联关系（完整版）
+
+- `Auto_Users` ← 多个表的 `trigger_by/created_by/updated_by/owner_id/executed_by` 字段（外键）
+- `Auto_TestCaseProjects` ← `Auto_TestCase.project_id`（一对多）
+- `Auto_TestCaseProjects` ← `Auto_TestCaseTasks.project_id`（一对多）
+- `Auto_TestCase` ← `Auto_TestRunResults.case_id`（一对多）
+- `Auto_TestCase` ← `Auto_RepositoryScriptMappings.case_id`（一对多）
+- `Auto_TestRun` ← `Auto_TestRunResults.execution_id`（一对多）
+- `Auto_TestCaseTasks` ← `Auto_TestCaseTaskExecutions.task_id`（一对多）
+- `Auto_TestEnvironments` ← `Auto_TestCaseTasks.environment_id`（一对多）
+- `Auto_TestEnvironments` ← `Auto_TestCaseTaskExecutions.environment_id`（一对多）
+- `Auto_RepositoryConfigs` ← `Auto_RepositoryScriptMappings.repo_config_id`（一对多）
+- `Auto_RepositoryConfigs` ← `Auto_SyncLogs.repo_config_id`（一对多）
+
+## 表结构变更历史
+
+### v1.1.0（2025-02）
+- `Auto_TestRun` 表新增 `execution_id` 字段（int, nullable）：
+  - 关联 `Auto_TestCaseTaskExecutions.id`，消除对时间窗口反查的依赖
+  - 在 triggerExecution 事务中与 TestRun 同步创建后立即写入
+  - 提升查询性能和数据一致性
+
+### v1.3.0（2026-03）
+- `Auto_TestCaseTasks` 新增字段：
+  - `max_retries TINYINT(3) NOT NULL DEFAULT 1` — 失败最大重试次数
+  - `retry_delay_ms INT(11) NOT NULL DEFAULT 30000` — 重试延迟毫秒
+- 新增 `Auto_TaskAuditLogs` 表：
+  - `operator_id INT(11) DEFAULT NULL`（NULL = 系统自动操作，配合 `ON DELETE SET NULL` 外键）
+  - 记录10种操作：`created / updated / deleted / status_changed / manually_triggered / execution_cancelled / compensated / triggered / retry_scheduled / permanently_failed`
+- 新增性能索引：`Auto_TestCaseTaskExecutions`（task+start/status/created）、`Auto_TestCaseTasks`（trigger+status/updated）、`Auto_TestRunResults`（status+execution_id）
+- 迁移脚本：`scripts/migrate-v1.3.0.sql`
+
+### v1.5.0（2026-03）
+- 新增 `Auto_AiCaseWorkspaces` 表：
+  - 存储 AI 用例工作台主快照（`map_data` JSON）与版本号（`version`）
+  - 内置节点进度聚合字段（`todo/doing/blocked/passed/failed/skipped`）用于报表快速查询
+- 新增 `Auto_AiCaseNodeExecutions` 表：
+  - 记录节点状态流转（`previous_status -> current_status`）与操作人
+  - 支持按 `workspace_id + node_id + created_at` 时间线回放
+- 新增 `Auto_AiCaseNodeAttachments` 表：
+  - 存储节点截图/证据元数据（对象存储地址、校验和、上传人）
+  - 通过 `execution_log_id` 可选关联到一次具体状态变更
+- 迁移脚本：`scripts/migrate-v1.5.0.sql`
+- 表结构文档：`docs/Table/Auto_AiCaseWorkspaces`、`docs/Table/Auto_AiCaseNodeExecutions`、`docs/Table/Auto_AiCaseNodeAttachments`
+
+---
+
 ## 文档更新
 
-**文档更新时间：** 2026-01-17
+**文档更新时间：** 2026-04-19
 
 **数据库类型：** 远程 MariaDB 数据库
 

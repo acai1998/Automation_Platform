@@ -50,7 +50,10 @@ const TRIGGER_PRECHECK_RETRY_DELAY_MS = Math.max(
   Number.parseInt(process.env.JENKINS_TRIGGER_PRECHECK_RETRY_DELAY_MS ?? '600', 10) || 600
 );
 /** 是否启用触发前 Jenkins 预检查 */
-const TRIGGER_PRECHECK_ENABLED = (process.env.JENKINS_TRIGGER_PRECHECK_ENABLED ?? 'true') !== 'false';
+// 注：Jenkins 预检查默认禁用（当 Jenkins 网络不稳定时）
+// 设置 JENKINS_TRIGGER_PRECHECK_ENABLED=true 以启用
+// 启用后，当 Jenkins 无法连接时，任务触发请求会被拒绝 (503 Service Unavailable)
+const TRIGGER_PRECHECK_ENABLED = (process.env.JENKINS_TRIGGER_PRECHECK_ENABLED ?? 'false') !== 'false';
 
 /**
  * [P2-B] 注册 CallbackQueue 消费者
