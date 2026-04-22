@@ -17,7 +17,7 @@ import { Cron } from 'croner';
 import { query, queryOne, getPool } from '../config/database';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, LOG_EVENTS } from '../config/logging';
-import { jenkinsService } from './JenkinsService';
+import { jenkinsService, JenkinsErrorCategory, isJenkinsErrorRetryable } from './JenkinsService';
 import { executionService } from './ExecutionService';
 import { AppDataSource } from '../config/database';
 import { TestCase } from '../entities/TestCase';
@@ -1384,8 +1384,12 @@ export class TaskSchedulerService {
         logger.warn(`Jenkins trigger failed for task ${taskId}`, {
           event: LOG_EVENTS.SCHEDULER_JENKINS_TRIGGER_FAILED,
           message: triggerResult.message,
+          errorCategory: triggerResult.errorCategory,
         }, LOG_CONTEXTS.EXECUTION);
-        throw new Error(`Jenkins trigger failed: ${triggerResult.message}`);
+        // 抛出带分类信息的错误，供 handleTaskFailure 决定是否重试
+        const classifiedErr = new Error(`Jenkins trigger failed: ${triggerResult.message}`);
+        (classifiedErr as Error & { _jenkinsErrorCategory: JenkinsErrorCategory })._jenkinsErrorCategory = triggerResult.errorCategory;
+        throw classifiedErr;
       }
     } catch (jenkinsErr) {
       // Jenkins 失败，将该任务记入重试（不注册槽位，不占用并发名额）
@@ -1444,10 +1448,42 @@ export class TaskSchedulerService {
 
   /**
    * 失败重试处理
+   *
+   * 错误分类逻辑：
+   * - 可重试错误（network/rate_limited/server_error）：按配置进行重试
+   * - 不可重试错误（auth_failed/not_found/bad_request）：直接标记为永久失败，不浪费重试配额
    */
   private async handleTaskFailure(taskId: number, err: unknown): Promise<void> {
     const task = this.taskCache.get(taskId);
     if (!task) return;
+
+    // 从 Error 对象中提取 Jenkins 错误分类
+    let errorCategory: JenkinsErrorCategory | undefined;
+    const errorObj = err instanceof Error ? err : new Error(String(err));
+    if ('_jenkinsErrorCategory' in errorObj) {
+      errorCategory = (errorObj as Error & { _jenkinsErrorCategory: JenkinsErrorCategory })._jenkinsErrorCategory;
+    }
+
+    // 如果是不可重试的错误，直接标记永久失败
+    if (errorCategory && !isJenkinsErrorRetryable(errorCategory)) {
+      logger.error(`Task ${taskId} permanently failed due to non-retryable error [${errorCategory}]: ${errorObj.message}`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_RETRY_EXHAUSTED,
+        taskId,
+        errorCategory,
+        attempts: 0,
+        error: errorObj.message,
+      }, LOG_CONTEXTS.EXECUTION);
+
+      await this.recordAuditLog(taskId, 'permanently_failed', SCHEDULER_USER_ID, {
+        attempts: 0,
+        error: errorObj.message,
+        errorCategory,
+        reason: `Non-retryable error: ${errorCategory}`,
+      });
+
+      this.clearRetryState(taskId);
+      return;
+    }
 
     let state = this.retryStates.get(taskId);
     if (!state) {
