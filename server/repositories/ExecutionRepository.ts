@@ -887,7 +887,18 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       return result[0].execution_id;
     }
 
-    // 3. 如果没有找到，记录警告
+    // 3. 尝试通过 TestRunResults 表反查 executionId
+    const fallbackExecutionId = await this.resolveExecutionIdFromRunResults(runId);
+    if (fallbackExecutionId) {
+      logger.info(
+        `Found executionId for runId via TestRunResults fallback`,
+        { runId, executionId: fallbackExecutionId },
+        LOG_CONTEXTS.REPOSITORY
+      );
+      return fallbackExecutionId;
+    }
+
+    // 4. 如果没有找到，记录警告
     logger.warn(
       `Could not find executionId for runId`,
       {

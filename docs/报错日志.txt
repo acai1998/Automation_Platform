@@ -1,0 +1,44 @@
+12026/4/22 21:22:09	检测到漏触发并执行补偿	审计	-
+2026/4/22 21:22:10	运行记录已创建	运行	runId=4598 | executionId=4575
+2026/4/22 21:22:10	调度触发执行	审计	traceId=scheduler_8_moa30x4o_j8ye4w | triggerReason=scheduled | source=scheduler
+2026/4/22 21:22:11	调度失败后进入重试队列	审计	-
+2026/4/22 21:22:41	调度触发执行	审计	traceId=scheduler_8_moa31ldr_c7iqna | triggerReason=retry | source=retry_timer
+2026/4/22 21:22:42	达到最大重试次数，任务失败	审计	-
+
+
+为什么会出现定时任务已经触发了，但是Jenkins却没有执行的情况呢
+
+# 设置 Gemini API Key 环境变量
+$env:Moonshot_API_KEY = "sk-t12kylne9iL6cbDVjeIvkC6duqdOekbxkKiViwXdIKH6cKNI"
+
+# 直接运行（不需要在配置文件中指定）
+opencode run --model google/gemini-1.5-pro "你好"
+
+有一个问题需要优化一下，就是任务记录 的执行编号会和数据库中的 execution_id 字段不一致，
+因为一条记录中可能会存在多个case，需要优化这个场景，使其编号保持一致，不然在对数据的时候会出现差异。影响判断
+
+
+1.分析现有代码中任务记录执行编号和 execution_id 的生成与关联逻辑
+2.设计并实施优化方案，确保在单记录多用例场景下编号的一致性
+3.测试优化后的逻辑，验证数据比对是否正确
+
+
+
+下面这张报错是什么原因
+[1] 2026-04-22T14:10:32.624Z ERROR [ERROR] Error in Task 7 execution error {
+[1]   message: 'Jenkins trigger failed: Failed to trigger batch job: 404 Not Found',
+[1]   stack: 'Error: Jenkins trigger failed: Failed to trigger batch job: 404 Not Found\n' +
+[1]     '    at TaskSchedulerService.executeTask (D:\\Project\\Automation_Platform\\server\\services\\TaskSchedulerService.ts:1388:15)\n' +
+[1]     '    at processTicksAndRejections (node:internal/process/task_queues:105:5)\n' +
+[1]     '    at async TaskSchedulerService.dispatchTask (D:\\Project\\Automation_Platform\\server\\services\\TaskSchedulerService.ts:1145:7)\n' +
+[1]     '    at async Timeout._onTimeout (D:\\Project\\Automation_Platform\\server\\services\\TaskSchedulerService.ts:1494:9)',
+[1]   context: 'Task 7 execution error',
+[1]   event: 'SCHEDULER_TASK_EXECUTION_FAILED',
+[1]   taskId: 7
+[1] }
+[1] 2026-04-22T14:10:32.624Z ERROR [EXECUTION] Task 7 permanently failed after 1 retries {
+[1]   event: 'SCHEDULER_TASK_RETRY_EXHAUSTED',
+[1]   taskId: 7,
+[1]   attempts: 2,
+[1]   error: 'Jenkins trigger failed: Failed to trigger batch job: 404 Not Found'
+[1] }
