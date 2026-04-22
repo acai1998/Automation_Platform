@@ -261,7 +261,7 @@ export class JenkinsService {
         return {
           success: false,
           message: `Failed to trigger job: ${response.status} ${response.statusText}`,
-          errorCategory: classifyHttpError(response.status),
+          errorCategory: this.classifyHttpError(response.status),
         };
       }
     } catch (error) {
@@ -269,7 +269,7 @@ export class JenkinsService {
       return {
         success: false,
         message: `Error triggering job: ${errorMessage}`,
-        errorCategory: error instanceof Error ? classifyNetworkError(error) : 'server_error',
+        errorCategory: error instanceof Error ? this.classifyNetworkError(error) : 'server_error',
       };
     }
   }
@@ -449,7 +449,7 @@ export class JenkinsService {
         }, 'JENKINS');
 
         // 根据 HTTP 状态码分类错误
-        const category: JenkinsErrorCategory = classifyHttpError(response.status);
+        const category: JenkinsErrorCategory = this.classifyHttpError(response.status);
 
         return {
           success: false,
@@ -478,7 +478,7 @@ export class JenkinsService {
       });
 
       // 根据异常类型分类网络错误
-      const category: JenkinsErrorCategory = classifyNetworkError(err);
+      const category: JenkinsErrorCategory = this.classifyNetworkError(err);
 
       return {
         success: false,
