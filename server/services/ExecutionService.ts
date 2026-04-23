@@ -1373,9 +1373,11 @@ export class ExecutionService {
       try {
         const startTime = result.startTime ? new Date(result.startTime) : new Date();
         const endTime = result.endTime ? new Date(result.endTime) : new Date();
+        const caseId = result.caseId && result.caseId > 0 ? result.caseId : undefined;
 
         // 尝试更新现有记录
-        const updated = await this.executionRepository.updateTestResult(executionId, result.caseId, {
+        const updated = await this.executionRepository.updateTestResult(executionId, caseId, {
+          caseName: result.caseName,
           status: result.status,
           duration: result.duration,
           errorMessage: result.errorMessage,
@@ -1390,10 +1392,10 @@ export class ExecutionService {
         });
 
         // 如果没有找到记录，插入新记录
-        if (!updated && result.caseId > 0) {
+        if (!updated && caseId) {
           await this.executionRepository.createTestResult({
             executionId,
-            caseId: result.caseId,
+            caseId,
             caseName: result.caseName,
             status: result.status,
             duration: result.duration,

@@ -1,6 +1,7 @@
 import { JenkinsConfig } from './JenkinsService';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS } from '../config/logging';
+import { getSecretOrEnv } from '../utils/secrets';
 
 /**
  * Jenkins构建状态
@@ -75,13 +76,116 @@ export interface TestCaseResult {
  * Jenkins状态查询服务
  * 提供主动查询Jenkins构建状态的能力，作为回调机制的备用方案
  */
+export interface MissingScriptPathDiagnostic {
+  nodeId: string;
+  filePath: string;
+}
+
+export interface JenkinsLogDiagnostics {
+  missingScriptPaths: MissingScriptPathDiagnostic[];
+  exitCode?: number;
+  callbackStatus?: string;
+  messages: string[];
+  excerpt: string;
+}
+
+function trimForStorage(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+}
+
+export function extractCaseNameFromNodeId(nodeId: string): string {
+  const cleanNodeId = nodeId.trim();
+  if (!cleanNodeId) {
+    return 'Jenkins diagnostic';
+  }
+
+  const parts = cleanNodeId.split('::').filter(Boolean);
+  if (parts.length > 0) {
+    return parts[parts.length - 1];
+  }
+
+  const filename = cleanNodeId.split(/[\\/]/).pop() ?? cleanNodeId;
+  return filename.replace(/\.[^.]+$/, '') || cleanNodeId;
+}
+
+export function extractJenkinsLogDiagnostics(log: string): JenkinsLogDiagnostics {
+  const lines = log.split(/\r?\n/);
+  const missingScriptPaths: MissingScriptPathDiagnostic[] = [];
+  const notableLineIndexes = new Set<number>();
+
+  lines.forEach((line, index) => {
+    if (
+      line.includes('SCRIPT_PATHS') ||
+      line.includes('exitCode=') ||
+      line.includes('status=') ||
+      line.includes('http_code=') ||
+      line.includes('403 Forbidden') ||
+      line.includes('crumb') ||
+      line.includes('permission')
+    ) {
+      notableLineIndexes.add(index);
+    }
+
+    const missingPathMatch = line.match(/^\s*-\s+(.+?)\s+->\s+(.+?)\s*$/);
+    if (missingPathMatch) {
+      notableLineIndexes.add(index);
+      missingScriptPaths.push({
+        nodeId: missingPathMatch[1].trim(),
+        filePath: missingPathMatch[2].trim(),
+      });
+    }
+  });
+
+  const exitCodeMatches = Array.from(log.matchAll(/exitCode=(\d+)/g));
+  const lastExitCodeMatch = exitCodeMatches[exitCodeMatches.length - 1];
+  const exitCode = lastExitCodeMatch ? Number.parseInt(lastExitCodeMatch[1], 10) : undefined;
+
+  const callbackStatusMatch =
+    log.match(/status=([^\s,\uFF0C]+)/) ??
+    log.match(/callback[^.\n\r]*(?:HTTP|status)[^\d]*(\d{3})/i) ??
+    log.match(/http_code=(\d{3})/);
+  const callbackStatus = callbackStatusMatch?.[1];
+
+  const messages: string[] = [];
+  if (missingScriptPaths.length > 0) {
+    const paths = missingScriptPaths
+      .map((item) => `${item.filePath} (${item.nodeId})`)
+      .join(', ');
+    messages.push(`SCRIPT_PATHS validation failed: missing ${paths}`);
+  }
+  if (typeof exitCode === 'number' && exitCode !== 0) {
+    messages.push(`Jenkins test runner exited with code ${exitCode}`);
+  }
+  if (callbackStatus) {
+    messages.push(`Jenkins callback failed with status ${callbackStatus}`);
+  }
+  if (log.includes('403 Forbidden') && /crumb|permission/i.test(log)) {
+    messages.push('Jenkins returned 403 Forbidden; check crumb, credentials, and Job/Build permission');
+  }
+
+  const excerptLines = Array.from(notableLineIndexes)
+    .sort((a, b) => a - b)
+    .flatMap((index) => {
+      const start = Math.max(0, index - 2);
+      const end = Math.min(lines.length, index + 3);
+      return lines.slice(start, end);
+    });
+  const dedupedExcerpt = Array.from(new Set(excerptLines)).join('\n');
+
+  return {
+    missingScriptPaths,
+    exitCode,
+    callbackStatus,
+    messages,
+    excerpt: trimForStorage(dedupedExcerpt, 4000),
+  };
+}
+
 export class JenkinsStatusService {
   private config: JenkinsConfig;
 
   constructor() {
     // 从 Docker Secrets 或环境变量加载 Jenkins 配置
-    const { getSecretOrEnv } = require('../utils/secrets');
-
     const token = getSecretOrEnv('JENKINS_TOKEN');
     if (!token) {
       logger.warn('JENKINS_TOKEN is required for Jenkins authentication', {
@@ -434,7 +538,7 @@ export class JenkinsStatusService {
       }
 
       // 方法3: 解析构建日志
-      const logResults = await this.parseLogResults(jobName, buildId);
+      const logResults = await this.parseLogResults(jobName, buildId, buildStatus);
       if (logResults) {
         return logResults;
       }
@@ -580,7 +684,7 @@ export class JenkinsStatusService {
    * 解析构建日志获取测试结果
    * 支持 pytest、JUnit 及自定义格式的日志输出
    */
-  private async parseLogResults(jobName: string, buildId: string): Promise<TestResults | null> {
+  private async parseLogResults(jobName: string, buildId: string, buildStatus?: BuildStatus): Promise<TestResults | null> {
     try {
       const logData = await this.getBuildLog(jobName, buildId);
       if (!logData) {
@@ -588,6 +692,11 @@ export class JenkinsStatusService {
       }
 
       const log = logData.text;
+
+      const diagnosticResults = this.buildDiagnosticResultsFromLog(jobName, buildId, log, buildStatus);
+      if (diagnosticResults) {
+        return diagnosticResults;
+      }
 
       // ─── 优先级由高到低的匹配模式 ───────────────────────────────────
       const patterns: Array<{
@@ -705,6 +814,53 @@ export class JenkinsStatusService {
     }
   }
 
+  private buildDiagnosticResultsFromLog(
+    jobName: string,
+    buildId: string,
+    log: string,
+    buildStatus?: BuildStatus
+  ): TestResults | null {
+    const diagnostics = extractJenkinsLogDiagnostics(log);
+    if (diagnostics.messages.length === 0) {
+      return null;
+    }
+
+    const firstMissingPath = diagnostics.missingScriptPaths[0];
+    const caseName = firstMissingPath
+      ? extractCaseNameFromNodeId(firstMissingPath.nodeId)
+      : `Build ${buildStatus?.number ?? buildId}`;
+    const duration = buildStatus?.duration ?? 0;
+    const errorMessage = trimForStorage(diagnostics.messages.join('; '), 2000);
+    const stackTrace = diagnostics.excerpt || errorMessage;
+
+    logger.warn('Parsed Jenkins diagnostic failure from build log', {
+      event: 'JENKINS_LOG_DIAGNOSTIC_PARSED',
+      jobName,
+      buildId,
+      caseName,
+      missingScriptPaths: diagnostics.missingScriptPaths,
+      exitCode: diagnostics.exitCode,
+      callbackStatus: diagnostics.callbackStatus,
+    }, LOG_CONTEXTS.JENKINS);
+
+    return {
+      totalCases: 1,
+      passedCases: 0,
+      failedCases: 1,
+      skippedCases: 0,
+      duration,
+      results: [{
+        caseId: 0,
+        caseName,
+        status: 'failed',
+        duration,
+        errorMessage,
+        stackTrace,
+        logPath: `${this.config.baseUrl}/job/${encodeURIComponent(jobName)}/${encodeURIComponent(buildId)}/console`,
+      }],
+    };
+  }
+
   /**
    * 基于构建状态生成基本结果
    */
@@ -782,6 +938,15 @@ export class JenkinsStatusService {
             errorMessage,
           };
         });
+
+        const exitCode = typeof data.exitcode === 'number' ? data.exitcode : 0;
+        if (totalCases === 0 && results.length === 0 && exitCode !== 0) {
+          logger.warn('Jenkins artifact report had no test cases but non-zero exit code; falling back to console diagnostics', {
+            event: 'JENKINS_ARTIFACT_EMPTY_WITH_EXIT_CODE',
+            exitCode,
+          }, LOG_CONTEXTS.JENKINS);
+          return null;
+        }
 
         return { totalCases, passedCases, failedCases, skippedCases, duration, results };
       }

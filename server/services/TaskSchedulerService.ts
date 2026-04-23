@@ -26,6 +26,33 @@ import { In } from 'typeorm';
 // 类型定义
 // ──────────────────────────────────────────────────────────
 
+const DEFAULT_JENKINS_URL = 'http://jenkins.wiac.xyz';
+
+function warnIfCallbackUrlIsLocal(callbackUrl: string, traceId?: string): void {
+  try {
+    const callbackHost = new URL(callbackUrl).hostname.toLowerCase();
+    const jenkinsHost = new URL(process.env.JENKINS_URL || DEFAULT_JENKINS_URL).hostname.toLowerCase();
+    const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+
+    if (localHosts.has(callbackHost) && !localHosts.has(jenkinsHost)) {
+      logger.warn('Jenkins callback URL points to localhost while Jenkins is remote', {
+        event: 'JENKINS_CALLBACK_URL_LOCALHOST_FOR_REMOTE',
+        callbackUrl,
+        jenkinsHost,
+        traceId,
+        suggestion: 'Set API_CALLBACK_URL to a URL that Jenkins can reach, otherwise scheduled callbacks may fail with 403 or never reach this service.',
+      }, LOG_CONTEXTS.EXECUTION);
+    }
+  } catch (error) {
+    logger.warn('Failed to validate Jenkins callback URL', {
+      event: 'JENKINS_CALLBACK_URL_VALIDATE_FAILED',
+      callbackUrl,
+      traceId,
+      error: error instanceof Error ? error.message : String(error),
+    }, LOG_CONTEXTS.EXECUTION);
+  }
+}
+
 export interface ScheduledTask {
   id: number;
   name: string;
@@ -1353,6 +1380,7 @@ export class TaskSchedulerService {
     const callbackUrl = callbackBase.endsWith('/api/jenkins/callback')
       ? callbackBase
       : `${callbackBase}/api/jenkins/callback`;
+    warnIfCallbackUrlIsLocal(callbackUrl, traceId);
 
     // 1. 创建运行记录
     // triggerReason 为 'manual' 时使用 'manual'，其余（'scheduled'/'retry'）使用 'schedule'

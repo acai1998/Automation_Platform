@@ -227,10 +227,36 @@ function buildCallbackUrl(): string {
   // 兼容老配置：如果配置已包含 callback 路径，优先直接使用。
   const trimmed = configuredBase.replace(/\/+$/, '');
   if (trimmed.endsWith('/api/jenkins/callback')) {
+    warnIfCallbackUrlIsLocal(trimmed);
     return trimmed;
   }
 
-  return `${trimmed}/api/jenkins/callback`;
+  const callbackUrl = `${trimmed}/api/jenkins/callback`;
+  warnIfCallbackUrlIsLocal(callbackUrl);
+  return callbackUrl;
+}
+
+function warnIfCallbackUrlIsLocal(callbackUrl: string): void {
+  try {
+    const callbackHost = new URL(callbackUrl).hostname.toLowerCase();
+    const jenkinsHost = new URL(process.env.JENKINS_URL || DEFAULT_JENKINS_URL).hostname.toLowerCase();
+    const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+
+    if (localHosts.has(callbackHost) && !localHosts.has(jenkinsHost)) {
+      logger.warn('Jenkins callback URL points to localhost while Jenkins is remote', {
+        event: 'JENKINS_CALLBACK_URL_LOCALHOST_FOR_REMOTE',
+        callbackUrl,
+        jenkinsHost,
+        suggestion: 'Set API_CALLBACK_URL to a URL that Jenkins can reach, otherwise callback may fail with 403 or never reach this service.',
+      }, LOG_CONTEXTS.JENKINS);
+    }
+  } catch (error) {
+    logger.warn('Failed to validate Jenkins callback URL', {
+      event: 'JENKINS_CALLBACK_URL_VALIDATE_FAILED',
+      callbackUrl,
+      error: error instanceof Error ? error.message : String(error),
+    }, LOG_CONTEXTS.JENKINS);
+  }
 }
 
 /**
