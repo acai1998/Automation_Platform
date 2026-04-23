@@ -88,6 +88,12 @@ interface JenkinsQueueItem {
   };
 }
 
+interface JenkinsCrumb {
+  field: string;
+  value: string;
+  fetchedAt: number;
+}
+
 /**
  * [dev-10] queueId → buildNumber 解析完成后的回调类型
  * 由调用方注入，异步回调中更新数据库
@@ -137,6 +143,10 @@ export class JenkinsService {
   private config: JenkinsConfig;
 
   private enabled: boolean = true;
+
+  private crumb: JenkinsCrumb | null = null;
+
+  private readonly crumbTtlMs = 5 * 60 * 1000;
 
   /** 内存指标：queueId → buildNumber 映射统计 */
   private readonly queueMetrics: JenkinsQueueMetrics = {
@@ -242,6 +252,68 @@ export class JenkinsService {
   }
 
   /**
+   * Jenkins installations with CSRF protection require a crumb on POST requests.
+   * API tokens often bypass this on some Jenkins versions, but not all.
+   */
+  private async getCrumbHeader(): Promise<Record<string, string>> {
+    const logger = require('../utils/logger').default;
+    const now = Date.now();
+
+    if (this.crumb && now - this.crumb.fetchedAt < this.crumbTtlMs) {
+      return { [this.crumb.field]: this.crumb.value };
+    }
+
+    const crumbUrl = `${this.config.baseUrl.replace(/\/+$/, '')}/crumbIssuer/api/json`;
+
+    try {
+      const response = await fetch(crumbUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.getAuthHeader(),
+        },
+      });
+
+      if (response.status === 404) {
+        logger.debug('Jenkins crumb issuer not available; continuing without crumb', {}, 'JENKINS');
+        return {};
+      }
+
+      if (!response.ok) {
+        logger.warn('Failed to fetch Jenkins crumb; continuing without crumb', {
+          status: response.status,
+          statusText: response.statusText,
+        }, 'JENKINS');
+        return {};
+      }
+
+      const body = await response.json() as Record<string, unknown>;
+      const crumbRequestField = body.crumbRequestField;
+      const crumb = body.crumb;
+
+      if (typeof crumbRequestField !== 'string' || typeof crumb !== 'string') {
+        logger.warn('Jenkins crumb response missing expected fields', {
+          hasCrumbRequestField: typeof crumbRequestField === 'string',
+          hasCrumb: typeof crumb === 'string',
+        }, 'JENKINS');
+        return {};
+      }
+
+      this.crumb = {
+        field: crumbRequestField,
+        value: crumb,
+        fetchedAt: now,
+      };
+
+      return { [crumbRequestField]: crumb };
+    } catch (error) {
+      logger.warn('Exception while fetching Jenkins crumb; continuing without crumb', {
+        error: error instanceof Error ? error.message : String(error),
+      }, 'JENKINS');
+      return {};
+    }
+  }
+
+  /**
    * 根据用例类型获取对应的 Job 名称
    */
   private getJobName(type: CaseType): string {
@@ -284,11 +356,13 @@ export class JenkinsService {
 
     try {
       // 调用 Jenkins API
+      const crumbHeader = await this.getCrumbHeader();
       const response = await fetch(`${triggerUrl}?${params.toString()}`, {
         method: 'POST',
         headers: {
           'Authorization': this.getAuthHeader(),
           'Content-Type': 'application/x-www-form-urlencoded',
+          ...crumbHeader,
         },
       });
 
@@ -307,7 +381,7 @@ export class JenkinsService {
       } else {
         return {
           success: false,
-          message: `Failed to trigger job: ${response.status} ${response.statusText}`,
+          message: `Failed to trigger job: ${response.status} ${response.statusText}${response.status === 403 ? ' (check Jenkins crumb and Job/Build permission)' : ''}`,
           errorCategory: this.classifyHttpError(response.status),
         };
       }
@@ -388,11 +462,13 @@ export class JenkinsService {
         method: 'POST',
       }, 'JENKINS');
       
+      const crumbHeader = await this.getCrumbHeader();
       const response = await fetch(fullUrl, {
         method: 'POST',
         headers: {
           'Authorization': this.getAuthHeader(),
           'Content-Type': 'application/x-www-form-urlencoded',
+          ...crumbHeader,
         },
       });
 
@@ -500,7 +576,7 @@ export class JenkinsService {
 
         return {
           success: false,
-          message: `Failed to trigger batch job: ${response.status} ${response.statusText}`,
+          message: `Failed to trigger batch job: ${response.status} ${response.statusText}${response.status === 403 ? ' (check Jenkins crumb and Job/Build permission)' : ''}`,
           errorCategory: category,
         };
       }

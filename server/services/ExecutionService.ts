@@ -273,8 +273,8 @@ export class ExecutionService {
           const statusSummary = await this.executionRepository.countResultsByStatus(input.executionId);
           // countResultsByStatus 中的 'failed' 包括了 'failed' 和 'error'，所以需要单独查询
           const errorRows = await (this.executionRepository as any).testRunResultRepository.query(
-            'SELECT COUNT(*) as errorCount FROM Auto_TestRunResults WHERE execution_id = ? AND status = ?',
-            [input.executionId, 'error']
+            "SELECT COUNT(*) as errorCount FROM Auto_TestRunResults WHERE execution_id = ? AND (status IS NULL OR status = 'error')",
+            [input.executionId]
           ) as Array<{ errorCount: number }>;
           const errorCount = Number(errorRows[0]?.errorCount ?? 0);
 
@@ -539,12 +539,36 @@ export class ExecutionService {
       return;
     }
     const durationMs = execution.startTime ? Date.now() - new Date(execution.startTime).getTime() : 0;
+    let passedCases: number | undefined;
+    let failedCases: number | undefined;
+    let skippedCases: number | undefined;
+
+    if (execution.executionId != null) {
+      const cleaned = await this.executionRepository.cleanupErrorPlaceholdersForExecution(
+        execution.executionId,
+        'aborted'
+      );
+
+      if (cleaned > 0) {
+        const counts = await this.executionRepository.countResultsByStatus(execution.executionId);
+        passedCases = counts.passed;
+        failedCases = counts.failed;
+        skippedCases = counts.skipped;
+      }
+    }
+
     await this.executionRepository.updateTestRunStatus(runId, 'aborted', {
       durationMs,
       abortReason: reason,
+      passedCases,
+      failedCases,
+      skippedCases,
     });
     await this.executionRepository.syncTaskExecutionFromTestRunStatus(runId, 'aborted', {
       durationMs,
+      passedCases,
+      failedCases,
+      skippedCases,
     });
     logger.info(`markExecutionAborted: execution marked as aborted (runId=${runId}, reason=${reason})`, {
       runId,
@@ -1188,17 +1212,25 @@ export class ExecutionService {
         });
       } else {
         // 构建完成，更新最终状态
+        const hasJenkinsSummary = Boolean(
+          jenkinsData.testResults &&
+          (jenkinsData.testResults.passedCases + jenkinsData.testResults.failedCases + jenkinsData.testResults.skippedCases) > 0
+        );
+        const summaryPassedCases = hasJenkinsSummary ? jenkinsData.testResults?.passedCases : undefined;
+        const summaryFailedCases = hasJenkinsSummary ? jenkinsData.testResults?.failedCases : undefined;
+        const summarySkippedCases = hasJenkinsSummary ? jenkinsData.testResults?.skippedCases : undefined;
+
         await this.executionRepository.updateTestRunStatus(runId, jenkinsData.status, {
           durationMs: jenkinsData.duration,
-          passedCases: jenkinsData.testResults?.passedCases,
-          failedCases: jenkinsData.testResults?.failedCases,
-          skippedCases: jenkinsData.testResults?.skippedCases,
+          passedCases: summaryPassedCases,
+          failedCases: summaryFailedCases,
+          skippedCases: summarySkippedCases,
         });
         await this.executionRepository.syncTaskExecutionFromTestRunStatus(runId, jenkinsData.status, {
           durationMs: jenkinsData.duration,
-          passedCases: jenkinsData.testResults?.passedCases,
-          failedCases: jenkinsData.testResults?.failedCases,
-          skippedCases: jenkinsData.testResults?.skippedCases,
+          passedCases: summaryPassedCases,
+          failedCases: summaryFailedCases,
+          skippedCases: summarySkippedCases,
         });
 
         logger.info(`Execution status updated from Jenkins poll (runId=${runId})`, {
@@ -1211,9 +1243,9 @@ export class ExecutionService {
         // 推送 WebSocket 更新
         webSocketService?.pushExecutionUpdate(runId, {
           status: jenkinsData.status,
-          passedCases: jenkinsData.testResults?.passedCases,
-          failedCases: jenkinsData.testResults?.failedCases,
-          skippedCases: jenkinsData.testResults?.skippedCases,
+          passedCases: summaryPassedCases,
+          failedCases: summaryFailedCases,
+          skippedCases: summarySkippedCases,
           durationMs: jenkinsData.duration,
           source: 'polling'
         });
@@ -1277,6 +1309,37 @@ export class ExecutionService {
             logger.warn('Failed to cleanup error placeholders after Jenkins poll (no results)', {
               runId,
               error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+            }, LOG_CONTEXTS.EXECUTION);
+          }
+        }
+
+        if (['success', 'failed', 'aborted'].includes(jenkinsData.status)) {
+          try {
+            const executionId = await this.executionRepository.findExecutionIdByRunId(runId);
+            if (executionId) {
+              const finalCounts = await this.executionRepository.countResultsByStatus(executionId);
+              const hasPersistedResults = (finalCounts.passed + finalCounts.failed + finalCounts.skipped) > 0;
+
+              if (hasPersistedResults) {
+                const reconciledStatus = finalCounts.failed > 0 ? 'failed' : jenkinsData.status;
+                await this.executionRepository.updateTestRunStatus(runId, reconciledStatus, {
+                  durationMs: jenkinsData.duration,
+                  passedCases: finalCounts.passed,
+                  failedCases: finalCounts.failed,
+                  skippedCases: finalCounts.skipped,
+                });
+                await this.executionRepository.syncTaskExecutionFromTestRunStatus(runId, reconciledStatus, {
+                  durationMs: jenkinsData.duration,
+                  passedCases: finalCounts.passed,
+                  failedCases: finalCounts.failed,
+                  skippedCases: finalCounts.skipped,
+                });
+              }
+            }
+          } catch (reconcileError) {
+            logger.warn('Failed to reconcile result summary after Jenkins poll', {
+              runId,
+              error: reconcileError instanceof Error ? reconcileError.message : String(reconcileError),
             }, LOG_CONTEXTS.EXECUTION);
           }
         }

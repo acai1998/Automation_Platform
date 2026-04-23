@@ -280,7 +280,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       executionId: number;
       caseId: number;
       caseName: string;
-      status: TestRunResultStatusType;
+      status: TestRunResultStatusType | null;
       duration?: number;
       errorMessage?: string;
       errorStack?: string;
@@ -567,6 +567,8 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       // "failed" 筛选同时包含 error 状态（Jenkins 执行异常写入 error，前端统一视为失败）
       if (options.status === "failed") {
         conditions.push("r.status IN ('failed', 'error')");
+      } else if (options.status === "pending") {
+        conditions.push("r.status IS NULL");
       } else {
         conditions.push("r.status = ?");
         params.push(options.status);
@@ -590,7 +592,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         COALESCE(tc.module, "-") as module,
         COALESCE(tc.priority, "P2") as priority,
         COALESCE(tc.type, "api") as type,
-        r.status,
+        COALESCE(r.status, 'pending') AS status,
         r.start_time,
         r.end_time,
         r.duration,
@@ -1274,7 +1276,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         executionId: taskExecution.id,
         caseId: testCase.id,
         caseName: testCase.name,
-        status: TestRunResultStatus.ERROR,
+        status: null,
       }));
 
       await this.createTestResults(testResults);
@@ -1537,7 +1539,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       const errorRows = await this.testRunResultRepository.query(`
         SELECT COUNT(*) AS errorCount
         FROM Auto_TestRunResults
-        WHERE execution_id = ? AND status = 'error'
+        WHERE execution_id = ? AND (status IS NULL OR status = 'error')
       `, [executionId]) as Array<{ errorCount: string }>;
 
       const residualErrorCount = Number(errorRows[0]?.errorCount ?? 0);
@@ -1598,7 +1600,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       const errorRows = await this.testRunResultRepository.query(`
         SELECT COUNT(*) AS errorCount
         FROM Auto_TestRunResults
-        WHERE execution_id = ? AND status = 'error'
+        WHERE execution_id = ? AND (status IS NULL OR status = 'error')
       `, [executionId]) as Array<{ errorCount: string }>;
 
       const residualErrorCount = Number(errorRows[0]?.errorCount ?? 0);
@@ -1883,7 +1885,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       UPDATE Auto_TestRunResults
       SET status = ?,
           end_time = COALESCE(end_time, NOW())
-      WHERE execution_id = ? AND status = 'error'
+      WHERE execution_id = ? AND (status IS NULL OR status = 'error')
     `, [targetStatus, executionId]) as { affectedRows?: number; changedRows?: number };
     return result?.affectedRows ?? 0;
   }
@@ -2265,7 +2267,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     const errorCountQuery = await this.testRunResultRepository.query(`
       SELECT COUNT(*) AS errorCount
       FROM Auto_TestRunResults
-      WHERE execution_id = ? AND status = 'error'
+      WHERE execution_id = ? AND (status IS NULL OR status = 'error')
     `, [executionId]) as Array<{ errorCount: string }>;
     const residualErrorCount = Number(errorCountQuery[0]?.errorCount ?? 0);
 
@@ -2381,7 +2383,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
       // 原查询无 status 过滤，在并发/重试场景下会把已正确更新的记录重置为错误状态
       const preCreatedResults = await this.testRunResultRepository.query(`
         SELECT id FROM Auto_TestRunResults
-        WHERE execution_id = ? AND status = 'error'
+        WHERE execution_id = ? AND (status IS NULL OR status = 'error')
         ORDER BY id ASC
       `, [executionId]) as Array<{ id: number }>;
 
@@ -2530,7 +2532,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         SELECT
           SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) AS passed,
           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-          SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS error_count,
+          SUM(CASE WHEN status IS NULL OR status = 'error' THEN 1 ELSE 0 END) AS error_count,
           SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
           COUNT(*) AS total
         FROM Auto_TestRunResults
@@ -2568,7 +2570,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
             UPDATE Auto_TestRunResults
             SET status = ?,
                 end_time = COALESCE(end_time, NOW())
-            WHERE execution_id = ? AND status = 'error'
+            WHERE execution_id = ? AND (status IS NULL OR status = 'error')
           `, [mappedStatus, executionId]);
 
           // 根据映射结果更新 Auto_TestRun 统计

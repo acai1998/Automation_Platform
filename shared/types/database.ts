@@ -56,7 +56,7 @@ export interface TestResultRecord {
   execution_id: number;
   case_id: number;
   case_name?: string;
-  status: 'passed' | 'failed' | 'skipped' | 'error';
+  status: 'passed' | 'failed' | 'skipped' | 'error' | 'pending';
   result?: string;
   duration?: number;
   error_message?: string;
