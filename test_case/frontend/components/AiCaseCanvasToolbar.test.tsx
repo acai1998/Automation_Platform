@@ -5,18 +5,23 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AiCaseCanvasToolbar } from '@/pages/cases/components/AiCaseCanvasToolbar';
+import { DEFAULT_MIND_THEME_ID } from '@/lib/aiCaseMindMap';
 
-function renderToolbar(overrides: Partial<Parameters<typeof AiCaseCanvasToolbar>[0]> = {}) {
-  const defaultProps = {
+type ToolbarProps = Parameters<typeof AiCaseCanvasToolbar>[0];
+
+function renderToolbar(overrides: Partial<ToolbarProps> = {}) {
+  const defaultProps: ToolbarProps = {
     scalePercent: 100,
     isFullscreen: false,
     showNodeKindTags: true,
+    mindThemeId: DEFAULT_MIND_THEME_ID,
     onZoomIn: vi.fn(),
     onZoomOut: vi.fn(),
     onCenter: vi.fn(),
     onFit: vi.fn(),
     onToggleFullscreen: vi.fn(),
     onToggleNodeTags: vi.fn(),
+    onChangeMindTheme: vi.fn(),
     ...overrides,
   };
   render(<AiCaseCanvasToolbar {...defaultProps} />);

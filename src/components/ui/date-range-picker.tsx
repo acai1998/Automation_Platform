@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { DayPicker, DateRange } from 'react-day-picker';
+import { DayPicker, type DateRange } from 'react-day-picker';
 import { format, addMonths, subMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { CalendarDays, X, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowRight } from 'lucide-react';
@@ -181,7 +181,7 @@ export function DateRangePicker({ value, onChange, placeholder = '选择日期�
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   // 内部临时选择（点击确定才提交）
-  const [tempRange, setTempRange] = useState<DateRange>({});
+  const [tempRange, setTempRange] = useState<DateRange | undefined>(undefined);
 
   // 当前两个面板的月份
   const today = new Date();
@@ -226,22 +226,22 @@ export function DateRangePicker({ value, onChange, placeholder = '选择日期�
   // 确定
   const handleConfirm = () => {
     onChange({
-      startDate: tempRange.from ? format(tempRange.from, 'yyyy-MM-dd') : undefined,
-      endDate: tempRange.to ? format(tempRange.to, 'yyyy-MM-dd') : undefined,
+      startDate: tempRange?.from ? format(tempRange.from, 'yyyy-MM-dd') : undefined,
+      endDate: tempRange?.to ? format(tempRange.to, 'yyyy-MM-dd') : undefined,
     });
     setOpen(false);
   };
 
   // 清空
   const handleClear = () => {
-    setTempRange({});
+    setTempRange(undefined);
   };
 
   // 清空并关闭（触发器上的 × 按钮）
   const handleTriggerClear = (e: React.MouseEvent) => {
     e.stopPropagation();
     onChange({});
-    setTempRange({});
+    setTempRange(undefined);
   };
 
   // 快捷选项
@@ -327,10 +327,10 @@ export function DateRangePicker({ value, onChange, placeholder = '选择日期�
                 {/* 开始日期 */}
                 <div className={cn(
                   'flex-1 flex items-center gap-1 h-6 px-2 rounded border text-[11px] bg-white',
-                  tempRange.from ? 'border-blue-300 text-gray-700' : 'border-gray-200 text-gray-400'
+                  tempRange?.from ? 'border-blue-300 text-gray-700' : 'border-gray-200 text-gray-400'
                 )}>
                   <CalendarDays className="h-3 w-3 text-gray-400 shrink-0" />
-                  <span>{tempRange.from ? format(tempRange.from, 'yyyy-MM-dd') : '开始日期'}</span>
+                  <span>{tempRange?.from ? format(tempRange.from, 'yyyy-MM-dd') : '开始日期'}</span>
                 </div>
 
                 <ArrowRight className="h-3 w-3 text-gray-400 shrink-0" />
@@ -338,10 +338,10 @@ export function DateRangePicker({ value, onChange, placeholder = '选择日期�
                 {/* 结束日期 */}
                 <div className={cn(
                   'flex-1 flex items-center gap-1 h-6 px-2 rounded border text-[11px] bg-white',
-                  tempRange.to ? 'border-blue-300 text-gray-700' : 'border-gray-200 text-gray-400'
+                  tempRange?.to ? 'border-blue-300 text-gray-700' : 'border-gray-200 text-gray-400'
                 )}>
                   <CalendarDays className="h-3 w-3 text-gray-400 shrink-0" />
-                  <span>{tempRange.to ? format(tempRange.to, 'yyyy-MM-dd') : '结束日期'}</span>
+                  <span>{tempRange?.to ? format(tempRange.to, 'yyyy-MM-dd') : '结束日期'}</span>
                 </div>
               </div>
 
@@ -363,13 +363,13 @@ export function DateRangePicker({ value, onChange, placeholder = '选择日期�
                     month={leftMonth}
                     onMonthChange={() => {}}
                     selected={tempRange}
-                    onSelect={(r) => setTempRange(r ?? {})}
+                    onSelect={(r) => setTempRange(r)}
                     locale={zhCN}
                     numberOfMonths={1}
                     showOutsideDays
                     hideNavigation
                     components={{
-                      Chevron: () => null,
+                      Chevron: () => <span className="hidden" />,
                     }}
                   />
                 </div>
@@ -390,13 +390,13 @@ export function DateRangePicker({ value, onChange, placeholder = '选择日期�
                     month={rightMonth}
                     onMonthChange={() => {}}
                     selected={tempRange}
-                    onSelect={(r) => setTempRange(r ?? {})}
+                    onSelect={(r) => setTempRange(r)}
                     locale={zhCN}
                     numberOfMonths={1}
                     showOutsideDays
                     hideNavigation
                     components={{
-                      Chevron: () => null,
+                      Chevron: () => <span className="hidden" />,
                     }}
                   />
                 </div>
