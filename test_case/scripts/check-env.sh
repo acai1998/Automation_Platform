@@ -106,7 +106,7 @@ check_optional_var() {
   fi
 }
 
-check_optional_var "JENKINS_URL" "Jenkins 服务器地址" "http://jenkins.wiac.xyz:8080/"
+check_optional_var "JENKINS_URL" "Jenkins 服务器地址" "http://jenkins.wiac.xyz"
 check_optional_var "JENKINS_USER" "Jenkins 用户名" "root"
 check_optional_var "JENKINS_TOKEN" "Jenkins API Token" "[未配置]"
 check_optional_var "JENKINS_ALLOWED_IPS" "IP 白名单" "[所有 IP]"
@@ -114,7 +114,7 @@ check_optional_var "JENKINS_ALLOWED_IPS" "IP 白名单" "[所有 IP]"
 # 检查网络配置
 print_header "4. 检查网络和连接"
 
-JENKINS_URL=$(grep "^JENKINS_URL=" .env | cut -d= -f2- | tr -d "\"'" 2>/dev/null || echo "http://jenkins.wiac.xyz:8080/")
+JENKINS_URL=$(grep "^JENKINS_URL=" .env | cut -d= -f2- | tr -d "\"'" 2>/dev/null || echo "http://jenkins.wiac.xyz")
 JENKINS_USER=$(grep "^JENKINS_USER=" .env | cut -d= -f2- | tr -d "\"'" 2>/dev/null || echo "root")
 JENKINS_TOKEN=$(grep "^JENKINS_TOKEN=" .env | cut -d= -f2- | tr -d "\"'" 2>/dev/null || echo "")
 

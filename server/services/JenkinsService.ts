@@ -193,17 +193,14 @@ export class JenkinsService {
       || process.env.TEST_CASE_REPO_URL
       || ''
     ).trim();
-    const inferredTestRepoUrl = normalizeGitRemoteUrl(runGitCommand('git config --get remote.origin.url'));
 
     const configuredTestRepoBranch = (
       process.env.JENKINS_TEST_REPO_BRANCH
       || process.env.TEST_CASE_REPO_BRANCH
       || ''
     ).trim();
-    const inferredTestRepoBranch = runGitCommand('git branch --show-current');
-
     this.config = {
-      baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/',
+      baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz',
       username: process.env.JENKINS_USER || 'root',
       token,
       jobs: {
@@ -211,13 +208,12 @@ export class JenkinsService {
         ui: process.env.JENKINS_JOB_UI || 'ui-automation',
         performance: process.env.JENKINS_JOB_PERF || 'performance-automation',
       },
-      testRepoUrl: configuredTestRepoUrl || inferredTestRepoUrl,
-      testRepoBranch: configuredTestRepoBranch || inferredTestRepoBranch || 'master',
+      testRepoUrl: configuredTestRepoUrl || undefined,
+      testRepoBranch: configuredTestRepoBranch || 'master',
     };
 
-    if (!configuredTestRepoUrl && this.config.testRepoUrl) {
-      logger.warn('Jenkins test repo URL not configured; inferred from git remote', {
-        testRepoUrl: this.config.testRepoUrl,
+    if (!this.config.testRepoUrl) {
+      logger.warn('Jenkins test repo URL not configured; REPO_URL will be omitted', {
         testRepoBranch: this.config.testRepoBranch,
       }, 'JENKINS');
     }

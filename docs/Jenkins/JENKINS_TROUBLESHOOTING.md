@@ -89,7 +89,7 @@ curl http://localhost:3000/api/jenkins/health
 #   "success": true,
 #   "data": {
 #     "connected": true,
-#     "jenkinsUrl": "http://jenkins.wiac.xyz:8080/",
+#     "jenkinsUrl": "http://jenkins.wiac.xyz",
 #     "version": "2.419.1",
 #     "details": {
 #       "checks": {
@@ -243,14 +243,14 @@ Jenkins health check failed:
 ```bash
 # 1. 检查 Jenkins 是否在线
 # 在浏览器中打开 Jenkins URL
-# 例如：http://jenkins.wiac.xyz:8080/
+# 例如：http://jenkins.wiac.xyz
 
 # 2. 检查 JENKINS_URL 配置
 grep "JENKINS_URL" .env
-# 应该返回类似：JENKINS_URL=http://jenkins.wiac.xyz:8080/
+# 应该返回类似：JENKINS_URL=http://jenkins.wiac.xyz
 
 # 3. 从应用服务器测试连接
-curl http://jenkins.wiac.xyz:8080/api/json -u root:TOKEN
+curl http://jenkins.wiac.xyzapi/json -u root:TOKEN
 # 如果超时或拒绝，Jenkins 可能未运行或防火墙阻止
 
 # 4. 检查防火墙规则
@@ -279,7 +279,7 @@ grep "JENKINS_USER\|JENKINS_TOKEN" .env
 
 # 2. 手动测试 Jenkins 认证
 curl -u root:116fb13c3cc6cd3e33e688bacc26e18b60 \
-  http://jenkins.wiac.xyz:8080/api/json
+  http://jenkins.wiac.xyzapi/json
 # 应该返回 JSON 响应（200 OK）
 
 # 3. 如果测试失败，重新生成 Token：
@@ -334,7 +334,7 @@ Jenkins connection test failed:
 
 ```bash
 # 1. 检查 Jenkins 响应时间
-time curl http://jenkins.wiac.xyz:8080/api/json -u root:TOKEN
+time curl http://jenkins.wiac.xyzapi/json -u root:TOKEN
 
 # 2. 如果响应很慢（> 10秒）：
 #    - 检查 Jenkins 服务器负载

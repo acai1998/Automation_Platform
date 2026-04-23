@@ -26,7 +26,7 @@ const MIN_CALLBACK_FALLBACK_SYNC_DELAY_MS = 10_000;
 /** Jenkins 健康检查超时（毫秒） */
 const HEALTH_CHECK_TIMEOUT_MS = 5_000;
 /** Jenkins 健康检查默认 URL */
-const DEFAULT_JENKINS_URL = 'http://jenkins.wiac.xyz:8080/';
+const DEFAULT_JENKINS_URL = 'http://jenkins.wiac.xyz';
 /** Jenkins 健康检查默认用户 */
 const DEFAULT_JENKINS_USER = 'root';
 /** 触发前 Jenkins 预检查默认超时（毫秒） */

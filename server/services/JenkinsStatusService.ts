@@ -90,7 +90,7 @@ export class JenkinsStatusService {
     }
 
     this.config = {
-      baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/',
+      baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz',
       username: process.env.JENKINS_USER || 'root',
       token,
       testRepoBranch: (process.env.JENKINS_TEST_REPO_BRANCH || 'master').trim(),

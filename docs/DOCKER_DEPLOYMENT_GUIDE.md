@@ -200,7 +200,7 @@ curl http://localhost:3000/api/health
 ```yaml
 - name: "触发 Jenkins 部署"
   script: |
-    curl -X POST "http://jenkins.wiac.xyz:8080/job/automation-platform-deploy/build" \
+    curl -X POST "http://jenkins.wiac.xyzjob/automation-platform-deploy/build" \
       --user "root:your_jenkins_token"
 ```
 

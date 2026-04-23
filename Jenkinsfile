@@ -57,6 +57,42 @@ pipeline {
 
                     sh "mkdir -p ${reportDir}"
 
+                    def normalizeScriptPath = { String rawPath ->
+                        def normalized = (rawPath ?: '').trim()
+                        if (normalized.contains('::')) {
+                            normalized = normalized.split(/::/, 2)[0].trim()
+                        }
+                        return normalized
+                            .replace('\\', '/')
+                            .replaceFirst('^/+', '')
+                    }
+
+                    def validateScriptPaths = { String rawScriptPaths ->
+                        def requestedPaths = (rawScriptPaths ?: '')
+                            .split(',')
+                            .collect { it.trim() }
+                            .findAll { it }
+
+                        if (requestedPaths.isEmpty()) {
+                            return []
+                        }
+
+                        def missing = []
+                        dir('test-repo') {
+                            requestedPaths.each { rawPath ->
+                                def filePath = normalizeScriptPath(rawPath)
+                                if (!filePath || !fileExists(filePath)) {
+                                    missing << [
+                                        scriptPath: rawPath,
+                                        filePath: filePath ?: '(empty)',
+                                    ]
+                                }
+                            }
+                        }
+
+                        return missing
+                    }
+
                     // 宿主机增量同步：首次 clone，后续 fetch + reset（节省 10~30s）
                     if (repoUrl) {
                         sh """
@@ -101,6 +137,19 @@ pipeline {
                     def repoPreloaded = repoUrl
                         ? sh(script: "test -d '${repoDir}/.git' && echo 'true' || echo 'false'", returnStdout: true).trim()
                         : 'false'
+
+                    def scriptPathValidationFailures = []
+                    if (repoUrl && (params.SCRIPT_PATHS ?: '').trim()) {
+                        scriptPathValidationFailures = validateScriptPaths(params.SCRIPT_PATHS)
+                        if (scriptPathValidationFailures) {
+                            echo "❌ SCRIPT_PATHS 校验失败，以下路径在仓库中不存在："
+                            scriptPathValidationFailures.each { item ->
+                                echo " - ${item.scriptPath} -> ${item.filePath}"
+                            }
+                            echo "请先修正 Auto_TestCase.script_path，再重新触发 Jenkins。"
+                        }
+                    }
+
                     writeFile file: envFile, text: [
                         "RUN_ID=${params.RUN_ID}",
                         "PLATFORM_URL=${env.PLATFORM_API_URL}",
@@ -127,18 +176,23 @@ pipeline {
                     def testExitCode = 1
                     def repoMount = repoUrl ? "-v ${repoDir}:/repo" : ''
                     try {
-                        testExitCode = sh(
-                            script: """
-                                docker run --rm \\
-                                    --shm-size=2g \\
-                                    --user "\$(id -u):\$(id -g)" \\
-                                    --env-file "${envFile}" \\
-                                    -v ${reportDir}:/workspace \\
-                                    ${repoMount} \\
-                                    ${TEST_RUNNER_IMAGE}
-                            """,
-                            returnStatus: true
-                        )
+                        if (scriptPathValidationFailures) {
+                            testExitCode = 2
+                            echo "已跳过 docker run：SCRIPT_PATHS 校验未通过。"
+                        } else {
+                            testExitCode = sh(
+                                script: """
+                                    docker run --rm \\
+                                        --shm-size=2g \\
+                                        --user "\$(id -u):\$(id -g)" \\
+                                        --env-file "${envFile}" \\
+                                        -v ${reportDir}:/workspace \\
+                                        ${repoMount} \\
+                                        ${TEST_RUNNER_IMAGE}
+                                """,
+                                returnStatus: true
+                            )
+                        }
                     } finally {
                         sh "rm -f '${envFile}' || true"  // 清理含凭据信息的临时文件
                     }
