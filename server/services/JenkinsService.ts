@@ -43,6 +43,10 @@ function normalizeGitRemoteUrl(remoteUrl: string | undefined): string | undefine
   return trimmed.replace(/\.git$/, '');
 }
 
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, '');
+}
+
 /**
  * 错误分类：用于区分应重试的错误和不应重试的错误
  */
@@ -210,7 +214,7 @@ export class JenkinsService {
       || ''
     ).trim();
     this.config = {
-      baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz',
+      baseUrl: normalizeBaseUrl(process.env.JENKINS_URL || 'http://jenkins.wiac.xyz'),
       username: process.env.JENKINS_USER || 'root',
       token,
       jobs: {
@@ -263,7 +267,7 @@ export class JenkinsService {
       return { [this.crumb.field]: this.crumb.value };
     }
 
-    const crumbUrl = `${this.config.baseUrl.replace(/\/+$/, '')}/crumbIssuer/api/json`;
+    const crumbUrl = `${this.config.baseUrl}/crumbIssuer/api/json`;
 
     try {
       const response = await fetch(crumbUrl, {
@@ -379,9 +383,10 @@ export class JenkinsService {
           errorCategory: 'none',
         };
       } else {
+        const errorText = await response.text().catch(() => '');
         return {
           success: false,
-          message: `Failed to trigger job: ${response.status} ${response.statusText}${response.status === 403 ? ' (check Jenkins crumb and Job/Build permission)' : ''}`,
+          message: `Failed to trigger job: ${this.formatTriggerFailure(response.status, response.statusText, errorText)}`,
           errorCategory: this.classifyHttpError(response.status),
         };
       }
@@ -576,7 +581,7 @@ export class JenkinsService {
 
         return {
           success: false,
-          message: `Failed to trigger batch job: ${response.status} ${response.statusText}${response.status === 403 ? ' (check Jenkins crumb and Job/Build permission)' : ''}`,
+          message: `Failed to trigger batch job: ${this.formatTriggerFailure(response.status, response.statusText, errorText)}`,
           errorCategory: category,
         };
       }
@@ -778,6 +783,32 @@ export class JenkinsService {
     } catch {
       return aliasedUrl;
     }
+  }
+
+  private formatTriggerFailure(status: number, statusText: string, responseText: string): string {
+    return `${status} ${statusText}${this.getTriggerFailureHint(status, responseText)}`;
+  }
+
+  private getTriggerFailureHint(status: number, responseText: string): string {
+    if (status !== 403) {
+      return '';
+    }
+
+    const normalized = responseText.replace(/\s+/g, ' ').toLowerCase();
+    if (normalized.includes('no valid crumb') || normalized.includes('invalid crumb')) {
+      return ' (Jenkins crumb rejected or missing)';
+    }
+    if (
+      normalized.includes('permission') ||
+      normalized.includes('access denied') ||
+      normalized.includes('is missing the') ||
+      normalized.includes('is missing overall/read') ||
+      normalized.includes('is missing job/build')
+    ) {
+      return ' (Jenkins account lacks required Job/Build permission)';
+    }
+
+    return ' (check Jenkins crumb and Job/Build permission)';
   }
 
   /**
