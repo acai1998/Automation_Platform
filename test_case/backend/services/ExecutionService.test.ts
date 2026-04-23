@@ -170,7 +170,7 @@ describe('ExecutionService', () => {
   });
 
   describe('completeBatchExecution', () => {
-    it('should skip duplicate completion (idempotency check)', async () => {
+    it('should reconcile duplicate completion when callback still carries summary data', async () => {
       const mockExecution = {
         id: 123,
         status: 'success', // Already completed
@@ -187,8 +187,17 @@ describe('ExecutionService', () => {
         durationMs: 1000,
       });
 
-      // Should not call completeBatch since already completed
-      expect(mockRepoInstance.completeBatch).not.toHaveBeenCalled();
+      expect(mockRepoInstance.completeBatch).toHaveBeenCalledWith(
+        123,
+        expect.objectContaining({
+          status: 'success',
+          passedCases: 5,
+          failedCases: 0,
+          skippedCases: 0,
+          durationMs: 1000,
+        }),
+        undefined
+      );
       expect(logger.warn).toHaveBeenCalledWith(
         expect.stringContaining('already completed'),
         expect.any(Object),
@@ -220,8 +229,10 @@ describe('ExecutionService', () => {
           status: 'success',
           passedCases: 5,
           failedCases: 0,
+          skippedCases: 0,
+          durationMs: 1000,
         }),
-        expect.any(Number)
+        undefined
       );
       expect(logger.info).toHaveBeenCalledWith(
         expect.stringContaining('completed successfully'),
@@ -253,6 +264,7 @@ describe('ExecutionService', () => {
       mockRepoInstance.getExecutionDetail.mockResolvedValue(mockExecution);
       // updateTestResult 返回 false 表示没有预创建记录，触发 createTestResult 新增
       mockRepoInstance.updateTestResult.mockResolvedValue(false);
+      mockRepoInstance.countResultsByStatus.mockResolvedValue({ passed: 1, failed: 1, skipped: 0 });
       mockRepoInstance.runInTransaction.mockImplementation(async (callback) => {
         return callback({});
       });
@@ -326,6 +338,42 @@ describe('ExecutionService', () => {
         results: [],
         duration: 100,
       })).rejects.toThrow('Execution not found: 999');
+    });
+  });
+
+  describe('recordTriggerFailureDiagnostics', () => {
+    it('marks target case results as failed and stores trigger diagnostics', async () => {
+      mockRepoInstance.findExecutionIdByRunId.mockResolvedValue(456);
+
+      await service.recordTriggerFailureDiagnostics({
+        runId: 123,
+        caseIds: [11, 12],
+        errorMessage: 'Jenkins trigger failed before build start: Jenkins account lacks Job/Build permission.',
+        errorStack: 'phase=trigger\nkind=permission',
+        logPath: 'http://jenkins.wiac.xyz/job/api-automation/',
+      });
+
+      expect(mockRepoInstance.updateTestResult).toHaveBeenCalledTimes(2);
+      expect(mockRepoInstance.updateTestResult).toHaveBeenNthCalledWith(
+        1,
+        456,
+        11,
+        expect.objectContaining({
+          status: 'failed',
+          duration: 0,
+          errorMessage: 'Jenkins trigger failed before build start: Jenkins account lacks Job/Build permission.',
+          errorStack: 'phase=trigger\nkind=permission',
+          logPath: 'http://jenkins.wiac.xyz/job/api-automation/',
+        })
+      );
+      expect(mockRepoInstance.updateTestResult).toHaveBeenNthCalledWith(
+        2,
+        456,
+        12,
+        expect.objectContaining({
+          status: 'failed',
+        })
+      );
     });
   });
 

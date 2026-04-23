@@ -9,6 +9,7 @@ import { requestValidator } from '../middleware/RequestValidator';
 import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import { optionalAuth } from '../middleware/auth';
 import logger from '../utils/logger';
+import { buildJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDiagnostics';
 import { LOG_CONTEXTS, LOG_EVENTS, createTimer } from '../config/logging';
 import { AppDataSource } from '../config/database';
 import { TestCase } from '../entities/TestCase';
@@ -257,6 +258,32 @@ function warnIfCallbackUrlIsLocal(callbackUrl: string): void {
       error: error instanceof Error ? error.message : String(error),
     }, LOG_CONTEXTS.JENKINS);
   }
+}
+
+async function recordTriggerFailure(
+  runId: number,
+  caseIds: number[],
+  scriptPaths: string[],
+  callbackUrl: string,
+  triggerResult: { message: string; errorCategory: 'none' | 'network' | 'auth_failed' | 'not_found' | 'bad_request' | 'rate_limited' | 'server_error' }
+): Promise<void> {
+  const config = jenkinsService.getConfigInfo();
+  const diagnostic = buildJenkinsTriggerFailureDiagnostic(triggerResult, {
+    baseUrl: config?.baseUrl,
+    jobName: config?.jobs.api,
+    callbackUrl,
+    caseIds,
+    scriptPaths,
+  });
+
+  await executionService.recordTriggerFailureDiagnostics({
+    runId,
+    caseIds,
+    errorMessage: diagnostic.errorMessage,
+    errorStack: diagnostic.errorStack,
+    logPath: diagnostic.logPath,
+  });
+  await executionService.markExecutionAborted(runId, diagnostic.abortReason);
 }
 
 /**
@@ -798,7 +825,7 @@ router.post('/run-case', [
             taskSchedulerService.releaseSlotByRunId(capturedRunId);
             // 将执行状态标记为失败
             try {
-              await executionService.markExecutionAborted(capturedRunId, `Jenkins trigger failed: ${triggerResult.message}`);
+              await recordTriggerFailure(capturedRunId, [caseId], scriptPaths, callbackUrl, triggerResult);
             } catch { /* ignore */ }
             logger.warn('[run-case] Jenkins trigger failed (async), slot released', {
               runId: capturedRunId,
@@ -985,7 +1012,7 @@ router.post('/run-batch', [
           if (!triggerResult.success) {
             taskSchedulerService.releaseSlotByRunId(capturedRunId);
             try {
-              await executionService.markExecutionAborted(capturedRunId, `Jenkins trigger failed: ${triggerResult.message}`);
+              await recordTriggerFailure(capturedRunId, caseIds, scriptPaths, callbackUrl, triggerResult);
             } catch { /* ignore */ }
             logger.warn('[run-batch] Jenkins trigger failed (async), slot released', {
               runId: capturedRunId,

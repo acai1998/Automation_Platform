@@ -544,17 +544,15 @@ export class ExecutionService {
     let skippedCases: number | undefined;
 
     if (execution.executionId != null) {
-      const cleaned = await this.executionRepository.cleanupErrorPlaceholdersForExecution(
+      await this.executionRepository.cleanupErrorPlaceholdersForExecution(
         execution.executionId,
         'aborted'
       );
 
-      if (cleaned > 0) {
-        const counts = await this.executionRepository.countResultsByStatus(execution.executionId);
-        passedCases = counts.passed;
-        failedCases = counts.failed;
-        skippedCases = counts.skipped;
-      }
+      const counts = await this.executionRepository.countResultsByStatus(execution.executionId);
+      passedCases = counts.passed;
+      failedCases = counts.failed;
+      skippedCases = counts.skipped;
     }
 
     await this.executionRepository.updateTestRunStatus(runId, 'aborted', {
@@ -578,6 +576,31 @@ export class ExecutionService {
       status: 'aborted',
       source: 'monitor',
     });
+  }
+
+  async recordTriggerFailureDiagnostics(input: {
+    runId: number;
+    caseIds: number[];
+    errorMessage: string;
+    errorStack?: string;
+    logPath?: string;
+  }): Promise<void> {
+    const executionId = await this.executionRepository.findExecutionIdByRunId(input.runId);
+    if (!executionId || input.caseIds.length === 0) {
+      return;
+    }
+
+    for (const caseId of input.caseIds) {
+      await this.executionRepository.updateTestResult(executionId, caseId, {
+        status: 'failed',
+        duration: 0,
+        errorMessage: input.errorMessage,
+        errorStack: input.errorStack,
+        logPath: input.logPath,
+        startTime: new Date(),
+        endTime: new Date(),
+      });
+    }
   }
 
   /**

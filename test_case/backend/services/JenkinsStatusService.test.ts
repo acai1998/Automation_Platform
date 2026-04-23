@@ -28,13 +28,13 @@ import {
 describe('JenkinsStatusService diagnostics', () => {
   it('extracts actionable diagnostics from a failed Jenkins console log', () => {
     const log = [
-      '❌ SCRIPT_PATHS 校验失败，以下路径在仓库中不存在：',
+      'SCRIPT_PATHS validation failed. Missing paths in repository:',
       '- examples/D/test_console_logging.py::TestConsoleLogging::test_console_logging -> examples/D/test_console_logging.py',
-      '请先修正 Auto_TestCase.script_path，再重新触发 Jenkins。',
+      'Please update Auto_TestCase.script_path before retrying Jenkins.',
       '[00:40:10] docker-run done, exitCode=2',
-      '❌ 测试执行失败，exitCode=2',
+      'Test execution failed, exitCode=2',
       'http_code=403',
-      '⚠️ 失败回调发送异常，status=0:403, body=Forbidden',
+      'Callback delivery failed, status=0:403, body=Forbidden',
       'Jenkins trigger failed: Failed to trigger batch job: 403 Forbidden (check Jenkins crumb and Job/Build permission)',
     ].join('\n');
 

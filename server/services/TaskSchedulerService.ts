@@ -22,6 +22,7 @@ import { executionService } from './ExecutionService';
 import { AppDataSource } from '../config/database';
 import { TestCase } from '../entities/TestCase';
 import { In } from 'typeorm';
+import { buildJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDiagnostics';
 // ──────────────────────────────────────────────────────────
 // 类型定义
 // ──────────────────────────────────────────────────────────
@@ -1479,6 +1480,25 @@ export class TaskSchedulerService {
           errorCategory: triggerResult.errorCategory,
         }, LOG_CONTEXTS.EXECUTION);
         // 抛出带分类信息的错误，供 handleTaskFailure 决定是否重试
+        if (!isJenkinsErrorRetryable(triggerResult.errorCategory)) {
+          const config = jenkinsService.getConfigInfo();
+          const diagnostic = buildJenkinsTriggerFailureDiagnostic(triggerResult, {
+            baseUrl: config?.baseUrl,
+            jobName: config?.jobs.api,
+            callbackUrl,
+            caseIds,
+            scriptPaths,
+          });
+
+          await executionService.recordTriggerFailureDiagnostics({
+            runId: capturedRunId,
+            caseIds,
+            errorMessage: diagnostic.errorMessage,
+            errorStack: diagnostic.errorStack,
+            logPath: diagnostic.logPath,
+          });
+          await executionService.markExecutionAborted(capturedRunId, diagnostic.abortReason);
+        }
         const classifiedErr = new Error(`Jenkins trigger failed: ${triggerResult.message}`);
         (classifiedErr as Error & { _jenkinsErrorCategory: JenkinsErrorCategory })._jenkinsErrorCategory = triggerResult.errorCategory;
         throw classifiedErr;
