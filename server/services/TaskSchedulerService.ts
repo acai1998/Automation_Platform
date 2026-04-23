@@ -252,6 +252,24 @@ export class TaskSchedulerService {
       logger.warn('TaskSchedulerService already started', { event: LOG_EVENTS.SCHEDULER_STARTED }, LOG_CONTEXTS.EXECUTION);
       return;
     }
+    // 等待 TypeORM DataSource 初始化，避免在 DataSource 未就绪时访问 Repository 导致错误
+    try {
+      const MAX_WAIT_MS = 30_000;
+      const POLL_MS = 500;
+      let waited = 0;
+      // AppDataSource may be imported lazily; check its isInitialized flag
+      while (!(AppDataSource && (AppDataSource as any).isInitialized) && waited < MAX_WAIT_MS) {
+        logger.debug('Waiting for AppDataSource to initialize before starting TaskSchedulerService', { waitedMs: waited }, LOG_CONTEXTS.EXECUTION);
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise(resolve => setTimeout(resolve, POLL_MS));
+        waited += POLL_MS;
+      }
+      if (!(AppDataSource && (AppDataSource as any).isInitialized)) {
+        logger.warn('AppDataSource not initialized after wait; proceeding may cause repository errors', { waitedMs: waited }, LOG_CONTEXTS.EXECUTION);
+      }
+    } catch (err) {
+      logger.warn('Error while waiting for AppDataSource initialization', { error: err instanceof Error ? err.message : String(err) }, LOG_CONTEXTS.EXECUTION);
+    }
     this.started = true;
     logger.info('TaskSchedulerService starting...', { event: LOG_EVENTS.SCHEDULER_STARTED }, LOG_CONTEXTS.EXECUTION);
 
@@ -1162,12 +1180,23 @@ export class TaskSchedulerService {
     const now = new Date();
     const windowStart = getPrevCronTime(cronExpression, new Date(now.getTime() + 1000));
     if (!windowStart) {
+      logger.debug(`Unable to compute previous cron window for task ${taskId}`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
+        taskId,
+        cronExpression,
+      }, LOG_CONTEXTS.EXECUTION);
       return { duplicated: false, windowStart: null, reason: 'window_unavailable' };
     }
 
     const windowStartMs = windowStart.getTime();
     const inMemoryWindow = this.recentScheduledWindowByTaskId.get(taskId);
     if (inMemoryWindow === windowStartMs) {
+      logger.info(`Task ${taskId} duplicate detected by memory guard`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
+        taskId,
+        windowStart: new Date(windowStartMs).toISOString(),
+        reason: 'memory_guard',
+      }, LOG_CONTEXTS.EXECUTION);
       return { duplicated: true, windowStart, reason: 'memory_guard' };
     }
 
@@ -1182,8 +1211,18 @@ export class TaskSchedulerService {
 
     if (lastExecution?.created_at) {
       const lastCreatedAt = new Date(lastExecution.created_at).getTime();
-      if (!Number.isNaN(lastCreatedAt) && lastCreatedAt >= windowStartMs) {
+      // 容错：允许少量时钟偏移（默认 5s），避免因节点或 DB 时钟微小差异造成重复触发
+      const toleranceMs = parseInt(process.env.SCHEDULER_DEDUPE_TOLERANCE_MS || '5000', 10);
+      if (!Number.isNaN(lastCreatedAt) && lastCreatedAt >= (windowStartMs - toleranceMs)) {
         this.recentScheduledWindowByTaskId.set(taskId, windowStartMs);
+        logger.info(`Task ${taskId} duplicate detected by DB guard`, {
+          event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
+          taskId,
+          windowStart: new Date(windowStartMs).toISOString(),
+          lastExecutionCreatedAt: new Date(lastCreatedAt).toISOString(),
+          toleranceMs,
+          reason: 'db_guard',
+        }, LOG_CONTEXTS.EXECUTION);
         return { duplicated: true, windowStart, reason: 'db_guard' };
       }
     }
@@ -1285,6 +1324,30 @@ export class TaskSchedulerService {
       lastRunAt: new Date(),
     };
     this.taskCache.set(taskId, updatedCache);
+
+    // 如果 Jenkins 未配置（dev 本地运行常见情况），则跳过真正触发并记录审计，避免创建会立即失败的运行记录
+    try {
+      if (!jenkinsService.isEnabled()) {
+        logger.warn(`Jenkins integration not configured, skipping run creation for task ${taskId}`, {
+          event: LOG_EVENTS.SCHEDULER_TASK_SKIPPED,
+          taskId,
+          triggerReason,
+          traceId,
+        }, LOG_CONTEXTS.EXECUTION);
+
+        await this.recordAuditLog(taskId, 'skipped', SCHEDULER_USER_ID, {
+          reason: 'jenkins_not_configured',
+          triggerReason,
+          traceId,
+          caseCount: caseIds.length,
+        });
+
+        return;
+      }
+    } catch (err) {
+      // 若 jenkinsService 未暴露 isEnabled 或检查失败，不阻塞执行，继续原流程
+      logger.debug('jenkinsService.isEnabled check failed or unavailable, proceeding with trigger', { error: err instanceof Error ? err.message : String(err) }, LOG_CONTEXTS.EXECUTION);
+    }
 
     const callbackBase = ((process.env.API_CALLBACK_URL ?? '').trim() || 'http://localhost:3000').replace(/\/+$/, '');
     const callbackUrl = callbackBase.endsWith('/api/jenkins/callback')

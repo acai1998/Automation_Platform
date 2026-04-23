@@ -187,6 +187,13 @@ export class JenkinsService {
   }
 
   /**
+   * Public helper to check whether Jenkins integration is enabled/configured
+   */
+  public isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /**
    * 获取基础认证头
    */
   private getAuthHeader(): string {
