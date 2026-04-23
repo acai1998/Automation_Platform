@@ -10,7 +10,6 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "outDir": "./dist/server",
-    "baseUrl": ".",
     "paths": {
       "@shared/*": [
         "./shared/*"
@@ -25,6 +24,11 @@
     "types": [
       "node"
     ]
+  },
+    "types": [
+      "node"
+    ],
+
   },
   "include": [
     "server",

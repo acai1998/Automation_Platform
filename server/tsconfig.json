@@ -11,10 +11,10 @@
   "compilerOptions": {
     "skipLibCheck": true,
     "rootDir": ".",
+    "forceConsistentCasingInFileNames": true,
     "typeRoots": [
       "./node_modules/@types",
       "../node_modules/@types"
     ],
-    "types": ["node"]
-  }
+    "
 }

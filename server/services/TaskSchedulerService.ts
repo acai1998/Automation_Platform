@@ -1416,6 +1416,7 @@ export class TaskSchedulerService {
             traceId,
           }, LOG_CONTEXTS.EXECUTION);
           await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+          this.scheduleJenkinsFallbackSync(capturedRunId, taskId, traceId);
         },
         async (reason: 'cancelled' | 'timeout') => {
           // [dev-11] Jenkins 队列取消/超时，主动将平台执行状态更新为 aborted 并释放槽位
@@ -1463,6 +1464,55 @@ export class TaskSchedulerService {
   /**
    * [P1] 注册运行中槽位，并设置超时自动释放
    */
+  private scheduleJenkinsFallbackSync(runId: number, taskId: number, traceId: string): void {
+    const delayMs = parseInt(process.env.JENKINS_CALLBACK_FALLBACK_DELAY_MS || '30000', 10);
+    const intervalMs = parseInt(process.env.JENKINS_CALLBACK_FALLBACK_INTERVAL_MS || '30000', 10);
+    const maxAttempts = parseInt(process.env.JENKINS_CALLBACK_FALLBACK_ATTEMPTS || '10', 10);
+    const terminalStatuses = new Set(['success', 'failed', 'aborted']);
+
+    const syncOnce = async (attempt: number): Promise<void> => {
+      try {
+        const result = await executionService.syncExecutionStatusFromJenkins(runId);
+        logger.info('[scheduler-fallback] Jenkins status sync attempted', {
+          runId,
+          taskId,
+          traceId,
+          attempt,
+          maxAttempts,
+          success: result.success,
+          updated: result.updated,
+          jenkinsStatus: result.jenkinsStatus,
+          message: result.message,
+        }, LOG_CONTEXTS.EXECUTION);
+
+        if (result.jenkinsStatus && terminalStatuses.has(result.jenkinsStatus)) {
+          this.releaseSlotByRunId(runId, 'db_reconcile');
+          return;
+        }
+      } catch (error) {
+        logger.warn('[scheduler-fallback] Jenkins status sync failed', {
+          runId,
+          taskId,
+          traceId,
+          attempt,
+          error: error instanceof Error ? error.message : String(error),
+        }, LOG_CONTEXTS.EXECUTION);
+      }
+
+      if (attempt < maxAttempts) {
+        const retryTimer = setTimeout(() => {
+          void syncOnce(attempt + 1);
+        }, intervalMs);
+        if (retryTimer.unref) retryTimer.unref();
+      }
+    };
+
+    const timer = setTimeout(() => {
+      void syncOnce(1);
+    }, delayMs);
+    if (timer.unref) timer.unref();
+  }
+
   private registerRunningSlot(taskId: number, runId: number): void {
     // 超时自动释放槽位（防止 Jenkins 挂死或回调永远不来）
     const timeoutTimer = setTimeout(() => {

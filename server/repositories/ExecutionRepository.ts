@@ -165,6 +165,7 @@ export interface TestRunBasicInfo {
  */
 export interface TestRunStatusInfo {
   id: number;
+  executionId: number | null;
   status: string;
   jenkinsJob: string | null;
   jenkinsBuildId: string | null;
@@ -1789,8 +1790,61 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
   async getTestRunStatus(runId: number): Promise<TestRunStatusInfo | null> {
     return this.testRunRepository.findOne({
       where: { id: runId },
-      select: ['id', 'status', 'jenkinsJob', 'jenkinsBuildId', 'jenkinsUrl', 'startTime'],
+      select: ['id', 'executionId', 'status', 'jenkinsJob', 'jenkinsBuildId', 'jenkinsUrl', 'startTime'],
     });
+  }
+
+  async syncTaskExecutionFromTestRunStatus(
+    runId: number,
+    status: string,
+    options?: {
+      durationMs?: number;
+      passedCases?: number;
+      failedCases?: number;
+      skippedCases?: number;
+    }
+  ): Promise<void> {
+    const testRun = await this.testRunRepository.findOne({
+      where: { id: runId },
+      select: ['id', 'executionId', 'passedCases', 'failedCases', 'skippedCases', 'durationMs'],
+    });
+
+    if (!testRun?.executionId) {
+      logger.warn('syncTaskExecutionFromTestRunStatus: no executionId bound to run', {
+        runId,
+      }, LOG_CONTEXTS.REPOSITORY);
+      return;
+    }
+
+    const currentTaskExecution = await this.repository.findOne({
+      where: { id: testRun.executionId },
+      select: ['id', 'startTime', 'endTime'],
+    });
+
+    const normalizedStatus: 'pending' | 'running' | 'success' | 'failed' | 'cancelled' =
+      status === 'aborted' || status === 'cancelled' ? 'cancelled'
+        : status === 'success' ? 'success'
+        : status === 'running' ? 'running'
+        : status === 'pending' ? 'pending'
+        : 'failed';
+
+    const updateData: QueryDeepPartialEntity<TaskExecution> = {
+      status: normalizedStatus,
+      passedCases: options?.passedCases ?? testRun.passedCases ?? 0,
+      failedCases: options?.failedCases ?? testRun.failedCases ?? 0,
+      skippedCases: options?.skippedCases ?? testRun.skippedCases ?? 0,
+      duration: Math.round((options?.durationMs ?? testRun.durationMs ?? 0) / 1000),
+    };
+
+    if (normalizedStatus === 'running') {
+      updateData.startTime = currentTaskExecution?.startTime ?? new Date();
+      updateData.endTime = null as unknown as Date;
+    } else if (['success', 'failed', 'cancelled'].includes(normalizedStatus)) {
+      updateData.startTime = currentTaskExecution?.startTime ?? new Date();
+      updateData.endTime = currentTaskExecution?.endTime ?? new Date();
+    }
+
+    await this.repository.update(testRun.executionId, updateData);
   }
 
   /**

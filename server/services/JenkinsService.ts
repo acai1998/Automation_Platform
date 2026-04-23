@@ -14,6 +14,35 @@ export interface JenkinsConfig {
   testRepoBranch: string;
 }
 
+function runGitCommand(command: string): string | undefined {
+  try {
+    const { execSync } = require('child_process') as typeof import('child_process');
+    const output = execSync(command, {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return output || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeGitRemoteUrl(remoteUrl: string | undefined): string | undefined {
+  if (!remoteUrl) return undefined;
+
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) return undefined;
+
+  const sshMatch = trimmed.match(/^git@([^:]+):(.+)$/);
+  if (sshMatch) {
+    const path = sshMatch[2].replace(/\.git$/, '');
+    return `https://${sshMatch[1]}/${path}`;
+  }
+
+  return trimmed.replace(/\.git$/, '');
+}
+
 /**
  * 错误分类：用于区分应重试的错误和不应重试的错误
  */
@@ -164,6 +193,14 @@ export class JenkinsService {
       || process.env.TEST_CASE_REPO_URL
       || ''
     ).trim();
+    const inferredTestRepoUrl = normalizeGitRemoteUrl(runGitCommand('git config --get remote.origin.url'));
+
+    const configuredTestRepoBranch = (
+      process.env.JENKINS_TEST_REPO_BRANCH
+      || process.env.TEST_CASE_REPO_BRANCH
+      || ''
+    ).trim();
+    const inferredTestRepoBranch = runGitCommand('git branch --show-current');
 
     this.config = {
       baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/',
@@ -174,9 +211,16 @@ export class JenkinsService {
         ui: process.env.JENKINS_JOB_UI || 'ui-automation',
         performance: process.env.JENKINS_JOB_PERF || 'performance-automation',
       },
-      testRepoUrl: configuredTestRepoUrl || undefined,
-      testRepoBranch: (process.env.JENKINS_TEST_REPO_BRANCH || 'master').trim(),
+      testRepoUrl: configuredTestRepoUrl || inferredTestRepoUrl,
+      testRepoBranch: configuredTestRepoBranch || inferredTestRepoBranch || 'master',
     };
+
+    if (!configuredTestRepoUrl && this.config.testRepoUrl) {
+      logger.warn('Jenkins test repo URL not configured; inferred from git remote', {
+        testRepoUrl: this.config.testRepoUrl,
+        testRepoBranch: this.config.testRepoBranch,
+      }, 'JENKINS');
+    }
 
     logger.info('JenkinsService initialized', {
       baseUrl: this.config.baseUrl,

@@ -538,9 +538,13 @@ export class ExecutionService {
       logger.debug(`markExecutionAborted: already in final status (runId=${runId}, status=${execution.status}), skipping`, {}, LOG_CONTEXTS.EXECUTION);
       return;
     }
+    const durationMs = execution.startTime ? Date.now() - new Date(execution.startTime).getTime() : 0;
     await this.executionRepository.updateTestRunStatus(runId, 'aborted', {
-      durationMs: execution.startTime ? Date.now() - new Date(execution.startTime).getTime() : 0,
+      durationMs,
       abortReason: reason,
+    });
+    await this.executionRepository.syncTaskExecutionFromTestRunStatus(runId, 'aborted', {
+      durationMs,
     });
     logger.info(`markExecutionAborted: execution marked as aborted (runId=${runId}, reason=${reason})`, {
       runId,
@@ -1055,22 +1059,16 @@ export class ExecutionService {
       }
 
       // 6. 检查状态是否需要更新
-      if (execution.status === jenkinsStatusMapped) {
-        return {
-          success: true,
-          updated: false,
-          message: 'Status already up to date',
-          currentStatus: execution.status,
-          jenkinsStatus: jenkinsStatusMapped
-        };
-      }
+      const statusAlreadySynced = execution.status === jenkinsStatusMapped;
 
       // 6. 先快速更新主状态，避免详细报告解析阻塞状态收敛
-      const updated = await this.updateExecutionStatusFromJenkins(runId, {
-        status: jenkinsStatusMapped,
-        building: buildStatus.building,
-        duration: buildStatus.duration,
-      });
+      const updated = statusAlreadySynced
+        ? false
+        : await this.updateExecutionStatusFromJenkins(runId, {
+            status: jenkinsStatusMapped,
+            building: buildStatus.building,
+            duration: buildStatus.duration,
+          });
 
       // 7. Jenkins 构建已结束时，再补充详细测试结果（失败不影响主状态）
       if (!buildStatus.building && buildStatus.result) {
@@ -1101,7 +1099,7 @@ export class ExecutionService {
       return {
         success: true,
         updated,
-        message: updated ? 'Status updated successfully' : 'No update needed',
+        message: updated ? 'Status updated successfully' : 'Status already up to date; details synchronized when available',
         currentStatus: execution.status,
         jenkinsStatus: jenkinsStatusMapped
       };
@@ -1177,6 +1175,7 @@ export class ExecutionService {
       if (jenkinsData.building) {
         // 如果还在构建中，只更新为 running 状态
         await this.executionRepository.updateTestRunStatus(runId, 'running');
+        await this.executionRepository.syncTaskExecutionFromTestRunStatus(runId, 'running');
         logger.debug(`Execution status refreshed from Jenkins (runId=${runId})`, {
           status: 'running',
           updateSource: 'jenkins_poll',
@@ -1190,6 +1189,12 @@ export class ExecutionService {
       } else {
         // 构建完成，更新最终状态
         await this.executionRepository.updateTestRunStatus(runId, jenkinsData.status, {
+          durationMs: jenkinsData.duration,
+          passedCases: jenkinsData.testResults?.passedCases,
+          failedCases: jenkinsData.testResults?.failedCases,
+          skippedCases: jenkinsData.testResults?.skippedCases,
+        });
+        await this.executionRepository.syncTaskExecutionFromTestRunStatus(runId, jenkinsData.status, {
           durationMs: jenkinsData.duration,
           passedCases: jenkinsData.testResults?.passedCases,
           failedCases: jenkinsData.testResults?.failedCases,
@@ -1248,6 +1253,11 @@ export class ExecutionService {
                 const finalCounts = await this.executionRepository.countResultsByStatus(executionId);
                 const reconciledStatus = finalCounts.failed > 0 ? 'failed' : effectiveCleanupStatus;
                 await this.executionRepository.updateTestRunStatus(runId, reconciledStatus, {
+                  passedCases: finalCounts.passed,
+                  failedCases: finalCounts.failed,
+                  skippedCases: finalCounts.skipped,
+                });
+                await this.executionRepository.syncTaskExecutionFromTestRunStatus(runId, reconciledStatus, {
                   passedCases: finalCounts.passed,
                   failedCases: finalCounts.failed,
                   skippedCases: finalCounts.skipped,
