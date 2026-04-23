@@ -9,6 +9,7 @@
     "dist"
   ],
   "compilerOptions": {
+    "moduleResolution": "node16",
     "skipLibCheck": true,
     "rootDir": ".",
     "forceConsistentCasingInFileNames": true,
@@ -16,5 +17,6 @@
       "./node_modules/@types",
       "../node_modules/@types"
     ],
-    "
+    "types": ["node"]
+  }
 }

@@ -25,11 +25,6 @@
       "node"
     ]
   },
-    "types": [
-      "node"
-    ],
-
-  },
   "include": [
     "server",
     "shared"

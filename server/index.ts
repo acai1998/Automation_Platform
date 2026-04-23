@@ -152,7 +152,7 @@ app.use('/api/ai-cases', aiCasesRoutes);
 
 // 【紧急修复】修复孤立的 TestRun 记录
 // 安全修复：添加 authenticate 和 requireAdmin 中间件，确保只有管理员才能执行数据修复操作
-app.post('/api/fix-orphaned-runs', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/fix-orphaned-runs', authenticate, requireAdmin, async (_req, res) => {
   try {
     if (!executionRepository) {
       return res.status(503).json({

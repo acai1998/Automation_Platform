@@ -6,15 +6,15 @@
     "build": "vite build",
     "preview": "vite preview",
     "server:build": "tsc -p tsconfig.server.json && tsc-alias -p tsconfig.server.json",
-    "server": "ts-node --project tsconfig.server.json -r tsconfig-paths/register server/index.ts",
+    "server": "node scripts/run-ts-node.cjs server/index.ts",
     "start": "concurrently \"npm run dev\" \"npm run server\"",
     "test": "vitest",
     "test:frontend": "vitest test_case/frontend",
     "test:backend": "vitest test_case/backend",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
-    "cleanup:results": "ts-node --project tsconfig.server.json -r tsconfig-paths/register scripts/cleanup-invalid-results.ts",
-    "import:knowledge-base": "ts-node --project tsconfig.server.json -r tsconfig-paths/register scripts/import-knowledge-base.ts"
+    "cleanup:results": "node scripts/run-ts-node.cjs scripts/cleanup-invalid-results.ts",
+    "import:knowledge-base": "node scripts/run-ts-node.cjs scripts/import-knowledge-base.ts"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.3",
