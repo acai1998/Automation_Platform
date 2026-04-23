@@ -1407,7 +1407,7 @@ export class TaskSchedulerService {
         callbackUrl,
         async (buildNumber: number, buildUrl: string) => {
           const buildId = String(buildNumber);
-          logger.info(`[dev-10] Task ${taskId} build resolved via queueId poll`, {
+          logger.debug(`[dev-10] Task ${taskId} build resolved via queueId poll`, {
             event: LOG_EVENTS.SCHEDULER_JENKINS_BUILD_RESOLVED,
             taskId,
             runId: capturedRunId,

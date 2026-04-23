@@ -300,7 +300,7 @@ export class JenkinsService {
         return {
           success: true,
           queueId,
-          buildUrl: `${this.config.baseUrl}/job/${jobName}/`,
+          buildUrl: this.normalizeJenkinsUrl(`${this.config.baseUrl}/job/${jobName}/`),
           message: 'Job triggered successfully',
           errorCategory: 'none',
         };
@@ -686,8 +686,22 @@ export class JenkinsService {
     if (!url) return url;
 
     // 替换错误的域名为正确的域名
-    return url.replace(/http:\/\/www\.wiac\.xyz:8080/g, 'http://jenkins.wiac.xyz:8080')
-              .replace(/https:\/\/www\.wiac\.xyz/g, 'https://jenkins.wiac.xyz');
+    const aliasedUrl = url
+      .replace(/^(https?:\/\/)www\.wiac\.xyz(?::8080)?/i, '$1jenkins.wiac.xyz')
+      .replace(/^(https?:\/\/jenkins\.wiac\.xyz):8080(?=\/|$)/i, '$1');
+
+    try {
+      const parsedUrl = new URL(aliasedUrl);
+      if (parsedUrl.hostname === 'www.wiac.xyz') {
+        parsedUrl.hostname = 'jenkins.wiac.xyz';
+      }
+      if (parsedUrl.hostname === 'jenkins.wiac.xyz' && parsedUrl.port === '8080') {
+        parsedUrl.port = '';
+      }
+      return parsedUrl.toString();
+    } catch {
+      return aliasedUrl;
+    }
   }
 
   /**
