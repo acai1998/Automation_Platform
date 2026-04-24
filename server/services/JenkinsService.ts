@@ -1,5 +1,7 @@
 import { isMisconfiguredTestRepoUrl, normalizeGitRemoteUrl } from '../utils/jenkinsRepoValidation';
 import { normalizeConfiguredJenkinsBaseUrl } from '../utils/jenkinsUrl';
+import logger from '../utils/logger';
+import { getSecretOrEnv } from '../utils/secrets';
 
 /**
  * Jenkins 配置接口
@@ -84,6 +86,11 @@ interface JenkinsCrumb {
   field: string;
   value: string;
   fetchedAt: number;
+}
+
+interface JenkinsTriggerHttpResult {
+  response: Response;
+  errorText?: string;
 }
 
 /**
@@ -182,9 +189,6 @@ export class JenkinsService {
 
   constructor() {
     // 从 Docker Secrets 或环境变量加载 Jenkins 配置
-    const { getSecretOrEnv } = require('../utils/secrets');
-    const logger = require('../utils/logger').default;
-
     const token = getSecretOrEnv('JENKINS_TOKEN');
     if (!token) {
       logger.warn('JENKINS_TOKEN not set, Jenkins integration disabled', {}, 'JENKINS');
@@ -266,8 +270,6 @@ export class JenkinsService {
     }
 
     const message = `Invalid Jenkins test repo configuration: REPO_URL points to the automation platform repository (${repoUrl}) instead of the test repository`;
-    const logger = require('../utils/logger').default;
-
     logger.error(message, {
       ...context,
       repoUrl,
@@ -292,7 +294,6 @@ export class JenkinsService {
    * API tokens often bypass this on some Jenkins versions, but not all.
    */
   private async getCrumbHeader(): Promise<Record<string, string>> {
-    const logger = require('../utils/logger').default;
     const now = Date.now();
 
     if (this.crumb && now - this.crumb.fetchedAt < this.crumbTtlMs) {
@@ -349,6 +350,64 @@ export class JenkinsService {
     }
   }
 
+  private getTriggerRequestHeaders(crumbHeader: Record<string, string> = {}): Record<string, string> {
+    return {
+      'Authorization': this.getAuthHeader(),
+      'Content-Type': 'application/x-www-form-urlencoded',
+      ...crumbHeader,
+    };
+  }
+
+  private isCrumbRejected(status: number, responseText: string): boolean {
+    if (status !== 400 && status !== 403) {
+      return false;
+    }
+
+    const normalized = responseText.replace(/\s+/g, ' ').toLowerCase();
+    return (
+      normalized.includes('no valid crumb') ||
+      normalized.includes('invalid crumb') ||
+      normalized.includes('crumb rejected') ||
+      normalized.includes('crumb is missing')
+    );
+  }
+
+  private async postTriggerRequestWithCrumbFallback(
+    url: string,
+    logContext: Record<string, unknown>
+  ): Promise<JenkinsTriggerHttpResult> {
+    const crumbHeader = await this.getCrumbHeader();
+
+    const performRequest = (headers: Record<string, string>) => fetch(url, {
+      method: 'POST',
+      headers,
+    });
+
+    const initialResponse = await performRequest(this.getTriggerRequestHeaders(crumbHeader));
+    if (initialResponse.ok || Object.keys(crumbHeader).length === 0) {
+      return { response: initialResponse };
+    }
+
+    const initialErrorText = await initialResponse.text().catch(() => 'Unable to read response');
+    if (!this.isCrumbRejected(initialResponse.status, initialErrorText)) {
+      return {
+        response: initialResponse,
+        errorText: initialErrorText,
+      };
+    }
+
+    logger.warn('Jenkins rejected crumb-protected trigger request, retrying without crumb', {
+      ...logContext,
+      status: initialResponse.status,
+      statusText: initialResponse.statusText,
+      errorText: initialErrorText.substring(0, 500),
+    }, 'JENKINS');
+
+    this.crumb = null;
+    const retryResponse = await performRequest(this.getTriggerRequestHeaders());
+    return { response: retryResponse };
+  }
+
   /**
    * 根据用例类型获取对应的 Job 名称
    */
@@ -365,8 +424,6 @@ export class JenkinsService {
     scriptPath: string,
     callbackUrl?: string
   ): Promise<JenkinsTriggerResult> {
-    const logger = require('../utils/logger').default;
-
     if (!this.enabled) {
       return {
         success: false,
@@ -410,15 +467,10 @@ export class JenkinsService {
       }, 'JENKINS');
 
       // 调用 Jenkins API
-      const crumbHeader = await this.getCrumbHeader();
-      const response = await fetch(`${triggerUrl}?${params.toString()}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': this.getAuthHeader(),
-          'Content-Type': 'application/x-www-form-urlencoded',
-          ...crumbHeader,
-        },
-      });
+      const { response, errorText } = await this.postTriggerRequestWithCrumbFallback(
+        `${triggerUrl}?${params.toString()}`,
+        { caseId, caseType: type, jobName }
+      );
 
       if (response.status === 201 || response.status === 200) {
         // 从 Location header 获取 queue ID
@@ -433,10 +485,10 @@ export class JenkinsService {
           errorCategory: 'none',
         };
       } else {
-        const errorText = await response.text().catch(() => '');
+        const finalErrorText = errorText ?? await response.text().catch(() => '');
         return {
           success: false,
-          message: `Failed to trigger job: ${this.formatTriggerFailure(response.status, response.statusText, errorText)}`,
+          message: `Failed to trigger job: ${this.formatTriggerFailure(response.status, response.statusText, finalErrorText)}`,
           errorCategory: this.classifyHttpError(response.status),
         };
       }
@@ -468,8 +520,6 @@ export class JenkinsService {
     onBuildResolved?: BuildResolvedCallback,
     onBuildCancelled?: BuildCancelledCallback
   ): Promise<JenkinsTriggerResult> {
-    const logger = require('../utils/logger').default;
-
     if (!this.enabled) {
       logger.warn('Jenkins integration not enabled', {
         runId,
@@ -527,15 +577,10 @@ export class JenkinsService {
         method: 'POST',
       }, 'JENKINS');
       
-      const crumbHeader = await this.getCrumbHeader();
-      const response = await fetch(fullUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': this.getAuthHeader(),
-          'Content-Type': 'application/x-www-form-urlencoded',
-          ...crumbHeader,
-        },
-      });
+      const { response, errorText } = await this.postTriggerRequestWithCrumbFallback(
+        fullUrl,
+        { runId, caseCount: caseIds.length, jobName }
+      );
 
       logger.debug('Jenkins API response received', {
         runId,
@@ -628,12 +673,12 @@ export class JenkinsService {
           errorCategory: 'none',
         };
       } else {
-        const errorText = await response.text().catch(() => 'Unable to read response');
+        const finalErrorText = errorText ?? await response.text().catch(() => 'Unable to read response');
         logger.warn('Jenkins API request failed', {
           runId,
           status: response.status,
           statusText: response.statusText,
-          errorText: errorText.substring(0, 500), // Limit error text length
+          errorText: finalErrorText.substring(0, 500), // Limit error text length
         }, 'JENKINS');
 
         // 根据 HTTP 状态码分类错误
@@ -641,7 +686,7 @@ export class JenkinsService {
 
         return {
           success: false,
-          message: `Failed to trigger batch job: ${this.formatTriggerFailure(response.status, response.statusText, errorText)}`,
+          message: `Failed to trigger batch job: ${this.formatTriggerFailure(response.status, response.statusText, finalErrorText)}`,
           errorCategory: category,
         };
       }
@@ -695,7 +740,6 @@ export class JenkinsService {
     maxWaitMs = parseInt(process.env.JENKINS_QUEUE_POLL_TIMEOUT_MS || String(5 * 60_000), 10), // 默认等待 5 分钟（可通过环境变量调整）
     pollIntervalMs = 3_000
   ): Promise<{ buildNumber: number; buildUrl: string; queueWaitMs: number } | null | { cancelled: true } | { timeout: true }> {
-    const logger = require('../utils/logger').default;
 
     // 规范化 Jenkins base URL（确保没有尾部斜杠）
     const base = this.config.baseUrl.replace(/\/+$/, '');
@@ -850,7 +894,7 @@ export class JenkinsService {
   }
 
   private getTriggerFailureHint(status: number, responseText: string): string {
-    if (status !== 403) {
+    if (status !== 403 && status !== 400) {
       return '';
     }
 
