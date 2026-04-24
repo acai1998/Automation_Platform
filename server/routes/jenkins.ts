@@ -10,6 +10,7 @@ import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import { optionalAuth } from '../middleware/auth';
 import logger from '../utils/logger';
 import { buildJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDiagnostics';
+import { validateScriptPathsInTestRepo } from '../utils/testRepoScriptPathValidator';
 import { LOG_CONTEXTS, LOG_EVENTS, createTimer } from '../config/logging';
 import { AppDataSource } from '../config/database';
 import { TestCase } from '../entities/TestCase';
@@ -422,6 +423,61 @@ async function resolveScriptPaths(caseIds: number[]): Promise<{ scriptPaths: str
   };
 }
 
+async function preflightExecutableScriptPaths(caseIds: number[]): Promise<
+  | { ok: true; scriptPaths: string[] }
+  | {
+      ok: false;
+      statusCode: number;
+      message: string;
+      details: {
+        reason: 'missing_script_path' | 'script_path_not_found_in_repo';
+        caseIds?: number[];
+        missingPaths?: string[];
+      };
+    }
+> {
+  const { scriptPaths, missingCaseIds } = await resolveScriptPaths(caseIds);
+
+  if (missingCaseIds.length > 0) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: missingCaseIds.length === 1
+        ? `测试用例 ${missingCaseIds[0]} 未配置 script_path，请先同步或修正后再执行`
+        : `存在未配置 script_path 的测试用例，请先同步或修正后再执行：${missingCaseIds.join(', ')}`,
+      details: {
+        reason: 'missing_script_path',
+        caseIds: missingCaseIds,
+      },
+    };
+  }
+
+  const testRepoConfig = jenkinsService.getTestRepoConfig();
+  const missingPaths = testRepoConfig
+    ? (await validateScriptPathsInTestRepo({
+        repoUrl: testRepoConfig.repoUrl,
+        branch: testRepoConfig.branch,
+        scriptPaths,
+      })).missingPaths
+    : [];
+
+  if (missingPaths.length > 0) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: missingPaths.length === 1
+        ? `测试仓库中不存在脚本路径：${missingPaths[0]}`
+        : `测试仓库中存在无效脚本路径，请先同步或修正后再执行：${missingPaths.join(', ')}`,
+      details: {
+        reason: 'script_path_not_found_in_repo',
+        missingPaths,
+      },
+    };
+  }
+
+  return { ok: true, scriptPaths };
+}
+
 /**
  * 净化错误消息，移除敏感信息以防止信息泄露
  * @param error 原始错误对象
@@ -747,6 +803,17 @@ router.post('/run-case', [
     }
 
     // ── Step 1: 立即创建执行记录（状态 pending）──────────────
+    const scriptPathPreflight = await preflightExecutableScriptPaths([caseId]);
+    if (!scriptPathPreflight.ok) {
+      return res.status(scriptPathPreflight.statusCode).json({
+        success: false,
+        message: scriptPathPreflight.message,
+        details: scriptPathPreflight.details,
+      });
+    }
+
+    const preflightScriptPaths = scriptPathPreflight.scriptPaths;
+
     const execution = await executionService.triggerTestExecution({
       caseIds: [caseId],
       projectId,
@@ -785,21 +852,13 @@ router.post('/run-case', [
 
         try {
           // 解析脚本路径
-          const { scriptPaths, missingCaseIds } = await resolveScriptPaths([caseId]);
           const callbackUrl = buildCallbackUrl();
-
-          if (missingCaseIds.length > 0) {
-            logger.warn('Some cases have no scriptPath configured', {
-              runId: capturedRunId,
-              missingCaseIds,
-            }, LOG_CONTEXTS.JENKINS);
-          }
 
           // 触发 Jenkins
           const triggerResult = await jenkinsService.triggerBatchJob(
             capturedRunId,
             [caseId],
-            scriptPaths,
+            preflightScriptPaths,
             callbackUrl,
             async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
               const buildId = String(buildNumber);
@@ -834,7 +893,7 @@ router.post('/run-case', [
             taskSchedulerService.releaseSlotByRunId(capturedRunId);
             // 将执行状态标记为失败
             try {
-              await recordTriggerFailure(capturedRunId, [caseId], scriptPaths, callbackUrl, triggerResult);
+              await recordTriggerFailure(capturedRunId, [caseId], preflightScriptPaths, callbackUrl, triggerResult);
             } catch { /* ignore */ }
             logger.warn('[run-case] Jenkins trigger failed (async), slot released', {
               runId: capturedRunId,
@@ -934,6 +993,17 @@ router.post('/run-batch', [
     }
 
     // ── Step 1: 立即创建执行记录（状态 pending）──────────────
+    const scriptPathPreflight = await preflightExecutableScriptPaths(caseIds);
+    if (!scriptPathPreflight.ok) {
+      return res.status(scriptPathPreflight.statusCode).json({
+        success: false,
+        message: scriptPathPreflight.message,
+        details: scriptPathPreflight.details,
+      });
+    }
+
+    const preflightScriptPaths = scriptPathPreflight.scriptPaths;
+
     const execution = await executionService.triggerTestExecution({
       caseIds,
       projectId,
@@ -974,21 +1044,13 @@ router.post('/run-batch', [
 
         try {
           // 解析脚本路径
-          const { scriptPaths, missingCaseIds } = await resolveScriptPaths(caseIds);
           const callbackUrl = buildCallbackUrl();
-
-          if (missingCaseIds.length > 0) {
-            logger.warn('Some cases have no scriptPath configured', {
-              runId: capturedRunId,
-              missingCaseIds,
-            }, LOG_CONTEXTS.JENKINS);
-          }
 
           // 触发 Jenkins
           const triggerResult = await jenkinsService.triggerBatchJob(
             capturedRunId,
             caseIds,
-            scriptPaths,
+            preflightScriptPaths,
             callbackUrl,
             async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
               const buildId = String(buildNumber);
@@ -1021,7 +1083,7 @@ router.post('/run-batch', [
           if (!triggerResult.success) {
             taskSchedulerService.releaseSlotByRunId(capturedRunId);
             try {
-              await recordTriggerFailure(capturedRunId, caseIds, scriptPaths, callbackUrl, triggerResult);
+              await recordTriggerFailure(capturedRunId, caseIds, preflightScriptPaths, callbackUrl, triggerResult);
             } catch { /* ignore */ }
             logger.warn('[run-batch] Jenkins trigger failed (async), slot released', {
               runId: capturedRunId,

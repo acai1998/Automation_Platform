@@ -883,6 +883,17 @@ export class JenkinsService {
     };
   }
 
+  getTestRepoConfig(): { repoUrl?: string; branch: string } | null {
+    if (!this.enabled) {
+      return null;
+    }
+
+    return {
+      repoUrl: this.config.testRepoUrl,
+      branch: this.config.testRepoBranch,
+    };
+  }
+
   /**
    * 根据 HTTP 状态码对 Jenkins API 错误进行分类
    *
