@@ -3,6 +3,7 @@ import type { JenkinsErrorCategory, JenkinsTriggerResult } from '../services/Jen
 export type JenkinsTriggerFailureKind =
   | 'crumb'
   | 'permission'
+  | 'not_parameterized'
   | 'auth'
   | 'network'
   | 'not_found'
@@ -54,6 +55,10 @@ function classifyFailureKind(message: string, category: JenkinsErrorCategory): J
     return 'permission';
   }
 
+  if (normalized.includes('is not parameterized') || normalized.includes('not parameterized')) {
+    return 'not_parameterized';
+  }
+
   switch (category) {
     case 'auth_failed':
       return 'auth';
@@ -78,6 +83,8 @@ function buildErrorMessage(kind: JenkinsTriggerFailureKind): string {
       return 'Jenkins trigger failed before build start: crumb is missing, invalid, or rejected.';
     case 'permission':
       return 'Jenkins trigger failed before build start: Jenkins account lacks Job/Build permission.';
+    case 'not_parameterized':
+      return 'Jenkins trigger failed before build start: target Jenkins job is not parameterized.';
     case 'auth':
       return 'Jenkins trigger failed before build start: authentication or authorization was rejected by Jenkins.';
     case 'network':

@@ -91,4 +91,41 @@ describe('JenkinsService trigger fallback', () => {
     expect(retryPostHeaders['Jenkins-Crumb']).toBeUndefined();
     expect(retryPostHeaders.Authorization).toBeDefined();
   });
+
+  it('surfaces a clear hint when the target Jenkins job is not parameterized', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        crumbRequestField: 'Jenkins-Crumb',
+        crumb: 'crumb-value',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(`
+        <html>
+          <head><title>Error 400 SeleniumBaseCi-AutoTest is not parameterized</title></head>
+          <body><h2>HTTP ERROR 400 SeleniumBaseCi-AutoTest is not parameterized</h2></body>
+        </html>
+      `, {
+        status: 400,
+        statusText: 'Bad Request',
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { JenkinsService } = await import('../../../server/services/JenkinsService');
+    const service = new JenkinsService();
+
+    const result = await service.triggerBatchJob(
+      4829,
+      [3032],
+      ['examples/D/test_console_logging.py::TestConsoleLogging::test_console_logging'],
+      'https://platform.example.com/api/jenkins/callback'
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.errorCategory).toBe('bad_request');
+    expect(result.message).toContain('target Jenkins job is not parameterized');
+    expect(result.message).toContain('configure this Pipeline job with parameters');
+  });
 });

@@ -63,4 +63,16 @@ describe('buildJenkinsTriggerFailureDiagnostic', () => {
     );
     expect(diagnostic.errorStack).toContain('kind=network');
   });
+
+  it('classifies non-parameterized Jenkins jobs explicitly', () => {
+    const diagnostic = buildJenkinsTriggerFailureDiagnostic({
+      message: 'Failed to trigger batch job: 400 Bad Request Body: <title>Error 400 SeleniumBaseCi-AutoTest is not parameterized</title>',
+      errorCategory: 'bad_request',
+    });
+
+    expect(diagnostic.errorMessage).toBe(
+      'Jenkins trigger failed before build start: target Jenkins job is not parameterized.'
+    );
+    expect(diagnostic.errorStack).toContain('kind=not_parameterized');
+  });
 });

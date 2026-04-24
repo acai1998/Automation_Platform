@@ -912,6 +912,9 @@ export class JenkinsService {
     }
 
     const normalized = responseText.replace(/\s+/g, ' ').toLowerCase();
+    if (normalized.includes('is not parameterized') || normalized.includes('not parameterized')) {
+      return ' (target Jenkins job is not parameterized; configure this Pipeline job with parameters such as RUN_ID, CASE_IDS, SCRIPT_PATHS, CALLBACK_URL, REPO_URL, and REPO_BRANCH)';
+    }
     if (normalized.includes('no valid crumb') || normalized.includes('invalid crumb')) {
       return ' (Jenkins crumb rejected or missing)';
     }
