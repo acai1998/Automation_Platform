@@ -1,3 +1,5 @@
+import { isMisconfiguredTestRepoUrl, normalizeGitRemoteUrl } from '../utils/jenkinsRepoValidation';
+
 /**
  * Jenkins 配置接口
  */
@@ -26,21 +28,6 @@ function runGitCommand(command: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function normalizeGitRemoteUrl(remoteUrl: string | undefined): string | undefined {
-  if (!remoteUrl) return undefined;
-
-  const trimmed = remoteUrl.trim();
-  if (!trimmed) return undefined;
-
-  const sshMatch = trimmed.match(/^git@([^:]+):(.+)$/);
-  if (sshMatch) {
-    const path = sshMatch[2].replace(/\.git$/, '');
-    return `https://${sshMatch[1]}/${path}`;
-  }
-
-  return trimmed.replace(/\.git$/, '');
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -148,6 +135,8 @@ export class JenkinsService {
 
   private enabled: boolean = true;
 
+  private readonly platformRepoUrl?: string;
+
   private crumb: JenkinsCrumb | null = null;
 
   private readonly crumbTtlMs = 5 * 60 * 1000;
@@ -213,6 +202,7 @@ export class JenkinsService {
       || process.env.TEST_CASE_REPO_BRANCH
       || ''
     ).trim();
+    this.platformRepoUrl = normalizeGitRemoteUrl(runGitCommand('git config --get remote.origin.url'));
     this.config = {
       baseUrl: normalizeBaseUrl(process.env.JENKINS_URL || 'http://jenkins.wiac.xyz'),
       username: process.env.JENKINS_USER || 'root',
@@ -237,6 +227,8 @@ export class JenkinsService {
       username: this.config.username,
       jobs: this.config.jobs,
       hasTestRepoUrl: Boolean(this.config.testRepoUrl),
+      testRepoUrl: this.config.testRepoUrl,
+      platformRepoUrl: this.platformRepoUrl,
     }, 'JENKINS');
   }
 
@@ -245,6 +237,45 @@ export class JenkinsService {
    */
   public isEnabled(): boolean {
     return this.enabled;
+  }
+
+  public getTriggerConfigurationError(): string | null {
+    if (!this.enabled || !this.config) {
+      return null;
+    }
+
+    const validation = this.validateAndGetTestRepoUrl({
+      jobName: this.config?.jobs.api ?? 'api-automation',
+    });
+    return validation.ok ? null : validation.message;
+  }
+
+  private validateAndGetTestRepoUrl(context: {
+    jobName: string;
+    runId?: number;
+    caseId?: number;
+  }): { ok: true; repoUrl?: string } | { ok: false; message: string } {
+    const repoUrl = this.config.testRepoUrl;
+    if (!repoUrl) {
+      return { ok: true, repoUrl: undefined };
+    }
+
+    if (!isMisconfiguredTestRepoUrl(repoUrl, this.platformRepoUrl)) {
+      return { ok: true, repoUrl };
+    }
+
+    const message = `Invalid Jenkins test repo configuration: REPO_URL points to the automation platform repository (${repoUrl}) instead of the test repository`;
+    const logger = require('../utils/logger').default;
+
+    logger.error(message, {
+      ...context,
+      repoUrl,
+      platformRepoUrl: this.platformRepoUrl,
+      testRepoBranch: this.config.testRepoBranch,
+      suggestion: 'Fix JENKINS_TEST_REPO_URL / TEST_CASE_REPO_URL to point to the test repository before triggering Jenkins.',
+    }, 'JENKINS');
+
+    return { ok: false, message };
   }
 
   /**
@@ -333,6 +364,8 @@ export class JenkinsService {
     scriptPath: string,
     callbackUrl?: string
   ): Promise<JenkinsTriggerResult> {
+    const logger = require('../utils/logger').default;
+
     if (!this.enabled) {
       return {
         success: false,
@@ -343,6 +376,14 @@ export class JenkinsService {
 
     const jobName = this.getJobName(type);
     const triggerUrl = `${this.config.baseUrl}/job/${jobName}/buildWithParameters`;
+    const repoValidation = this.validateAndGetTestRepoUrl({ jobName, caseId });
+    if (!repoValidation.ok) {
+      return {
+        success: false,
+        message: repoValidation.message,
+        errorCategory: 'bad_request',
+      };
+    }
 
     // 构建参数
     const params = new URLSearchParams({
@@ -354,11 +395,19 @@ export class JenkinsService {
     if (callbackUrl) {
       params.append('CALLBACK_URL', callbackUrl);
     }
-    if (this.config.testRepoUrl) {
-      params.append('REPO_URL', this.config.testRepoUrl);
+    if (repoValidation.repoUrl) {
+      params.append('REPO_URL', repoValidation.repoUrl);
     }
 
     try {
+      logger.info('Triggering Jenkins case job', {
+        caseId,
+        caseType: type,
+        jobName,
+        repoUrl: repoValidation.repoUrl ?? null,
+        callbackUrl: callbackUrl ?? null,
+      }, 'JENKINS');
+
       // 调用 Jenkins API
       const crumbHeader = await this.getCrumbHeader();
       const response = await fetch(`${triggerUrl}?${params.toString()}`, {
@@ -434,6 +483,14 @@ export class JenkinsService {
 
     const jobName = this.config.jobs.api; // 使用默认API Job
     const triggerUrl = `${this.config.baseUrl}/job/${jobName}/buildWithParameters`;
+    const repoValidation = this.validateAndGetTestRepoUrl({ jobName, runId });
+    if (!repoValidation.ok) {
+      return {
+        success: false,
+        message: repoValidation.message,
+        errorCategory: 'bad_request',
+      };
+    }
 
     // 构建参数
     const params = new URLSearchParams({
@@ -445,8 +502,8 @@ export class JenkinsService {
     if (callbackUrl) {
       params.append('CALLBACK_URL', callbackUrl);
     }
-    if (this.config.testRepoUrl) {
-      params.append('REPO_URL', this.config.testRepoUrl);
+    if (repoValidation.repoUrl) {
+      params.append('REPO_URL', repoValidation.repoUrl);
       params.append('REPO_BRANCH', this.config.testRepoBranch);
     }
 
@@ -456,7 +513,9 @@ export class JenkinsService {
         jobName,
         caseCount: caseIds.length,
         hasCallbackUrl: !!callbackUrl,
-        hasTestRepoUrl: Boolean(this.config.testRepoUrl),
+        hasTestRepoUrl: Boolean(repoValidation.repoUrl),
+        repoUrl: repoValidation.repoUrl ?? null,
+        repoBranch: repoValidation.repoUrl ? this.config.testRepoBranch : null,
       }, 'JENKINS');
 
       // 调用 Jenkins API
@@ -900,6 +959,11 @@ export class JenkinsService {
   async testConnection(): Promise<{ connected: boolean; message: string }> {
     if (!this.enabled) {
       return { connected: false, message: 'Jenkins integration is not configured' };
+    }
+
+    const configError = this.getTriggerConfigurationError();
+    if (configError) {
+      return { connected: false, message: configError };
     }
 
     try {

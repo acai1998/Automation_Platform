@@ -291,6 +291,15 @@ async function recordTriggerFailure(
  * 目标：在 Jenkins 不可用时快速失败，避免创建后立刻变成 aborted 的运行记录。
  */
 async function runJenkinsTriggerPrecheck(source: 'run-case' | 'run-batch'): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const configError = jenkinsService.getTriggerConfigurationError();
+  if (configError) {
+    logger.warn('[trigger-precheck] Jenkins trigger configuration invalid', {
+      source,
+      reason: configError,
+    }, LOG_CONTEXTS.JENKINS);
+    return { ok: false, reason: configError };
+  }
+
   if (!TRIGGER_PRECHECK_ENABLED) {
     return { ok: true };
   }
