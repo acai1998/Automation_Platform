@@ -53,6 +53,10 @@ Jenkins Job 必须支持以下参数：
 }
 ```
 
+- `CALLBACK_URL` 必须是 Jenkins 节点或测试容器可直接访问的地址；远端 Jenkins 场景不要使用 `localhost`。
+- 平台执行状态以测试结果回调为准，`status` 和统计值应来自 pytest 报告或用例结果，而不是 Pipeline 总体状态。
+- 如果 Jenkins 后置步骤、归档或清理失败，但测试结果已经完整，不要再补发空的 `failed` 回调覆盖已有结果。
+
 ### 回调认证方式
 
 Jenkins 回调支持三种认证方式（任选其一）：

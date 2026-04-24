@@ -211,30 +211,18 @@ GET /api/executions/stuck?timeout=10
 
 ### 1. 配置 Jenkins Pipeline 回调
 
-在 Jenkins Pipeline 的 `post` 块中添加:
+不要在 Jenkins Pipeline 的 `post` 块里直接按 `currentBuild.result` 回调平台。平台状态应来自测试报告或用例结果，而不是 Pipeline 总体状态。
+
+推荐做法：
+- 测试执行脚本在产出 `test-report.json` 或 JUnit 后，根据用例结果回调平台。
+- `CALLBACK_URL` 必须指向 Jenkins 主机和测试容器都能访问的平台地址，远端环境不要使用 `http://localhost:3000/...`。
+- Jenkinsfile 可以保留自身 `FAILURE` 作为 CI 信号，但不要再补发空的 `failed` 回调。
+
+反例：
 
 ```groovy
-post {
-    always {
-        script {
-            // 回调平台
-            def callbackUrl = env.CALLBACK_URL ?: "http://localhost:3000/api/jenkins/callback"
-            def apiKey = env.JENKINS_API_KEY
-            
-            httpRequest(
-                url: callbackUrl,
-                httpMode: 'POST',
-                contentType: 'APPLICATION_JSON',
-                customHeaders: [[name: 'X-Api-Key', value: apiKey]],
-                requestBody: groovy.json.JsonOutput.toJson([
-                    runId: params.RUN_ID.toInteger(),
-                    status: currentBuild.result == 'SUCCESS' ? 'success' : 'failed',
-                    durationMs: currentBuild.duration
-                ])
-            )
-        }
-    }
-}
+// 不要这样做：Pipeline 可能因归档、清理或网络问题失败，但用例结果已经成功
+status: currentBuild.result == 'SUCCESS' ? 'success' : 'failed'
 ```
 
 ### 2. 定期测试
@@ -261,7 +249,7 @@ post {
 
 **A:** Jenkins 没有成功回调到平台。可能原因:
 1. Jenkins Job 未配置回调逻辑
-2. 回调地址配置错误
+2. 回调地址配置错误，例如远端 Jenkins 或测试容器仍回调 `localhost`
 3. 网络连通性问题
 4. 认证配置错误
 

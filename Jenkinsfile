@@ -203,33 +203,7 @@ pipeline {
                     if (testExitCode != 0) {
                         currentBuild.result = 'FAILURE'
                         echo "❌ 测试执行失败，exitCode=${testExitCode}"
-                        // 主动发送失败回调：Docker 级别失败（如 exitCode=128）时 entrypoint 无法执行，
-                        // 不会自动回调，需要 Jenkinsfile 兜底通知平台更新执行状态，
-                        // 防止占位记录永久卡在 error 状态、汇总统计错乱。
-                        if (params.RUN_ID && callbackUrl) {
-                            try {
-                                // -L：跟随 301/302 重定向（HTTP → HTTPS），避免回调因 nginx 重定向而丢失
-                                def callbackStatus = sh(
-                                    script: """
-                                        set +e
-                                        http_code=\$(curl -sS -L --max-time 10 -o /tmp/callback_body.txt -w '%{http_code}' -X POST '${callbackUrl}' \\
-                                            -H 'Content-Type: application/json' \\
-                                            -d '{"runId":${params.RUN_ID},"status":"failed","passedCases":0,"failedCases":0,"skippedCases":0,"durationMs":0,"results":[]}')
-                                        curl_exit=\$?
-                                        echo "\${curl_exit}:\${http_code}"
-                                        exit 0
-                                    """,
-                                    returnStdout: true
-                                ).trim()
-                                if (callbackStatus.startsWith('0:2')) {
-                                    echo "📡 已向平台发送失败回调 (exitCode=${testExitCode})"
-                                } else {
-                                    echo "⚠️ 失败回调发送异常，status=${callbackStatus}，详见 /tmp/callback_body.txt（不影响 Pipeline）"
-                                }
-                            } catch (Exception cbErr) {
-                                echo "⚠️ 发送失败回调时出错（忽略）: ${cbErr.message}"
-                            }
-                        }
+                        echo "⚠️ Jenkinsfile 不再根据 Pipeline exitCode 补发 failed 回调，平台结果以测试报告/用例回调为准"
                     } else {
                         echo "✅ 测试执行成功"
                     }

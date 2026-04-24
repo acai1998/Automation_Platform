@@ -173,6 +173,11 @@ Content-Type: application/json
 }
 ```
 
+说明：
+- `CALLBACK_URL` 必须是 Jenkins 主机和测试容器都能访问的外部地址；如果 Jenkins 不在平台宿主机上，不要使用 `localhost`。
+- 回调中的 `status`、`passedCases`、`failedCases`、`skippedCases` 应从 pytest 报告或测试明细推导，不应直接取 Pipeline 总体结果。
+- Pipeline 后置步骤失败不等于用例失败；已有完整测试结果时，不要再发送空的 `failed` 回调。
+
 ### 环境变量配置
 
 在后端 `.env` 文件中配置:

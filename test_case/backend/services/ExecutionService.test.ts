@@ -205,6 +205,37 @@ describe('ExecutionService', () => {
       );
     });
 
+    it('should ignore empty failed callback when execution already has real final data', async () => {
+      const mockExecution = {
+        id: 123,
+        status: 'success',
+        startTime: new Date(),
+      };
+
+      mockRepoInstance.getTestRunDetail.mockResolvedValue(mockExecution);
+
+      await service.completeBatchExecution(123, {
+        status: 'failed',
+        passedCases: 0,
+        failedCases: 0,
+        skippedCases: 0,
+        durationMs: 0,
+      });
+
+      expect(mockRepoInstance.completeBatch).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('skipping empty duplicate callback'),
+        expect.objectContaining({
+          runId: 123,
+          currentStatus: 'success',
+          newStatus: 'failed',
+          hasDetailedResults: false,
+          hasSummaryCounts: false,
+        }),
+        expect.any(String)
+      );
+    });
+
     it('should complete execution successfully', async () => {
       const mockExecution = {
         id: 123,
