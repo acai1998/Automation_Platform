@@ -98,6 +98,7 @@ pipeline {
                         sh """
                             if [ -d "${repoDir}/.git" ]; then
                                 echo "📦 增量更新测试仓库..."
+                                git -C "${repoDir}" remote set-url origin ${repoUrl}
                                 git -C "${repoDir}" fetch --depth=1 origin ${repoBranch}
                                 git -C "${repoDir}" reset --hard origin/${repoBranch}
                             else

@@ -67,6 +67,10 @@ test-repo/
 └── pytest.ini
 ```
 
+防回归说明：
+- Jenkinsfile 会复用工作空间中的 `test-repo/` 目录以加快后续构建，但在每次增量更新前都会先把缓存仓库的 `origin` 强制同步为本次传入的 `REPO_URL`，避免历史错误 remote 持续把平台仓库当成测试仓库。
+- 如果曾有旧构建把 `test-repo/` 缓存成错误仓库，升级 Jenkinsfile 后重新触发即可自动纠正；只有在仓库目录损坏时才需要手动删除工作空间中的 `test-repo/`。
+
 ### requirements.txt 示例
 
 ```

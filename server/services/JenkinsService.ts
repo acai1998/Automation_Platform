@@ -1,4 +1,5 @@
 import { isMisconfiguredTestRepoUrl, normalizeGitRemoteUrl } from '../utils/jenkinsRepoValidation';
+import { normalizeConfiguredJenkinsBaseUrl } from '../utils/jenkinsUrl';
 
 /**
  * Jenkins 配置接口
@@ -204,7 +205,7 @@ export class JenkinsService {
     ).trim();
     this.platformRepoUrl = normalizeGitRemoteUrl(runGitCommand('git config --get remote.origin.url'));
     this.config = {
-      baseUrl: normalizeBaseUrl(process.env.JENKINS_URL || 'http://jenkins.wiac.xyz'),
+      baseUrl: normalizeConfiguredJenkinsBaseUrl(process.env.JENKINS_URL || 'http://jenkins.wiac.xyz'),
       username: process.env.JENKINS_USER || 'root',
       token,
       jobs: {
