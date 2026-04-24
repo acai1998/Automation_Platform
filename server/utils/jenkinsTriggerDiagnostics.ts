@@ -44,10 +44,12 @@ function classifyFailureKind(message: string, category: JenkinsErrorCategory): J
   }
 
   if (
-    normalized.includes('job/build permission') ||
     normalized.includes('lacks required job/build permission') ||
     normalized.includes('access denied') ||
-    normalized.includes('permission')
+    normalized.includes('permission denied') ||
+    normalized.includes('is missing the') ||
+    normalized.includes('is missing job/build') ||
+    normalized.includes('missing job/build')
   ) {
     return 'permission';
   }

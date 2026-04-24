@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildJenkinsTriggerFailureDiagnostic } from '../../../server/utils/jenkinsTriggerDiagnostics';
 
 describe('buildJenkinsTriggerFailureDiagnostic', () => {
-  it('classifies Jenkins crumb and permission failures', () => {
+  it('keeps generic Jenkins 403 trigger failures as auth failures', () => {
     const diagnostic = buildJenkinsTriggerFailureDiagnostic(
       {
         message: 'Failed to trigger batch job: 403 Forbidden (check Jenkins crumb and Job/Build permission)',
@@ -19,13 +19,37 @@ describe('buildJenkinsTriggerFailureDiagnostic', () => {
     );
 
     expect(diagnostic.errorMessage).toBe(
-      'Jenkins trigger failed before build start: Jenkins account lacks Job/Build permission.'
+      'Jenkins trigger failed before build start: authentication or authorization was rejected by Jenkins.'
     );
     expect(diagnostic.abortReason).toContain('Detail: Failed to trigger batch job: 403 Forbidden');
     expect(diagnostic.errorStack).toContain('phase=trigger');
-    expect(diagnostic.errorStack).toContain('kind=permission');
+    expect(diagnostic.errorStack).toContain('kind=auth');
     expect(diagnostic.errorStack).toContain('warning=callback_url_points_to_localhost_while_jenkins_is_remote');
     expect(diagnostic.logPath).toBe('http://jenkins.wiac.xyz/job/api-automation/');
+  });
+
+  it('classifies explicit Jenkins Job/Build permission failures', () => {
+    const diagnostic = buildJenkinsTriggerFailureDiagnostic({
+      message: 'Failed to trigger batch job: 403 Forbidden (Jenkins account lacks required Job/Build permission)',
+      errorCategory: 'auth_failed',
+    });
+
+    expect(diagnostic.errorMessage).toBe(
+      'Jenkins trigger failed before build start: Jenkins account lacks Job/Build permission.'
+    );
+    expect(diagnostic.errorStack).toContain('kind=permission');
+  });
+
+  it('classifies Jenkins crumb failures separately', () => {
+    const diagnostic = buildJenkinsTriggerFailureDiagnostic({
+      message: 'Failed to trigger batch job: 403 Forbidden (Jenkins crumb rejected or missing)',
+      errorCategory: 'auth_failed',
+    });
+
+    expect(diagnostic.errorMessage).toBe(
+      'Jenkins trigger failed before build start: crumb is missing, invalid, or rejected.'
+    );
+    expect(diagnostic.errorStack).toContain('kind=crumb');
   });
 
   it('classifies network trigger failures separately', () => {
