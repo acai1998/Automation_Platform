@@ -368,7 +368,10 @@ export class JenkinsService {
       normalized.includes('no valid crumb') ||
       normalized.includes('invalid crumb') ||
       normalized.includes('crumb rejected') ||
-      normalized.includes('crumb is missing')
+      normalized.includes('crumb is missing') ||
+      normalized.includes('403 forbidden') ||
+      normalized.includes('403 no valid crumb') ||
+      normalized.includes('http/1.1 403')
     );
   }
 
@@ -377,6 +380,7 @@ export class JenkinsService {
     logContext: Record<string, unknown>
   ): Promise<JenkinsTriggerHttpResult> {
     const crumbHeader = await this.getCrumbHeader();
+    const crumbWasPresent = Object.keys(crumbHeader).length > 0;
 
     const performRequest = (headers: Record<string, string>) => fetch(url, {
       method: 'POST',
@@ -384,12 +388,19 @@ export class JenkinsService {
     });
 
     const initialResponse = await performRequest(this.getTriggerRequestHeaders(crumbHeader));
-    if (initialResponse.ok || Object.keys(crumbHeader).length === 0) {
+    if (initialResponse.ok) {
+      return { response: initialResponse };
+    }
+
+    if (!crumbWasPresent) {
       return { response: initialResponse };
     }
 
     const initialErrorText = await initialResponse.text().catch(() => 'Unable to read response');
-    if (!this.isCrumbRejected(initialResponse.status, initialErrorText)) {
+    if (
+      initialResponse.status !== 403 &&
+      !this.isCrumbRejected(initialResponse.status, initialErrorText)
+    ) {
       return {
         response: initialResponse,
         errorText: initialErrorText,
@@ -890,7 +901,9 @@ export class JenkinsService {
   }
 
   private formatTriggerFailure(status: number, statusText: string, responseText: string): string {
-    return `${status} ${statusText}${this.getTriggerFailureHint(status, responseText)}`;
+    const hint = this.getTriggerFailureHint(status, responseText);
+    const bodySnippet = responseText ? ` Body: ${responseText.substring(0, 300)}` : '';
+    return `${status} ${statusText}${hint}${bodySnippet}`;
   }
 
   private getTriggerFailureHint(status: number, responseText: string): string {
@@ -911,8 +924,11 @@ export class JenkinsService {
     ) {
       return ' (Jenkins account lacks required Job/Build permission)';
     }
+    if (status === 403) {
+      return ' (check Jenkins authentication and Job/Build permission)';
+    }
 
-    return ' (check Jenkins crumb and Job/Build permission)';
+    return '';
   }
 
   /**
