@@ -167,7 +167,7 @@ export default function Login() {
 
   // 获取 returnUrl 参数
   const searchParams = new URLSearchParams(window.location.search);
-  const returnUrl = searchParams.get('returnUrl') || '/';
+  const returnUrl = searchParams.get('returnUrl') || '/dashboard';
 
   // 如果已登录，自动跳转
   useEffect(() => {

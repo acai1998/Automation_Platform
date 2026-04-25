@@ -10,6 +10,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { NavCollapseProvider } from "./contexts/NavCollapseContext";
 import { AiGenerationProvider, useAiGeneration } from "./contexts/AiGenerationContext";
 import Home from "./pages/Home";
+import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
@@ -130,6 +131,10 @@ function Router() {
         <Route path="/reset-password" component={ResetPassword} />
 
         <Route path="/">
+          <Landing />
+        </Route>
+
+        <Route path="/dashboard">
           <ProtectedRoute>
             <Layout>
               <Home />

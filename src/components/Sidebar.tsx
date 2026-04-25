@@ -41,7 +41,7 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { icon: <LayoutDashboard className="h-5 w-5" />, label: "仪表盘", href: "/" },
+  { icon: <LayoutDashboard className="h-5 w-5" />, label: "仪表盘", href: "/dashboard" },
   {
     icon: <FolderOpen className="h-5 w-5" />,
     label: "用例管理",
