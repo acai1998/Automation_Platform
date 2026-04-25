@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AICases from '@/pages/cases/AICases';
+import { ThemeProvider } from '@/contexts/ThemeContext';
 import { createInitialMindData } from '@/lib/aiCaseMindMap';
 import * as aiCaseStorage from '@/lib/aiCaseStorage';
 import { aiCasesApi } from '@/api';
@@ -155,6 +156,14 @@ function createStoredDoc(options?: { selectTestcase?: boolean }): AiCaseWorkspac
   };
 }
 
+function renderAICases() {
+  return render(
+    <ThemeProvider>
+      <AICases />
+    </ThemeProvider>
+  );
+}
+
 describe('AICases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -191,7 +200,7 @@ describe('AICases', () => {
   it('初始化失败后应回退到默认脑图而不是永久 loading', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockRejectedValue(new Error('indexeddb unavailable'));
 
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -204,7 +213,7 @@ describe('AICases', () => {
   it('AI 生成和重置模板都应触发历史附件清理', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
 
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -252,7 +261,7 @@ describe('AICases', () => {
       .mockReturnValueOnce(pendingAttachments)
       .mockResolvedValue([]);
 
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -284,7 +293,7 @@ describe('AICases', () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
     vi.mocked(aiCaseStorage.deleteStaleWorkspaceAttachments).mockResolvedValue(3);
 
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -315,7 +324,7 @@ describe('AICases', () => {
   it('复制截图后可直接粘贴上传到当前测试节点', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc({ selectTestcase: true }));
 
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -375,7 +384,7 @@ describe('AICases – 新双栏布局', () => {
 
   it('渲染后应显示顶部标题栏且点击需求信息可打开对话框', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -393,7 +402,7 @@ describe('AICases – 新双栏布局', () => {
 
   it('顶部标题栏应显示工作台名称和保存状态', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -404,7 +413,7 @@ describe('AICases – 新双栏布局', () => {
 
   it('初始化无存储记录时应自动创建并显示默认工作台名称', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(null);
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -434,7 +443,7 @@ describe('AICases – 新双栏布局', () => {
 
     vi.mocked(aiCasesApi.getWorkspace).mockResolvedValue({ data: remoteWorkspace } as any);
 
-    render(<AICases />);
+    renderAICases();
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
     });
@@ -479,7 +488,7 @@ describe('AICases – 新双栏布局', () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
     vi.mocked(aiCasesApi.getWorkspace).mockRejectedValue(new Error('network error'));
 
-    render(<AICases />);
+    renderAICases();
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
     });
@@ -510,7 +519,7 @@ describe('AICases – 新双栏布局', () => {
 
   it('从侧边栏修改工作台名称应触发自动保存', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -537,7 +546,7 @@ describe('AICases – 新双栏布局', () => {
 
   it('点击工作台操作区"导出 Markdown"按钮应触发下载', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -562,7 +571,7 @@ describe('AICases – 新双栏布局', () => {
 
   it('画布工具栏应渲染且可点击缩放按钮', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
-    render(<AICases />);
+    renderAICases();
 
     await waitFor(() => {
       expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
@@ -577,7 +586,7 @@ describe('AICases – 新双栏布局', () => {
 
   it('执行进度区应渲染并显示进度信息', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
-    render(<AICases />);
+    renderAICases();
 
     // 等待组件初始化完成
     await waitFor(

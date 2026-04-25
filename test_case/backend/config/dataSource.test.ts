@@ -1,14 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock dependencies before importing modules
-vi.mock('../../../server/utils/logger', () => ({
-  default: {
-    info: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+vi.mock('../../../server/utils/logger', async () => {
+  const actual = await vi.importActual<typeof import('../../../server/utils/logger')>(
+    '../../../server/utils/logger'
+  );
+
+  return {
+    ...actual,
+    default: {
+      info: vi.fn(),
+      error: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+    },
+  };
+});
 
 vi.mock('../../../server/config/dbConfig', () => ({
   getTypeOrmConfig: vi.fn(() => ({
@@ -94,14 +101,16 @@ describe('DataSource Configuration', () => {
       expect(mockDataSourceInstance.initialize).toHaveBeenCalledOnce();
       expect(mockLogger.info).toHaveBeenCalledWith(
         'Initializing TypeORM DataSource...',
-        expect.any(Object)
+        expect.any(Object),
+        'DATABASE'
       );
       expect(mockLogger.info).toHaveBeenCalledWith(
         'TypeORM DataSource initialized successfully',
         expect.objectContaining({
           entitiesCount: 3,
           entityNames: ['TestCase', 'TestRun', 'User'],
-        })
+        }),
+        'DATABASE'
       );
       expect(result).toBeDefined();
     });
@@ -117,7 +126,9 @@ describe('DataSource Configuration', () => {
       // Assert
       expect(mockDataSourceInstance.initialize).not.toHaveBeenCalled();
       expect(mockLogger.debug).toHaveBeenCalledWith(
-        'TypeORM DataSource already initialized, skipping...'
+        'TypeORM DataSource already initialized, skipping...',
+        expect.any(Object),
+        'DATABASE'
       );
       expect(result).toBeDefined();
     });
@@ -139,7 +150,8 @@ describe('DataSource Configuration', () => {
         expect.objectContaining({
           error: 'Connection failed',
           stack: expect.any(String),
-        })
+        }),
+        'DATABASE'
       );
     });
   });
@@ -156,10 +168,15 @@ describe('DataSource Configuration', () => {
 
       // Assert
       expect(mockDataSourceInstance.destroy).toHaveBeenCalledOnce();
-      expect(mockLogger.info).toHaveBeenCalledWith('Closing TypeORM DataSource...');
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Closing TypeORM DataSource...',
+        expect.any(Object),
+        'DATABASE'
+      );
       expect(mockLogger.info).toHaveBeenCalledWith(
         'TypeORM DataSource closed successfully',
-        expect.any(Object)
+        expect.any(Object),
+        'DATABASE'
       );
     });
 
@@ -174,7 +191,9 @@ describe('DataSource Configuration', () => {
       // Assert
       expect(mockDataSourceInstance.destroy).not.toHaveBeenCalled();
       expect(mockLogger.debug).toHaveBeenCalledWith(
-        'TypeORM DataSource not initialized, nothing to close'
+        'TypeORM DataSource not initialized, nothing to close',
+        expect.any(Object),
+        'DATABASE'
       );
     });
   });
@@ -192,7 +211,11 @@ describe('DataSource Configuration', () => {
       // Assert
       expect(result).toBe(true);
       expect(mockDataSourceInstance.query).toHaveBeenCalledWith('SELECT 1 as health_check');
-      expect(mockLogger.debug).toHaveBeenCalledWith('DataSource health check passed');
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        'DataSource health check passed',
+        expect.any(Object),
+        'DATABASE'
+      );
     });
 
     it('should return false when DataSource not initialized', async () => {
@@ -206,7 +229,11 @@ describe('DataSource Configuration', () => {
       // Assert
       expect(result).toBe(false);
       expect(mockDataSourceInstance.query).not.toHaveBeenCalled();
-      expect(mockLogger.warn).toHaveBeenCalledWith('DataSource not initialized for health check');
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'DataSource not initialized for health check',
+        expect.any(Object),
+        'DATABASE'
+      );
     });
   });
 
