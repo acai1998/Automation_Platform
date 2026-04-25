@@ -14,7 +14,8 @@
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
     "cleanup:results": "node scripts/run-ts-node.cjs scripts/cleanup-invalid-results.ts",
-    "import:knowledge-base": "node scripts/run-ts-node.cjs scripts/import-knowledge-base.ts"
+    "import:knowledge-base": "node scripts/run-ts-node.cjs scripts/import-knowledge-base.ts",
+    "jenkins:inspect-job": "node scripts/run-ts-node.cjs scripts/inspect-jenkins-job.ts"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.3",

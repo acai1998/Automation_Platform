@@ -10,6 +10,7 @@ import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import { optionalAuth } from '../middleware/auth';
 import logger from '../utils/logger';
 import { buildJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDiagnostics';
+import { persistJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDiagnosticArtifact';
 import { validateScriptPathsInTestRepo } from '../utils/testRepoScriptPathValidator';
 import { LOG_CONTEXTS, LOG_EVENTS, createTimer } from '../config/logging';
 import { AppDataSource } from '../config/database';
@@ -266,25 +267,44 @@ async function recordTriggerFailure(
   caseIds: number[],
   scriptPaths: string[],
   callbackUrl: string,
+  source: 'run-case' | 'run-batch',
   triggerResult: { message: string; errorCategory: 'none' | 'network' | 'auth_failed' | 'not_found' | 'bad_request' | 'rate_limited' | 'server_error' }
 ): Promise<void> {
   const config = jenkinsService.getConfigInfo();
-  const diagnostic = buildJenkinsTriggerFailureDiagnostic(triggerResult, {
+  const persisted = await persistJenkinsTriggerFailureDiagnostic(triggerResult, {
+    runId,
+    source,
     baseUrl: config?.baseUrl,
     jobName: config?.jobs.api,
     callbackUrl,
     caseIds,
     scriptPaths,
+  }).catch(async (error: unknown) => {
+    logger.warn('Failed to persist Jenkins trigger diagnostic artifact', {
+      runId,
+      error: error instanceof Error ? error.message : String(error),
+    }, LOG_CONTEXTS.JENKINS);
+
+    return {
+      publicPath: undefined,
+      diagnostic: buildJenkinsTriggerFailureDiagnostic(triggerResult, {
+        baseUrl: config?.baseUrl,
+        jobName: config?.jobs.api,
+        callbackUrl,
+        caseIds,
+        scriptPaths,
+      }),
+    };
   });
 
   await executionService.recordTriggerFailureDiagnostics({
     runId,
     caseIds,
-    errorMessage: diagnostic.errorMessage,
-    errorStack: diagnostic.errorStack,
-    logPath: diagnostic.logPath,
+    errorMessage: persisted.diagnostic.errorMessage,
+    errorStack: persisted.diagnostic.errorStack,
+    logPath: persisted.publicPath,
   });
-  await executionService.markExecutionAborted(runId, diagnostic.abortReason);
+  await executionService.markExecutionAborted(runId, persisted.diagnostic.abortReason);
 }
 
 /**
@@ -893,7 +913,7 @@ router.post('/run-case', [
             taskSchedulerService.releaseSlotByRunId(capturedRunId);
             // 将执行状态标记为失败
             try {
-              await recordTriggerFailure(capturedRunId, [caseId], preflightScriptPaths, callbackUrl, triggerResult);
+              await recordTriggerFailure(capturedRunId, [caseId], preflightScriptPaths, callbackUrl, 'run-case', triggerResult);
             } catch { /* ignore */ }
             logger.warn('[run-case] Jenkins trigger failed (async), slot released', {
               runId: capturedRunId,
@@ -1083,7 +1103,7 @@ router.post('/run-batch', [
           if (!triggerResult.success) {
             taskSchedulerService.releaseSlotByRunId(capturedRunId);
             try {
-              await recordTriggerFailure(capturedRunId, caseIds, preflightScriptPaths, callbackUrl, triggerResult);
+              await recordTriggerFailure(capturedRunId, caseIds, preflightScriptPaths, callbackUrl, 'run-batch', triggerResult);
             } catch { /* ignore */ }
             logger.warn('[run-batch] Jenkins trigger failed (async), slot released', {
               runId: capturedRunId,
@@ -1916,6 +1936,7 @@ router.get('/health', generalAuthRateLimiter, rateLimitMiddleware.limit, async (
         connectionTest: { success: false, duration: 0 },
         authenticationTest: { success: false, duration: 0 },
         apiResponseTest: { success: false, duration: 0 },
+        targetJobInspection: { success: false, duration: 0 },
       },
       diagnostics: {
         configPresent: {
@@ -1977,17 +1998,43 @@ router.get('/health', generalAuthRateLimiter, rateLimitMiddleware.limit, async (
         const data = await response.json() as Record<string, unknown>;
         healthCheckData.checks.authenticationTest.success = true;
         healthCheckData.checks.apiResponseTest.success = true;
+        let triggerReady = false;
+
+        const targetJobStart = Date.now();
+        try {
+          const targetJobInspection = await jenkinsService.inspectConfiguredApiJob();
+          healthCheckData.checks.targetJobInspection.duration = Date.now() - targetJobStart;
+          healthCheckData.checks.targetJobInspection.success = Boolean(targetJobInspection?.triggerReady);
+          healthCheckData.diagnostics.targetJobInspection = targetJobInspection;
+          triggerReady = Boolean(targetJobInspection?.triggerReady);
+
+          if (targetJobInspection) {
+            healthCheckData.issues.push(...targetJobInspection.issues);
+            healthCheckData.recommendations.push(...targetJobInspection.recommendations);
+          }
+        } catch (inspectionError) {
+          healthCheckData.checks.targetJobInspection.duration = Date.now() - targetJobStart;
+          healthCheckData.diagnostics.targetJobInspectionError =
+            inspectionError instanceof Error ? inspectionError.message : String(inspectionError);
+          healthCheckData.issues.push('❌ 无法读取目标 Jenkins Job 的实时配置');
+          healthCheckData.recommendations.push('检查 Jenkins Job 权限，确保当前账号具备读取任务配置的权限。');
+        }
+
+        healthCheckData.duration = Date.now() - startTime;
         
         res.json({
           success: true,
           data: {
             connected: true,
+            triggerReady,
             jenkinsUrl,
             version: typeof data['version'] === 'string' ? data['version'] : 'unknown',
             timestamp: new Date().toISOString(),
             details: healthCheckData,
           },
-          message: 'Jenkins is healthy'
+          message: triggerReady
+            ? 'Jenkins is healthy'
+            : 'Jenkins is reachable, but the target job needs configuration fixes before the platform can trigger it'
         });
       } else if (response.status === 401 || response.status === 403) {
         healthCheckData.issues.push('❌ 认证失败：API Token 或用户名可能不正确');

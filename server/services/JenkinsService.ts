@@ -19,6 +19,23 @@ export interface JenkinsConfig {
   testRepoBranch: string;
 }
 
+export interface JenkinsJobInspection {
+  jobName: string;
+  jobUrl: string;
+  jobClass?: string;
+  definitionClass?: string;
+  parameterized: boolean;
+  parameterNames: string[];
+  triggerReady: boolean;
+  scmUrl?: string;
+  branchSpec?: string;
+  scriptPath?: string;
+  hasTimerTrigger: boolean;
+  timerSpec?: string;
+  issues: string[];
+  recommendations: string[];
+}
+
 function runGitCommand(command: string): string | undefined {
   try {
     const { execSync } = require('child_process') as typeof import('child_process');
@@ -35,6 +52,69 @@ function runGitCommand(command: string): string | undefined {
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, '');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, '\'')
+    .replace(/&amp;/g, '&');
+}
+
+function extractXmlValue(xml: string, pattern: RegExp): string | undefined {
+  const match = pattern.exec(xml);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  return decodeXmlEntities(match[1].trim());
+}
+
+function extractXmlValues(xml: string, pattern: RegExp): string[] {
+  return Array.from(
+    new Set(
+      Array.from(xml.matchAll(pattern))
+        .map((match) => match[1]?.trim())
+        .filter((value): value is string => Boolean(value))
+        .map(decodeXmlEntities)
+    )
+  );
+}
+
+function extractParameterNamesFromApiPayload(payload: Record<string, unknown>): string[] {
+  const collected = new Set<string>();
+
+  for (const key of ['actions', 'property']) {
+    const source = payload[key];
+    if (!Array.isArray(source)) {
+      continue;
+    }
+
+    for (const entry of source) {
+      if (!isRecord(entry)) {
+        continue;
+      }
+
+      const definitions = entry.parameterDefinitions;
+      if (!Array.isArray(definitions)) {
+        continue;
+      }
+
+      for (const definition of definitions) {
+        if (isRecord(definition) && typeof definition.name === 'string' && definition.name.trim()) {
+          collected.add(definition.name.trim());
+        }
+      }
+    }
+  }
+
+  return Array.from(collected);
 }
 
 /**
@@ -358,6 +438,44 @@ export class JenkinsService {
     };
   }
 
+  private async fetchJenkinsJson(url: string): Promise<Record<string, unknown>> {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': this.getAuthHeader(),
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`Failed to fetch Jenkins JSON (${response.status} ${response.statusText})${body ? `: ${body.substring(0, 300)}` : ''}`);
+    }
+
+    const payload = await response.json();
+    if (!isRecord(payload)) {
+      throw new Error('Unexpected Jenkins JSON payload shape');
+    }
+
+    return payload;
+  }
+
+  private async fetchJenkinsText(url: string): Promise<string> {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': this.getAuthHeader(),
+      },
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`Failed to fetch Jenkins text (${response.status} ${response.statusText})${body ? `: ${body.substring(0, 300)}` : ''}`);
+    }
+
+    return response.text();
+  }
+
   private isCrumbRejected(status: number, responseText: string): boolean {
     if (status !== 400 && status !== 403) {
       return false;
@@ -424,6 +542,104 @@ export class JenkinsService {
    */
   private getJobName(type: CaseType): string {
     return this.config.jobs[type] || this.config.jobs.api;
+  }
+
+  public async inspectConfiguredApiJob(): Promise<JenkinsJobInspection | null> {
+    if (!this.enabled) {
+      return null;
+    }
+
+    const jobName = this.config.jobs.api;
+    const jobUrl = this.normalizeJenkinsUrl(`${this.config.baseUrl}/job/${jobName}/`);
+    const jobApiUrl = `${jobUrl}api/json?tree=name,fullName,url,_class,property[parameterDefinitions[name]],actions[parameterDefinitions[name]]`;
+    const jobConfigUrl = `${jobUrl}config.xml`;
+
+    const payload = await this.fetchJenkinsJson(jobApiUrl);
+    const configXml = await this.fetchJenkinsText(jobConfigUrl);
+
+    const apiParameterNames = extractParameterNamesFromApiPayload(payload);
+    const xmlParameterNames = extractXmlValues(
+      configXml,
+      /<[^>]*ParameterDefinition[^>]*>[\s\S]*?<name>([^<]+)<\/name>/g
+    );
+    const parameterNames = Array.from(new Set([...apiParameterNames, ...xmlParameterNames]));
+    const parameterized = parameterNames.length > 0 || configXml.includes('ParametersDefinitionProperty');
+    const definitionClass = extractXmlValue(configXml, /<definition[^>]*class="([^"]+)"/);
+    const scmUrl = extractXmlValue(
+      configXml,
+      /<scm[^>]*class="hudson\.plugins\.git\.GitSCM"[\s\S]*?<userRemoteConfigs>[\s\S]*?<url>([^<]+)<\/url>/
+    );
+    const branchSpec = extractXmlValue(
+      configXml,
+      /<branches>[\s\S]*?<hudson\.plugins\.git\.BranchSpec>[\s\S]*?<name>([^<]+)<\/name>/
+    );
+    const scriptPath = extractXmlValue(configXml, /<scriptPath>([^<]+)<\/scriptPath>/);
+    const timerSpec = extractXmlValue(
+      configXml,
+      /<hudson\.triggers\.TimerTrigger>[\s\S]*?<spec>([\s\S]*?)<\/spec>[\s\S]*?<\/hudson\.triggers\.TimerTrigger>/
+    );
+    const hasTimerTrigger = Boolean(timerSpec);
+    const normalizedConfiguredRepoUrl = normalizeGitRemoteUrl(this.config.testRepoUrl);
+    const normalizedScmUrl = normalizeGitRemoteUrl(scmUrl);
+    const issues: string[] = [];
+    const recommendations: string[] = [];
+
+    if (!parameterized) {
+      issues.push('Target Jenkins job is not parameterized');
+      recommendations.push('Save the Pipeline job until Jenkins shows Build with Parameters and exposes RUN_ID, CASE_IDS, SCRIPT_PATHS, CALLBACK_URL, REPO_URL, and REPO_BRANCH.');
+    }
+
+    if (definitionClass !== 'org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition') {
+      issues.push('Pipeline job is not using Pipeline script from SCM');
+      recommendations.push('Set the Pipeline definition to Pipeline script from SCM so Jenkins reads the repository Jenkinsfile.');
+    }
+
+    if (scriptPath && scriptPath !== 'Jenkinsfile') {
+      issues.push(`Pipeline script path is ${scriptPath} instead of Jenkinsfile`);
+      recommendations.push('Set Script Path to Jenkinsfile.');
+    }
+
+    if (normalizedConfiguredRepoUrl && normalizedScmUrl && normalizedConfiguredRepoUrl !== normalizedScmUrl) {
+      issues.push(`Pipeline SCM URL (${normalizedScmUrl}) does not match configured test repository (${normalizedConfiguredRepoUrl})`);
+      recommendations.push('Update the Jenkins job SCM Repository URL to the same repository configured in JENKINS_TEST_REPO_URL.');
+    }
+
+    if (hasTimerTrigger) {
+      issues.push('Jenkins Timer Trigger is enabled on the target job');
+      recommendations.push('Disable the Jenkins timer trigger so the platform remains the single scheduler.');
+    }
+
+    const triggerReady = parameterized
+      && definitionClass === 'org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition'
+      && (!scriptPath || scriptPath === 'Jenkinsfile')
+      && (!normalizedConfiguredRepoUrl || !normalizedScmUrl || normalizedConfiguredRepoUrl === normalizedScmUrl);
+
+    return {
+      jobName,
+      jobUrl,
+      jobClass: typeof payload._class === 'string' ? payload._class : undefined,
+      definitionClass,
+      parameterized,
+      parameterNames,
+      triggerReady,
+      scmUrl,
+      branchSpec,
+      scriptPath,
+      hasTimerTrigger,
+      timerSpec,
+      issues,
+      recommendations,
+    };
+  }
+
+  public async fetchConfiguredApiJobConfigXml(): Promise<string | null> {
+    if (!this.enabled) {
+      return null;
+    }
+
+    const jobName = this.config.jobs.api;
+    const jobUrl = this.normalizeJenkinsUrl(`${this.config.baseUrl}/job/${jobName}/`);
+    return this.fetchJenkinsText(`${jobUrl}config.xml`);
   }
 
   /**

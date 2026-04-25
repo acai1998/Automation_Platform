@@ -1,4 +1,7 @@
 import { AsyncLocalStorage } from 'async_hooks';
+import fs from 'fs';
+import path from 'path';
+import { inspect } from 'util';
 
 // 日志级别枚举
 export enum LogLevel {
@@ -40,6 +43,7 @@ interface LoggerConfig {
   enableTimestamp: boolean;
   enableColors: boolean;
   outputFormat: LogOutputFormat;
+  filePath?: string;
 }
 
 // 默认配置
@@ -82,6 +86,7 @@ class Logger {
 
   constructor() {
     this.config = this.loadConfig();
+    this.ensureFilePathReady();
   }
 
   // 从环境变量加载配置
@@ -90,6 +95,7 @@ class Logger {
     const level = LogLevel[levelStr as keyof typeof LogLevel] ?? LogLevel.INFO;
     const outputFormatEnv = process.env.LOG_OUTPUT_FORMAT?.toLowerCase();
     const outputFormat: LogOutputFormat = outputFormatEnv === 'json' ? 'json' : DEFAULT_CONFIG.outputFormat;
+    const configuredFilePath = process.env.LOG_FILE_PATH?.trim();
 
     return {
       level,
@@ -100,7 +106,24 @@ class Logger {
       enableTimestamp: process.env.LOG_TIMESTAMP !== 'false',
       enableColors: process.env.NODE_ENV !== 'production' && process.env.LOG_COLORS !== 'false',
       outputFormat,
+      filePath: configuredFilePath
+        ? (path.isAbsolute(configuredFilePath)
+            ? configuredFilePath
+            : path.resolve(process.cwd(), configuredFilePath))
+        : undefined,
     };
+  }
+
+  private ensureFilePathReady(): void {
+    if (!this.config.filePath) {
+      return;
+    }
+
+    try {
+      fs.mkdirSync(path.dirname(this.config.filePath), { recursive: true });
+    } catch {
+      // Ignore file sink initialization failures and keep console logging available.
+    }
   }
 
   // 设置当前请求上下文
@@ -185,6 +208,38 @@ class Logger {
     return compacted;
   }
 
+  private stripAnsi(value: string): string {
+    return value.replace(/\u001b\[[0-9;]*m/g, '');
+  }
+
+  private serializeFileLogData(data: unknown): string {
+    if (typeof data === 'string') {
+      return data;
+    }
+
+    return inspect(data, {
+      depth: 6,
+      colors: false,
+      compact: false,
+      breakLength: 120,
+    });
+  }
+
+  private writeFileLog(logMessage: string, data?: unknown): void {
+    if (!this.config.filePath) {
+      return;
+    }
+
+    const baseLine = this.stripAnsi(logMessage);
+    const serialized = data === undefined ? baseLine : `${baseLine} ${this.serializeFileLogData(data)}`;
+
+    try {
+      fs.appendFileSync(this.config.filePath, `${serialized}\n`, 'utf8');
+    } catch {
+      // Ignore file sink failures so console logging remains available.
+    }
+  }
+
   private writeLog(level: LogLevel, logMessage: string, data?: unknown): void {
     switch (level) {
       case LogLevel.DEBUG:
@@ -216,6 +271,8 @@ class Logger {
         }
         break;
     }
+
+    this.writeFileLog(logMessage, data);
   }
 
   // 核心日志记录方法
@@ -388,6 +445,7 @@ class Logger {
   // 更新配置
   updateConfig(updates: Partial<LoggerConfig>): void {
     this.config = { ...this.config, ...updates };
+    this.ensureFilePathReady();
   }
 }
 
