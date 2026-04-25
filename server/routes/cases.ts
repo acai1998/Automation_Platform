@@ -51,7 +51,8 @@ router.get('/', async (req, res) => {
     const { projectId, module, enabled, type, search, priority, owner, limit, offset } = req.query;
 
     // 分页参数安全解析：统一上限保护，防止无边界查询；NaN 兜底为默认值
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 50));
+    // 任务管理页的用例选择器会按 500 条加载候选集，这里需要与前端保持一致。
+    const limitNum = Math.min(500, Math.max(1, parseInt(limit as string) || 50));
     const offsetNum = Math.max(0, parseInt(offset as string) || 0);
 
     // projectId 安全解析：parseInt + isNaN 双重检查，防止 NaN 流入 SQL
