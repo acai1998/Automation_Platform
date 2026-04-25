@@ -1,7 +1,26 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-elixir';
 import 'mind-elixir/style.css';
-import { BrainCircuit, History, Loader2, Menu, X, FileText, Bot, GripHorizontal } from 'lucide-react';
+import {
+  Activity,
+  BarChart3,
+  Bot,
+  BrainCircuit,
+  Bug,
+  CheckCircle2,
+  FileText,
+  GitBranch,
+  GripHorizontal,
+  History,
+  LayoutGrid,
+  Link2,
+  ListTree,
+  Loader2,
+  Menu,
+  PlayCircle,
+  ShieldAlert,
+  X,
+} from 'lucide-react';
 import { useLocation } from 'wouter';
 import { useTheme } from '@/contexts/ThemeContext';
 import ErrorBoundary from '@/components/ErrorBoundary';
@@ -97,6 +116,167 @@ const SIDEBAR_WIDTH = 320;
 const FLOAT_PANEL_WIDTH = 300;
 const FLOAT_PANEL_DEFAULT_RIGHT = 16;
 const FLOAT_PANEL_DEFAULT_TOP = 8;
+
+type WorkspaceTab = 'materials' | 'results' | 'coverage' | 'execution';
+type ResultViewMode = 'mind' | 'list';
+type RiskLevel = 'high' | 'medium' | 'low';
+
+interface GeneratedCaseListItem {
+  id: string;
+  title: string;
+  moduleName: string;
+  priority: string;
+  status: AiCaseNodeStatus;
+  riskLevel: RiskLevel;
+  sourceLabel: string;
+}
+
+const WORKSPACE_TAB_ITEMS: Array<{
+  id: WorkspaceTab;
+  label: string;
+  description: string;
+  icon: ReactNode;
+}> = [
+  {
+    id: 'materials',
+    label: '输入材料',
+    description: '准备 PRD、附件和外部来源',
+    icon: <FileText className="h-4 w-4" />,
+  },
+  {
+    id: 'results',
+    label: '生成结果',
+    description: '查看脑图与结构化结果',
+    icon: <BrainCircuit className="h-4 w-4" />,
+  },
+  {
+    id: 'coverage',
+    label: '覆盖与风险',
+    description: '评估高风险点与覆盖缺口',
+    icon: <ShieldAlert className="h-4 w-4" />,
+  },
+  {
+    id: 'execution',
+    label: '执行与回流',
+    description: '发布、执行与质量沉淀',
+    icon: <PlayCircle className="h-4 w-4" />,
+  },
+];
+
+function inferRiskLevel(priority: string | undefined, status: AiCaseNodeStatus): RiskLevel {
+  if (status === 'failed' || priority === 'P0') {
+    return 'high';
+  }
+  if (priority === 'P1' || priority === 'P2' || status === 'blocked') {
+    return 'medium';
+  }
+  return 'low';
+}
+
+function collectGeneratedCases(mapData: AiCaseMindData): GeneratedCaseListItem[] {
+  const modules = mapData.nodeData.children ?? [];
+  const items: GeneratedCaseListItem[] = [];
+
+  for (const moduleNode of modules) {
+    const moduleName = typeof moduleNode.topic === 'string' && moduleNode.topic.trim()
+      ? moduleNode.topic.trim()
+      : '未命名模块';
+
+    for (const caseNode of moduleNode.children ?? []) {
+      const priority = caseNode.metadata?.priority ?? 'P2';
+      const status = caseNode.metadata?.status ?? 'todo';
+
+      items.push({
+        id: caseNode.id,
+        title: caseNode.topic,
+        moduleName,
+        priority,
+        status,
+        riskLevel: inferRiskLevel(priority, status),
+        sourceLabel: caseNode.metadata?.aiGenerated ? 'AI 生成' : '手动补充',
+      });
+    }
+  }
+
+  return items;
+}
+
+function WorkspaceSummaryCard({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
+      <div className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</div>
+      <div className="mt-1 text-xl font-semibold text-slate-900 dark:text-white">{value}</div>
+      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{hint}</div>
+    </div>
+  );
+}
+
+function WorkspaceTabButton({
+  active,
+  icon,
+  label,
+  description,
+  onClick,
+}: {
+  active: boolean;
+  icon: ReactNode;
+  label: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`min-w-[180px] rounded-xl border px-4 py-3 text-left transition-colors ${
+        active
+          ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/60 dark:bg-indigo-500/10 dark:text-indigo-300'
+          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-700 dark:hover:bg-slate-800/80'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span className={active ? '' : 'text-slate-400 dark:text-slate-500'}>{icon}</span>
+        <span className="text-sm font-semibold">{label}</span>
+      </div>
+      <div className={`mt-1 text-xs ${active ? 'text-indigo-600/80 dark:text-indigo-300/80' : 'text-slate-500 dark:text-slate-400'}`}>
+        {description}
+      </div>
+    </button>
+  );
+}
+
+function WorkspacePanelCard({
+  title,
+  description,
+  action,
+  children,
+}: {
+  title: string;
+  description: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
+      <div className="flex items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800 px-5 py-4">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h3>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{description}</p>
+        </div>
+        {action}
+      </div>
+      <div className="px-5 py-4">{children}</div>
+    </div>
+  );
+}
 
 /**
  * 浮动面板拖拽 hook
@@ -352,6 +532,8 @@ const [panelOpen, setPanelOpen] = useState(false);
 const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMove, onPointerUp: panelDragUp } = useDraggablePanel(canvasDivRef, panelOpen);
   // 需求编辑弹窗
   const [isRequirementDialogOpen, setIsRequirementDialogOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('results');
+  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>('mind');
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
@@ -927,6 +1109,84 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
 
     return `远端#${remoteSyncMeta.remoteWorkspaceId} · v${remoteSyncMeta.remoteVersion ?? '-'} · ${remoteSyncMeta.remoteStatus ?? 'draft'}`;
   }, [isRemoteLinked, remoteSyncMeta.remoteStatus, remoteSyncMeta.remoteVersion, remoteSyncMeta.remoteWorkspaceId]);
+
+  const generatedCases = useMemo(() => {
+    if (!mindData) {
+      return [];
+    }
+    return collectGeneratedCases(mindData);
+  }, [mindData]);
+
+  const highRiskCases = useMemo(
+    () => generatedCases.filter((item) => item.riskLevel === 'high'),
+    [generatedCases]
+  );
+
+  const coverageGapCases = useMemo(
+    () => generatedCases.filter((item) => item.status === 'todo' || item.status === 'blocked' || item.status === 'failed'),
+    [generatedCases]
+  );
+
+  const moduleCoverage = useMemo(() => {
+    const map = new Map<string, { total: number; done: number; highRisk: number }>();
+
+    for (const item of generatedCases) {
+      const current = map.get(item.moduleName) ?? { total: 0, done: 0, highRisk: 0 };
+      current.total += 1;
+      if (item.status === 'passed' || item.status === 'skipped') {
+        current.done += 1;
+      }
+      if (item.riskLevel === 'high') {
+        current.highRisk += 1;
+      }
+      map.set(item.moduleName, current);
+    }
+
+    return Array.from(map.entries()).map(([moduleName, value]) => ({
+      moduleName,
+      total: value.total,
+      done: value.done,
+      highRisk: value.highRisk,
+      completionRate: value.total === 0 ? 0 : Math.round((value.done / value.total) * 100),
+    }));
+  }, [generatedCases]);
+
+  const workspaceSummary = useMemo(() => {
+    const materialCount =
+      (requirementText.trim() ? 1 : 0) +
+      attachments.length +
+      (isRemoteLinked ? 1 : 0);
+
+    return {
+      materialCount,
+      caseCount: progress.total,
+      highRiskCount: highRiskCases.length,
+      coverageRate: `${progress.completionRate}%`,
+      executionState: isRemoteLinked ? '已发布' : '未发布',
+    };
+  }, [attachments.length, highRiskCases.length, isRemoteLinked, progress.completionRate, progress.total, requirementText]);
+
+  const handleFocusGeneratedCase = useCallback((nodeId: string) => {
+    setActiveTab('results');
+    setResultViewMode('mind');
+    selectedNodeIdRef.current = nodeId;
+    selectedNodeIdsRef.current = [nodeId];
+    setSelectedNodeId(nodeId);
+    setSelectedNodeIds([nodeId]);
+
+    window.setTimeout(() => {
+      if (!mindRef.current) {
+        return;
+      }
+
+      try {
+        const target = mindRef.current.findEle(nodeId);
+        mindRef.current.selectNode(target);
+      } catch {
+        // no-op: node may not be ready yet
+      }
+    }, 0);
+  }, []);
 
   const handleCanvasScale = useCallback((scale: number) => {
     if (!mindRef.current) {
@@ -1649,6 +1909,8 @@ const applyWorkspaceDetail = useCallback(
       return;
     }
 
+    setActiveTab('results');
+    setResultViewMode('mind');
     setIsRequirementDialogOpen(false);
     startGenerateProgress();
     setIsGenerating(true);
@@ -2071,6 +2333,35 @@ const applyWorkspaceDetail = useCallback(
             <span className="hidden md:block">{remoteStatusText}</span>
           </div>
         </header>
+      ) : null}
+
+      {!isCanvasFullscreen ? (
+        <>
+          <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950 px-4 py-3">
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+              <WorkspaceSummaryCard label="输入材料" value={`${workspaceSummary.materialCount}`} hint="需求、附件和远端上下文" />
+              <WorkspaceSummaryCard label="生成用例" value={`${workspaceSummary.caseCount}`} hint="当前工作台中的测试点数量" />
+              <WorkspaceSummaryCard label="高风险项" value={`${workspaceSummary.highRiskCount}`} hint="按优先级和状态初步推断" />
+              <WorkspaceSummaryCard label="当前覆盖率" value={workspaceSummary.coverageRate} hint="基于节点状态的阶段性指标" />
+              <WorkspaceSummaryCard label="执行状态" value={workspaceSummary.executionState} hint={isRemoteLinked ? remoteStatusText : '尚未发布到远端工作台'} />
+            </div>
+          </div>
+
+          <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {WORKSPACE_TAB_ITEMS.map((tab) => (
+                <WorkspaceTabButton
+                  key={tab.id}
+                  active={activeTab === tab.id}
+                  icon={tab.icon}
+                  label={tab.label}
+                  description={tab.description}
+                  onClick={() => setActiveTab(tab.id)}
+                />
+              ))}
+            </div>
+          </div>
+        </>
       ) : null}
 
       {/* 主体：左侧边栏 + 右侧画布 */}
