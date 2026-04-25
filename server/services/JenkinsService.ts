@@ -560,7 +560,7 @@ export class JenkinsService {
     const apiParameterNames = extractParameterNamesFromApiPayload(payload);
     const xmlParameterNames = extractXmlValues(
       configXml,
-      /<[^>]*ParameterDefinition[^>]*>[\s\S]*?<name>([^<]+)<\/name>/g
+      /<hudson\.model\.(?:String|Boolean|Text|Choice|Password|Run|File)ParameterDefinition>\s*[\s\S]*?<name>([^<]+)<\/name>/g
     );
     const parameterNames = Array.from(new Set([...apiParameterNames, ...xmlParameterNames]));
     const parameterized = parameterNames.length > 0 || configXml.includes('ParametersDefinitionProperty');
