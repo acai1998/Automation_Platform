@@ -3,13 +3,12 @@
 ## 📚 文档目录
 
 ### 快速参考
-- **[快速修复指南](./QUICK_FIX_GUIDE.md)** - 5分钟内解决执行卡住问题
-- **[故障排查指南](./JENKINS_CALLBACK_TROUBLESHOOTING.md)** - 完整的诊断和配置指南
+- **[快速配置指南](./JENKINS_QUICK_SETUP.md)** - 5分钟内完成 Jenkins 集成
+- **[故障排查指南](./JENKINS_TROUBLESHOOTING.md)** - 完整的诊断和配置指南
 
-### 历史记录
-- [回调修复报告](./JENKINS_CALLBACK_FIX_REPORT.md)
-- [回调修复总结](./JENKINS_CALLBACK_SUMMARY.md)
-- [回调修复向导](./JENKINS_CALLBACK_FIX_GUIDE.md)
+### 配置与集成
+- [完整 API 文档](../API_DOCUMENTATION.md)
+- [部署指南](../DOCKER_DEPLOYMENT_GUIDE.md)
 
 ---
 
@@ -20,12 +19,8 @@
 #### 立即修复
 
 ```bash
-# 方法1:使用测试脚本(推荐)
-./scripts/test_jenkins_callback.sh --run-id <你的runId>
-
-# 方法2:手动命令
+# 测试回调接口
 curl -X POST http://localhost:3000/api/jenkins/callback/test \
-  -H "X-Api-Key: $(grep JENKINS_API_KEY .env | cut -d'=' -f2)" \
   -H "Content-Type: application/json" \
   -d '{
     "runId": <runId>,
@@ -52,31 +47,24 @@ curl -X POST http://localhost:3000/api/executions/sync-stuck \
 
 ## 🔧 配置检查
 
-### 1. 测试回调接口
-
-```bash
-# 运行测试脚本
-./scripts/test_jenkins_callback.sh --test-only
-```
-
-### 2. 检查 .env 配置
+### 1. 检查 .env 配置
 
 ```bash
 # 查看 Jenkins 相关配置
-grep -E "JENKINS_URL|JENKINS_API_KEY|API_CALLBACK_URL" .env
+grep -E "JENKINS_URL|JENKINS_ALLOWED_IPS|JENKINS_TOKEN" .env
 
 # 应该包含:
-# JENKINS_URL=http://jenkins.wiac.xyz:8080
-# JENKINS_API_KEY=<64位密钥>
-# API_CALLBACK_URL=http://your-platform-host:3000
+# JENKINS_URL=http://jenkins.example.com:8080
+# JENKINS_USER=your-jenkins-user
+# JENKINS_TOKEN=your-jenkins-api-token
+# JENKINS_ALLOWED_IPS=192.168.1.0/24,jenkins.example.com
 ```
 
-### 3. 验证认证
+### 2. 测试回调接口
 
 ```bash
-# 测试认证是否正确
+# 测试回调连接
 curl -X POST http://localhost:3000/api/jenkins/callback/test \
-  -H "X-Api-Key: $(grep JENKINS_API_KEY .env | cut -d'=' -f2)" \
   -H "Content-Type: application/json" \
   -d '{"testMessage": "test"}'
 
@@ -109,8 +97,7 @@ curl -X POST http://localhost:3000/api/jenkins/callback/test \
    - 设置监控告警
 
 详细步骤请参考:
-- [快速修复指南](./QUICK_FIX_GUIDE.md)
-- [故障排查指南](./JENKINS_CALLBACK_TROUBLESHOOTING.md)
+- [故障排查指南](./JENKINS_TROUBLESHOOTING.md)
 
 ---
 
@@ -208,7 +195,7 @@ POST /api/executions/:id/sync
 POST /api/executions/sync-stuck
 ```
 
-批量同步长时间未更新的执行记录。
+批量同步长时间未更新的运行记录。
 
 ### 查询卡住的执行
 
@@ -224,30 +211,18 @@ GET /api/executions/stuck?timeout=10
 
 ### 1. 配置 Jenkins Pipeline 回调
 
-在 Jenkins Pipeline 的 `post` 块中添加:
+不要在 Jenkins Pipeline 的 `post` 块里直接按 `currentBuild.result` 回调平台。平台状态应来自测试报告或用例结果，而不是 Pipeline 总体状态。
+
+推荐做法：
+- 测试执行脚本在产出 `test-report.json` 或 JUnit 后，根据用例结果回调平台。
+- `CALLBACK_URL` 必须指向 Jenkins 主机和测试容器都能访问的平台地址，远端环境不要使用 `http://localhost:3000/...`。
+- Jenkinsfile 可以保留自身 `FAILURE` 作为 CI 信号，但不要再补发空的 `failed` 回调。
+
+反例：
 
 ```groovy
-post {
-    always {
-        script {
-            // 回调平台
-            def callbackUrl = env.CALLBACK_URL ?: "http://localhost:3000/api/jenkins/callback"
-            def apiKey = env.JENKINS_API_KEY
-            
-            httpRequest(
-                url: callbackUrl,
-                httpMode: 'POST',
-                contentType: 'APPLICATION_JSON',
-                customHeaders: [[name: 'X-Api-Key', value: apiKey]],
-                requestBody: groovy.json.JsonOutput.toJson([
-                    runId: params.RUN_ID.toInteger(),
-                    status: currentBuild.result == 'SUCCESS' ? 'success' : 'failed',
-                    durationMs: currentBuild.duration
-                ])
-            )
-        }
-    }
-}
+// 不要这样做：Pipeline 可能因归档、清理或网络问题失败，但用例结果已经成功
+status: currentBuild.result == 'SUCCESS' ? 'success' : 'failed'
 ```
 
 ### 2. 定期测试
@@ -274,7 +249,7 @@ post {
 
 **A:** Jenkins 没有成功回调到平台。可能原因:
 1. Jenkins Job 未配置回调逻辑
-2. 回调地址配置错误
+2. 回调地址配置错误，例如远端 Jenkins 或测试容器仍回调 `localhost`
 3. 网络连通性问题
 4. 认证配置错误
 
@@ -282,7 +257,7 @@ post {
 
 ### Q: 如何配置 Jenkins 回调?
 
-**A:** 参考 [故障排查指南](./JENKINS_CALLBACK_TROUBLESHOOTING.md) 中的"配置 Jenkins Job 回调"章节。
+**A:** 参考 [故障排查指南](./JENKINS_TROUBLESHOOTING.md) 中的"配置 Jenkins Job 回调"章节。
 
 ### Q: 如何批量修复多个卡住的执行?
 

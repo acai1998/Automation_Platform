@@ -1,19 +1,13 @@
-import { useEffect, useState, useRef, useMemo } from "react";
-import { MoreVertical, Loader2, Filter } from "lucide-react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import { MoreVertical, Loader2, Filter, RefreshCw, FileText, ExternalLink } from "lucide-react";
 import { useLocation } from "wouter";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import type { DashboardResponse, TestStatusFilter } from "@/types/dashboard";
+import { dashboardApi } from "@/api";
+import type { DashboardResponse, TestStatusFilter, RecentRun, TestStatus } from "@/types/dashboard";
 
-interface RecentRun {
-  id: number;
-  suiteName: string;
-  status: TestStatus;
-  duration: number | null;
-  startTime: string;
-  executedBy: string | null;
+// 扩展 DashboardResponse 以支持 recentRuns（用于组件内部）
+interface DashboardDataWithRuns extends DashboardResponse {
+  recentRuns?: RecentRun[];
 }
-
-type TestStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 
 // Grid 布局配置常量
 const GRID_CONFIG = {
@@ -158,6 +152,65 @@ function getInitials(name: string): string {
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 }
 
+// 三点操作菜单
+function ActionMenu({ run, onNavigate }: { run: RecentRun; onNavigate: (path: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭菜单
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        aria-label={`${run.suiteName}的更多操作`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(v => !v)}
+        className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded p-1"
+      >
+        <MoreVertical className="h-5 w-5" aria-hidden="true" />
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 z-50 mt-1 w-40 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1"
+          role="menu"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => { setOpen(false); onNavigate(`/reports/${run.id}`); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          >
+            <FileText className="h-4 w-4 shrink-0" />
+            查看详情
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => { setOpen(false); onNavigate('/reports'); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          >
+            <ExternalLink className="h-4 w-4 shrink-0" />
+            运行记录
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 响应式Grid模板Hook
 function useResponsiveGrid() {
   const [screenSize, setScreenSize] = useState<'medium' | 'large' | 'ultrawide'>('large');
@@ -192,17 +245,31 @@ function useResponsiveGrid() {
 }
 
 interface RecentTestsProps {
-  data?: DashboardResponse;
+  data?: DashboardDataWithRuns;
   initialData?: RecentRun[];
-  onRefresh?: () => Promise<void>;
   statusFilter?: TestStatusFilter;
+  lastRefreshAt?: Date | null;
 }
 
-export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all' }: RecentTestsProps) {
+function formatRefreshTime(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+
+  if (diffSecs < 5) return '刚刚';
+  if (diffSecs < 60) return `${diffSecs} 秒前`;
+  if (diffMins < 60) return `${diffMins} 分钟前`;
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
+export function RecentTests({ data, initialData, statusFilter = 'all', lastRefreshAt }: RecentTestsProps) {
   const [, setLocation] = useLocation();
   const [runs, setRuns] = useState<RecentRun[]>(() => initialData || []);
   const [loading, setLoading] = useState(() => !initialData);
-  const parentRef = useRef<HTMLDivElement>(null);
+  const [displayRefreshAt, setDisplayRefreshAt] = useState<Date | null>(lastRefreshAt || null);
+  // 用于定期刷新「X秒前」显示的计时器
+  const [, setTick] = useState(0);
 
   // 响应式Grid布局
   const { gridTemplate, showTimeColumn } = useResponsiveGrid();
@@ -224,14 +291,6 @@ export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all'
     return runs.filter(run => targetStatuses?.includes(run.status));
   }, [runs, statusFilter]);
 
-  // 使用虚拟滚动优化性能 - PC端专用
-  const rowVirtualizer = useVirtualizer({
-    count: filteredRuns.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 72, // PC端行高估计值
-    overscan: 5, // 预渲染额外行数
-  });
-
   useEffect(() => {
     if (data?.recentRuns) {
       setRuns(data.recentRuns);
@@ -239,14 +298,30 @@ export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all'
     }
   }, [data]);
 
+  useEffect(() => {
+    if (lastRefreshAt) {
+      setDisplayRefreshAt(lastRefreshAt);
+    }
+  }, [lastRefreshAt]);
+
+  // 每 10s 重新渲染一次，确保「X秒前」文案实时更新
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 10000);
+    return () => clearInterval(timer);
+  }, []);
+
   const handleRefresh = async () => {
-    if (onRefresh) {
-      setLoading(true);
-      try {
-        await onRefresh();
-      } finally {
-        setLoading(false);
+    setLoading(true);
+    try {
+      const recentRunsResponse = await dashboardApi.getRecentRuns(10);
+      if (recentRunsResponse.success && recentRunsResponse.data) {
+        setRuns(recentRunsResponse.data);
+        setDisplayRefreshAt(new Date());
       }
+    } catch (error) {
+      console.error('Failed to refresh recent runs:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -270,32 +345,39 @@ export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all'
           )}
         </div>
         <div className="flex items-center gap-3">
-          {onRefresh && (
-            <button
-              type="button"
-              onClick={handleRefresh}
-              disabled={loading}
-              className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors disabled:opacity-50"
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <span>刷新</span>
-              )}
-            </button>
+          {/* 最后刷新时间 */}
+          {displayRefreshAt && (
+            <span className="flex items-center gap-1 text-xs text-slate-400 dark:text-gray-500">
+              <RefreshCw className="h-3 w-3" aria-hidden="true" />
+              {formatRefreshTime(displayRefreshAt)}
+            </span>
           )}
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={loading}
+            title="刷新数据"
+            aria-label="刷新测试运行数据"
+            className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors disabled:opacity-50"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <span>刷新</span>
+            )}
+          </button>
           <button
             type="button"
             onClick={() => setLocation('/reports')}
             className="text-primary text-sm font-semibold hover:text-primary/80 transition-colors"
           >
-            查看所有报告
+            查看所有记录
           </button>
         </div>
       </div>
 
       <div className="w-full overflow-hidden rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark transition-all duration-200 hover:shadow-lg hover:border-primary/10">
-        {loading ? (
+        {loading && runs.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
@@ -363,87 +445,58 @@ export function RecentTests({ data, initialData, onRefresh, statusFilter = 'all'
               </div>
             </div>
 
-            {/* 虚拟滚动的表体 */}
-            <div
-              ref={parentRef}
-              className="h-[600px] overflow-auto"
-              style={{
-                contain: 'strict'
-              }}
-              role="rowgroup"
-              aria-label="测试运行记录列表"
-            >
-              <div
-                style={{
-                  height: `${rowVirtualizer.getTotalSize()}px`,
-                  width: '100%',
-                  position: 'relative',
-                }}
-              >
-                {rowVirtualizer.getVirtualItems().map((virtualItem) => {
-                  const run = filteredRuns[virtualItem.index];
-                  return (
-                    <div
-                      key={run.id}
-                      className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-all duration-150 ease-in-out absolute top-0 left-0 right-0 grid items-center border-b border-slate-100 dark:border-border-dark"
-                      style={{
-                        gridTemplateColumns: gridTemplate,
-                        height: `${virtualItem.size}px`,
-                        transform: `translateY(${virtualItem.start}px)`,
-                      }}
-                      role="row"
-                      aria-label={`测试运行: ${run.suiteName}`}
-                    >
-                      {/* 状态列 */}
-                      <div className="px-4 py-3" role="cell" aria-label={`状态: ${statusConfig[run.status].label}`}>
-                        <StatusBadge status={run.status} />
+            {/* 表体：直接渲染最近记录，避免模块内部滚动影响整页滚动 */}
+            <div role="rowgroup" aria-label="测试运行记录列表">
+              {filteredRuns.map((run, index) => (
+                <div
+                  key={run.id}
+                  className="group hover:bg-slate-50 dark:hover:bg-white/5 transition-all duration-150 ease-in-out grid items-center border-b border-slate-100 dark:border-border-dark last:border-b-0"
+                  style={{ gridTemplateColumns: gridTemplate }}
+                  role="row"
+                  aria-label={`测试运行: ${run.suiteName}`}
+                >
+                  {/* 状态列 */}
+                  <div className="px-4 py-3" role="cell" aria-label={`状态: ${statusConfig[run.status].label}`}>
+                    <StatusBadge status={run.status} />
+                  </div>
+                  {/* 计划名称列 */}
+                  <div className="px-4 py-3" role="cell" aria-label={`计划名称: ${run.suiteName}`}>
+                    <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                      {run.suiteName}
+                    </div>
+                  </div>
+                  {/* 耗时列 */}
+                  <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`耗时: ${formatDuration(run.duration)}`}>
+                    <div className="text-sm text-slate-500 dark:text-gray-400">
+                      {formatDuration(run.duration)}
+                    </div>
+                  </div>
+                  {/* 执行者列 */}
+                  <div className="px-4 py-3" role="cell" aria-label={`执行者: ${run.executedBy || '系统'}`}>
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`size-6 rounded-full ${ownerColors[index % ownerColors.length]} flex items-center justify-center text-[10px] text-white font-bold`}
+                        aria-hidden="true"
+                      >
+                        {getInitials(run.executedBy || '系统')}
                       </div>
-                      {/* 计划名称列 */}
-                      <div className="px-4 py-3" role="cell" aria-label={`计划名称: ${run.suiteName}`}>
-                        <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                          {run.suiteName}
-                        </div>
-                      </div>
-                      {/* 耗时列 */}
-                      <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`耗时: ${formatDuration(run.duration)}`}>
-                        <div className="text-sm text-slate-500 dark:text-gray-400">
-                          {formatDuration(run.duration)}
-                        </div>
-                      </div>
-                      {/* 执行者列 */}
-                      <div className="px-4 py-3" role="cell" aria-label={`执行者: ${run.executedBy || '系统'}`}>
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={`size-6 rounded-full ${ownerColors[virtualItem.index % ownerColors.length]} flex items-center justify-center text-[10px] text-white font-bold`}
-                            aria-hidden="true"
-                          >
-                            {getInitials(run.executedBy || '系统')}
-                          </div>
-                          <span className="text-sm text-slate-600 dark:text-gray-300 truncate">{run.executedBy || '系统'}</span>
-                        </div>
-                      </div>
-                      {/* 时间列 - 根据屏幕尺寸动态显示 */}
-                      {showTimeColumn && (
-                        <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`时间: ${formatTime(run.startTime)}`}>
-                          <div className="text-sm text-slate-500 dark:text-gray-400">
-                            {formatTime(run.startTime)}
-                          </div>
-                        </div>
-                      )}
-                      {/* 操作列 */}
-                      <div className="px-4 py-3 flex justify-end" role="cell">
-                        <button
-                          type="button"
-                          aria-label={`${run.suiteName}的更多操作`}
-                          className="text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
-                        >
-                          <MoreVertical className="h-5 w-5" aria-hidden="true" />
-                        </button>
+                      <span className="text-sm text-slate-600 dark:text-gray-300 truncate">{run.executedBy || '系统'}</span>
+                    </div>
+                  </div>
+                  {/* 时间列 - 根据屏幕尺寸动态显示 */}
+                  {showTimeColumn && (
+                    <div className="px-4 py-3 flex justify-center" role="cell" aria-label={`时间: ${formatTime(run.startTime)}`}>
+                      <div className="text-sm text-slate-500 dark:text-gray-400">
+                        {formatTime(run.startTime)}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  )}
+                  {/* 操作列 */}
+                  <div className="px-4 py-3 flex justify-end" role="cell">
+                    <ActionMenu run={run} onNavigate={setLocation} />
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}

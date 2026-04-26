@@ -1,313 +1,267 @@
 pipeline {
-    agent any
-    
+    agent none
+
     parameters {
-        string(name: 'RUN_ID', description: '执行批次ID', defaultValue: '')
-        string(name: 'CASE_IDS', description: '用例ID列表(JSON)', defaultValue: '[]')
+        string(name: 'RUN_ID',       description: '执行批次ID',        defaultValue: '')
+        string(name: 'CASE_IDS',     description: '用例ID列表(JSON)',   defaultValue: '[]')
         string(name: 'SCRIPT_PATHS', description: '脚本路径(逗号分隔)', defaultValue: '')
-        string(name: 'CALLBACK_URL', description: '回调URL', defaultValue: '')
-        string(name: 'MARKER', description: 'Pytest marker标记', defaultValue: '')
-        string(name: 'REPO_URL', description: '测试用例仓库URL', defaultValue: '')
+        string(name: 'CALLBACK_URL', description: '回调URL',            defaultValue: '')
+        string(name: 'MARKER',       description: 'Pytest marker标记',  defaultValue: '')
+        string(name: 'REPO_URL',     description: '测试用例仓库URL',    defaultValue: '')
+        string(name: 'REPO_BRANCH',  description: '测试用例仓库分支',   defaultValue: 'master')
+        string(name: 'PARALLEL_WORKERS', description: '并发进程数（N=指定数量，0或空=串行）headless2模式下每Chrome约250MB，建议master填3，Agent-node-2填4', defaultValue: '3')
+        booleanParam(name: 'FORCE_PULL_IMAGE', description: '强制重新拉取测试镜像（镜像有更新时勾选）', defaultValue: false)
     }
-    
+
     environment {
-        GIT_CREDENTIALS = credentials('git-credentials')
-        PLATFORM_API_URL = 'http://localhost:3000'
-        JENKINS_API_KEY = '3512fc38e1882a9ad2ab88c436277c129517e24a76daad1849ef419f90fd8a4f'
-        PYTHON_ENV = "${WORKSPACE}/venv"
+        PLATFORM_API_URL  = 'https://autotest.wiac.xyz'  // 必须用 HTTPS，避免 nginx 301 导致 curl POST 回调丢失
+        TEST_RUNNER_IMAGE = 'docker.cnb.cool/imacaiy/seleniumbase-ci:latest'
+        EXEC_NODE         = 'test-runner'  // 拥有该标签的节点均可承接构建
     }
-    
+
+    options {
+        buildDiscarder(logRotator(
+            numToKeepStr:         '10',
+            artifactNumToKeepStr: '5',
+            daysToKeepStr:        '30',
+            artifactDaysToKeepStr:'7'
+        ))
+        timeout(time: 60, unit: 'MINUTES')
+        skipDefaultCheckout(true)  // 禁用默认 checkout，仅在执行节点按需 checkout
+    }
+
     stages {
-        stage('准备') {
-            steps {
-                script {
-                    echo "========== 执行信息 =========="
-                    echo "运行ID: ${params.RUN_ID}"
-                    echo "用例IDs: ${params.CASE_IDS}"
-                    echo "脚本路径: ${params.SCRIPT_PATHS}"
-                    echo "回调地址: ${params.CALLBACK_URL}"
-                    echo "==============================="
-                    
-                    // 标记执行开始（可选）
-                    if (params.RUN_ID) {
-                        sh '''
-                            curl -X POST "${PLATFORM_API_URL}/api/executions/${RUN_ID}/start" \
-                                -H "Content-Type: application/json"
-                        '''
-                    }
-                }
-            }
-        }
-        
-        stage('检出代码') {
-            steps {
-                script {
-                    echo "正在克隆/更新测试用例仓库..."
-                    
-                    if (params.REPO_URL) {
-                        if (fileExists('test-cases')) {
-                            dir('test-cases') {
-                                sh 'git pull origin main'
-                            }
-                        } else {
-                            sh 'git clone ${params.REPO_URL} test-cases'
-                        }
-                    } else {
-                        echo "⚠️ 警告：REPO_URL 未设置，跳过代码检出"
-                        echo "使用默认的测试用例目录"
-                    }
-                }
-            }
-        }
-        
-        stage('准备环境') {
-            steps {
-                script {
-                    echo "准备Python环境..."
-                    
-                    sh '''
-                        cd test-cases
-                        
-                        # 创建虚拟环境（如果不存在）
-                        if [ ! -d "${PYTHON_ENV}" ]; then
-                            python3 -m venv ${PYTHON_ENV}
-                        fi
-                        
-                        # 激活虚拟环境并安装依赖
-                        source ${PYTHON_ENV}/bin/activate
-                        pip install -q pytest pytest-json-report
-                        
-                        # 列出可用的用例
-                        echo "可用的测试文件:"
-                        find . -name "test_*.py" -o -name "*_test.py" | head -20
-                    '''
-                }
-            }
-        }
-        
+
+        // ── Stage 1: 执行测试 ─────────────────────────────────────────────────
+        // EXEC_NODE = 'test-runner'，Jenkins 自动从拥有该标签的节点中分配空闲节点
+        // 镜像内已包含：Python 3.11 + Google Chrome + ChromeDriver + pytest + seleniumbase
         stage('执行测试') {
+            agent { label "${env.EXEC_NODE}" }
             steps {
+                checkout scm  // skipDefaultCheckout 后需手动执行
                 script {
-                    def scriptPaths = params.SCRIPT_PATHS
-                    def marker = params.MARKER
-                    def testCommand = "source ${PYTHON_ENV}/bin/activate && "
-                    
-                    if (scriptPaths) {
-                        // 执行指定的脚本路径
-                        def paths = scriptPaths.split(',')
-                        testCommand += "pytest ${paths.join(' ')}"
-                    } else if (marker) {
-                        // 使用marker标记执行
-                        testCommand += "pytest -m ${marker}"
-                    } else {
-                        // 执行所有测试
-                        testCommand += "pytest"
+                    if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
+                        echo "⚠️ 未传入执行参数（可能是定时触发），跳过执行测试"
+                        return
                     }
-                    
-                    // 添加报告输出参数
-                    testCommand += " --json-report --json-report-file=test-report.json -v"
-                    
-                    sh '''
-                        cd test-cases
-                        ''' + testCommand + ''' || true
-                    '''
+
+                    def callbackUrl = (params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback").trim()
+                    // 兼容历史配置：平台域名优先使用 HTTPS，避免回调走 301 或被策略拦截。
+                    if (callbackUrl.startsWith('http://autotest.wiac.xyz')) {
+                        callbackUrl = callbackUrl.replace('http://', 'https://')
+                    }
+                    def reportDir   = "${env.WORKSPACE}/reports"
+                    def repoDir     = "${env.WORKSPACE}/test-repo"
+                    def repoBranch  = params.REPO_BRANCH ?: 'master'
+                    def repoUrl     = params.REPO_URL ?: ''
+
+                    sh "mkdir -p ${reportDir}"
+
+                    def normalizeScriptPath = { String rawPath ->
+                        def normalized = (rawPath ?: '').trim()
+                        if (normalized.contains('::')) {
+                            normalized = normalized.split(/::/, 2)[0].trim()
+                        }
+                        return normalized
+                            .replace('\\', '/')
+                            .replaceFirst('^/+', '')
+                    }
+
+                    def validateScriptPaths = { String rawScriptPaths ->
+                        def requestedPaths = (rawScriptPaths ?: '')
+                            .split(',')
+                            .collect { it.trim() }
+                            .findAll { it }
+
+                        if (requestedPaths.isEmpty()) {
+                            return []
+                        }
+
+                        def missing = []
+                        dir('test-repo') {
+                            requestedPaths.each { rawPath ->
+                                def filePath = normalizeScriptPath(rawPath)
+                                if (!filePath || !fileExists(filePath)) {
+                                    missing << [
+                                        scriptPath: rawPath,
+                                        filePath: filePath ?: '(empty)',
+                                    ]
+                                }
+                            }
+                        }
+
+                        return missing
+                    }
+
+                    // 宿主机增量同步：首次 clone，后续 fetch + reset（节省 10~30s）
+                    if (repoUrl) {
+                        sh """
+                            if [ -d "${repoDir}/.git" ]; then
+                                echo "📦 增量更新测试仓库..."
+                                git -C "${repoDir}" remote set-url origin ${repoUrl}
+                                git -C "${repoDir}" fetch --depth=1 origin ${repoBranch}
+                                git -C "${repoDir}" reset --hard origin/${repoBranch}
+                            else
+                                echo "📦 首次克隆测试仓库..."
+                                git clone --depth=1 -b ${repoBranch} ${repoUrl} "${repoDir}"
+                            fi
+                        """
+                    }
+
+                    // 登录制品库（凭据 CNB_DOCKER_TOKEN 未配置时静默跳过）
+                    try {
+                        withCredentials([string(credentialsId: 'CNB_DOCKER_TOKEN', variable: 'CNB_TOKEN', optional: true)]) {
+                            if (env.CNB_TOKEN) {
+                                sh 'echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin'
+                            } else {
+                                echo "⚠️ 凭据 CNB_DOCKER_TOKEN 未配置，跳过制品库登录"
+                            }
+                        }
+                    } catch (Exception e) {
+                        echo "⚠️ Docker 登录跳过: ${e.message}"
+                    }
+
+                    // ── 镜像预热：本地已有则跳过 pull；FORCE_PULL_IMAGE=true 时强制更新 ──
+                    def forcePull = params.FORCE_PULL_IMAGE == true
+                    sh """
+                        if [ "${forcePull}" = "true" ] || ! docker image inspect ${TEST_RUNNER_IMAGE} > /dev/null 2>&1; then
+                            echo "拉取镜像... \$(date '+%H:%M:%S')"
+                            docker pull ${TEST_RUNNER_IMAGE} || echo "WARNING: image pull failed"
+                        else
+                            echo "镜像已存在，跳过 pull（镜像有更新时请勾选 FORCE_PULL_IMAGE 参数）"
+                        fi
+                    """
+
+                    // 环境变量写入文件后通过 --env-file 传给容器，避免特殊字符破坏 shell 命令
+                    def envFile = "${reportDir}/.docker_env"
+                    // REPO_PRELOADED=true 时，entrypoint.sh 跳过 git clone，直接用已挂载的 /repo 目录
+                    def repoPreloaded = repoUrl
+                        ? sh(script: "test -d '${repoDir}/.git' && echo 'true' || echo 'false'", returnStdout: true).trim()
+                        : 'false'
+
+                    def scriptPathValidationFailures = []
+                    if (repoUrl && (params.SCRIPT_PATHS ?: '').trim()) {
+                        scriptPathValidationFailures = validateScriptPaths(params.SCRIPT_PATHS)
+                        if (scriptPathValidationFailures) {
+                            echo "❌ SCRIPT_PATHS 校验失败，以下路径在仓库中不存在："
+                            scriptPathValidationFailures.each { item ->
+                                echo " - ${item.scriptPath} -> ${item.filePath}"
+                            }
+                            echo "请先修正 Auto_TestCase.script_path，再重新触发 Jenkins。"
+                        }
+                    }
+
+                    writeFile file: envFile, text: [
+                        "RUN_ID=${params.RUN_ID}",
+                        "PLATFORM_URL=${env.PLATFORM_API_URL}",
+                        "REPO_URL=${repoUrl}",
+                        "REPO_BRANCH=${repoBranch}",
+                        "SCRIPT_PATHS=${params.SCRIPT_PATHS ?: ''}",
+                        "MARKER=${params.MARKER ?: ''}",
+                        "PARALLEL_WORKERS=${params.PARALLEL_WORKERS ?: 'auto'}",
+                        "CALLBACK_URL=${callbackUrl}",
+                        "REPO_PRELOADED=${repoPreloaded}",
+                    ].join('\n') + '\n'
+
+                    // 清理上次构建遗留的 /workspace/repo（可能由旧镜像以 root 身份写入）
+                    // 新镜像（REPO_PRELOADED=true 时走 /repo 挂载）不再写此目录，此块可在镜像更新后删除
+                    sh """
+                        rm -rf "${reportDir}/repo" 2>/dev/null || \
+                        docker run --rm --entrypoint sh \
+                            -v "${reportDir}:/workspace" \
+                            ${TEST_RUNNER_IMAGE} \
+                            -c 'rm -rf /workspace/repo' || true
+                    """
+
+                    echo "[${new Date().format('HH:mm:ss')}] docker-run start"
+                    def testExitCode = 1
+                    def repoMount = repoUrl ? "-v ${repoDir}:/repo" : ''
+                    try {
+                        if (scriptPathValidationFailures) {
+                            testExitCode = 2
+                            echo "已跳过 docker run：SCRIPT_PATHS 校验未通过。"
+                        } else {
+                            testExitCode = sh(
+                                script: """
+                                    docker run --rm \\
+                                        --shm-size=2g \\
+                                        --user "\$(id -u):\$(id -g)" \\
+                                        --env-file "${envFile}" \\
+                                        -v ${reportDir}:/workspace \\
+                                        ${repoMount} \\
+                                        ${TEST_RUNNER_IMAGE}
+                                """,
+                                returnStatus: true
+                            )
+                        }
+                    } finally {
+                        sh "rm -f '${envFile}' || true"  // 清理含凭据信息的临时文件
+                    }
+                    echo "[${new Date().format('HH:mm:ss')}] docker-run done, exitCode=${testExitCode}"
+
+                    writeFile file: "${env.WORKSPACE}/pytest_exit_code.txt", text: "${testExitCode}\n"
+
+                    if (testExitCode != 0) {
+                        currentBuild.result = 'FAILURE'
+                        echo "❌ 测试执行失败，exitCode=${testExitCode}"
+                        echo "⚠️ Jenkinsfile 不再根据 Pipeline exitCode 补发 failed 回调，平台结果以测试报告/用例回调为准"
+                    } else {
+                        echo "✅ 测试执行成功"
+                    }
                 }
             }
         }
-        
-        stage('收集结果') {
+
+        // ── Stage 2: 归档报告 ─────────────────────────────────────────────────
+        // test-report.json / junit.xml 由 entrypoint.sh 写入 /workspace（挂载到 ${reportDir}）
+        stage('归档报告') {
+            agent { label "${env.EXEC_NODE}" }
             steps {
                 script {
-                    echo "收集测试结果..."
-                    
-                    sh '''
-                        cd test-cases
-                        
-                        # 如果生成了报告文件，解析结果
-                        if [ -f "test-report.json" ]; then
-                            cat test-report.json
-                        else
-                            # 生成默认的结果
-                            echo "未生成详细报告，生成默认结果"
-                        fi
-                    '''
+                    if (!params.RUN_ID && !params.SCRIPT_PATHS && !params.MARKER) {
+                        echo "⚠️ 无测试产物需要归档"
+                        return
+                    }
+
+                    try {
+                        archiveArtifacts artifacts: 'reports/test-report.json',
+                            allowEmptyArchive: true, fingerprint: true
+                        echo "✅ 测试报告已归档"
+                    } catch (Exception e) {
+                        echo "⚠️ 归档测试报告失败（非致命）: ${e.message}"
+                    }
+
+                    try {
+                        junit allowEmptyResults: true, testResults: 'reports/junit.xml'
+                    } catch (Throwable t) {
+                        echo "⚠️ JUnit 报告处理失败（非致命）: ${t.message}"
+                    }
                 }
             }
         }
-        
-        stage('回调平台') {
-            steps {
-                script {
-                    echo "回调测试结果到平台..."
-                    
-                    sh '''
-                        cd test-cases
-                        
-                        # 解析测试结果（示例）
-                        if [ -f "test-report.json" ]; then
-                            TOTAL=$(jq '.summary.total' test-report.json || echo "0")
-                            PASSED=$(jq '.summary.passed' test-report.json || echo "0")
-                            FAILED=$(jq '.summary.failed' test-report.json || echo "0")
-                            SKIPPED=$(jq '.summary.skipped' test-report.json || echo "0")
-                        else
-                            TOTAL=0
-                            PASSED=0
-                            FAILED=0
-                            SKIPPED=0
-                        fi
-                        
-                        # 计算执行时长
-                        BUILD_DURATION_MS=$((BUILD_DURATION * 1000))
-                        
-                        # 确定状态
-                        if [ $FAILED -eq 0 ]; then
-                            STATUS="success"
-                        else
-                            STATUS="failed"
-                        fi
-                        
-                        echo "测试结果汇总:"
-                        echo "  总数: $TOTAL"
-                        echo "  通过: $PASSED"
-                        echo "  失败: $FAILED"
-                        echo "  跳过: $SKIPPED"
-                        echo "  状态: $STATUS"
-                        echo "  耗时: ${BUILD_DURATION_MS}ms"
-                        
-                        # 回调到平台
-                        if [ ! -z "${CALLBACK_URL}" ]; then
-                            curl -X POST "${CALLBACK_URL}" \
-                                -H "Content-Type: application/json" \
-                                -H "X-Api-Key: ${JENKINS_API_KEY}" \
-                                -d "{
-                                    \"runId\": ${RUN_ID},
-                                    \"status\": \"$STATUS\",
-                                    \"passedCases\": $PASSED,
-                                    \"failedCases\": $FAILED,
-                                    \"skippedCases\": $SKIPPED,
-                                    \"durationMs\": $BUILD_DURATION_MS,
-                                    \"buildUrl\": \"${BUILD_URL}\"
-                                }" \
-                                || echo "回调请求失败，但继续处理"
-                        fi
-                    '''
-                }
-            }
-        }
+
     }
-    
+
     post {
         always {
-            node {
-                script {
-                    echo "清理环境..."
-                    
-                    try {
-                        archiveArtifacts artifacts: 'test-cases/test-report.json', allowEmptyArchive: true, fingerprint: true
-                        echo "测试报告已归档"
-                    } catch (Exception e) {
-                        echo "归档测试报告失败: ${e.message}"
-                    }
-                    
-                    try {
-                        junit allowEmptyResults: true, testResults: '**/test-cases/junit.xml,**/test-cases/.pytest_cache/**/junit.xml'
-                    } catch (Exception e) {
-                        echo "JUnit报告处理失败: ${e.message}"
-                    }
-                    
-                    // 最终回调 - 确保状态同步
-                    if (params.RUN_ID) {
-                        echo "========== 最终回调 =========="
-                        def callbackUrl = params.CALLBACK_URL ?: "${env.PLATFORM_API_URL}/api/jenkins/callback"
-                        def finalStatus = currentBuild.result == 'SUCCESS' ? 'success' : 'failed'
-                        
-                        echo "回调地址: ${callbackUrl}"
-                        echo "运行ID: ${params.RUN_ID}"
-                        echo "最终状态: ${finalStatus}"
-                        
-                        // 尝试使用 httpRequest 插件(如果可用)
-                        try {
-                            def callbackData = [
-                                runId: params.RUN_ID.toInteger(),
-                                status: finalStatus,
-                                passedCases: 0,
-                                failedCases: currentBuild.result == 'SUCCESS' ? 0 : 1,
-                                skippedCases: 0,
-                                durationMs: currentBuild.durationMillis ?: 0
-                            ]
-                            
-                            httpRequest(
-                                url: callbackUrl,
-                                httpMode: 'POST',
-                                contentType: 'APPLICATION_JSON',
-                                customHeaders: [[name: 'X-Api-Key', value: env.JENKINS_API_KEY]],
-                                requestBody: groovy.json.JsonOutput.toJson(callbackData),
-                                validResponseCodes: '200:299',
-                                ignoreSslErrors: true
-                            )
-                            echo "✅ httpRequest 回调成功"
-                        } catch (Exception e) {
-                            echo "⚠️ httpRequest 插件不可用或失败: ${e.message}"
-                            echo "使用 curl 进行回调..."
-                            
-                            // 回退到 curl
-                            sh """
-                                curl -X POST '${callbackUrl}' \
-                                    -H 'Content-Type: application/json' \
-                                    -H 'X-Api-Key: ${env.JENKINS_API_KEY}' \
-                                    -d '{
-                                        "runId": ${params.RUN_ID},
-                                        "status": "${finalStatus}",
-                                        "passedCases": 0,
-                                        "failedCases": ${currentBuild.result == 'SUCCESS' ? 0 : 1},
-                                        "skippedCases": 0,
-                                        "durationMs": ${currentBuild.durationMillis ?: 0}
-                                    }' \
-                                    || echo '❌ curl 回调失败'
-                            """
-                        }
-                        echo "==============================="
-                    }
+            script {
+                // post.always 需显式指定 node（Jenkins 2.307+ master 改名为 built-in）
+                node(env.EXEC_NODE ?: 'built-in') {
+                    sh 'docker logout docker.cnb.cool || true'
+                    // 保留 test-repo（增量更新缓存），清理其余产物
+                    cleanWs(patterns: [
+                        [pattern: 'test-repo/**', type: 'EXCLUDE'],
+                        [pattern: 'test-repo',    type: 'EXCLUDE'],
+                    ])
                 }
+                echo "Pipeline 执行完成，最终状态: ${currentBuild.currentResult}"
             }
         }
-        
         success {
-            node {
-                script {
-                    echo "✅ Pipeline执行成功"
-                }
-            }
+            echo "✅ Pipeline 执行成功"
         }
-        
         failure {
-            node {
-                script {
-                    echo "❌ Pipeline执行失败"
-                    
-                    // 回调平台，标记为失败
-                    if (params.RUN_ID && params.CALLBACK_URL) {
-                        sh '''
-                            BUILD_DURATION_MS=$((BUILD_DURATION * 1000))
-                            
-                            echo "正在回调失败状态到平台..."
-                            curl -X POST "${CALLBACK_URL}" \
-                                -H "Content-Type: application/json" \
-                                -H "X-Api-Key: ${JENKINS_API_KEY}" \
-                                -d "{
-                                    \"runId\": ${RUN_ID},
-                                    \"status\": \"failed\",
-                                    \"passedCases\": 0,
-                                    \"failedCases\": 0,
-                                    \"skippedCases\": 0,
-                                    \"durationMs\": $BUILD_DURATION_MS,
-                                    \"buildUrl\": \"${BUILD_URL}\"
-                                }" \
-                                || echo "失败回调请求失败，但继续处理"
-                        '''
-                    }
-                }
-            }
+            echo "❌ Pipeline 执行失败"
         }
     }
 }

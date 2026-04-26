@@ -17,11 +17,8 @@ export class TestRunResult {
   @Column({ type: 'varchar', length: 255, name: 'case_name' })
   caseName: string;
 
-  @Column({ type: 'enum', enum: ['passed', 'failed', 'skipped', 'error'], default: 'error' })
-  status: 'passed' | 'failed' | 'skipped' | 'error';
-
-  @Column({ type: 'text', name: 'result', nullable: true })
-  result: string | null;
+  @Column({ type: 'enum', enum: ['passed', 'failed', 'skipped', 'error'], nullable: true, default: null })
+  status: 'passed' | 'failed' | 'skipped' | 'error' | null;
 
   @Column({ type: 'int', nullable: true })
   duration: number | null;

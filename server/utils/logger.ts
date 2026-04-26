@@ -1,4 +1,7 @@
 import { AsyncLocalStorage } from 'async_hooks';
+import fs from 'fs';
+import path from 'path';
+import { inspect } from 'util';
 
 // 日志级别枚举
 export enum LogLevel {
@@ -29,6 +32,8 @@ interface LogContext {
 const asyncLocalStorage = new AsyncLocalStorage<LogContext>();
 
 // 日志配置接口
+type LogOutputFormat = 'text' | 'json';
+
 interface LoggerConfig {
   level: LogLevel;
   enableRequestDetails: boolean;
@@ -37,6 +42,8 @@ interface LoggerConfig {
   enableSensitiveData: boolean;
   enableTimestamp: boolean;
   enableColors: boolean;
+  outputFormat: LogOutputFormat;
+  filePath?: string;
 }
 
 // 默认配置
@@ -48,6 +55,7 @@ const DEFAULT_CONFIG: LoggerConfig = {
   enableSensitiveData: false,
   enableTimestamp: true,
   enableColors: true,
+  outputFormat: 'text',
 };
 
 // 颜色代码 (仅在开发环境使用)
@@ -78,12 +86,16 @@ class Logger {
 
   constructor() {
     this.config = this.loadConfig();
+    this.ensureFilePathReady();
   }
 
   // 从环境变量加载配置
   private loadConfig(): LoggerConfig {
     const levelStr = process.env.LOG_LEVEL?.toUpperCase() || 'INFO';
     const level = LogLevel[levelStr as keyof typeof LogLevel] ?? LogLevel.INFO;
+    const outputFormatEnv = process.env.LOG_OUTPUT_FORMAT?.toLowerCase();
+    const outputFormat: LogOutputFormat = outputFormatEnv === 'json' ? 'json' : DEFAULT_CONFIG.outputFormat;
+    const configuredFilePath = process.env.LOG_FILE_PATH?.trim();
 
     return {
       level,
@@ -93,7 +105,25 @@ class Logger {
       enableSensitiveData: process.env.LOG_SENSITIVE_DATA === 'true',
       enableTimestamp: process.env.LOG_TIMESTAMP !== 'false',
       enableColors: process.env.NODE_ENV !== 'production' && process.env.LOG_COLORS !== 'false',
+      outputFormat,
+      filePath: configuredFilePath
+        ? (path.isAbsolute(configuredFilePath)
+            ? configuredFilePath
+            : path.resolve(process.cwd(), configuredFilePath))
+        : undefined,
     };
+  }
+
+  private ensureFilePathReady(): void {
+    if (!this.config.filePath) {
+      return;
+    }
+
+    try {
+      fs.mkdirSync(path.dirname(this.config.filePath), { recursive: true });
+    } catch {
+      // Ignore file sink initialization failures and keep console logging available.
+    }
   }
 
   // 设置当前请求上下文
@@ -166,53 +196,134 @@ class Logger {
     return data;
   }
 
+  private compactObject(obj: Record<string, unknown>): Record<string, unknown> {
+    const compacted: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        compacted[key] = value;
+      }
+    }
+
+    return compacted;
+  }
+
+  private stripAnsi(value: string): string {
+    return value.replace(/\u001b\[[0-9;]*m/g, '');
+  }
+
+  private serializeFileLogData(data: unknown): string {
+    if (typeof data === 'string') {
+      return data;
+    }
+
+    return inspect(data, {
+      depth: 6,
+      colors: false,
+      compact: false,
+      breakLength: 120,
+    });
+  }
+
+  private writeFileLog(logMessage: string, data?: unknown): void {
+    if (!this.config.filePath) {
+      return;
+    }
+
+    const baseLine = this.stripAnsi(logMessage);
+    const serialized = data === undefined ? baseLine : `${baseLine} ${this.serializeFileLogData(data)}`;
+
+    try {
+      fs.appendFileSync(this.config.filePath, `${serialized}\n`, 'utf8');
+    } catch {
+      // Ignore file sink failures so console logging remains available.
+    }
+  }
+
+  private writeLog(level: LogLevel, logMessage: string, data?: unknown): void {
+    switch (level) {
+      case LogLevel.DEBUG:
+        if (data !== undefined) {
+          console.debug('%s', logMessage, data);
+        } else {
+          console.debug('%s', logMessage);
+        }
+        break;
+      case LogLevel.INFO:
+        if (data !== undefined) {
+          console.info('%s', logMessage, data);
+        } else {
+          console.info('%s', logMessage);
+        }
+        break;
+      case LogLevel.WARN:
+        if (data !== undefined) {
+          console.warn('%s', logMessage, data);
+        } else {
+          console.warn('%s', logMessage);
+        }
+        break;
+      case LogLevel.ERROR:
+        if (data !== undefined) {
+          console.error('%s', logMessage, data);
+        } else {
+          console.error('%s', logMessage);
+        }
+        break;
+    }
+
+    this.writeFileLog(logMessage, data);
+  }
+
   // 核心日志记录方法
   private log(level: LogLevel, message: string, data?: unknown, context?: string): void {
     if (!this.shouldLog(level)) {
       return;
     }
 
+    // 注意：使用固定字面量 '%s' 作为格式字符串，将 logMessage 作为数据参数传入，
+    // 防止外部输入（如用户提供的 message）中包含 %s/%d/%o 等格式说明符被解析（format string injection）
+    const sanitizedData = data !== undefined ? this.sanitizeData(data) : undefined;
+    const requestContext = Logger.getContext();
+
+    if (this.config.outputFormat === 'json') {
+      const payload = this.compactObject({
+        timestamp: this.config.enableTimestamp ? this.formatTimestamp() : undefined,
+        level: LOG_LEVEL_NAMES[level],
+        message,
+        context,
+        requestId: requestContext.requestId,
+        userId: requestContext.userId,
+        ip: requestContext.ip,
+        userAgent: requestContext.userAgent,
+        data: sanitizedData,
+      });
+
+      this.writeLog(level, JSON.stringify(payload));
+      return;
+    }
+
     const parts: string[] = [];
 
-    // 时间戳
     if (this.config.enableTimestamp) {
       parts.push(this.formatTimestamp());
     }
 
-    // 日志级别
     parts.push(this.formatLevel(level));
 
-    // 请求上下文
     const contextStr = this.formatContext();
     if (contextStr) {
       parts.push(contextStr);
     }
 
-    // 自定义上下文前缀
     if (context) {
       parts.push(`[${context}]`);
     }
 
-    // 消息
     parts.push(message);
 
     const logMessage = parts.join(' ');
-
-    // 根据级别选择输出方法
-    switch (level) {
-      case LogLevel.DEBUG:
-        console.debug(logMessage, data ? this.sanitizeData(data) : '');
-        break;
-      case LogLevel.INFO:
-        console.info(logMessage, data ? this.sanitizeData(data) : '');
-        break;
-      case LogLevel.WARN:
-        console.warn(logMessage, data ? this.sanitizeData(data) : '');
-        break;
-      case LogLevel.ERROR:
-        console.error(logMessage, data ? this.sanitizeData(data) : '');
-        break;
-    }
+    this.writeLog(level, logMessage, sanitizedData);
   }
 
   // 公共日志方法
@@ -334,6 +445,7 @@ class Logger {
   // 更新配置
   updateConfig(updates: Partial<LoggerConfig>): void {
     this.config = { ...this.config, ...updates };
+    this.ensureFilePathReady();
   }
 }
 

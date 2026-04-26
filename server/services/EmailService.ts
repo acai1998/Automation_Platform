@@ -1,20 +1,25 @@
 import nodemailer from 'nodemailer';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
-// 邮件配置 - 使用环境变量或默认配置
+// 是否处于"开发模式"：SMTP 凭证未配置时自动降级为控制台打印
+const SMTP_USER = process.env.SMTP_USER ?? '';
+const SMTP_PASS = process.env.SMTP_PASS ?? '';
+const IS_DEV_MODE = !SMTP_USER || !SMTP_PASS;
+
 const emailConfig = {
-  host: process.env.SMTP_HOST || 'smtp.163.com',
-  port: parseInt(process.env.SMTP_PORT || '465'),
+  host: process.env.SMTP_HOST ?? 'smtp.163.com',
+  port: parseInt(process.env.SMTP_PORT ?? '465', 10),
   secure: true, // 465 端口使用 SSL
   auth: {
-    user: process.env.SMTP_USER || 'wiac_1998@163.com',
-    pass: process.env.SMTP_PASS || 'VD5aYRVSz6ZppFfq',
+    user: SMTP_USER,
+    pass: SMTP_PASS,
   },
 };
 
-// 前端重置密码页面 URL
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
-// 创建邮件发送器
+// 懒加载单例：仅在首次调用时创建，避免生产模式下提前校验凭证
 let transporter: nodemailer.Transporter | null = null;
 
 function getTransporter(): nodemailer.Transporter {
@@ -24,33 +29,8 @@ function getTransporter(): nodemailer.Transporter {
   return transporter;
 }
 
-// 发送密码重置邮件
-export async function sendPasswordResetEmail(
-  email: string,
-  resetToken: string,
-  username: string
-): Promise<boolean> {
-  try {
-    // 检查 SMTP 配置是否完整
-    if (!emailConfig.auth.user || !emailConfig.auth.pass) {
-      // 开发模式：打印到控制台
-      console.log('========================================');
-      console.log('开发模式 - 密码重置邮件');
-      console.log('========================================');
-      console.log(`收件人: ${email}`);
-      console.log(`用户名: ${username}`);
-      console.log(`重置链接: ${FRONTEND_URL}/reset-password?token=${resetToken}`);
-      console.log('========================================');
-      return true;
-    }
-
-    const resetUrl = `${FRONTEND_URL}/reset-password?token=${resetToken}`;
-
-    const mailOptions = {
-      from: `"AutoTest Platform" <${emailConfig.auth.user}>`,
-      to: email,
-      subject: '重置您的 AutoTest 账户密码',
-      html: `
+function buildResetEmailHtml(username: string, resetUrl: string): string {
+  return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -107,9 +87,11 @@ export async function sendPasswordResetEmail(
   </div>
 </body>
 </html>
-      `,
-      text: `
-您好，${username}
+  `;
+}
+
+function buildResetEmailText(username: string, resetUrl: string): string {
+  return `您好，${username}
 
 我们收到了您重置密码的请求。请点击以下链接来设置新密码：
 
@@ -120,37 +102,55 @@ ${resetUrl}
 如果您没有请求重置密码，请忽略此邮件。
 
 AutoTest Platform
-      `,
-    };
-
-    const transport = getTransporter();
-    await transport.sendMail(mailOptions);
-    console.log(`Password reset email sent to ${email}`);
-    return true;
-  } catch (error) {
-    console.error('Failed to send password reset email:', error);
-    return false;
-  }
+  `;
 }
 
-// 测试邮件配置
-export async function testEmailConfig(): Promise<boolean> {
+export async function sendPasswordResetEmail(
+  email: string,
+  resetToken: string,
+  username: string
+): Promise<boolean> {
+  const resetUrl = `${FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+  // SMTP 凭证未配置时降级为开发模式（控制台打印）
+  if (IS_DEV_MODE) {
+    logger.info('Password reset email skipped in development mode', {
+      recipient: email,
+      username,
+      resetUrl,
+    }, LOG_CONTEXTS.EMAIL);
+    return true;
+  }
+
   try {
-    if (!emailConfig.auth.user || !emailConfig.auth.pass) {
-      console.log('SMTP credentials not configured, running in development mode');
-      return true;
-    }
-    const transport = getTransporter();
-    await transport.verify();
-    console.log('SMTP connection verified successfully');
+    await getTransporter().sendMail({
+      from: `"AutoTest Platform" <${SMTP_USER}>`,
+      to: email,
+      subject: '重置您的 AutoTest 账户密码',
+      html: buildResetEmailHtml(username, resetUrl),
+      text: buildResetEmailText(username, resetUrl),
+    });
+    logger.info('Password reset email sent', { recipient: email }, LOG_CONTEXTS.EMAIL);
     return true;
   } catch (error) {
-    console.error('SMTP connection failed:', error);
+    logger.errorLog(error, 'Failed to send password reset email', {
+      recipient: email,
+    });
     return false;
   }
 }
 
-export default {
-  sendPasswordResetEmail,
-  testEmailConfig,
-};
+export async function testEmailConfig(): Promise<boolean> {
+  if (IS_DEV_MODE) {
+    logger.info('SMTP credentials not configured, running in development mode', {}, LOG_CONTEXTS.EMAIL);
+    return true;
+  }
+  try {
+    await getTransporter().verify();
+    logger.info('SMTP connection verified successfully', {}, LOG_CONTEXTS.EMAIL);
+    return true;
+  } catch (error) {
+    logger.errorLog(error, 'SMTP connection failed');
+    return false;
+  }
+}

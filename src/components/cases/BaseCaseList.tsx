@@ -1,11 +1,12 @@
-import { useState, ReactNode, useMemo, useCallback } from 'react';
-import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User, Info } from 'lucide-react';
+import { useState, ReactNode, useMemo, useCallback, useEffect } from 'react';
+import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User, X, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useCases, usePagination, type CaseType, type TestCase } from '@/hooks/useCases';
 import { useTestExecution } from '@/hooks/useExecuteCase';
 import { toast } from 'sonner';
-import { useQueryClient } from '@tanstack/react-query';
+import { showExecutionSuccessToast, showExecutionErrorToast } from '@/components/ui/execution-toast';
 
 /**
  * 分页配置常量
@@ -17,6 +18,24 @@ const PAGINATION_CONFIG = {
   MAX_VISIBLE_PAGES: 5,
   SEARCH_DEBOUNCE_MS: 300,
 } as const;
+
+/**
+ * 优先级配置
+ */
+const PRIORITY_OPTIONS: MultiSelectOption[] = [
+  { value: 'P0', label: 'P0' },
+  { value: 'P1', label: 'P1' },
+  { value: 'P2', label: 'P2' },
+  { value: 'P3', label: 'P3' },
+];
+
+/**
+ * 多选选项类型
+ */
+type MultiSelectOption = {
+  value: string;
+  label: string;
+};
 
 /**
  * 列配置
@@ -42,6 +61,14 @@ interface BaseCaseListProps {
 }
 
 /**
+ * 筛选状态
+ */
+interface FilterState {
+  priority: string[];
+  owner: string[];
+}
+
+/**
  * 通用用例列表组件
  * 三个页面（API/UI/性能）通过配置复用此组件
  * 采用现代化 SaaS Dashboard 风格设计
@@ -55,6 +82,35 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const [retryCount, setRetryCount] = useState(0);
   const [isRetrying, setIsRetrying] = useState(false);
 
+  // 筛选状态（多选）
+  const [filters, setFilters] = useState<FilterState>({
+    priority: [],
+    owner: [],
+  });
+
+  // 负责人列表
+  const [ownerList, setOwnerList] = useState<string[]>([]);
+
+  // 获取负责人列表
+  useEffect(() => {
+    const fetchOwners = async () => {
+      try {
+        const response = await fetch('/api/cases/owners/list');
+        const data = await response.json();
+        if (data.success && Array.isArray(data.data)) {
+          console.log('Owners fetched successfully:', data.data);
+          setOwnerList(data.data);
+        } else {
+          console.warn('Owners API returned unexpected format:', data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch owners:', err);
+        toast.error('加载负责人列表失败');
+      }
+    };
+    
+    fetchOwners();
+  }, []);
 
   // 获取用例列表
   const { data, isLoading, error, refetch } = useCases({
@@ -62,6 +118,8 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     search,
     page,
     pageSize,
+    priority: filters.priority.length > 0 ? filters.priority : undefined,
+    owner: filters.owner.length > 0 ? filters.owner : undefined,
   });
 
   // 执行管理
@@ -71,22 +129,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
 
   // 分页信息
   const pagination = usePagination(data?.total || 0, page, pageSize);
-
-  // 刷新页面数据
-  const queryClient = useQueryClient();
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await queryClient.invalidateQueries({ queryKey: ['cases'] });
-      toast.success('页面数据已刷新');
-    } catch (error) {
-      toast.error('刷新失败，请重试');
-    } finally {
-      setTimeout(() => setIsRefreshing(false), 500);
-    }
-  };
 
   // 指数退避重试函数
   const retryWithBackoff = useCallback(async () => {
@@ -111,34 +153,63 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
     setPage(1);
   };
 
+  // 处理多选筛选变化
+  const handleMultiFilterChange = (key: keyof FilterState, values: string[]) => {
+    setFilters(prev => ({ ...prev, [key]: values }));
+    setPage(1);
+  };
+
+  // 清除所有筛选
+  const clearFilters = () => {
+    setFilters({ priority: [], owner: [] });
+    setSearch('');
+    setSearchInput('');
+    setPage(1);
+  };
+
+  // 是否有活动筛选
+  const hasActiveFilters = filters.priority.length > 0 || filters.owner.length > 0 || search !== '';
+
+  const getExecutionErrorDescription = (message: string): string => {
+    if (message.includes('未启用') || message.includes('No active test cases found')) {
+      return '该用例已禁用，请先启用后再重试';
+    }
+
+    if (message.includes('Jenkins 当前不可用')) {
+      // 优先透传后端给出的具体失败原因（如 timeout / 401 / DNS）
+      return message;
+    }
+
+    return '请检查 Jenkins 连接或稍后重试';
+  };
+
   // 处理运行用例
   const handleRunCase = async (caseId: number, caseName: string, projectId: number | null) => {
-    // 如果没有项目ID，使用默认项目ID 1
     const finalProjectId = projectId || 1;
-    
+
     // 设置该用例为加载状态
     setLoadingCaseIds(prev => new Set(prev).add(caseId));
-    
+
     try {
       const result = await executeCase(caseId, finalProjectId);
-      
-      // 显示成功提示,包含 Jenkins 链接
-      toast.success(`用例 "${caseName}" 已开始执行`, {
-        description: result?.buildUrl 
-          ? '点击下方按钮查看 Jenkins 执行详情' 
-          : '执行任务已创建,请稍后在执行记录页面查看结果',
-        duration: 5000,
-        action: result?.buildUrl ? {
-          label: '查看 Jenkins',
-          onClick: () => window.open(result.buildUrl, '_blank')
-        } : undefined,
+
+      // 使用新的双按钮 Toast（桌面端优化版）
+      showExecutionSuccessToast({
+        runId: result.runId,
+        buildUrl: result.buildUrl,
+        // caseName: caseName, // 可选：取消注释此行以显示用例名称
       });
+
     } catch (err) {
       const message = err instanceof Error ? err.message : '执行失败';
-      toast.error(message, {
-        description: '请检查 Jenkins 连接或稍后重试',
-        duration: 4000,
+
+      // 使用新的错误 Toast（带重试功能）
+      showExecutionErrorToast({
+        message,
+        description: getExecutionErrorDescription(message),
+        onRetry: () => handleRunCase(caseId, caseName, projectId),
       });
+
     } finally {
       // 移除该用例的加载状态
       setLoadingCaseIds(prev => {
@@ -185,14 +256,6 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       );
     }
 
-    if (column.key === 'script_path') {
-      return (
-        <span className="text-slate-500 dark:text-slate-400 font-mono text-xs truncate block max-w-[200px] lg:max-w-[300px]" title={value as string}>
-          {(value as string) || '-'}
-        </span>
-      );
-    }
-
     return value ?? '-';
   };
 
@@ -222,80 +285,88 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
 
   const theme = useMemo(() => getTypeTheme(), [type]);
 
+  // 构建负责人多选选项
+  const ownerOptions: MultiSelectOption[] = ownerList.map(o => ({ value: o, label: o }));
+
   return (
-    <div className="h-full flex flex-col min-h-0">
+    <div className="min-h-full flex flex-col p-4 sm:p-6">
+      {/* 整体卡片容器 - 统一边框和圆角，flex-1 撑满可用高度 */}
+      <div className="flex-1 flex flex-col rounded-xl border border-slate-200/80 dark:border-slate-700/50 shadow-sm overflow-hidden">
       {/* 顶部标题区 - 带渐变背景 */}
       <div className={`relative h-20 px-4 sm:px-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl flex items-center`}>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between w-full">
-          <div className="flex items-center gap-3">
-            <div className={`p-2.5 rounded-xl ${theme.iconBg} shadow-sm`}>
-              {icon}
-            </div>
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-                {title}
-              </h1>
-              {description && (
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                  {description}
-                </p>
-              )}
-            </div>
+        <div className="flex items-center gap-3">
+          <div className={`p-2.5 rounded-xl ${theme.iconBg} shadow-sm`}>
+            {icon}
           </div>
-
-          {/* 操作按钮和提示 */}
-          <div className="flex flex-col items-end gap-2">
-            <Button
-              variant="outline"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              className="gap-2 h-9 px-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 hover:shadow-md"
-            >
-              {isRefreshing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              刷新页面
-            </Button>
-
-            {/* 数据同步提示 */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 bg-blue-50/80 dark:bg-blue-900/20 px-2 py-1 rounded-md border border-blue-200/50 dark:border-blue-800/50">
-              <Info className="h-3 w-3 text-blue-500" />
-              <span>脚本更新后约1分钟自动同步，如数据未更新可刷新页面</span>
-            </div>
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+              {title}
+            </h1>
+            {description && (
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                {description}
+              </p>
+            )}
           </div>
         </div>
       </div>
 
-      {/* 搜索栏 */}
-      <div className="px-4 sm:px-6 py-4 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <Input
-              placeholder="搜索用例名称或描述..."
+      {/* 筛选栏 */}
+      <div className="relative z-30 overflow-visible px-4 sm:px-6 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-t border-b border-slate-200/80 dark:border-slate-700/50">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* 搜索输入框 */}
+          <div className="relative flex-1 min-w-[200px] max-w-[320px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 h-4 w-4" />
+            <input
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              className="pl-10 h-9 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500/20"
+              placeholder="搜索用例名称..."
+              className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md pl-10 pr-4 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 h-8"
             />
           </div>
-          <Button
-            onClick={handleSearch}
-            size="sm"
-            className="h-9 px-4 gap-2"
-          >
-            <Search className="w-4 h-4" />
-            <span className="hidden sm:inline">搜索</span>
-          </Button>
+
+          {/* 优先级筛选 */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">优先级</span>
+            <FilterMultiSelect
+              options={PRIORITY_OPTIONS}
+              value={filters.priority}
+              onChange={(values) => handleMultiFilterChange('priority', values)}
+              placeholder="全部"
+            />
+          </div>
+
+          {/* 负责人筛选 */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">负责人</span>
+            <FilterMultiSelect
+              options={ownerOptions}
+              value={filters.owner}
+              onChange={(values) => handleMultiFilterChange('owner', values)}
+              placeholder="全部"
+            />
+          </div>
+
+          {/* 清除筛选按钮 */}
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearFilters}
+              className="h-8 gap-1.5 text-xs text-slate-500 hover:text-slate-700 ml-auto"
+            >
+              <X className="h-3 w-3" />
+              清空筛选
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* 列表内容区 - 自适应剩余高度 */}
-      <div className="flex-1 min-h-0 overflow-hidden bg-white dark:bg-slate-900 rounded-b-xl shadow-sm border border-t-0 border-slate-200/80 dark:border-slate-700/50">
+      {/* 列表内容区 - flex-1 撑满剩余高度，确保分页 sticky 贴底 */}
+      <div className="bg-white dark:bg-slate-900 flex-1 flex flex-col">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-3">
+          <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
             <div className="relative">
               <Loader2 className="h-10 w-10 animate-spin text-blue-500" />
               <div className="absolute inset-0 h-10 w-10 animate-ping opacity-20 rounded-full bg-blue-500" />
@@ -303,7 +374,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             <span className="text-sm text-slate-500 dark:text-slate-400">加载中...</span>
           </div>
         ) : error ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-4">
+          <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
             <div className="p-4 rounded-full bg-red-50 dark:bg-red-900/20">
               <FileText className="h-8 w-8 text-red-500" />
             </div>
@@ -326,17 +397,21 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             </Button>
           </div>
         ) : data?.data.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-500 dark:text-slate-400">
+          <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-slate-500 dark:text-slate-400">
             <div className="p-4 rounded-full bg-slate-100 dark:bg-slate-800">
               <FileText className="h-8 w-8" />
             </div>
-            <p className="font-medium">暂无用例数据</p>
-            <p className="text-sm">请在仓库管理页面同步用例</p>
+            <p className="font-medium">{hasActiveFilters ? '没有符合筛选条件的用例' : '暂无用例数据'}</p>
+            {hasActiveFilters ? (
+              <Button variant="outline" size="sm" onClick={clearFilters}>清空筛选条件</Button>
+            ) : (
+              <p className="text-sm">用例由 GitHub Actions 自动同步，请检查仓库 CI 是否已运行</p>
+            )}
           </div>
         ) : (
-          <div className="h-full flex flex-col">
+          <div className="flex-1 flex flex-col">
             {/* 桌面端表格 */}
-            <div className="hidden lg:block flex-1 overflow-auto">
+            <div className="hidden lg:block overflow-x-auto flex-1">
               <table className="w-full min-w-[800px]">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
@@ -375,7 +450,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             </div>
 
             {/* 平板端表格（简化列） */}
-            <div className="hidden md:block lg:hidden flex-1 overflow-auto">
+            <div className="hidden md:block lg:hidden overflow-x-auto flex-1">
               <table className="w-full">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
@@ -434,7 +509,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             </div>
 
             {/* 移动端卡片列表 */}
-            <div className="md:hidden flex-1 overflow-auto">
+            <div className="md:hidden flex-1">
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
                 {data?.data.map((record, index) => (
                   <div
@@ -480,20 +555,15 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                       {record.description && (
                         <p className="line-clamp-2 leading-relaxed">{record.description}</p>
                       )}
-                      {record.script_path && (
-                        <p className="font-mono text-[10px] text-slate-400 dark:text-slate-500 truncate">
-                          {record.script_path}
-                        </p>
-                      )}
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* 分页 */}
+            {/* 分页 - sticky 贴底，内容不足一屏时仍在视口底部 */}
             {data && data.total > 0 && (
-              <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
+              <div className="sticky bottom-0 z-20 flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm">
                 {/* 左侧：每页数量选择 + 统计信息 */}
                 <div className="flex items-center gap-4 order-2 sm:order-1">
                   <div className="flex items-center gap-2">
@@ -577,6 +647,92 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
           </div>
         )}
       </div>
-    </div>
+      </div>{/* end 整体卡片容器 */}
+    </div>  
+  );
+}
+
+// ─── 子组件 ───────────────────────────────────────────────────────────────────
+
+function FilterMultiSelect({
+  options,
+  value,
+  onChange,
+  placeholder = "请选择",
+}: {
+  options: MultiSelectOption[];
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder?: string;
+}) {
+  const optionMap = new Map(options.map((item) => [item.value, item.label]));
+
+  const toggleOption = (optionValue: string) => {
+    if (value.includes(optionValue)) {
+      onChange(value.filter((item) => item !== optionValue));
+      return;
+    }
+    onChange([...value, optionValue]);
+  };
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="min-h-8 min-w-[140px] max-w-[280px] px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-left text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+        >
+          <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
+              {value.length === 0 ? (
+                <span className="text-slate-400">{placeholder}</span>
+              ) : (
+                value.map((item) => (
+                  <span
+                    key={item}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800"
+                  >
+                    {optionMap.get(item) || item}
+                  </span>
+                ))
+              )}
+            </div>
+            <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+          </div>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={6} className="w-48 p-1.5">
+        <div className="space-y-0.5 max-h-56 overflow-auto">
+          {options.length === 0 ? (
+            <p className="px-2 py-2 text-xs text-slate-400 text-center">暂无数据</p>
+          ) : (
+            options.map((option) => (
+              <label
+                key={option.value}
+                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <Checkbox
+                  checked={value.includes(option.value)}
+                  onCheckedChange={() => toggleOption(option.value)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+                />
+                <span className="text-xs text-slate-700 dark:text-slate-300">{option.label}</span>
+              </label>
+            ))
+          )}
+        </div>
+        {value.length > 0 && (
+          <div className="pt-1.5 mt-1.5 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              className="w-full text-left px-2 py-1 text-xs text-slate-500 hover:text-blue-600 transition-colors"
+              onClick={() => onChange([])}
+            >
+              清空选择
+            </button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }

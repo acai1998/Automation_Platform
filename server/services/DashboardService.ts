@@ -1,10 +1,10 @@
-import { DashboardRepository } from '../repositories/DashboardRepository';
+import { DashboardRepository, TrendDebugInfo } from '../repositories/DashboardRepository';
 import { AppDataSource } from '../config/database';
 
 export interface DashboardStats {
   totalCases: number;
   todayRuns: number;
-  todaySuccessRate: number | null;
+  todaySuccessRate: number;
   runningTasks: number;
 }
 
@@ -69,6 +69,13 @@ export class DashboardService {
   }
 
   /**
+   * 获取趋势调试信息（三层数据源计数）
+   */
+  async getTrendDebugInfo(days: number = 30): Promise<TrendDebugInfo> {
+    return this.dashboardRepository.getTrendDebugInfo(days);
+  }
+
+  /**
    * 获取最近测试运行
    */
   async getRecentRuns(limit: number = 10) {
@@ -76,10 +83,20 @@ export class DashboardService {
   }
 
   /**
-   * 刷新每日汇总数据
+   * 刷新每日汇总数据（单日）
    */
   async refreshDailySummary(date?: string) {
     return this.dashboardRepository.refreshDailySummary(date);
+  }
+
+  /**
+   * 批量刷新每日汇总数据（多日）
+   * 使用批量查询优化，减少数据库请求次数
+   * @param days 要刷新的天数
+   * @param onlyMissingDates 是否仅回填缺失日期（增量模式）
+   */
+  async batchRefreshDailySummaries(days: number, onlyMissingDates: boolean = false) {
+    return this.dashboardRepository.batchRefreshDailySummaries(days, onlyMissingDates);
   }
 }
 

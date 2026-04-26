@@ -33,7 +33,7 @@ vi .env  # 或使用你喜欢的编辑器
 
 ```bash
 # Jenkins 服务器配置
-JENKINS_URL=http://jenkins.wiac.xyz:8080/
+JENKINS_URL=http://jenkins.wiac.xyz
 JENKINS_USER=your-jenkins-username
 JENKINS_TOKEN=your-jenkins-api-token
 
@@ -109,7 +109,7 @@ JENKINS_TOKEN=your-generated-token
 
 ```bash
 # 使用 curl 测试（替换 USERNAME 和 TOKEN）
-curl -u USERNAME:TOKEN http://jenkins.wiac.xyz:8080/api/json
+curl -u USERNAME:TOKEN http://jenkins.wiac.xyzapi/json
 
 # 应该返回 JSON（200 OK）
 # 如果返回 401，表示凭证不正确
@@ -410,7 +410,7 @@ grep "\[AUTH\]\|\[CALLBACK\]\|\[IP-DETECTION\]" app.log
 
 | 文档 | 说明 |
 |------|------|
-| [JENKINS_AUTH_QUICK_START.md](./JENKINS_AUTH_QUICK_START.md) | 5 分钟快速开始 |
+| [JENKINS_QUICK_SETUP.md](./JENKINS_QUICK_SETUP.md) | 5 分钟快速开始 |
 | [JENKINS_TROUBLESHOOTING.md](./JENKINS_TROUBLESHOOTING.md) | 详细故障排查 |
 | [JENKINS_INTEGRATION.md](./JENKINS_INTEGRATION.md) | 集成指南 |
 | [.env.example](../.env.example) | 配置文件模板 |

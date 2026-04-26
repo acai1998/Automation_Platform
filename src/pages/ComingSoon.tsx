@@ -44,7 +44,7 @@ export default function ComingSoon({ title, description, icon }: ComingSoonProps
 
         {/* Back Button */}
         <button
-          onClick={() => setLocation('/')}
+          onClick={() => setLocation('/dashboard')}
           className="inline-flex items-center gap-2 rounded-lg bg-blue-500 px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-600"
         >
           <ArrowLeft className="h-4 w-4" />

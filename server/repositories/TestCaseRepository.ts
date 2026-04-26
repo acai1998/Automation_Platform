@@ -41,7 +41,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
   async findAll(options?: {
     type?: string;
     priority?: string;
-    status?: string;
     limit?: number;
     offset?: number;
   }): Promise<TestCase[]> {
@@ -53,10 +52,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
 
     if (options?.priority) {
       queryBuilder.andWhere('testCase.priority = :priority', { priority: options.priority });
-    }
-
-    if (options?.status) {
-      queryBuilder.andWhere('testCase.status = :status', { status: options.status });
     }
 
     queryBuilder.orderBy('testCase.createdAt', 'DESC');
@@ -153,7 +148,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
     if (data.module !== undefined) updateData.module = data.module || null;
     if (data.priority !== undefined) updateData.priority = data.priority;
     if (data.type !== undefined) updateData.type = data.type;
-    if (data.status !== undefined) updateData.status = data.status;
     if (data.scriptPath !== undefined) updateData.scriptPath = data.scriptPath || null;
     if (data.enabled !== undefined) updateData.enabled = data.enabled;
     if (data.updatedBy !== undefined) updateData.updatedBy = data.updatedBy;
@@ -200,7 +194,7 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
   async count(options?: {
     type?: string;
     priority?: string;
-    status?: string;
+    owner?: string;
     projectId?: number;
     module?: string;
     enabled?: boolean;
@@ -213,11 +207,13 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
     }
 
     if (options?.priority) {
-      queryBuilder.andWhere('testCase.priority = :priority', { priority: options.priority });
-    }
-
-    if (options?.status) {
-      queryBuilder.andWhere('testCase.status = :status', { status: options.status });
+      // 支持逗号分隔的多值筛选
+      const priorityValues = options.priority.split(',').map(v => v.trim()).filter(v => v.length > 0);
+      if (priorityValues.length === 1) {
+        queryBuilder.andWhere('testCase.priority = :priority', { priority: priorityValues[0] });
+      } else if (priorityValues.length > 1) {
+        queryBuilder.andWhere('testCase.priority IN (:...priorities)', { priorities: priorityValues });
+      }
     }
 
     if (options?.projectId) {
@@ -239,6 +235,16 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
       );
     }
 
+    if (options?.owner) {
+      // 支持逗号分隔的多值筛选
+      const ownerValues = options.owner.split(',').map(v => v.trim()).filter(v => v.length > 0);
+      if (ownerValues.length === 1) {
+        queryBuilder.andWhere('testCase.owner = :owner', { owner: ownerValues[0] });
+      } else if (ownerValues.length > 1) {
+        queryBuilder.andWhere('testCase.owner IN (:...owners)', { owners: ownerValues });
+      }
+    }
+
     return queryBuilder.getCount();
   }
 
@@ -251,6 +257,8 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
     enabled?: boolean;
     type?: string;
     search?: string;
+    priority?: string;
+    owner?: string;
     limit?: number;
     offset?: number;
   }): Promise<Array<TestCase & { createdByName?: string }>> {
@@ -285,6 +293,26 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
       );
     }
 
+    if (options?.priority) {
+      // 支持逗号分隔的多值筛选
+      const priorityValues = options.priority.split(',').map(v => v.trim()).filter(v => v.length > 0);
+      if (priorityValues.length === 1) {
+        queryBuilder.andWhere('testCase.priority = :priority', { priority: priorityValues[0] });
+      } else if (priorityValues.length > 1) {
+        queryBuilder.andWhere('testCase.priority IN (:...priorities)', { priorities: priorityValues });
+      }
+    }
+
+    if (options?.owner) {
+      // 支持逗号分隔的多值筛选
+      const ownerValues = options.owner.split(',').map(v => v.trim()).filter(v => v.length > 0);
+      if (ownerValues.length === 1) {
+        queryBuilder.andWhere('testCase.owner = :owner', { owner: ownerValues[0] });
+      } else if (ownerValues.length > 1) {
+        queryBuilder.andWhere('testCase.owner IN (:...owners)', { owners: ownerValues });
+      }
+    }
+
     queryBuilder.orderBy('testCase.updatedAt', 'DESC');
 
     if (options?.limit) {
@@ -301,6 +329,20 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
       ...testCase,
       createdByName: testCase.creator?.displayName,
     })) as Array<TestCase & { createdByName?: string }>;
+  }
+
+  /**
+   * 获取不同的负责人列表
+   */
+  async getDistinctOwners(): Promise<string[]> {
+    const results = await this.testCaseRepo
+      .createQueryBuilder('testCase')
+      .select('DISTINCT testCase.owner', 'owner')
+      .where('testCase.owner IS NOT NULL')
+      .orderBy('testCase.owner', 'ASC')
+      .getRawMany<{ owner: string }>();
+
+    return results.map(r => r.owner);
   }
 
   /**
@@ -439,7 +481,6 @@ export class TestCaseRepository extends BaseRepository<TestCase> {
         if (data.module !== undefined) updateData.module = data.module || null;
         if (data.priority !== undefined) updateData.priority = data.priority;
         if (data.type !== undefined) updateData.type = data.type;
-        if (data.status !== undefined) updateData.status = data.status;
         if (data.scriptPath !== undefined) updateData.scriptPath = data.scriptPath || null;
         if (data.enabled !== undefined) updateData.enabled = data.enabled;
         if (data.updatedBy !== undefined) updateData.updatedBy = data.updatedBy;

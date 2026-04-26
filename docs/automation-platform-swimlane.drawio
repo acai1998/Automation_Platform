@@ -1,0 +1,445 @@
+<mxfile host="app.diagrams.net" modified="2026-03-12T00:00:00.000Z" agent="CatPaw" version="21.0.0" type="device">
+  <diagram id="swimlane-main" name="自动化测试平台泳道图">
+    <mxGraphModel defaultFontFamily="Noto Sans JP" dx="1800" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="自动化测试平台 - 系统交互泳道图" style="text;html=1;fontSize=24;fontFamily=Noto Sans JP;fontStyle=1;align=center;verticalAlign=middle;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="200" y="20" width="1300" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Subtitle -->
+        <mxCell id="subtitle" value="v1.3.0 | 2026-03-12" style="text;html=1;fontSize=14;fontFamily=Noto Sans JP;fontStyle=0;align=center;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="200" y="60" width="1300" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ========================================= -->
+        <!-- SWIM LANE HEADERS -->
+        <!-- ========================================= -->
+
+        <!-- Lane 1: 用户/浏览器 -->
+        <mxCell id="lane1-header" value="用户 / 浏览器" style="swimlane;startSize=40;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Noto Sans JP;fontSize=16;fontStyle=1;horizontal=0;" vertex="1" parent="1">
+          <mxGeometry x="30" y="100" width="1620" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Lane 2: 前端 React 应用 -->
+        <mxCell id="lane2-header" value="前端 React 应用 (src/)" style="swimlane;startSize=40;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=16;fontStyle=1;horizontal=0;" vertex="1" parent="1">
+          <mxGeometry x="30" y="220" width="1620" height="160" as="geometry" />
+        </mxCell>
+
+        <!-- Lane 3: Express 后端 API -->
+        <mxCell id="lane3-header" value="后端 Express API (server/routes/)" style="swimlane;startSize=40;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=16;fontStyle=1;horizontal=0;" vertex="1" parent="1">
+          <mxGeometry x="30" y="380" width="1620" height="160" as="geometry" />
+        </mxCell>
+
+        <!-- Lane 4: 业务服务层 -->
+        <mxCell id="lane4-header" value="业务服务层 (server/services/)" style="swimlane;startSize=40;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=16;fontStyle=1;horizontal=0;" vertex="1" parent="1">
+          <mxGeometry x="30" y="540" width="1620" height="160" as="geometry" />
+        </mxCell>
+
+        <!-- Lane 5: 外部系统 -->
+        <mxCell id="lane5-header" value="外部系统" style="swimlane;startSize=40;fillColor=#e1d5e7;strokeColor=#9673a6;fontFamily=Noto Sans JP;fontSize=16;fontStyle=1;horizontal=0;" vertex="1" parent="1">
+          <mxGeometry x="30" y="700" width="1620" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Lane 6: 数据库 -->
+        <mxCell id="lane6-header" value="数据库 (MariaDB)" style="swimlane;startSize=40;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=16;fontStyle=1;horizontal=0;" vertex="1" parent="1">
+          <mxGeometry x="30" y="820" width="1620" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- ========================================= -->
+        <!-- LANE 1 ELEMENTS: 用户操作 -->
+        <!-- ========================================= -->
+
+        <!-- User action: 登录 -->
+        <mxCell id="u-login" value="登录系统" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="70" y="130" width="100" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- User action: 管理用例 -->
+        <mxCell id="u-cases" value="管理测试用例" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="270" y="130" width="120" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- User action: 创建任务 -->
+        <mxCell id="u-tasks" value="创建执行任务" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="500" y="130" width="120" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- User action: 查看报告 -->
+        <mxCell id="u-reports" value="查看测试报告" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="730" y="130" width="120" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- User action: 仪表盘 -->
+        <mxCell id="u-dashboard" value="查看仪表盘" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="960" y="130" width="120" height="40" as="geometry" />
+        </mxCell>
+
+
+        <!-- ========================================= -->
+        <!-- LANE 2 ELEMENTS: 前端组件 -->
+        <!-- ========================================= -->
+
+        <!-- Frontend: Login Page -->
+        <mxCell id="fe-auth" value="认证页面&lt;br&gt;Login/Register" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="260" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Frontend: Cases Page -->
+        <mxCell id="fe-cases" value="用例管理页面&lt;br&gt;APICases / UICases / PerformanceCases" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="240" y="260" width="170" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Frontend: Tasks Page -->
+        <mxCell id="fe-tasks" value="任务管理页面&lt;br&gt;Tasks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="460" y="260" width="130" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Frontend: Reports Page -->
+        <mxCell id="fe-reports" value="报告页面&lt;br&gt;Reports/Detail" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="680" y="260" width="130" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Frontend: Dashboard -->
+        <mxCell id="fe-dashboard" value="仪表盘&lt;br&gt;Home / Dashboard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="900" y="260" width="145" height="60" as="geometry" />
+        </mxCell>
+
+
+        <!-- Frontend: TanStack Query -->
+        <mxCell id="fe-query" value="TanStack Query&lt;br&gt;(状态管理/缓存)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fff0;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=12;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="255" width="140" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- ========================================= -->
+        <!-- LANE 3 ELEMENTS: 后端路由 -->
+        <!-- ========================================= -->
+
+        <!-- Route: Auth -->
+        <mxCell id="be-auth" value="/api/auth&lt;br&gt;认证路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="415" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Route: Cases -->
+        <mxCell id="be-cases" value="/api/cases&lt;br&gt;用例路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="240" y="415" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Route: Tasks -->
+        <mxCell id="be-tasks" value="/api/tasks&lt;br&gt;任务路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="420" y="415" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Route: Jenkins -->
+        <mxCell id="be-jenkins" value="/api/jenkins&lt;br&gt;Jenkins路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="600" y="415" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Route: Executions -->
+        <mxCell id="be-executions" value="/api/executions&lt;br&gt;执行路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="780" y="415" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Route: Dashboard -->
+        <mxCell id="be-dashboard" value="/api/dashboard&lt;br&gt;仪表盘路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="960" y="415" width="130" height="60" as="geometry" />
+        </mxCell>
+
+
+        <!-- Middleware note -->
+        <mxCell id="be-middleware" value="中间件层: Auth / RateLimit / Logger / JenkinsAuth" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=12;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="415" width="240" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ========================================= -->
+        <!-- LANE 4 ELEMENTS: 服务层 -->
+        <!-- ========================================= -->
+
+        <!-- Service: AuthService -->
+        <mxCell id="svc-auth" value="AuthService&lt;br&gt;认证授权" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="575" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Service: ExecutionService -->
+        <mxCell id="svc-exec" value="ExecutionService&lt;br&gt;执行管理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="240" y="575" width="130" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Service: JenkinsService -->
+        <mxCell id="svc-jenkins" value="JenkinsService&lt;br&gt;Jenkins集成" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="430" y="575" width="130" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Service: TaskSchedulerService -->
+        <mxCell id="svc-scheduler" value="TaskSchedulerService&lt;br&gt;任务调度引擎&lt;br&gt;(Cron/重试/补偿)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="620" y="560" width="150" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Service: DashboardService -->
+        <mxCell id="svc-dashboard" value="DashboardService&lt;br&gt;仪表盘统计" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="575" width="130" height="60" as="geometry" />
+        </mxCell>
+
+
+        <!-- Service: EmailService -->
+        <mxCell id="svc-email" value="EmailService&lt;br&gt;邮件通知" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="575" width="130" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Service: DailySummary -->
+        <mxCell id="svc-summary" value="DailySummaryScheduler&lt;br&gt;每日汇总" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1410" y="575" width="150" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ========================================= -->
+        <!-- LANE 5 ELEMENTS: 外部系统 -->
+        <!-- ========================================= -->
+
+        <!-- External: Jenkins CI -->
+        <mxCell id="ext-jenkins" value="Jenkins CI/CD&lt;br&gt;(执行pytest测试)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="500" y="730" width="160" height="60" as="geometry" />
+        </mxCell>
+
+
+        <!-- External: Email Server -->
+        <mxCell id="ext-email" value="邮件服务器&lt;br&gt;(SMTP/nodemailer)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="730" width="160" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- External: Socket.IO -->
+        <mxCell id="ext-socketio" value="WebSocket&lt;br&gt;Socket.IO 推送" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontFamily=Noto Sans JP;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="200" y="730" width="160" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ========================================= -->
+        <!-- LANE 6 ELEMENTS: 数据库 -->
+        <!-- ========================================= -->
+
+        <!-- DB: Users -->
+        <mxCell id="db-users" value="Auto_Users" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="70" y="850" width="110" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- DB: TestCase -->
+        <mxCell id="db-testcase" value="Auto_TestCase" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="220" y="850" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- DB: Tasks -->
+        <mxCell id="db-tasks" value="Auto_TestCaseTasks" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="380" y="850" width="140" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- DB: TestRun -->
+        <mxCell id="db-testrun" value="Auto_TestRun" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="560" y="850" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- DB: Results -->
+        <mxCell id="db-results" value="Auto_TestRunResults" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="720" y="850" width="140" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- DB: Executions -->
+        <mxCell id="db-executions" value="Auto_TestCaseTask&lt;br&gt;Executions" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="900" y="850" width="130" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- DB: Summaries -->
+        <mxCell id="db-summaries" value="Auto_TestCase&lt;br&gt;DailySummaries" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="850" width="130" height="60" as="geometry" />
+        </mxCell>
+
+
+        <!-- DB: AuditLogs -->
+        <mxCell id="db-audit" value="Auto_TaskAuditLogs" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=12;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="1400" y="850" width="140" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ========================================= -->
+        <!-- ARROWS: User to Frontend -->
+        <!-- ========================================= -->
+
+        <mxCell id="a-u-login" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#6c8ebf;" edge="1" source="u-login" target="fe-auth" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-u-cases" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#6c8ebf;" edge="1" source="u-cases" target="fe-cases" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-u-tasks" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#6c8ebf;" edge="1" source="u-tasks" target="fe-tasks" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-u-reports" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#6c8ebf;" edge="1" source="u-reports" target="fe-reports" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-u-dashboard" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#6c8ebf;" edge="1" source="u-dashboard" target="fe-dashboard" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+
+        <!-- ========================================= -->
+        <!-- ARROWS: Frontend to Backend Routes -->
+        <!-- ========================================= -->
+
+        <mxCell id="a-fe-be-auth" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" source="fe-auth" target="be-auth" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-fe-be-cases" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" source="fe-cases" target="be-cases" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-fe-be-tasks" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" source="fe-tasks" target="be-tasks" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 报告页面 → /api/executions -->
+        <mxCell id="a-fe-be-reports" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" source="fe-reports" target="be-executions" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-fe-be-dashboard" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" source="fe-dashboard" target="be-dashboard" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+
+        <!-- ========================================= -->
+        <!-- ARROWS: Backend Routes to Services -->
+        <!-- ========================================= -->
+
+        <mxCell id="a-be-svc-auth" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" source="be-auth" target="svc-auth" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-be-svc-cases" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" source="be-cases" target="svc-exec" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-be-svc-tasks" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" source="be-tasks" target="svc-scheduler" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-be-svc-jenkins" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" source="be-jenkins" target="svc-jenkins" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- /api/executions → ExecutionService -->
+        <mxCell id="a-be-svc-executions" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" source="be-executions" target="svc-exec" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- /api/dashboard → DashboardService -->
+        <mxCell id="a-be-svc-dashboard" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" source="be-dashboard" target="svc-dashboard" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+
+        <!-- ========================================= -->
+        <!-- ARROWS: Services to External -->
+        <!-- ========================================= -->
+
+        <!-- JenkinsService -> Jenkins CI (trigger) -->
+        <mxCell id="a-svc-jenkins-ext" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#9673a6;" edge="1" source="svc-jenkins" target="ext-jenkins" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+
+        <!-- EmailService -> Email Server -->
+        <mxCell id="a-svc-email-ext" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#9673a6;" edge="1" source="svc-email" target="ext-email" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ExecutionService -> Socket.IO -->
+        <mxCell id="a-svc-exec-socket" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#9673a6;" edge="1" source="svc-exec" target="ext-socketio" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Jenkins Callback -> be-jenkins (return) -->
+        <mxCell id="a-jenkins-callback" value="Jenkins回调&lt;br&gt;/api/jenkins/callback" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#9673a6;dashed=1;endArrow=block;startArrow=none;" edge="1" source="ext-jenkins" target="be-jenkins" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ========================================= -->
+        <!-- ARROWS: Services to DB -->
+        <!-- ========================================= -->
+
+        <mxCell id="a-svc-auth-db" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-auth" target="db-users" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-svc-exec-db-case" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-exec" target="db-testcase" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-svc-scheduler-db" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-scheduler" target="db-tasks" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-svc-jenkins-db-run" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-jenkins" target="db-testrun" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-svc-jenkins-db-results" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-jenkins" target="db-results" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-svc-scheduler-db-exec" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-scheduler" target="db-executions" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-svc-summary-db" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-summary" target="db-summaries" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+
+        <mxCell id="a-svc-scheduler-db-audit" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" source="svc-scheduler" target="db-audit" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Socket.IO -> Frontend realtime -->
+        <mxCell id="a-socket-fe" value="实时推送&lt;br&gt;WebSocket" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;dashed=1;endArrow=block;" edge="1" source="ext-socketio" target="fe-tasks" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ========================================= -->
+        <!-- LEGEND -->
+        <!-- ========================================= -->
+
+        <mxCell id="legend-title" value="图例" style="text;html=1;fontSize=14;fontFamily=Noto Sans JP;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="100" width="100" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend-user" value="用户操作" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Noto Sans JP;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="135" width="100" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend-fe" value="前端组件" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Noto Sans JP;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="170" width="100" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend-be" value="后端路由" style="rounded=1;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Noto Sans JP;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="205" width="100" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend-svc" value="业务服务" style="rounded=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Noto Sans JP;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="240" width="100" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend-ext" value="外部系统" style="rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontFamily=Noto Sans JP;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="275" width="100" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend-db" value="数据库" style="rounded=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Noto Sans JP;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="310" width="100" height="28" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

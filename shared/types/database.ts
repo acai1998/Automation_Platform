@@ -5,6 +5,33 @@
  * to replace unsafe 'as any' type assertions throughout the codebase.
  */
 
+// ============================================================================
+// Branded ID 类型
+//
+// 使用 Branded Types 防止在编译期将不同类型的 ID 混用
+// 例如：不能将 TaskId 传给需要 ExecutionId 的函数
+//
+// 用法：
+//   function getTask(id: TaskId): Task {}
+//   const tid = 123 as TaskId;
+//   getTask(execId); // ← TypeScript 编译报错
+// ============================================================================
+
+type Brand<T, B extends string> = T & { readonly __brand: B };
+
+/** 测试任务 ID */
+export type TaskId = Brand<number, 'TaskId'>;
+/** 任务执行记录 ID */
+export type TaskExecutionId = Brand<number, 'TaskExecutionId'>;
+/** 测试用例 ID */
+export type CaseId = Brand<number, 'CaseId'>;
+/** TestRun ID */
+export type TestRunId = Brand<number, 'TestRunId'>;
+/** 用户 ID */
+export type UserId = Brand<number, 'UserId'>;
+/** AI 工作台 ID */
+export type AiWorkspaceId = Brand<number, 'AiWorkspaceId'>;
+
 /**
  * Generic database query result wrapper
  */
@@ -15,7 +42,6 @@ export type DbQueryResult<T> = T[];
  */
 export interface ExecutionRecord {
   id: number;
-  run_id?: number;
   task_id?: number;
   status: string;
   created_at?: Date;
@@ -30,7 +56,7 @@ export interface TestResultRecord {
   execution_id: number;
   case_id: number;
   case_name?: string;
-  status: 'passed' | 'failed' | 'skipped' | 'error';
+  status: 'passed' | 'failed' | 'skipped' | 'error' | 'pending';
   result?: string;
   duration?: number;
   error_message?: string;

@@ -1,5 +1,5 @@
 import type { CaseColumn } from './BaseCaseList';
-import { renderScriptPath, renderDescription, renderPriority, renderOwner } from './columnRenderers';
+import { renderDescription, renderPriority, renderOwner } from './columnRenderers';
 
 /**
  * 预定义的列配置
@@ -31,12 +31,6 @@ export const COLUMN_DEFINITIONS = {
     width: '100px',
     render: renderOwner,
   },
-  /** 脚本路径列 */
-  scriptPath: {
-    key: 'script_path',
-    label: '脚本路径',
-    render: renderScriptPath,
-  },
   /** 用例说明列 */
   description: {
     key: 'description',
@@ -53,7 +47,7 @@ export const COLUMN_DEFINITIONS = {
 } as const satisfies Record<string, CaseColumn>;
 
 /**
- * 完整列配置（含脚本路径和说明）
+ * 完整列配置（含说明）
  * 适用于 API、UI 用例页面
  */
 export const FULL_COLUMNS: CaseColumn[] = [
@@ -61,7 +55,6 @@ export const FULL_COLUMNS: CaseColumn[] = [
   COLUMN_DEFINITIONS.name,
   COLUMN_DEFINITIONS.priority,
   COLUMN_DEFINITIONS.owner,
-  COLUMN_DEFINITIONS.scriptPath,
   COLUMN_DEFINITIONS.description,
   COLUMN_DEFINITIONS.actions,
 ];

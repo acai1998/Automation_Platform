@@ -67,6 +67,10 @@ test-repo/
 └── pytest.ini
 ```
 
+防回归说明：
+- Jenkinsfile 会复用工作空间中的 `test-repo/` 目录以加快后续构建，但在每次增量更新前都会先把缓存仓库的 `origin` 强制同步为本次传入的 `REPO_URL`，避免历史错误 remote 持续把平台仓库当成测试仓库。
+- 如果曾有旧构建把 `test-repo/` 缓存成错误仓库，升级 Jenkinsfile 后重新触发即可自动纠正；只有在仓库目录损坏时才需要手动删除工作空间中的 `test-repo/`。
+
 ### requirements.txt 示例
 
 ```
@@ -172,6 +176,11 @@ Content-Type: application/json
   "buildUrl": "http://jenkins.wiac.xyz/job/.../45/"
 }
 ```
+
+说明：
+- `CALLBACK_URL` 必须是 Jenkins 主机和测试容器都能访问的外部地址；如果 Jenkins 不在平台宿主机上，不要使用 `localhost`。
+- 回调中的 `status`、`passedCases`、`failedCases`、`skippedCases` 应从 pytest 报告或测试明细推导，不应直接取 Pipeline 总体结果。
+- Pipeline 后置步骤失败不等于用例失败；已有完整测试结果时，不要再发送空的 `failed` 回调。
 
 ### 环境变量配置
 

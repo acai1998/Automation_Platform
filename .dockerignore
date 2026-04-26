@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.github
+.cnb.yml
+.env*
+*.log
+test_case
+docs
+scripts

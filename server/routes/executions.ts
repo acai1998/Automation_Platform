@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { executionService } from '../services/ExecutionService';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
+import { authenticate, requireTester } from '../middleware/auth';
 
 const router = Router();
 
@@ -122,12 +123,47 @@ router.post('/:id/start', async (req, res) => {
 /**
  * GET /api/executions/test-runs
  * 获取 Auto_TestRun 表的运行记录列表
+ * 支持筛选参数：triggerType、status、startDate（YYYY-MM-DD）、endDate（YYYY-MM-DD）
  */
 router.get('/test-runs', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit as string) || 50;
-    const offset = parseInt(req.query.offset as string) || 0;
-    const result = await executionService.getAllTestRuns(limit, offset);
+    // 分页上限保护：默认 50，最大 100
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
+
+    const filters: {
+      triggerType?: string[];
+      status?: string[];
+      startDate?: string;
+      endDate?: string;
+    } = {};
+
+    const parseMultiQuery = (value: unknown): string[] | undefined => {
+      if (typeof value !== "string") return undefined;
+      const items = value.split(",").map(item => item.trim()).filter(Boolean);
+      return items.length > 0 ? items : undefined;
+    };
+
+    const triggerTypes = parseMultiQuery(req.query.triggerType);
+    if (triggerTypes) {
+      filters.triggerType = triggerTypes;
+    }
+
+    const statuses = parseMultiQuery(req.query.status);
+    if (statuses) {
+      filters.status = statuses;
+    }
+
+    // 日期格式验证：YYYY-MM-DD
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (req.query.startDate && typeof req.query.startDate === 'string' && dateRegex.test(req.query.startDate)) {
+      filters.startDate = req.query.startDate;
+    }
+    if (req.query.endDate && typeof req.query.endDate === 'string' && dateRegex.test(req.query.endDate)) {
+      filters.endDate = req.query.endDate;
+    }
+
+    const result = await executionService.getAllTestRuns(limit, offset, filters);
     res.json({ success: true, ...result });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -136,17 +172,24 @@ router.get('/test-runs', async (req, res) => {
 });
 
 /**
- * GET /api/executions/:id/results
- * 获取执行批次的用例结果列表
- * 
- * 改进：现在支持通过 executionId 查询结果
- * 注意：:id 现在指的是 executionId（来自 Auto_TestCaseTaskExecutions.id）
+ * GET /api/executions/stale-summary
+ * 获取历史卡住执行汇总（用于运行记录页提示条）
  */
-router.get('/:id/results', async (req, res) => {
+router.get('/stale-summary', authenticate, async (req, res) => {
   try {
-    const executionId = parseInt(req.params.id);
-    const results = await executionService.getBatchExecutionResults(executionId);
-    res.json({ success: true, data: results });
+    const maxAgeHours = Math.min(168, Math.max(1, parseInt(String(req.query.maxAgeHours ?? '24'), 10) || 24));
+    const stalePendingMinutes = Math.min(24 * 60, Math.max(1, parseInt(String(req.query.stalePendingMinutes ?? '10'), 10) || 10));
+
+    const summary = await executionService.getStaleExecutionSummary(maxAgeHours, stalePendingMinutes);
+
+    res.json({
+      success: true,
+      data: {
+        ...summary,
+        maxAgeHours,
+        stalePendingMinutes,
+      },
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -154,32 +197,113 @@ router.get('/:id/results', async (req, res) => {
 });
 
 /**
- * GET /api/executions/:id
- * 获取执行详情
+ * POST /api/executions/cleanup-stale
+ * 一次性清理历史卡住执行（pending/running -> aborted）
  */
-router.get('/:id', async (req, res) => {
+router.post('/cleanup-stale', authenticate, requireTester, async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const data = await executionService.getExecutionDetail(id);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const dryRun = typeof body.dryRun === 'boolean' ? body.dryRun : false;
+    const maxAgeHours = Math.min(168, Math.max(1, Number(body.maxAgeHours) || 24));
+    const stalePendingMinutes = Math.min(24 * 60, Math.max(1, Number(body.stalePendingMinutes) || 10));
 
-    if (!data || !data.execution) {
-      return res.status(404).json({ success: false, message: 'Execution not found' });
-    }
+    const result = await executionService.cleanupStaleExecutions(maxAgeHours, stalePendingMinutes, dryRun);
 
-    res.json({ success: true, data });
+    res.json({
+      success: true,
+      data: {
+        ...result,
+        maxAgeHours,
+        stalePendingMinutes,
+      },
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
 });
 
+/**
+ * GET /api/executions/test-runs/:runId/results
+ * 根据 Auto_TestRun.id（runId）获取该批次的用例结果列表
+ * 注意：此路由必须放在 /:id/results 之前，防止被 Express 误匹配
+ */
+router.get("/test-runs/:runId/results", async (req, res) => {
+  try {
+    const runId = parseInt(req.params.runId);
+    const result = await executionService.getResultsByRunId(runId);
+    res.json({ success: true, data: result.data, total: result.total });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/executions/test-runs/:runId/scheduler-logs
+ * 获取运行记录关联的调度追踪日志（用于排障）
+ */
+router.get('/test-runs/:runId/scheduler-logs', async (req, res) => {
+  try {
+    const runId = parseInt(req.params.runId);
+    if (Number.isNaN(runId) || runId <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid runId' });
+    }
+
+    const logs = await executionService.getSchedulerTraceLogs(runId);
+    res.json({ success: true, data: logs });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    if (message.includes('not found')) {
+      return res.status(404).json({ success: false, message });
+    }
+    res.status(500).json({ success: false, message });
+  }
+});
+
+/**
+ * GET /api/executions/:id/results
+ * 获取运行批次的用例结果列表，:id 为 Auto_TestRun.id（runId）
+ * 内部通过 execution_id 字段（优先）或时间窗口反查 executionId，再取用例结果
+ */
+router.get("/:id/results", async (req, res) => {
+  try {
+    const runId = parseInt(req.params.id);
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = Math.min(100, parseInt(req.query.pageSize as string) || 20);
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const keyword = typeof req.query.keyword === "string" ? req.query.keyword.trim() || undefined : undefined;
+    const result = await executionService.getResultsByRunId(runId, { page, pageSize, status, keyword });
+    res.json({ success: true, data: result.data, total: result.total, page, pageSize });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ success: false, message });
+  }
+});
+/**
+ * GET /api/executions/:id
+ * 获取 TestRun 运行详情，:id 为 Auto_TestRun.id（runId）
+ */
+router.get("/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const data = await executionService.getTestRunDetailRow(id);
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    if (message.includes("not found")) return res.status(404).json({ success: false, message });
+    res.status(500).json({ success: false, message });
+  }
+});
+
  /**
  * GET /api/executions
- * 获取执行记录列表
+ * 获取运行记录列表
  */
 router.get('/', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit as string) || 20;
+    // 分页上限保护：默认 20，最大 100
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
     const data = await executionService.getRecentExecutions(limit);
     res.json({ success: true, data });
   } catch (error: unknown) {
@@ -203,11 +327,17 @@ router.post('/:id/sync', async (req, res) => {
       });
     }
 
-    console.log(`[MANUAL-SYNC] Starting manual sync for execution ${id}`);
+    logger.info('Manual sync started', { executionId: id }, LOG_CONTEXTS.MANUAL_SYNC);
 
     const syncResult = await executionService.syncExecutionStatusFromJenkins(id);
 
-    console.log(`[MANUAL-SYNC] Sync result for execution ${id}:`, syncResult);
+    logger.info('Manual sync completed', {
+      executionId: id,
+      success: syncResult.success,
+      updated: syncResult.updated,
+      currentStatus: syncResult.currentStatus,
+      jenkinsStatus: syncResult.jenkinsStatus,
+    }, LOG_CONTEXTS.MANUAL_SYNC);
 
     res.json({
       success: syncResult.success,
@@ -221,7 +351,10 @@ router.post('/:id/sync', async (req, res) => {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[MANUAL-SYNC] Failed to sync execution ${req.params.id}:`, message);
+    logger.errorLog(error, 'Manual sync failed', {
+      executionId: req.params.id,
+      message,
+    });
     res.status(500).json({ success: false, message });
   }
 });
@@ -232,15 +365,26 @@ router.post('/:id/sync', async (req, res) => {
  */
 router.post('/sync-stuck', async (req, res) => {
   try {
-    const { timeoutMinutes = 10, maxExecutions = 20 } = req.body;
+    const rawTimeoutMinutes = (req.body as Record<string, unknown>)['timeoutMinutes'];
+    const rawMaxExecutions = (req.body as Record<string, unknown>)['maxExecutions'];
+    const timeoutMinutes = typeof rawTimeoutMinutes === 'number' ? rawTimeoutMinutes : 10;
+    const maxExecutions = typeof rawMaxExecutions === 'number' ? rawMaxExecutions : 20;
     const timeoutMs = timeoutMinutes * 60 * 1000;
 
-    console.log(`[BULK-SYNC] Starting bulk sync for stuck executions (timeout: ${timeoutMinutes}min, max: ${maxExecutions})`);
+    logger.info('Bulk sync for stuck executions started', {
+      timeoutMinutes,
+      maxExecutions,
+    }, LOG_CONTEXTS.BULK_SYNC);
 
     // Use the existing timeout check method with custom parameters
     const result = await executionService.checkAndHandleTimeouts(timeoutMs);
 
-    console.log(`[BULK-SYNC] Bulk sync completed:`, result);
+    logger.info('Bulk sync for stuck executions completed', {
+      checked: result.checked,
+      timedOut: result.timedOut,
+      updated: result.updated,
+      timeoutMinutes,
+    }, LOG_CONTEXTS.BULK_SYNC);
 
     res.json({
       success: true,
@@ -254,7 +398,7 @@ router.post('/sync-stuck', async (req, res) => {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[BULK-SYNC] Failed to perform bulk sync:`, message);
+    logger.errorLog(error, 'Bulk sync for stuck executions failed', { message });
     res.status(500).json({ success: false, message });
   }
 });
@@ -301,7 +445,10 @@ router.get('/stuck', async (req, res) => {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[STUCK-QUERY] Failed to query stuck executions:`, message);
+    logger.errorLog(error, 'Query stuck executions failed', {
+      timeout: req.query.timeout,
+      message,
+    });
     res.status(500).json({ success: false, message });
   }
 });

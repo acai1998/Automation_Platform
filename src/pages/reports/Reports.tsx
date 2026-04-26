@@ -2,10 +2,9 @@ import { useState } from 'react';
 import { Link } from 'wouter';
 import { 
   BarChart3, 
-  Search, 
-  RefreshCw, 
   ChevronLeft, 
   ChevronRight, 
+  ChevronDown,
   Loader2, 
   CheckCircle2, 
   XCircle, 
@@ -14,44 +13,98 @@ import {
   ExternalLink,
   FileText,
   History,
-  Calendar
+  Calendar,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { useTestRuns } from '@/hooks/useExecutions';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
+import { useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
+
 /**
- * 报告中心页面
+ * 将毫秒时长格式化为可读字符串（与仪表盘口径一致）
+ * 例：1279600ms → "21m 20s"，39000ms → "39s"
+ */
+function formatDuration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || ms <= 0) return '-';
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+}
+
+/**
+ * 运行记录页面
  * 采用与用例管理一致的现代化 SaaS Dashboard 风格
  * 数据读取自 Auto_TestRun 表
  */
 export default function Reports() {
-  const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  
+
+  // 筛选状态
+  const [filters, setFilters] = useState<TestRunFilters>({});
+
   const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
+  const TRIGGER_TYPE_OPTIONS: MultiSelectOption[] = [
+    { value: 'manual', label: '手动' },
+    { value: 'jenkins', label: 'Jenkins' },
+    { value: 'schedule', label: '定时' },
+    { value: 'ci_triggered', label: 'CI' },
+  ];
+
+  const STATUS_OPTIONS: MultiSelectOption[] = [
+    { value: 'success', label: '成功' },
+    { value: 'failed', label: '失败' },
+    { value: 'running', label: '运行中' },
+    { value: 'pending', label: '等待中' },
+    { value: 'aborted', label: '已中止' },
+  ];
+
+
   // 获取运行记录
-  const { data, isLoading, error, refetch } = useTestRuns(page, pageSize);
+  const { data, isLoading, error, refetch } = useTestRuns(page, pageSize, filters);
+
+  // 历史等待中治理（默认阈值与后端 monitor 一致）
 
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
   const startIndex = (page - 1) * pageSize + 1;
   const endIndex = Math.min(page * pageSize, data?.total || 0);
 
-  // 处理刷新
-  const handleRefresh = () => {
-    refetch();
-    toast.success('数据已更新');
+  // 更新多选筛选项，同时重置到第一页
+  const handleMultiFilterChange = (key: "triggerType" | "status", values: string[]) => {
+    setFilters(prev => ({
+      ...prev,
+      [key]: values.length > 0 ? values : undefined,
+    }));
+    setPage(1);
   };
 
-  // 状态主题配置
+  const handleDateRangeChange = (range: { startDate?: string; endDate?: string }) => {
+    setFilters(prev => ({
+      ...prev,
+      startDate: range.startDate,
+      endDate: range.endDate,
+    }));
+    setPage(1);
+  };
+
+  // 清除所有筛选
+  const handleClearAll = () => {
+    setFilters({});
+    setPage(1);
+  };
+
+  // 是否有活跃筛选
+  const hasActiveFilters = !!((filters.triggerType?.length ?? 0) || (filters.status?.length ?? 0) || filters.startDate || filters.endDate);
   const theme = {
     gradient: 'from-blue-500/20 via-blue-500/5 to-transparent',
     iconBg: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-    accent: 'blue',
   };
 
   return (
@@ -65,38 +118,59 @@ export default function Reports() {
             </div>
             <div>
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-                报告中心
+                运行记录
               </h1>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                查看和分析自动化测试运行历史记录 (Auto_TestRun)
+                查看和分析自动化测试运行历史记录
               </p>
             </div>
           </div>
 
-          <Button
-            variant="outline"
-            onClick={handleRefresh}
-            disabled={isLoading}
-            className="gap-2 h-9 px-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 hover:shadow-md"
-          >
-            <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
-            刷新数据
-          </Button>
         </div>
       </div>
 
-      {/* 搜索栏 */}
-      <div className="px-4 sm:px-6 py-4 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <Input
-              placeholder="搜索运行 ID 或项目名称..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="pl-10 h-9 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500/20"
+      {/* 筛选栏 */}
+      <div className="relative z-30 overflow-visible px-3 sm:px-4 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">触发方式</span>
+            <FilterMultiSelect
+              options={TRIGGER_TYPE_OPTIONS}
+              value={filters.triggerType || []}
+              onChange={(values) => handleMultiFilterChange('triggerType', values)}
+              placeholder="全部"
             />
           </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">状态</span>
+            <FilterMultiSelect
+              options={STATUS_OPTIONS}
+              value={filters.status || []}
+              onChange={(values) => handleMultiFilterChange('status', values)}
+              placeholder="全部"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">时间范围</span>
+            <DateRangePicker
+              value={{ startDate: filters.startDate, endDate: filters.endDate }}
+              onChange={handleDateRangeChange}
+            />
+          </div>
+
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearAll}
+              className="h-8 gap-1.5 text-xs text-slate-500 hover:text-slate-700 ml-auto"
+            >
+              <X className="h-3 w-3" />
+              清空筛选
+            </Button>
+          )}
         </div>
       </div>
 
@@ -116,7 +190,10 @@ export default function Reports() {
         ) : data?.data.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-500 dark:text-slate-400">
             <History className="h-10 w-10 opacity-20" />
-            <p className="font-medium">暂无运行记录</p>
+            <p className="font-medium">{hasActiveFilters ? '没有符合筛选条件的记录' : '暂无运行记录'}</p>
+            {hasActiveFilters && (
+              <Button variant="outline" size="sm" onClick={handleClearAll}>清空筛选条件</Button>
+            )}
           </div>
         ) : (
           <div className="h-full flex flex-col">
@@ -125,10 +202,10 @@ export default function Reports() {
               <table className="w-full min-w-[1000px]">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">运行 ID</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">所属项目</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">执行编号</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">触发信息</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">状态</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">用例统计 (P/F/T)</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">用例统计</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">开始时间</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">耗时</th>
                     <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">操作</th>
@@ -137,24 +214,28 @@ export default function Reports() {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {data?.data.map((record) => (
                     <tr key={record.id} className="group hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors duration-150">
-                      <td className="px-4 py-3.5 text-sm font-mono text-slate-500">#{record.id}</td>
+                      <td className="px-4 py-3.5 text-sm font-mono text-slate-700 dark:text-slate-300">{record.id}</td>
                       <td className="px-4 py-3.5">
-                        <div className="font-medium text-slate-900 dark:text-white">{record.project_name || '未分类'}</div>
-                        <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
-                          <Badge variant="outline" className="px-1 py-0 text-[9px] h-auto font-normal uppercase">{record.trigger_type}</Badge>
-                          <span>by {record.trigger_by_name || 'System'}</span>
+                        <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                          <TriggerTypeBadge type={record.trigger_type} />
+                          <span>by {record.trigger_by_name || '系统'}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
-                        <StatusBadge status={record.status} />
+                        <StatusBadge status={record.status} reason={record.abort_reason} />
+                        {record.status === 'aborted' && record.abort_reason && (
+                          <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400 max-w-[220px] truncate" title={record.abort_reason}>
+                            原因: {record.abort_reason}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-green-600 font-bold">{record.passed_cases}</span>
-                          <span className="text-slate-300">/</span>
-                          <span className="text-red-600 font-bold">{record.failed_cases}</span>
-                          <span className="text-slate-300">/</span>
-                          <span className="text-slate-600 dark:text-slate-400">{record.total_cases}</span>
+                        <div className="flex items-center gap-1.5 text-xs mb-1">
+                          <span className="text-green-600 font-medium">{record.passed_cases} 通过</span>
+                          <span className="text-slate-300">·</span>
+                          <span className="text-red-500 font-medium">{record.failed_cases} 失败</span>
+                          <span className="text-slate-300">·</span>
+                          <span className="text-slate-400">{record.total_cases} 总计</span>
                         </div>
                         <div className="w-24 bg-slate-100 dark:bg-slate-800 rounded-full h-1 overflow-hidden">
                           <div 
@@ -167,7 +248,7 @@ export default function Reports() {
                         {record.start_time ? new Date(record.start_time).toLocaleString() : '-'}
                       </td>
                       <td className="px-4 py-3.5 text-xs text-slate-600 dark:text-slate-400">
-                        {record.duration_ms ? `${(record.duration_ms / 1000).toFixed(1)}s` : '-'}
+                        {formatDuration(record.duration_ms)}
                       </td>
                       <td className="px-4 py-3.5 text-right">
                         <div className="flex justify-end gap-2">
@@ -200,12 +281,13 @@ export default function Reports() {
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1.5">
-                          <span className="text-[10px] font-mono text-slate-400">#{record.id}</span>
-                          <StatusBadge status={record.status} />
+                          <span className="text-[10px] font-mono text-slate-400">{record.id}</span>
+                          <StatusBadge status={record.status} reason={record.abort_reason} />
                         </div>
-                        <h3 className="font-medium text-slate-900 dark:text-white text-sm truncate">
-                          {record.project_name || '未分类'}
-                        </h3>
+                        <div className="flex items-center gap-1 mt-1">
+                          <TriggerTypeBadge type={record.trigger_type} />
+                          <span className="text-[10px] text-slate-400">by {record.trigger_by_name || '系统'}</span>
+                        </div>
                       </div>
                       <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" asChild>
                         <Link href={`/reports/${record.id}`}>
@@ -228,7 +310,7 @@ export default function Reports() {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <Clock className="h-3 w-3" />
-                        <span>{record.duration_ms ? `${(record.duration_ms / 1000).toFixed(1)}s` : '-'}</span>
+                        <span>{formatDuration(record.duration_ms)}</span>
                       </div>
                     </div>
                   </div>
@@ -273,20 +355,123 @@ export default function Reports() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+// ─── 子组件 ───────────────────────────────────────────────────────────────────
+
+type MultiSelectOption = {
+  value: string;
+  label: string;
+};
+
+function FilterMultiSelect({
+  options,
+  value,
+  onChange,
+  placeholder = "请选择",
+}: {
+  options: MultiSelectOption[];
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder?: string;
+}) {
+  const optionMap = new Map(options.map((item) => [item.value, item.label]));
+
+  const toggleOption = (optionValue: string) => {
+    if (value.includes(optionValue)) {
+      onChange(value.filter((item) => item !== optionValue));
+      return;
+    }
+    onChange([...value, optionValue]);
+  };
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="min-h-8 min-w-[180px] max-w-[320px] px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-left text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+        >
+          <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
+              {value.length === 0 ? (
+                <span className="text-slate-400">{placeholder}</span>
+              ) : (
+                value.map((item) => (
+                  <span
+                    key={item}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800"
+                  >
+                    {optionMap.get(item) || item}
+                  </span>
+                ))
+              )}
+            </div>
+            <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+          </div>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={6} className="w-52 p-1.5">
+        <div className="space-y-0.5 max-h-56 overflow-auto">
+          {options.map((option) => (
+            <label
+              key={option.value}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+            >
+              <Checkbox
+                checked={value.includes(option.value)}
+                onCheckedChange={() => toggleOption(option.value)}
+                className="h-3.5 w-3.5 rounded border-slate-300 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+              />
+              <span className="text-xs text-slate-700 dark:text-slate-300">{option.label}</span>
+            </label>
+          ))}
+        </div>
+        {value.length > 0 && (
+          <div className="pt-1.5 mt-1.5 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              className="w-full text-left px-2 py-1 text-xs text-slate-500 hover:text-blue-600 transition-colors"
+              onClick={() => onChange([])}
+            >
+              清空选择
+            </button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function TriggerTypeBadge({ type }: { type: string }) {
+  const configs: Record<string, { label: string; className: string }> = {
+    manual: { label: '手动', className: 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800' },
+    jenkins: { label: 'Jenkins', className: 'bg-orange-50 text-orange-600 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-800' },
+    schedule: { label: '定时', className: 'bg-purple-50 text-purple-600 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800' },
+    ci_triggered: { label: 'CI', className: 'bg-green-50 text-green-600 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800' },
+  };
+  const config = configs[type] || { label: type, className: 'bg-slate-50 text-slate-500 border-slate-200' };
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border ${config.className}`}>
+      {config.label}
+    </span>
+  );
+}
+
+function StatusBadge({ status, reason }: { status: string; reason?: string | null }) {
   const configs: Record<string, { label: string, variant: "success" | "destructive" | "secondary" | "outline" | "warning", icon: any }> = {
     success: { label: '成功', variant: 'success', icon: CheckCircle2 },
     failed: { label: '失败', variant: 'destructive', icon: XCircle },
     running: { label: '运行中', variant: 'secondary', icon: Loader2 },
     pending: { label: '等待中', variant: 'outline', icon: Clock },
     aborted: { label: '已中止', variant: 'warning', icon: AlertCircle },
+    cancelled: { label: '已取消', variant: 'warning', icon: AlertCircle },
   };
 
   const config = configs[status] || { label: status, variant: 'outline', icon: AlertCircle };
   const Icon = config.icon;
+  const title = status === 'aborted' && reason ? `中止原因: ${reason}` : undefined;
 
   return (
-    <Badge variant={config.variant} className="gap-1.5 px-2 py-0.5 font-medium">
+    <Badge variant={config.variant} className="gap-1.5 px-2 py-0.5 font-medium" title={title}>
       <Icon className={cn("h-3 w-3", status === 'running' && "animate-spin")} />
       {config.label}
     </Badge>

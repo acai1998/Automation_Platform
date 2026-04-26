@@ -8,6 +8,14 @@ import { LOG_CONTEXTS, createTimer } from '../config/logging';
 const router = Router();
 const testCaseRepository = new TestCaseRepository(AppDataSource);
 
+function logCasesRouteError(error: unknown, endpoint: string, method: string): void {
+  logger.errorLog(error, 'Cases route database operation failed', {
+    event: 'CASES_ROUTE_DB_ERROR',
+    endpoint,
+    method,
+  });
+}
+
 interface TestCase {
   id: number;
   case_key?: string;
@@ -24,7 +32,6 @@ interface TestCase {
   source?: string;
   enabled: boolean;
   last_sync_commit?: string;
-  script_path?: string;
   config_json?: string;
   created_by?: number;
   created_by_name?: string;
@@ -41,21 +48,40 @@ router.get('/', async (req, res) => {
   const timer = createTimer();
 
   try {
-    const { projectId, module, enabled, type, search, limit = 50, offset = 0 } = req.query;
+    const { projectId, module, enabled, type, search, priority, owner, limit, offset } = req.query;
+
+    // 分页参数安全解析：统一上限保护，防止无边界查询；NaN 兜底为默认值
+    // 任务管理页的用例选择器会按 500 条加载候选集，这里需要与前端保持一致。
+    const limitNum = Math.min(500, Math.max(1, parseInt(limit as string) || 50));
+    const offsetNum = Math.max(0, parseInt(offset as string) || 0);
+
+    // projectId 安全解析：parseInt + isNaN 双重检查，防止 NaN 流入 SQL
+    let projectIdNum: number | undefined;
+    if (projectId !== undefined && projectId !== '') {
+      projectIdNum = parseInt(projectId as string, 10);
+      if (isNaN(projectIdNum)) {
+        return res.status(400).json({
+          success: false,
+          message: '无效的 projectId：必须为正整数',
+        });
+      }
+    }
 
     logger.info('Fetching test cases list', {
-      filters: { projectId, module, enabled, type, search },
-      pagination: { limit, offset },
+      filters: { projectId: projectIdNum, module, enabled, type, search, priority, owner },
+      pagination: { limit: limitNum, offset: offsetNum },
     }, LOG_CONTEXTS.CASES);
 
     const options = {
-      projectId: projectId ? Number(projectId) : undefined,
+      projectId: projectIdNum,
       module: module as string | undefined,
       enabled: enabled !== undefined ? (enabled === 'true' || enabled === '1') : undefined,
       type: type as string | undefined,
       search: search as string | undefined,
-      limit: Number(limit),
-      offset: Number(offset),
+      priority: priority as string | undefined,
+      owner: owner as string | undefined,
+      limit: limitNum,
+      offset: offsetNum,
     };
 
     const data = await testCaseRepository.findAllWithUser(options);
@@ -78,10 +104,34 @@ router.get('/', async (req, res) => {
       resultCount: data.length,
       total,
       duration: `${duration}ms`,
-      hasFilters: !!(projectId || module || enabled !== undefined || type || search),
+      hasFilters: !!(projectId || module || enabled !== undefined || type || search || priority || owner),
     }, LOG_CONTEXTS.CASES);
 
-    res.json({ success: true, data, total });
+    // 将 TypeORM 实体的驼峰字段映射为前端期望的下划线格式
+    const mappedData = data.map(item => ({
+      id: item.id,
+      case_key: item.caseKey,
+      name: item.name,
+      description: item.description,
+      project_id: item.projectId,
+      repo_id: item.repoId,
+      module: item.module,
+      owner: item.owner,
+      source: item.source,
+      priority: item.priority,
+      type: item.type,
+      tags: item.tags,
+      config_json: item.config ? JSON.stringify(item.config) : null,
+      enabled: item.enabled,
+      last_sync_commit: item.lastSyncCommit,
+      created_by: item.createdBy,
+      created_by_name: item.createdByName ?? null,
+      updated_by: item.updatedBy,
+      created_at: item.createdAt,
+      updated_at: item.updatedAt,
+    }));
+
+    res.json({ success: true, data: mappedData, total });
   } catch (error: unknown) {
     const duration = timer();
     logger.errorLog(error, 'Failed to fetch test cases list', {
@@ -97,22 +147,17 @@ router.get('/', async (req, res) => {
 });
 
 /**
- * GET /api/cases/modules/list
- * 获取所有模块列表
+ * GET /api/cases/owners
+ * 获取所有负责人列表
+ * @deprecated 旧路径 /owners/list 保留向后兼容，请使用 /owners
  */
-router.get('/modules/list', async (_req, res) => {
+router.get('/owners', async (_req, res) => {
   try {
-    const data = await testCaseRepository.getDistinctModules();
+    const data = await testCaseRepository.getDistinctOwners();
 
     res.json({ success: true, data });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: '/api/cases/modules/list',
-      method: 'GET'
-    });
+    logCasesRouteError(error, '/api/cases/owners', 'GET');
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -120,27 +165,38 @@ router.get('/modules/list', async (_req, res) => {
 });
 
 /**
- * GET /api/cases/running/list
- * 获取所有正在运行的用例（注：远程表无此字段，返回空数组）
+ * GET /api/cases/modules
+ * 获取所有模块列表
+ * @deprecated 旧路径 /modules/list 保留向后兼容，请使用 /modules
  */
-router.get('/running/list', async (_req, res) => {
+router.get('/modules', async (_req, res) => {
   try {
-    // 远程 Auto_TestCase 表没有 running_status 字段
-    // 返回空数组以保持 API 兼容性
-    res.json({ success: true, data: [] });
+    const data = await testCaseRepository.getDistinctModules();
+
+    res.json({ success: true, data });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: '/api/cases/running/list',
-      method: 'GET'
-    });
+    logCasesRouteError(error, '/api/cases/modules', 'GET');
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
 });
+
+/**
+ * GET /api/cases/running
+ * 获取所有正在运行的用例（注：远程表无此字段，返回空数组）
+ * @deprecated 旧路径 /running/list 保留向后兼容，请使用 /running
+ */
+router.get('/running', async (_req, res) => {
+  // 远程 Auto_TestCase 表没有 running_status 字段，返回空数组以保持 API 兼容性
+  res.json({ success: true, data: [] });
+});
+
+// ── 向后兼容别名：旧 /xxx/list 路径重定向到新 REST 路径 ────────────────────
+// 保留这些别名，防止现有集成方调用时 404；待所有消费方切换后可删除
+router.get('/owners/list', (_req, res) => res.redirect(301, '/api/cases/owners'));
+router.get('/modules/list', (_req, res) => res.redirect(301, '/api/cases/modules'));
+router.get('/running/list', (_req, res) => res.redirect(301, '/api/cases/running'));
 
 /**
  * GET /api/cases/:id
@@ -158,13 +214,7 @@ router.get('/:id', async (req, res) => {
 
     res.json({ success: true, data });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -210,13 +260,7 @@ router.post('/', async (req, res) => {
       message: 'Case created successfully',
     });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -264,13 +308,7 @@ router.put('/:id', async (req, res) => {
 
     res.json({ success: true, message: 'Case updated successfully' });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -289,13 +327,7 @@ router.delete('/:id', async (req, res) => {
 
     res.json({ success: true, message: 'Case deleted successfully' });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -364,13 +396,7 @@ router.post('/:id/run', async (req, res) => {
       });
     }
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
@@ -392,10 +418,20 @@ router.post('/:id/callback', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Case not found' });
     }
 
-    // 记录执行结果（可以扩展为写入执行记录表）
-    console.log(`Case ${id} execution completed: status=${status}, duration=${duration}ms`);
+    logger.info('Case execution callback received', {
+      event: 'CASES_EXECUTION_CALLBACK_RECEIVED',
+      caseId: id,
+      status,
+      duration,
+      hasError: Boolean(errorMessage),
+    }, LOG_CONTEXTS.CASES);
+
     if (errorMessage) {
-      console.log(`Error: ${errorMessage}`);
+      logger.warn('Case execution callback contains error message', {
+        event: 'CASES_EXECUTION_CALLBACK_ERROR',
+        caseId: id,
+        errorMessage,
+      }, LOG_CONTEXTS.CASES);
     }
 
     res.json({
@@ -403,13 +439,7 @@ router.post('/:id/callback', async (req, res) => {
       message: 'Callback received successfully',
     });
   } catch (error: unknown) {
-    // 增强错误日志记录
-    console.error('Database operation failed:', {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
-      endpoint: req.path,
-      method: req.method
-    });
+    logCasesRouteError(error, req.path, req.method);
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });

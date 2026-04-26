@@ -1,7 +1,7 @@
 /* ============================================
  * 字体导入 - 只导入实际使用的字重以优化性能
  * ============================================ */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -13,12 +13,12 @@
 @layer base {
   :root {
     /* Base Colors */
-    --background: 246 248 247;
-    --foreground: 15 23 42;
-    --card: 255 255 255;
-    --card-foreground: 15 23 42;
-    --popover: 255 255 255;
-    --popover-foreground: 15 23 42;
+    --background: 150 12% 97%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
 
     /* Brand Colors */
     --primary: 142 71% 55%;
@@ -54,52 +54,52 @@
 
     /* Enhanced Color Variables for Components */
     --color-surface-light: #ffffff;
-    --color-surface-dark: #162e21;
+    --color-surface-dark: #161b27;
     --color-sidebar-light: #f8faf9;
-    --color-sidebar-dark: #122017;
+    --color-sidebar-dark: #0f1420;
     --color-border-light: #e2e8f0;
-    --color-border-dark: #234833;
+    --color-border-dark: #252d3d;
     --color-text-muted-light: #64748b;
     --color-text-muted-dark: #94a3b8;
   }
 
-  /* Dark Theme */
+  /* Dark Theme - Modern deep blue-black neutral palette */
   .dark {
-    --background: 144 40% 6%;
+    --background: 222 47% 7%;
     --foreground: 210 40% 98%;
-    --card: 144 35% 12%;
+    --card: 222 40% 11%;
     --card-foreground: 210 40% 98%;
-    --popover: 144 35% 12%;
+    --popover: 222 40% 11%;
     --popover-foreground: 210 40% 98%;
     --primary: 142 71% 55%;
     --primary-foreground: 144 50% 10%;
-    --secondary: 144 30% 15%;
+    --secondary: 217 32% 17%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 144 30% 15%;
-    --muted-foreground: 150 30% 60%;
-    --accent: 144 30% 18%;
+    --muted: 217 32% 17%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 217 32% 20%;
     --accent-foreground: 142 71% 55%;
     --destructive: 0 62.8% 50%;
     --destructive-foreground: 210 40% 98%;
-    --border: 144 30% 18%;
-    --input: 144 30% 18%;
+    --border: 217 32% 18%;
+    --input: 217 32% 18%;
     --ring: 142 71% 45%;
 
     /* Custom Theme Colors */
-    --sidebar-bg: 144 40% 6%;
-    --sidebar-border: 144 30% 18%;
-    --surface-bg: 144 35% 12%;
+    --sidebar-bg: 222 47% 7%;
+    --sidebar-border: 217 32% 15%;
+    --surface-bg: 222 40% 11%;
     --text-primary: 255 255 255;
-    --text-secondary: 150 30% 70%;
-    --text-muted: 150 30% 50%;
+    --text-secondary: 215 20% 65%;
+    --text-muted: 215 15% 50%;
 
     /* Enhanced Color Variables for Components */
     --color-surface-light: #ffffff;
-    --color-surface-dark: #162e21;
+    --color-surface-dark: #161b27;
     --color-sidebar-light: #f8faf9;
-    --color-sidebar-dark: #122017;
+    --color-sidebar-dark: #0f1420;
     --color-border-light: #e2e8f0;
-    --color-border-dark: #234833;
+    --color-border-dark: #252d3d;
     --color-text-muted-light: #64748b;
     --color-text-muted-dark: #94a3b8;
   }
@@ -129,7 +129,7 @@
   }
 
   .dark * {
-    scrollbar-color: rgb(35 72 51) transparent;
+    scrollbar-color: rgb(37 45 61) transparent;
   }
 
   /* Webkit 滚动条样式 */
@@ -143,11 +143,11 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-slate-300 dark:bg-[#234833] rounded;
+    @apply bg-slate-300 dark:bg-[#252d3d] rounded;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-slate-400 dark:bg-[#326748];
+    @apply bg-slate-400 dark:bg-[#323d54];
   }
 
   /* 移动端更窄的滚动条 */
@@ -266,6 +266,10 @@
   .text-balance {
     text-wrap: balance;
   }
+  .text-crisp {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
 /* ============================================
@@ -281,4 +285,55 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ============================================
+ * Mind-Elixir 节点标签内联样式
+ *
+ * 将 .tags 改为 display:inline-flex，使其与 span.text（inline-block）
+ * 在同一文字行内水平排列，节点高度 = 文字行高，不外溢、不遮线。
+ *
+ * 关键约束：
+ *   - 不修改 me-tpc 的 display（保持 block），避免改变 offsetWidth，
+ *     从而不影响 mind-elixir generateMainBranch / generateSubBranch 的连线坐标计算
+ *   - 不修改 me-parent 的 padding/margin，避免影响 SVG 连线整体坐标
+ * ============================================ */
+.map-container me-parent me-tpc {
+  overflow: visible;
+}
+
+.map-container me-parent me-tpc .tags {
+  display: inline-flex;
+  vertical-align: middle;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* LHS（左侧）节点：
+ * mind-elixir 原生已设置 .lhs me-tpc { direction: ltr }，因此 me-tpc 内部
+ * span.text 和 .tags 仍按 LTR 顺序排列（文字在前、Tag 在后）。
+ * 为使 Tag 靠近主节点（即出现在文字左侧），我们借助 me-tpc 本身的 direction:
+ * 暂时移除原生的 "direction:ltr" 覆盖，让 .lhs 的 direction:rtl 作用到 me-tpc，
+ * 同时给 .tags 显式设 direction:ltr 保持 Tag 文字可读。
+ *
+ * 不改 me-tpc 的 display 属性，offsetWidth 行为不变，连线坐标不受影响。
+ */
+.map-container .lhs me-parent me-tpc {
+  direction: rtl; /* 覆盖原生的 direction:ltr，使 inline 子元素从右向左排 */
+}
+
+.map-container .lhs me-parent me-tpc .text {
+  direction: ltr; /* 节点文字保持 LTR 可读 */
+}
+
+.map-container .lhs me-parent me-tpc .tags {
+  direction: ltr; /* Tag 文字保持 LTR 可读 */
+  margin-left: 0;
+  margin-right: 6px;
 }

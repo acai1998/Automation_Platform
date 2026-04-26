@@ -10,12 +10,30 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "outDir": "./dist/server",
-    "baseUrl": ".",
     "paths": {
-      "@shared/*": ["./shared/*"],
-      "@configs/*": ["./configs/*"]
-    }
+      "@shared/*": [
+        "./shared/*"
+      ],
+      "@configs/*": [
+        "./configs/*"
+      ],
+      "@test/*": [
+        "./test_case/*"
+      ]
+    },
+    "types": [
+      "node"
+    ]
   },
-  "include": ["server", "shared"],
-  "exclude": ["node_modules", "dist", "archive", "tmp", ".aiconfig"]
+  "include": [
+    "server",
+    "shared"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "archive",
+    "tmp",
+    ".aiconfig"
+  ]
 }

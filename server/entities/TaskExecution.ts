@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { User } from './User';
 
 /**
@@ -9,9 +9,6 @@ export class TaskExecution {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ type: 'int', name: 'run_id', nullable: true })
-  runId: number | null;
-
   @Column({ type: 'int', name: 'task_id', nullable: true })
   taskId: number | null;
 
@@ -20,6 +17,9 @@ export class TaskExecution {
 
   @Column({ type: 'enum', enum: ['pending', 'running', 'success', 'failed', 'cancelled'], default: 'pending' })
   status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+
+  @Column({ type: 'enum', enum: ['manual', 'scheduled', 'ci_triggered'], nullable: true, name: 'trigger_type' })
+  triggerType: 'manual' | 'scheduled' | 'ci_triggered' | null;
 
   @Column({ type: 'int', name: 'total_cases', default: 0 })
   totalCases: number;
@@ -36,8 +36,8 @@ export class TaskExecution {
   @Column({ type: 'int', name: 'duration', default: 0 })
   duration: number;
 
-  @Column({ type: 'int', name: 'executed_by' })
-  executedBy: number;
+  @Column({ type: 'int', name: 'executed_by', nullable: true })
+  executedBy: number | null;
 
   @ManyToOne(() => User, { eager: false })
   @JoinColumn({ name: 'executed_by' })
@@ -51,7 +51,4 @@ export class TaskExecution {
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
-
-  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
-  updatedAt: Date;
 }

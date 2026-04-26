@@ -1,0 +1,14 @@
+-- autotest.Auto_TestEnvironments definition
+
+CREATE TABLE `Auto_TestEnvironments` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '环境唯一标识',
+  `name` varchar(100) NOT NULL COMMENT '环境名称',
+  `description` text DEFAULT NULL COMMENT '环境描述',
+  `base_url` varchar(255) DEFAULT NULL COMMENT '环境基础URL地址',
+  `config_json` text DEFAULT NULL COMMENT '环境配置JSON',
+  `status` enum('active','inactive') DEFAULT 'active' COMMENT '环境状态',
+  `created_at` datetime DEFAULT current_timestamp() COMMENT '创建时间',
+  `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp() COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_env_status` (`status`)
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试环境配置表';

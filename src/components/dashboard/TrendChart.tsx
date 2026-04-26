@@ -1,33 +1,57 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { Loader2, TrendingUp, BarChart3, HelpCircle, RefreshCw } from "lucide-react";
-import { dashboardApi } from "@/lib/api";
+import { dashboardApi } from "@/api";
 import {
-  LineChart,
+  ComposedChart,
   Line,
-  BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
 } from "recharts";
 import { Tooltip as UiTooltip, TooltipTrigger as UiTooltipTrigger, TooltipContent as UiTooltipContent } from "@/components/ui/tooltip";
 import type { DashboardResponse } from "@/types/dashboard";
 
 // ============================================
+// 暗色模式检测 Hook
+// ============================================
+function useIsDarkMode(): boolean {
+  const [isDark, setIsDark] = useState(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+  );
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  return isDark;
+}
+
+// ============================================
 // 配置常量
 // ============================================
 const CHART_CONFIG = {
   colors: {
-    primary: '#39E079',
-    grid: '#e2e8f0',
-    axis: '#94a3b8',
+    primary: '#39E079',   // 成功率 - 绿色
+    danger: '#f87171',    // 失败用例 - 红色
+    // grid/axis 通过 useIsDarkMode 动态获取
+    gridLight: '#e2e8f0',
+    gridDark: '#252d3d',
+    axisLight: '#94a3b8',
+    axisDark: '#4a5568',
   },
   dimensions: {
     height: 250,
-    margin: { top: 10, right: 10, left: 0, bottom: 2 },
+    margin: { top: 10, right: 50, left: 0, bottom: 2 },
     yAxisWidth: 45,
+    yAxisRightWidth: 40,
   },
   line: {
     strokeWidth: 2.5,
@@ -37,9 +61,9 @@ const CHART_CONFIG = {
   bar: {
     radius: [4, 4, 0, 0] as [number, number, number, number],
     maxBarSize: {
-      '7d': 30,
-      '30d': 15,
-      '90d': 8,
+      '7d': 28,
+      '30d': 14,
+      '90d': 7,
     },
   },
   xAxis: {
@@ -108,7 +132,6 @@ function formatTooltipDate(dateStr: string): string {
   if (!dateStr) return '';
 
   try {
-    // 处理 ISO 格式日期 (如 2024-12-16T16:00:00.000Z)
     if (dateStr.includes('T')) {
       const date = new Date(dateStr);
       if (isNaN(date.getTime())) return dateStr;
@@ -119,7 +142,6 @@ function formatTooltipDate(dateStr: string): string {
       return `${year}-${month}-${day}`;
     }
 
-    // 处理普通格式，已经是 YYYY-MM-DD 格式
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       return dateStr;
     }
@@ -166,6 +188,22 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   );
 }
 
+/** 自定义图例渲染 */
+function renderLegend() {
+  return (
+    <div className="flex items-center justify-center gap-5 mt-1 text-xs text-slate-500 dark:text-gray-400">
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block w-5 h-0.5 rounded" style={{ background: CHART_CONFIG.colors.primary }} />
+        成功率（左轴）
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block w-3 h-3 rounded-sm" style={{ background: CHART_CONFIG.colors.danger, opacity: 0.7 }} />
+        失败用例数（右轴）
+      </span>
+    </div>
+  );
+}
+
 /** 图表头部组件 */
 function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = false, onRefresh }: ChartHeaderProps) {
   return (
@@ -185,14 +223,14 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
                 <HelpCircle className="h-4 w-4" />
               </button>
             </UiTooltipTrigger>
-            <UiTooltipContent side="top" className="max-w-xs">
+            <UiTooltipContent side="top" sideOffset={12} className="max-w-xs">
               <div className="text-slate-600 dark:text-gray-400 text-sm">
-                展示过去 {timeRange === '7d' ? '7 天' : timeRange === '30d' ? '30 天' : '90 天'} 的成功率趋势，用于评估稳定性变化。
+                展示过去 {timeRange === '7d' ? '7 天' : timeRange === '30d' ? '30 天' : '90 天'} 的成功率趋势与失败用例数，用于评估稳定性变化。
               </div>
             </UiTooltipContent>
           </UiTooltip>
         </div>
-        <p className="text-slate-500 dark:text-gray-400 text-sm">通过率一致性变化（T-1 数据）</p>
+        <p className="text-slate-500 dark:text-gray-400 text-sm">通过率 & 失败量双维度（T-1 数据）</p>
       </div>
 
       <div className="flex items-center gap-2">
@@ -261,7 +299,7 @@ function ChartStats({ avgStability, totalExecutions, totalFailed, hasData }: Cha
         </p>
       </div>
       <div className="text-center">
-        <p className="text-xs text-slate-500 dark:text-gray-400 mb-1">总失败次数</p>
+        <p className="text-xs text-slate-500 dark:text-gray-400 mb-1">总失败用例数</p>
         <p className={`text-lg font-bold ${hasData ? 'text-danger' : 'text-slate-400 dark:text-gray-500'}`}>
           {hasData ? totalFailed : 'N/A'}
         </p>
@@ -277,6 +315,12 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
   const [chartType, setChartType] = useState<ChartType>('line');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isDark = useIsDarkMode();
+
+  const chartColors = useMemo(() => ({
+    grid: isDark ? CHART_CONFIG.colors.gridDark : CHART_CONFIG.colors.gridLight,
+    axis: isDark ? CHART_CONFIG.colors.axisDark : CHART_CONFIG.colors.axisLight,
+  }), [isDark]);
 
   const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
 
@@ -285,7 +329,7 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
 
   // 数据获取函数（仅在批量数据不可用时使用）
   const fetchData = useCallback(async () => {
-    if (data?.trendData) return; // 如果已有批量数据，不重复获取
+    if (data?.trendData) return;
 
     try {
       setLoading(true);
@@ -293,7 +337,7 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
       const trendRes = await dashboardApi.getTrend(days);
 
       if (trendRes.success && trendRes.data) {
-        // 这里可以设置本地状态，但由于我们使用批量数据，这个路径很少执行
+        // 使用批量数据路径，这里很少执行
       } else {
         setError('获取数据失败');
       }
@@ -314,11 +358,16 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
     }
   }, [fetchData, data?.trendData]);
 
-  // 使用 useMemo 缓存计算结果
+  // 统计信息
   const avgStability = useMemo(() => {
     if (trendData.length === 0) return 0;
-    const total = trendData.reduce((acc, d) => acc + (d.successRate || 0), 0);
-    return Math.round((total / trendData.length) * 10) / 10;
+    // 仅统计有执行数据的天的成功率，避免补零天拉低均值
+    const daysWithData = trendData.filter(d =>
+      (d.passedCases || 0) + (d.failedCases || 0) + (d.skippedCases || 0) > 0
+    );
+    if (daysWithData.length === 0) return 0;
+    const total = daysWithData.reduce((acc, d) => acc + (d.successRate || 0), 0);
+    return Math.round((total / daysWithData.length) * 10) / 10;
   }, [trendData]);
 
   const totalExecutions = useMemo(() => {
@@ -329,7 +378,13 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
     return trendData.reduce((acc, d) => acc + (d.failedCases || 0), 0);
   }, [trendData]);
 
-  // X轴配置 - 根据数据量动态计算 interval
+  // 右轴最大值（失败用例数），动态计算
+  const failedMax = useMemo(() => {
+    const max = Math.max(...trendData.map(d => d.failedCases || 0), 1);
+    return Math.ceil(max * 1.2); // 留 20% 余量
+  }, [trendData]);
+
+  // X轴配置
   const xAxisConfig = useMemo(() => {
     switch (timeRange) {
       case '7d':
@@ -337,7 +392,6 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
       case '30d':
         return { angle: -45, textAnchor: 'end' as const, interval: 0 };
       case '90d': {
-        // 动态计算 interval，确保最多显示约 12 个标签
         const dataLength = trendData.length || 90;
         const interval = Math.max(0, Math.ceil(dataLength / 12) - 1);
         return { angle: -45, textAnchor: 'end' as const, interval };
@@ -347,23 +401,18 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
     }
   }, [timeRange, trendData.length]);
 
-  // 格式化日期显示 - 优化为纯函数，避免不必要的重新创建
   const formatDate = useCallback((dateStr: string) => {
     if (!dateStr) return '';
 
     try {
-      // 处理 ISO 格式日期 (如 2024-12-16T16:00:00.000Z)
       if (dateStr.includes('T')) {
         const date = new Date(dateStr);
         if (isNaN(date.getTime())) return dateStr;
-
-        // 使用 UTC 时间避免时区偏移
         const month = String(date.getUTCMonth() + 1).padStart(2, '0');
         const day = String(date.getUTCDate()).padStart(2, '0');
         return `${month}-${day}`;
       }
 
-      // 处理普通格式 (如 2024-12-16)
       const parts = dateStr.split('-');
       if (parts.length >= 3) {
         return `${parts[1]}-${parts[2]}`;
@@ -374,7 +423,6 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
     }
   }, []);
 
-  // 预计算图表数据，避免每次渲染都重新计算
   const chartData = useMemo(() => {
     return trendData.map(item => ({
       ...item,
@@ -382,36 +430,44 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
     }));
   }, [trendData, formatDate]);
 
-  // 预计算图表配置，避免每次渲染都重新计算
-  const chartConfig = useMemo(() => ({
-    colors: { primary: '#39E079', grid: '#e2e8f0', axis: '#94a3b8' },
-    dimensions: { height: 250, margin: { top: 10, right: 10, left: 0, bottom: 2 } }
-  }), []);
-
-  // 预计算图表属性，避免在渲染函数中调用 hooks
-  const commonAxisProps = useMemo(() => ({
-    tick: { fontSize: CHART_CONFIG.xAxis.fontSize, fill: chartConfig.colors.axis },
-    tickLine: false,
-  }), [chartConfig.colors.axis]);
+  const commonAxisTick = useMemo(() => ({
+    fontSize: CHART_CONFIG.xAxis.fontSize,
+    fill: chartColors.axis,
+  }), [chartColors.axis]);
 
   const xAxisProps = useMemo(() => ({
-    ...commonAxisProps,
     dataKey: "date",
     tickFormatter: formatDate,
-    axisLine: { stroke: chartConfig.colors.grid },
-    angle: xAxisConfig.angle,
-    textAnchor: xAxisConfig.textAnchor,
+    tick: { ...commonAxisTick, angle: xAxisConfig.angle, textAnchor: xAxisConfig.textAnchor },
+    tickLine: false,
+    axisLine: { stroke: chartColors.grid },
     interval: xAxisConfig.interval,
     height: CHART_CONFIG.xAxis.height[timeRange],
-  }), [commonAxisProps, formatDate, xAxisConfig, timeRange, chartConfig.colors.grid]);
+  }), [formatDate, xAxisConfig, timeRange, commonAxisTick, chartColors.grid]);
 
-  const yAxisProps = useMemo(() => ({
-    ...commonAxisProps,
+  // 左轴：成功率
+  const yAxisLeftProps = useMemo(() => ({
+    yAxisId: "left",
     domain: [0, 100] as [number, number],
+    tick: commonAxisTick,
+    tickLine: false,
     axisLine: false,
-    tickFormatter: (value: number) => `${value}%`,
+    tickFormatter: (v: number) => `${v}%`,
     width: CHART_CONFIG.dimensions.yAxisWidth,
-  }), [commonAxisProps]);
+  }), [commonAxisTick]);
+
+  // 右轴：失败用例数
+  const yAxisRightProps = useMemo(() => ({
+    yAxisId: "right",
+    orientation: "right" as const,
+    domain: [0, failedMax] as [number, number],
+    tick: commonAxisTick,
+    tickLine: false,
+    axisLine: false,
+    tickFormatter: (v: number) => `${v}`,
+    width: CHART_CONFIG.dimensions.yAxisRightWidth,
+    allowDecimals: false,
+  }), [commonAxisTick, failedMax]);
 
   // 渲染图表内容
   const renderChart = () => {
@@ -448,46 +504,54 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
     }
 
     return (
-      <ResponsiveContainer width="100%" height={chartConfig.dimensions.height} minHeight={chartConfig.dimensions.height}>
-        {chartType === 'line' ? (
-          <LineChart data={chartData} margin={chartConfig.dimensions.margin}>
-            <CartesianGrid
-              strokeDasharray="3 3"
-              stroke={chartConfig.colors.grid}
-              className="dark:stroke-border-dark"
-              vertical={false}
-            />
-            <XAxis {...xAxisProps} />
-            <YAxis {...yAxisProps} />
-            <Tooltip content={<CustomTooltip />} cursor={false} />
+      <ResponsiveContainer width="100%" height={CHART_CONFIG.dimensions.height} minHeight={CHART_CONFIG.dimensions.height}>
+        <ComposedChart data={chartData} margin={CHART_CONFIG.dimensions.margin}>
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke={chartColors.grid}
+            vertical={false}
+          />
+          <XAxis {...xAxisProps} />
+          <YAxis {...yAxisLeftProps} />
+          <YAxis {...yAxisRightProps} />
+          <Tooltip content={<CustomTooltip />} cursor={false} />
+          <Legend content={renderLegend} />
+
+          {/* 失败用例数 - 柱状/面积，始终用柱子可见 */}
+          <Bar
+            yAxisId="right"
+            dataKey="failedCases"
+            name="失败用例数"
+            fill={CHART_CONFIG.colors.danger}
+            radius={CHART_CONFIG.bar.radius}
+            maxBarSize={CHART_CONFIG.bar.maxBarSize[timeRange]}
+            opacity={0.65}
+          />
+
+          {/* 成功率 - 折线或柱状 */}
+          {chartType === 'line' ? (
             <Line
+              yAxisId="left"
               type="monotone"
               dataKey="successRate"
-              stroke={chartConfig.colors.primary}
+              name="成功率"
+              stroke={CHART_CONFIG.colors.primary}
               strokeWidth={CHART_CONFIG.line.strokeWidth}
-              dot={{ fill: chartConfig.colors.primary, strokeWidth: 0, r: CHART_CONFIG.line.dotRadius }}
-              activeDot={{ fill: chartConfig.colors.primary, strokeWidth: 2, stroke: '#fff', r: CHART_CONFIG.line.activeDotRadius }}
+              dot={{ fill: CHART_CONFIG.colors.primary, strokeWidth: 0, r: CHART_CONFIG.line.dotRadius }}
+              activeDot={{ fill: CHART_CONFIG.colors.primary, strokeWidth: 2, stroke: '#fff', r: CHART_CONFIG.line.activeDotRadius }}
             />
-          </LineChart>
-        ) : (
-          <BarChart data={chartData} margin={chartConfig.dimensions.margin}>
-            <CartesianGrid
-              strokeDasharray="3 3"
-              stroke={chartConfig.colors.grid}
-              className="dark:stroke-border-dark"
-              vertical={false}
-            />
-            <XAxis {...xAxisProps} />
-            <YAxis {...yAxisProps} />
-            <Tooltip content={<CustomTooltip />} cursor={false} />
+          ) : (
             <Bar
+              yAxisId="left"
               dataKey="successRate"
-              fill={chartConfig.colors.primary}
+              name="成功率"
+              fill={CHART_CONFIG.colors.primary}
               radius={CHART_CONFIG.bar.radius}
               maxBarSize={CHART_CONFIG.bar.maxBarSize[timeRange]}
+              opacity={0.9}
             />
-          </BarChart>
-        )}
+          )}
+        </ComposedChart>
       </ResponsiveContainer>
     );
   };

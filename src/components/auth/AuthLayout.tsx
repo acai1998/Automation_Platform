@@ -11,6 +11,24 @@ interface AuthLayoutProps {
  * 左侧表单区域 + 右侧营销区域（可选）
  */
 export function AuthLayout({ children, rightPanel }: AuthLayoutProps) {
+  if (!rightPanel) {
+    return (
+      <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-[#020617] px-6 py-12">
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute left-1/2 top-0 h-[30rem] w-[30rem] -translate-x-1/2 rounded-full bg-indigo-500/25 blur-[130px]" />
+          <div className="absolute bottom-[-8rem] right-[-5rem] h-[22rem] w-[22rem] rounded-full bg-cyan-500/20 blur-[110px]" />
+        </div>
+
+        <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/15 bg-white/95 p-8 shadow-2xl backdrop-blur dark:bg-slate-900/90">
+          <div className="mb-8">
+            <AuthLogo />
+          </div>
+          {children}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen w-full flex-row bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-[#0a0a0a] dark:via-[#0f172a] dark:to-[#1e293b]">
       {/* Decorative background elements */}

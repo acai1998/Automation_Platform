@@ -9,11 +9,21 @@ __pycache__/
 *.so
 
 # Project specific
+.trae/
 .claude/
+.catpaw/
 .venv/
 .venv/
 .env
 .env.example
+.mrules
+.catpaw/
+
+# 规则忽略文件
+CLAUDE.md
+AGENTS.md
+Jenkinsfile.bak
+Jenkinsfile.optimized
 
 
 # Distribution / packaging
@@ -26,6 +36,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!src/lib/
 parts/
 sdist/
 var/
@@ -169,3 +180,15 @@ server/db/autotest.db
 
 # MCP config (contains credentials)
 .mcp.json
+
+# Docker Secrets (contains sensitive information)
+deployment/secrets/
+*.secret
+*.key
+*_password.txt
+*_token.txt
+*_secret.txt
+secrets/
+db_password.txt
+*_secret.txt
+*.pem

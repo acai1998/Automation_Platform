@@ -1,0 +1,22 @@
+-- autotest.Auto_RepositoryConfigs definition
+
+CREATE TABLE `Auto_RepositoryConfigs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '主键ID，自增',
+  `name` varchar(255) NOT NULL COMMENT '仓库配置名称，用于标识和显示',
+  `description` text DEFAULT NULL COMMENT '仓库描述信息，可选',
+  `repo_url` varchar(500) NOT NULL COMMENT 'Git仓库URL地址',
+  `branch` varchar(100) DEFAULT 'main' COMMENT 'Git分支名称，默认main',
+  `auth_type` enum('none','ssh','token') DEFAULT 'none' COMMENT '认证方式：none-无认证，ssh-SSH密钥，token-访问令牌',
+  `credentials_encrypted` text DEFAULT NULL COMMENT '加密后的认证凭据（SSH私钥或访问令牌）',
+  `script_path_pattern` varchar(255) DEFAULT NULL COMMENT '脚本文件路径匹配模式，如**/*.test.js',
+  `script_type` enum('javascript','python','java','other') DEFAULT 'javascript' COMMENT '脚本类型',
+  `status` enum('active','inactive','error') DEFAULT 'active' COMMENT '仓库状态：active-活跃，inactive-非活跃，error-错误',
+  `last_sync_at` datetime DEFAULT NULL COMMENT '最后同步时间',
+  `last_sync_status` varchar(50) DEFAULT NULL COMMENT '最后同步状态描述',
+  `sync_interval` int(11) DEFAULT 0 COMMENT '同步间隔（分钟），0表示不自动同步',
+  `auto_create_cases` tinyint(1) DEFAULT 1 COMMENT '是否自动创建测试用例',
+  `created_by` int(11) DEFAULT NULL COMMENT '创建者用户ID',
+  `created_at` datetime DEFAULT current_timestamp() COMMENT '创建时间',
+  `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp() COMMENT '更新时间',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动化测试仓库配置表';

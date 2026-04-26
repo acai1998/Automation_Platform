@@ -1,17 +1,10 @@
 import { useEffect, useState, useMemo } from "react";
 import { CheckCircle, Terminal, AlertCircle, Timer, TrendingUp, TrendingDown, Loader2, HelpCircle } from "lucide-react";
 import { useLocation } from "wouter";
-import { dashboardApi } from "@/lib/api";
+import { dashboardApi } from "@/api";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { StatCardSkeleton } from "@/components/ui/StatCardSkeleton";
 import type { DashboardResponse } from "@/types/dashboard";
-
-interface DashboardStats {
-  totalCases: number;
-  todayRuns: number;
-  todaySuccessRate: number | null;
-  runningTasks: number;
-}
 
 interface StatCardProps {
   icon: React.ReactNode;
@@ -33,7 +26,7 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
   return (
     <div
       onClick={onClick}
-      className={`flex flex-col gap-4 rounded-xl p-6 border border-slate-200 dark:border-border-dark bg-gradient-to-br from-white to-slate-50/50 dark:from-surface-dark dark:to-surface-dark/80 shadow-sm transition-all duration-200 ${onClick ? 'cursor-pointer hover:shadow-lg hover:scale-[1.02] hover:border-primary/20 hover:from-primary/5 hover:to-primary/10' : ''}`}
+      className={`flex flex-col gap-4 rounded-xl p-6 border border-slate-200 dark:border-border-dark bg-gradient-to-br from-white to-slate-50/50 dark:from-surface-dark dark:to-surface-dark/80 shadow-sm transition-all duration-200 overflow-visible hover:shadow-lg hover:scale-[1.02] ${onClick ? 'cursor-pointer hover:border-primary/20 hover:from-primary/5 hover:to-primary/10' : ''}`}
     >
       <div className="flex justify-between items-start">
         <div className={`p-3 ${iconBg} rounded-xl shadow-sm ${iconColor} transition-transform duration-200 hover:scale-110`}>
@@ -52,7 +45,7 @@ function StatCard({ icon, iconBg, iconColor, label, value, trend, onClick, loadi
                   <HelpCircle className="h-4 w-4" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs">
+              <TooltipContent side="top" sideOffset={12} className="max-w-xs">
                 <div className="text-slate-600 dark:text-gray-400 text-sm">
                   {description}
                 </div>
@@ -101,7 +94,7 @@ interface StatsCardsProps {
   onRefresh?: () => Promise<void>;
 }
 
-export function StatsCards({ data, onRefresh }: StatsCardsProps) {
+export function StatsCards({ data }: StatsCardsProps) {
   const [, setLocation] = useLocation();
   const [loading, setLoading] = useState(false);
   const [, setError] = useState<string | null>(null);
@@ -155,11 +148,11 @@ export function StatsCards({ data, onRefresh }: StatsCardsProps) {
     },
     {
       icon: <AlertCircle className="h-5 w-5" />,
-      iconBg: stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "bg-danger/10" : "bg-success/10",
-      iconColor: stats && stats.todaySuccessRate !== null && stats.todaySuccessRate < 80 ? "text-danger" : "text-success",
-      label: "今日成功率%",
-      value: stats && stats.todaySuccessRate !== null ? `${stats.todaySuccessRate}%` : 'N/A',
-      description: "基于今日完成的测试执行计算的成功率，低于 80% 会显示为警示颜色。",
+      iconBg: stats && stats.todaySuccessRate < 80 ? "bg-danger/10" : "bg-success/10",
+      iconColor: stats && stats.todaySuccessRate < 80 ? "text-danger" : "text-success",
+      label: "今日成功率",
+      value: stats ? `${stats.todaySuccessRate}%` : '-',
+      description: "今日成功运行次数 / 今日总运行次数，低于 80% 会显示为警示颜色。",
     },
     {
       icon: <Timer className="h-5 w-5" />,
@@ -187,9 +180,9 @@ export function StatsCards({ data, onRefresh }: StatsCardsProps) {
 
   return (
     <TooltipProvider>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 overflow-visible">
         {cardsConfig.map((config, index) => (
-          <div key={index} className="animate-fade-in-up" style={{ animationDelay: `${index * 100}ms` }}>
+          <div key={index} className="animate-fade-in-up overflow-visible" style={{ animationDelay: `${index * 100}ms` }}>
             <StatCard
               {...config}
               loading={loading}

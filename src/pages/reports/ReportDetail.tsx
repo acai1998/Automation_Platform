@@ -1,62 +1,441 @@
-import { useState } from 'react';
-import { useRoute } from 'wouter';
-import { 
-  ArrowLeft, 
-  Clock, 
-  Calendar, 
-  User, 
-  ExternalLink, 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle, 
-  Loader2,
-  Search,
-  Filter,
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useRoute } from "wouter";
+import {
+  AlertCircle,
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
   ChevronDown,
-  ChevronUp
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { useTestRunDetail, useTestRunResults, type Auto_TestRunResults } from '@/hooks/useExecutions';
-import { cn } from '@/lib/utils';
+  ChevronUp,
+  Copy,
+  Download,
+  ExternalLink,
+  FileText,
+  Image as ImageIcon,
+  Loader2,
+  MinusCircle,
+  RefreshCw,
+  Search,
+  TrendingUp,
+  MoreHorizontal,
+  XCircle,
+} from "lucide-react";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { useTestRunDetail, useTestRunResults, useTestRunSchedulerLogs, TestRunResultStatus } from "@/hooks/useExecutions";
+import type { TestRunResult, TestRunRecord } from "@/hooks/useExecutions";
 
-export default function ReportDetail() {
-  const [, params] = useRoute('/reports/:id');
-  const id = params?.id ? parseInt(params.id) : 0;
-  
-  const { data: runData, isLoading: isRunLoading } = useTestRunDetail(id);
-  const { data: resultsData, isLoading: isResultsLoading } = useTestRunResults(id);
-  
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+type SortBy = "failed_first" | "default" | "duration_desc";
 
-  const run = runData?.data;
-  const results = resultsData?.data || [];
+// ─── 常量定义 ─────────────────────────────────────────────────────────────────
+const PAGE_SIZE = 10;
+const SEARCH_DEBOUNCE_MS = 300;
 
-  // 过滤逻辑
-  const filteredResults = results.filter(result => {
-    const matchesSearch = result.case_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          result.module?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || result.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+const RUN_STATUS_STYLE: Record<TestRunRecord['status'], string> = {
+  success: "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20",
+  failed: "bg-rose-500/10 text-rose-500 border border-rose-500/20",
+  running: "bg-blue-500/10 text-blue-500 border border-blue-500/20",
+  pending: "bg-slate-500/10 text-slate-500 border border-slate-500/20",
+  aborted: "bg-amber-500/10 text-amber-500 border border-amber-500/20",
+};
 
-  const toggleRow = (id: number) => {
-    const newExpanded = new Set(expandedRows);
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id);
-    } else {
-      newExpanded.add(id);
+const RUN_STATUS_LABEL: Record<TestRunRecord['status'], string> = {
+  success: "Completed",
+  failed:  "Completed",
+  running: "Running",
+  pending: "Pending",
+  aborted: "Aborted",
+};
+
+const TRIGGER_MAP: Record<TestRunRecord['trigger_type'], string> = {
+  manual:       "手动触发",
+  jenkins:      "Jenkins 触发",
+  schedule:     "定时触发",
+  ci_triggered: "CI 触发",
+};
+
+const STATUS_LABEL_MAP: Record<TestRunResult['status'], string> = {
+  passed: 'PASSED',
+  failed: 'FAILED',
+  skipped: 'SKIPPED',
+  error: 'ERROR',
+  pending: 'PENDING',
+};
+
+// ─── 工具函数 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 构建分页器的页码数组，超过 7 页时使用省略号
+ * @param current 当前页码（1-based）
+ * @param total 总页数
+ * @returns 页码数组，例如 [1, "...", 5, 6, 7, "...", 10]
+ */
+function buildPageNumbers(current: number, total: number): (number | "...")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: (number | "...")[] = [1];
+  const start = Math.max(2, current - 1);
+  const end   = Math.min(total - 1, current + 1);
+  if (start > 2) pages.push("...");
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (end < total - 1) pages.push("...");
+  pages.push(total);
+  return pages;
+}
+
+/**
+ * 判断测试用例状态是否为失败
+ */
+function isFailedStatus(status: string): boolean {
+  return status === "failed" || status === "error";
+}
+
+/** 运行终态集合 */
+const TERMINAL_RUN_STATUSES = new Set(['success', 'failed', 'aborted']);
+
+/**
+ * 判断用例是否是「执行中」的占位记录（整体运行中且用例状态为 error）
+ * 触发执行时会预先创建 error 占位记录，等 Jenkins 回调后才更新为真实状态。
+ * 若此时用户进入详情页，应将这些占位 error 显示为「执行中」而非真实错误。
+ * 注意：若 run 已是终态（success/failed/aborted），则 error 状态不再是占位符而是实际失败。
+ */
+function isRunningPlaceholder(status: string, runStatus?: string): boolean {
+  return status === "error" && (runStatus === "running" || runStatus === "pending");
+}
+
+/**
+ * 判断用例是否是终态 run 中未收到 Jenkins 回调的占位记录
+ * 这种状态应展示为 FAILED，语义上表示该用例未能成功执行
+ */
+function isTerminalErrorPlaceholder(status: string, runStatus?: string): boolean {
+  return status === "error" && runStatus !== undefined && TERMINAL_RUN_STATUSES.has(runStatus);
+}
+
+/**
+ * 获取测试用例状态的显示标签（考虑整体运行状态）
+ */
+function getStatusLabel(status: TestRunResult['status'], runStatus?: string): string {
+  if (isRunningPlaceholder(status, runStatus)) return '执行中';
+  // 终态 run 中的 error 占位符：Jenkins 未上报结果，语义上算作失败
+  if (isTerminalErrorPlaceholder(status, runStatus)) return 'FAILED';
+  return STATUS_LABEL_MAP[status] ?? 'UNKNOWN';
+}
+
+function formatTime(value?: string | null, full = false): string {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "-";
+  return full
+    ? d.toLocaleString("zh-CN", { hour12: false })
+    : d.toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+function formatDuration(ms?: number | null) {
+  // duration 为 null/undefined 或 0 时均视为"无数据"，显示 "-"
+  // 0 表示占位符记录未收到真实耗时，而非真正的 0ms
+  if (ms == null || ms === 0) return "-";
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function buildLogMetaPreview(metadata: Record<string, unknown>): string {
+  const keys = ['traceId', 'triggerReason', 'source', 'windowStart', 'dedupeReason', 'runId', 'executionId'];
+  const parts: string[] = [];
+  for (const key of keys) {
+    const value = metadata[key];
+    if (value !== undefined && value !== null && String(value).length > 0) {
+      parts.push(`${key}=${String(value)}`);
     }
-    setExpandedRows(newExpanded);
+    if (parts.length >= 3) break;
+  }
+  return parts.join(' | ');
+}
+
+// ─── 按分组视图组件 ───────────────────────────────────────────────────────────
+
+function GroupView({ results, loading, runStatus }: { results: TestRunResult[]; loading: boolean; runStatus?: string }) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // 按模块分组
+  const groups = useMemo(() => {
+    const map = new Map<string, TestRunResult[]>();
+    for (const item of results) {
+      const key = item.module && item.module !== "-" ? item.module : "未分组";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(item);
+    }
+    // 有失败的组排前面（执行中的占位 error 不算失败）
+    return Array.from(map.entries()).sort(([, a], [, b]) => {
+      const aFail = a.some(r => isFailedStatus(r.status) && !isRunningPlaceholder(r.status, runStatus)) ? 0 : 1;
+      const bFail = b.some(r => isFailedStatus(r.status) && !isRunningPlaceholder(r.status, runStatus)) ? 0 : 1;
+      return aFail - bFail;
+    });
+  }, [results, runStatus]);
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
-  if (isRunLoading || isResultsLoading) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (groups.length === 0) {
+    return (
+      <div className="py-12 text-center text-slate-400 text-sm">
+        暂无匹配的用例结果
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-slate-200 dark:divide-slate-800">
+      {groups.map(([groupName, items]) => {
+        const hasFail = items.some(r => isFailedStatus(r.status) && !isRunningPlaceholder(r.status, runStatus));
+        const passCount = items.filter(r => r.status === "passed").length;
+        const failCount = items.filter(r => isFailedStatus(r.status) && !isRunningPlaceholder(r.status, runStatus)).length;
+        const pendingCount = items.filter(r => isRunningPlaceholder(r.status, runStatus) || r.status === "pending").length;
+        const skipCount = items.filter(r => r.status === "skipped").length;
+        const expanded = expandedGroups.has(groupName);
+
+        return (
+          <div key={groupName}>
+            <button
+              onClick={() => toggleGroup(groupName)}
+              className={cn(
+                "w-full flex items-center justify-between px-6 py-4 text-left transition-colors",
+                hasFail
+                  ? "bg-rose-500/[0.03] hover:bg-rose-500/[0.06]"
+                  : "hover:bg-slate-50 dark:hover:bg-slate-800/50",
+              )}
+            >
+              <div className="flex items-center gap-3">
+                {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                <span className={cn("text-sm font-bold", hasFail ? "text-rose-600 dark:text-rose-400" : "text-slate-800 dark:text-slate-200")}>
+                  {groupName}
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  共 {items.length} 个用例
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-xs font-bold">
+                {passCount > 0 && (
+                  <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> {passCount} 通过
+                  </span>
+                )}
+                {failCount > 0 && (
+                  <span className="flex items-center gap-1 text-rose-600 dark:text-rose-400">
+                    <XCircle className="h-3.5 w-3.5" /> {failCount} 失败
+                  </span>
+                )}
+                {skipCount > 0 && (
+                  <span className="flex items-center gap-1 text-slate-400">
+                    <MinusCircle className="h-3.5 w-3.5" /> {skipCount} 跳过
+                  </span>
+                )}
+                {pendingCount > 0 && (
+                  <span className="flex items-center gap-1 text-blue-500 dark:text-blue-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> {pendingCount} 执行中
+                  </span>
+                )}
+              </div>
+            </button>
+
+            {expanded && (
+              <div className="bg-slate-50/50 dark:bg-slate-900/30 border-t border-slate-100 dark:border-slate-800/50">
+                <table className="w-full text-left text-sm">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                    {items.map(item => {
+                      const placeholder = isRunningPlaceholder(item.status, runStatus);
+                      const failed = !placeholder && isFailedStatus(item.status);
+                      const statusText = getStatusLabel(item.status, runStatus);
+                      return (
+                        <tr key={item.id} className={cn("px-6", failed ? "bg-rose-500/[0.02]" : "")}>
+                          <td className="pl-14 pr-6 py-3">
+                            <span className={cn("font-medium", failed ? "font-semibold text-slate-900 dark:text-slate-100" : "text-slate-700 dark:text-slate-300")}>
+                              {item.case_name}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3 w-28">
+                            <div className={cn(
+                              "flex items-center gap-1.5 text-xs font-bold uppercase",
+                              item.status === "passed" ? "text-emerald-600 dark:text-emerald-400"
+                              : failed ? "text-rose-600 dark:text-rose-400"
+                              : placeholder ? "text-blue-500 dark:text-blue-400"
+                              : "text-slate-400",
+                            )}>
+                              {item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5" /> : failed ? <XCircle className="h-3.5 w-3.5" /> : placeholder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MinusCircle className="h-3.5 w-3.5" />}
+                              {statusText}
+                            </div>
+                          </td>
+                          <td className="px-6 py-3 w-24 font-mono text-slate-500 text-xs">
+                            {formatDuration(item.duration)}
+                          </td>
+                          <td className="px-6 py-3 w-32 font-mono text-slate-500 text-xs">
+                            {formatTime(item.start_time)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── 主组件 ────────────────────────────────────────────────────────────────────
+
+export default function ReportDetail() {
+  const [, params] = useRoute("/reports/:id");
+  const [, navigate] = useLocation();
+  const rawId = params?.id ? Number(params.id) : 0;
+  const runId = isNaN(rawId) || rawId <= 0 ? 0 : rawId;
+
+  // ✅ 所有 Hook 必须在任何条件 return 之前调用，保证 Hook 调用顺序稳定
+  const { data: run, isLoading: runLoading, error, refetch } = useTestRunDetail(runId);
+  const { data: schedulerLogs, isLoading: schedulerLogsLoading } = useTestRunSchedulerLogs(runId);
+
+  const [activeTab, setActiveTab] = useState<"cases" | "groups">("cases");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<TestRunResultStatus>("all");
+  const [sortBy, setSortBy] = useState<SortBy>("failed_first");
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  const [page, setPage] = useState(1);
+
+  // ✅ P1 优化：搜索防抖逻辑优化
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // ✅ P1 优化：筛选条件变化时重置页码
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter]);
+
+  const apiStatus = statusFilter !== "all" ? statusFilter : undefined;
+
+  const { data: resultData, isLoading: resultLoading } = useTestRunResults(runId, {
+    page,
+    pageSize: PAGE_SIZE,
+    status: apiStatus,
+    keyword: debouncedSearch || undefined,
+  });
+
+  const results = resultData?.data ?? [];
+  const total = resultData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+
+  // ✅ P2 优化：排序逻辑使用 useMemo 缓存
+  const pagedResults = useMemo(() => {
+    const copy = [...results];
+    if (sortBy === "failed_first") {
+      copy.sort((a, b) => {
+        const af = isFailedStatus(a.status) ? 0 : 1;
+        const bf = isFailedStatus(b.status) ? 0 : 1;
+        return af - bf;
+      });
+    } else if (sortBy === "duration_desc") {
+      copy.sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0));
+    }
+    return copy;
+  }, [results, sortBy]);
+
+  // ✅ P0 修复：页码变化时清空展开状态，防止内存泄漏
+  useEffect(() => {
+    setExpandedRows(new Set());
+  }, [page]);
+
+  const toggleRow = useCallback((id: number) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const applyFilter = useCallback((next: () => void) => {
+    next();
+    setPage(1);
+  }, []);
+
+  // ✅ P2 优化：派生状态使用 useMemo
+  const onlyFailures = useMemo(() => statusFilter === "failed", [statusFilter]);
+
+  // ✅ P2 优化：成功率计算使用 useMemo（run 为 null 时返回 0）
+  const successRate = useMemo(
+    () => run && run.total_cases > 0
+      ? Math.round((run.passed_cases / run.total_cases) * 100)
+      : 0,
+    [run],
+  );
+
+  // ─── 所有 Hook 调用结束，以下开始条件渲染 ────────────────────────────────────
+
+  // 无效 ID 提前返回
+  if (runId === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-4">
+        <AlertCircle className="h-10 w-10 text-rose-500" />
+        <p className="text-sm text-slate-500">无效的执行 ID</p>
+        <button
+          onClick={() => navigate("/reports")}
+          className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
+        >
+          返回运行记录
+        </button>
+      </div>
+    );
+  }
+
+  // 错误处理
+  if (error) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-4">
+        <AlertCircle className="h-10 w-10 text-rose-500" />
+        <p className="text-sm text-slate-500">加载失败：{error instanceof Error ? error.message : '未知错误'}</p>
+        <div className="flex gap-3">
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all flex items-center gap-2"
+          >
+            <RefreshCw className="h-4 w-4" />
+            重试
+          </button>
+          <button
+            onClick={() => navigate("/reports")}
+            className="px-4 py-2 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-white text-sm font-semibold hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors"
+          >
+            返回运行记录
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (runLoading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
@@ -64,208 +443,557 @@ export default function ReportDetail() {
   if (!run) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-4">
-        <AlertCircle className="h-12 w-12 text-red-500" />
-        <p className="text-lg font-medium">未找到运行记录</p>
-        <Button onClick={() => window.history.back()}>返回列表</Button>
+        <AlertCircle className="h-10 w-10 text-rose-500" />
+        <p className="text-sm text-slate-500">未找到运行记录</p>
+        <button
+          onClick={() => navigate("/reports")}
+          className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all"
+        >
+          返回运行记录
+        </button>
       </div>
     );
   }
 
+  const hasFailures = run.failed_cases > 0;
+  const abortReason = run.abort_reason?.trim() || '';
+
   return (
-    <div className="h-full flex flex-col min-h-0 bg-slate-50 dark:bg-slate-950">
-      {/* 顶部导航与概览 */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-4">
-        <div className="flex items-center gap-4 mb-6">
-          <Button variant="ghost" size="icon" onClick={() => window.history.back()} className="-ml-2">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold text-slate-900 dark:text-white">
-                运行详情 #{run.id}
-              </h1>
-              <StatusBadge status={run.status} />
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+      <main className="max-w-[1440px] mx-auto px-6 py-8">
+        <div className="mb-8">
+          <nav className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-4">
+<button className="hover:text-primary" onClick={() => navigate("/reports")}>
+运行记录
+</button>
+            <ChevronDown className="h-3 w-3 -rotate-90" />
+            <span className="text-slate-900 dark:text-slate-200 font-medium">
+              运行详情
+            </span>
+          </nav>
+
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+            <div className="space-y-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  onClick={() => navigate("/reports")}
+                  className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg -ml-2"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </button>
+
+                <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">
+                  <span className="font-mono">#{run.id}</span>
+                </h1>
+
+                <span
+                  className={cn(
+                    "inline-flex items-center px-3 py-1 rounded-full text-xs font-bold",
+                    RUN_STATUS_STYLE[run.status] ?? RUN_STATUS_STYLE.pending,
+                  )}
+                >
+                  执行状态: {RUN_STATUS_LABEL[run.status] ?? run.status}
+                </span>
+
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border",
+                    hasFailures
+                      ? "bg-rose-500/10 text-rose-500 border-rose-500/20"
+                      : "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+                  )}
+                >
+                  {hasFailures ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                  质量结果: {hasFailures ? "Has Failed" : "All Passed"}
+                </span>
+              </div>
+
+              <p className="text-slate-500 dark:text-slate-400 text-sm pl-9">
+                触发方式: <span className="text-slate-700 dark:text-slate-200 font-medium">{TRIGGER_MAP[run.trigger_type] ?? run.trigger_type}</span>
+                {" | "}
+                执行人: <span className="text-slate-700 dark:text-slate-200 font-medium">{run.trigger_by_name || "-"}</span>
+                {" | "}
+                触发时间: <span className="text-slate-700 dark:text-slate-200 font-medium font-mono">{formatTime(run.start_time ?? run.created_at, true)}</span>
+              </p>
+
+              {run.status === 'aborted' && abortReason && (
+                <div className="ml-9 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                  <span className="font-semibold">中止原因：</span>
+                  <span className="break-all">{abortReason}</span>
+                </div>
+              )}
             </div>
-            <p className="text-sm text-slate-500 mt-1">
-              {run.project_name || '未分类项目'} · {run.trigger_type}
-            </p>
-          </div>
-          <div className="ml-auto flex items-center gap-3">
-            {run.jenkins_url && (
-              <Button variant="outline" size="sm" asChild className="gap-2">
-                <a href={run.jenkins_url} target="_blank" rel="noreferrer">
+
+            <div className="flex gap-3">
+              <button onClick={() => toast.info("导出功能开发中，敬请期待")} className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-white text-sm font-bold border border-slate-300 dark:border-slate-700 hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors">
+                <Download className="h-4 w-4" />
+                Export Report
+              </button>
+
+              {run.jenkins_url && (
+                <a
+                  href={run.jenkins_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-white text-sm font-bold hover:brightness-110 transition-all shadow-lg shadow-primary/20"
+                >
                   <ExternalLink className="h-4 w-4" />
-                  Jenkins 构建
+                  View on Jenkins
                 </a>
-              </Button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-16 h-16 bg-primary/5 -mr-8 -mt-8 rounded-full" />
+            <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">总用例</p>
+            <div className="flex items-baseline gap-3">
+              <h3 className="text-4xl font-black font-mono text-slate-900 dark:text-white">{run.total_cases}</h3>
+              <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-xs font-bold">成功率 {successRate}%</span>
+            </div>
+          </div>
+
+          <div
+            className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:border-emerald-500/50 cursor-pointer transition-all"
+            onClick={() => applyFilter(() => setStatusFilter("passed"))}
+          >
+            <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">通过</p>
+            <div className="flex items-center gap-3">
+              <h3 className="text-4xl font-black font-mono text-emerald-500">{run.passed_cases}</h3>
+              <TrendingUp className="h-6 w-6 text-emerald-500/30" />
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              "p-5 rounded-xl shadow-sm cursor-pointer transition-all",
+              hasFailures
+                ? "bg-rose-500/5 dark:bg-rose-500/10 border-2 border-rose-500"
+                : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800",
+            )}
+            onClick={() => applyFilter(() => setStatusFilter("failed"))}
+          >
+            <p className={cn("text-sm mb-1", hasFailures ? "font-bold text-rose-500 uppercase tracking-wider" : "text-slate-500 dark:text-slate-400")}>
+              失败
+            </p>
+            <div className="flex items-center gap-3">
+              <h3 className={cn("text-4xl font-black font-mono", hasFailures ? "text-rose-600 dark:text-rose-500" : "text-slate-400")}>{run.failed_cases}</h3>
+              {hasFailures && <AlertCircle className="h-6 w-6 text-rose-500" />}
+            </div>
+          </div>
+
+          <div
+            className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:border-slate-400 transition-all cursor-pointer"
+            onClick={() => applyFilter(() => setStatusFilter("skipped"))}
+          >
+            <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">跳过</p>
+            <div className="flex items-center gap-3">
+              <h3 className="text-4xl font-black font-mono text-slate-400">{run.skipped_cases}</h3>
+              <MinusCircle className="h-6 w-6 text-slate-300 dark:text-slate-700" />
+            </div>
+          </div>
+        </div>
+
+        {hasFailures && (
+          <div className="bg-rose-600 text-white p-4 rounded-xl flex items-center justify-between mb-8 shadow-xl shadow-rose-900/20">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-5 w-5 flex-shrink-0" />
+              <p className="font-medium">
+                失败摘要 ({run.failed_cases} 个用例失败):
+                <span className="opacity-90 ml-1">优先处理失败用例，查看错误信息与堆栈</span>
+              </p>
+            </div>
+            <button
+              className="bg-white/20 hover:bg-white/30 text-white px-4 py-1.5 rounded-lg text-sm font-bold transition-colors"
+              onClick={() => applyFilter(() => setStatusFilter("failed"))}
+            >
+              查看详情
+            </button>
+          </div>
+        )}
+
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm mb-6">
+          <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">调度日志</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">用于排查定时触发、补偿触发与重复触发问题</p>
+            </div>
+            <span className="text-xs text-slate-400">{schedulerLogs?.length ?? 0} 条</span>
+          </div>
+          <div className="max-h-72 overflow-auto">
+            {schedulerLogsLoading ? (
+              <div className="px-6 py-8 flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                正在加载调度日志...
+              </div>
+            ) : !schedulerLogs || schedulerLogs.length === 0 ? (
+              <div className="px-6 py-8 text-sm text-slate-500">暂无调度日志（可能是历史运行记录，尚未采集）</div>
+            ) : (
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800/70">
+                  <tr className="text-slate-500 dark:text-slate-300">
+                    <th className="px-6 py-2">时间</th>
+                    <th className="px-6 py-2">事件</th>
+                    <th className="px-6 py-2">来源</th>
+                    <th className="px-6 py-2">备注</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {schedulerLogs.map((log) => {
+                    const metaPreview = buildLogMetaPreview(log.metadata);
+                    return (
+                      <tr key={log.id}>
+                        <td className="px-6 py-2 font-mono text-slate-500">{formatTime(log.createdAt, true)}</td>
+                        <td className="px-6 py-2 text-slate-700 dark:text-slate-200 font-medium">{log.message}</td>
+                        <td className="px-6 py-2">
+                          <span className={cn(
+                            "inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold",
+                            log.source === 'audit'
+                              ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+                              : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                          )}>
+                            {log.source === 'audit' ? '审计' : '运行'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-2 text-slate-500">{metaPreview || '-'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
 
-        {/* 统计卡片 */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard 
-            label="总用例" 
-            value={run.total_cases} 
-            icon={CheckCircle2}
-            className="bg-slate-50 dark:bg-slate-800/50"
-          />
-          <StatCard 
-            label="通过" 
-            value={run.passed_cases} 
-            icon={CheckCircle2}
-            className="bg-green-50 dark:bg-green-900/10 text-green-600 dark:text-green-400"
-          />
-          <StatCard 
-            label="失败" 
-            value={run.failed_cases} 
-            icon={XCircle}
-            className="bg-red-50 dark:bg-red-900/10 text-red-600 dark:text-red-400"
-          />
-          <StatCard 
-            label="耗时" 
-            value={run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : '-'} 
-            icon={Clock}
-            className="bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400"
-          />
-        </div>
-      </div>
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+          <div className="flex border-b border-slate-200 dark:border-slate-800 px-6">
+            <button
+              onClick={() => setActiveTab("cases")}
+              className={cn(
+                "px-6 py-4 text-sm font-bold transition-colors",
+                activeTab === "cases"
+                  ? "border-b-2 border-primary text-primary"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300",
+              )}
+            >
+              按用例视图
+            </button>
+            <button
+              onClick={() => setActiveTab("groups")}
+              className={cn(
+                "px-6 py-4 text-sm font-bold transition-colors",
+                activeTab === "groups"
+                  ? "border-b-2 border-primary text-primary"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300",
+              )}
+            >
+              按分组视图
+            </button>
+          </div>
 
-      {/* 结果列表 */}
-      <div className="flex-1 p-6 min-h-0 overflow-hidden flex flex-col">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input 
-                placeholder="搜索用例名称或模块..." 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
+          {activeTab === "groups" && (
+            <GroupView results={pagedResults} loading={resultLoading} runStatus={run?.status} />
+          )}
+
+          {activeTab === "cases" && <>
+          <div className="p-4 bg-slate-50 dark:bg-slate-900/50 flex flex-wrap items-center gap-4 border-b border-slate-200 dark:border-slate-800">
+            <div className="relative flex-1 min-w-[240px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 h-4 w-4" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索用例名/模块..."
+                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary h-10"
               />
             </div>
-            <div className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md p-1">
-              {['all', 'passed', 'failed', 'skipped'].map((status) => (
-                <button
-                  key={status}
-                  onClick={() => setStatusFilter(status)}
-                  className={cn(
-                    "px-3 py-1.5 text-xs font-medium rounded-sm transition-colors",
-                    statusFilter === status 
-                      ? "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white" 
-                      : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                  )}
-                >
-                  {status === 'all' ? '全部' : status}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="text-sm text-slate-500">
-            共 {filteredResults.length} 条结果
-          </div>
-        </div>
 
-        <div className="flex-1 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 overflow-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 z-10">
-              <tr>
-                <th className="px-4 py-3 font-medium text-slate-500 w-12"></th>
-                <th className="px-4 py-3 font-medium text-slate-500">用例名称</th>
-                <th className="px-4 py-3 font-medium text-slate-500">模块</th>
-                <th className="px-4 py-3 font-medium text-slate-500">状态</th>
-                <th className="px-4 py-3 font-medium text-slate-500">耗时</th>
-                <th className="px-4 py-3 font-medium text-slate-500 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filteredResults.map((result) => (
-                <>
-                  <tr key={result.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
-                    <td className="px-4 py-3">
-                      {result.status === 'failed' || result.status === 'error' ? (
-                        <button onClick={() => toggleRow(result.id)}>
-                          {expandedRows.has(result.id) ? (
-                            <ChevronUp className="h-4 w-4 text-slate-400" />
-                          ) : (
-                            <ChevronDown className="h-4 w-4 text-slate-400" />
-                          )}
-                        </button>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-200">
-                      {result.case_name}
-                    </td>
-                    <td className="px-4 py-3 text-slate-500">{result.module || '-'}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={result.status} />
-                    </td>
-                    <td className="px-4 py-3 text-slate-500">
-                      {result.duration ? `${result.duration}ms` : '-'}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {/* 预留操作按钮 */}
+            <select
+              value={statusFilter}
+              onChange={(e) => applyFilter(() => setStatusFilter(e.target.value as TestRunResultStatus))}
+              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm h-10 px-3 min-w-[120px]"
+            >
+              <option value="all">All Status</option>
+              <option value="passed">Passed</option>
+              <option value="failed">Failed / Error</option>
+              <option value="skipped">Skipped</option>
+            </select>
+
+            <div className="flex items-center gap-2 px-3 py-2 bg-rose-500/10 rounded-lg border border-rose-500/20">
+              <input
+                type="checkbox"
+                checked={onlyFailures}
+                onChange={(e) =>
+                  applyFilter(() => setStatusFilter(e.target.checked ? "failed" : "all"))
+                }
+                className="rounded text-rose-500 focus:ring-rose-500 border-rose-500/50 bg-transparent"
+              />
+              <span className="text-xs font-bold text-rose-600 dark:text-rose-400 uppercase">仅看失败</span>
+            </div>
+
+            <div className="h-6 w-[1px] bg-slate-200 dark:bg-slate-700" />
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Sort by:</span>
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)} className="bg-transparent border-none text-sm font-bold">
+                <option value="failed_first">失败优先</option>
+                <option value="default">Default</option>
+                <option value="duration_desc">耗时降序</option>
+              </select>
+            </div>
+
+            <div className="ml-auto text-sm text-slate-500 font-medium">共 {total} 条</div>
+          </div>
+
+          <div className="overflow-x-auto relative">
+            {resultLoading && (
+              <div className="absolute inset-0 bg-white/60 dark:bg-slate-900/60 flex items-center justify-center z-10">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            )}
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider">
+                  <th className="px-6 py-4">用例名称 / 分组</th>
+                  <th className="px-6 py-4">模块</th>
+                  <th className="px-6 py-4">状态</th>
+                  <th className="px-6 py-4">耗时</th>
+                  <th className="px-6 py-4">开始时间</th>
+                  <th className="px-6 py-4 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {pagedResults.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-12 text-center text-slate-400 text-sm">
+                      暂无匹配的用例结果
                     </td>
                   </tr>
-                  {expandedRows.has(result.id) && (
-                    <tr className="bg-slate-50 dark:bg-slate-800/30">
-                      <td colSpan={6} className="px-4 py-4">
-                        <div className="space-y-2">
-                          {result.error_message && (
-                            <div className="text-red-600 dark:text-red-400 font-mono text-xs bg-red-50 dark:bg-red-900/10 p-3 rounded border border-red-100 dark:border-red-900/20">
-                              {result.error_message}
+                )}
+
+                {pagedResults.map((item) => {
+                  const placeholder = isRunningPlaceholder(item.status, run?.status);
+                  const failed = !placeholder && isFailedStatus(item.status);
+                  const expanded = expandedRows.has(item.id);
+                  const statusText = getStatusLabel(item.status, run?.status);
+
+                  return (
+                    <Fragment key={item.id}>
+                      <tr className={failed ? "bg-rose-500/[0.02] dark:bg-rose-500/[0.05]" : "hover:bg-slate-50 dark:hover:bg-slate-800/50"}>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col">
+                <span className={cn("text-sm text-slate-900 dark:text-slate-100", failed ? "font-semibold" : "font-medium")}>
+                {item.case_name}
+                            </span>
+                            {item.module && item.module !== "-" && (
+                              <span
+                                className={cn(
+                                  "text-[10px] self-start px-1.5 py-0.5 rounded mt-1 font-bold",
+                                  failed ? "text-primary bg-primary/10" : "text-slate-500 bg-slate-100 dark:bg-slate-800",
+                                )}
+                              >
+                                {item.module}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="px-6 py-4 text-sm font-medium">{item.module || "-"}</td>
+
+                        <td className="px-6 py-4">
+                          <div
+                            className={cn(
+                              "flex items-center gap-2 text-xs uppercase font-bold",
+                              item.status === "passed"
+                                ? "text-emerald-600 dark:text-emerald-500"
+                                : failed
+                                  ? "text-rose-600 dark:text-rose-500"
+                                  : placeholder
+                                    ? "text-blue-500 dark:text-blue-400"
+                                    : "text-slate-500 dark:text-slate-400",
+                            )}
+                          >
+                            {item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5" /> : failed ? <XCircle className="h-3.5 w-3.5" /> : placeholder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isTerminalErrorPlaceholder(item.status, run?.status) ? <XCircle className="h-3.5 w-3.5" /> : <MinusCircle className="h-3.5 w-3.5" />}
+                            {statusText}
+                          </div>
+                        </td>
+
+                        <td className="px-6 py-4 text-sm font-mono">{formatDuration(item.duration)}</td>
+                        <td className="px-6 py-4 text-sm font-mono text-slate-500">{formatTime(item.start_time)}</td>
+
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            aria-label={expanded ? "折叠详情" : "展开详情"}
+                            onClick={() => toggleRow(item.id)}
+                            className={cn(
+                              "p-1.5 rounded transition-colors",
+                              expanded ? "text-primary hover:bg-primary/10" : "text-slate-400 hover:text-primary",
+                            )}
+                          >
+                            {expanded ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                          </button>
+                        </td>
+                      </tr>
+                      {expanded && (
+                        <tr className="bg-slate-50 dark:bg-slate-950/50">
+                          <td className="p-6" colSpan={6}>
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                              <div className="lg:col-span-2 space-y-4">
+                                                                {failed ? (
+                                  <>
+                                    {item.error_message ? (
+                                      <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-4">
+                                        <p className="text-rose-600 dark:text-rose-400 text-sm font-bold mb-2">Error Message:</p>
+                                        <p className="text-sm font-mono text-rose-700 dark:text-rose-300 break-all">{item.error_message}</p>
+                                      </div>
+                                    ) : (
+                                      <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
+                                        <div className="flex items-start gap-2">
+                                          <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                                          <div>
+                                            <p className="text-sm font-bold text-amber-700 dark:text-amber-400 mb-1">未收到错误详情</p>
+                                            <p className="text-xs text-amber-600 dark:text-amber-500">
+                                              Jenkins 执行器未上报错误信息，可能是用例启动失败或执行环境异常。
+                                              {run.jenkins_url && (
+                                                <>
+                                                  {" 请"}
+                                                  <a
+                                                    href={run.jenkins_url}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="font-bold underline hover:text-amber-800 dark:hover:text-amber-300 inline-flex items-center gap-0.5"
+                                                  >
+                                                    前往 Jenkins 查看日志
+                                                    <ExternalLink className="h-3 w-3" />
+                                                  </a>
+                                                  {"。"}
+                                                </>
+                                              )}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {item.error_stack && (
+                                      <div className="bg-slate-900 rounded-lg p-4 border border-slate-800">
+                                        <div className="flex items-center justify-between mb-2">
+                                          <span className="text-xs text-slate-500 font-mono uppercase tracking-widest">Stack Trace</span>
+                                          <button aria-label="复制堆栈信息" className="text-slate-400 hover:text-white transition-colors" onClick={async () => { try { await navigator.clipboard.writeText(item.error_stack ?? ''); toast.success('堆栈信息已复制到剪贴板'); } catch { toast.error('复制失败，请手动选中并复制'); } }}>
+                                            <Copy className="h-4 w-4" />
+                                          </button>
+                                        </div>
+                                        <pre className="font-mono text-[12px] text-slate-300 leading-relaxed overflow-x-auto max-h-64">{item.error_stack}</pre>
+                                      </div>
+                                    )}
+                                  </>
+                                ) : placeholder ? (
+                                  <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 flex items-center gap-3">
+                                    <Loader2 className="h-5 w-5 text-blue-500 flex-shrink-0 animate-spin" />
+                                    <p className="text-sm text-blue-700 dark:text-blue-400 font-medium">用例正在执行中，请等待 Jenkins 任务完成后刷新查看结果</p>
+                                  </div>
+                                ) : (
+                                  <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-4 flex items-center gap-3">
+                                    <CheckCircle2 className="h-5 w-5 text-emerald-500 flex-shrink-0" />
+                                    <p className="text-sm text-emerald-700 dark:text-emerald-400 font-medium">用例执行通过，无错误信息</p>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="space-y-4">
+                                {(item.assertions_total ?? 0) > 0 && (
+                                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4">
+                                    <p className="text-xs font-bold text-slate-500 uppercase mb-2">Assertion Stats</p>
+                                    <p className="text-sm text-slate-600 dark:text-slate-300">
+                                      Total: <span className="font-mono">{item.assertions_total}</span>
+                                      {" | "}Passed: <span className="font-mono text-emerald-500">{item.assertions_passed ?? 0}</span>
+                                      {" | "}Failed: <span className="font-mono text-rose-500">{(item.assertions_total ?? 0) - (item.assertions_passed ?? 0)}</span>
+                                    </p>
+                                  </div>
+                                )}
+
+                                {item.response_data && (
+                                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4">
+                                    <p className="text-xs font-bold text-slate-500 uppercase mb-2">Response Data</p>
+                                    <pre className="font-mono text-[11px] text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 p-2 rounded overflow-x-auto">{item.response_data}</pre>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          )}
-                          {result.error_stack && (
-                            <pre className="text-slate-600 dark:text-slate-400 font-mono text-xs overflow-x-auto p-3 bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800">
-                              {result.error_stack}
-                            </pre>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </>
-              ))}
-            </tbody>
-          </table>
+
+                            <div className="mt-6 flex gap-3 border-t border-slate-200 dark:border-slate-800 pt-6">
+                              {item.log_path && (
+                                <a href={item.log_path} target="_blank" rel="noreferrer" className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-slate-700 transition-colors">
+                                  <FileText className="h-3.5 w-3.5" /> View Logs
+                                </a>
+                              )}
+                              {item.screenshot_path && (
+                                <a href={item.screenshot_path} target="_blank" rel="noreferrer" className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-slate-700 transition-colors">
+                                  <ImageIcon className="h-3.5 w-3.5" /> Screenshot
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {total > PAGE_SIZE && (
+            <div className="px-6 py-4 flex items-center justify-between border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+              <span className="text-sm text-slate-500 font-medium">
+                第 {(currentPage - 1) * PAGE_SIZE + 1}-{Math.min(currentPage * PAGE_SIZE, total)} 条，共 {total} 条
+              </span>
+
+              <div className="flex gap-2">
+                <button
+                  disabled={currentPage === 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="p-2 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors disabled:opacity-30"
+                >
+                  <ChevronDown className="h-4 w-4 rotate-90" />
+                </button>
+
+                {buildPageNumbers(currentPage, totalPages).map((p, idx) =>
+                  p === "..." ? (
+                    <span key={"ellipsis-"+idx} className="px-2 py-1.5 flex items-center text-slate-400">
+                      <MoreHorizontal className="h-4 w-4" />
+                    </span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={cn(
+                        "min-w-[36px] px-2.5 py-1.5 text-sm font-bold rounded-lg transition-colors",
+                        p === currentPage
+                          ? "bg-primary text-white"
+                          : "hover:bg-slate-200 dark:hover:bg-slate-800",
+                      )}
+                    >
+                      {p}
+                    </button>
+                  ),
+                )}
+
+                <button
+                  disabled={currentPage === totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="下一页"
+                  className="p-2 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors disabled:opacity-30"
+                >
+                  <ChevronDown className="h-4 w-4 -rotate-90" />
+                </button>
+              </div>
+            </div>
+          )}
+          </>}
         </div>
-      </div>
+      </main>
     </div>
-  );
-}
-
-function StatCard({ label, value, icon: Icon, className }: any) {
-  return (
-    <div className={cn("p-4 rounded-lg border border-slate-200 dark:border-slate-800", className)}>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium opacity-70">{label}</span>
-        <Icon className="h-4 w-4 opacity-50" />
-      </div>
-      <div className="text-2xl font-bold">{value}</div>
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const configs: Record<string, { label: string, variant: "success" | "destructive" | "secondary" | "outline" | "warning", icon: any }> = {
-    success: { label: '成功', variant: 'success', icon: CheckCircle2 },
-    passed: { label: '通过', variant: 'success', icon: CheckCircle2 },
-    failed: { label: '失败', variant: 'destructive', icon: XCircle },
-    error: { label: '错误', variant: 'destructive', icon: AlertCircle },
-    running: { label: '运行中', variant: 'secondary', icon: Loader2 },
-    pending: { label: '等待中', variant: 'outline', icon: Clock },
-    skipped: { label: '跳过', variant: 'outline', icon: AlertCircle },
-    aborted: { label: '已中止', variant: 'warning', icon: AlertCircle },
-  };
-
-  const config = configs[status] || { label: status, variant: 'outline', icon: AlertCircle };
-  const Icon = config.icon;
-
-  return (
-    <Badge variant={config.variant} className="gap-1.5 px-2 py-0.5 font-medium">
-      <Icon className={cn("h-3 w-3", status === 'running' && "animate-spin")} />
-      {config.label}
-    </Badge>
   );
 }

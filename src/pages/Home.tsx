@@ -2,30 +2,48 @@ import { StatsCards } from "@/components/dashboard/StatsCards";
 import { TodayExecution } from "@/components/dashboard/TodayExecution";
 import { TrendChart } from "@/components/dashboard/TrendChart";
 import { RecentTests } from "@/components/dashboard/RecentTests";
-import { Button } from "@/components/ui/button";
-import { Play, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState, useEffect } from "react";
-import { dashboardApi } from "@/lib/api";
+import { dashboardApi } from "@/api";
 import { useDashboardFilter } from "@/hooks/useDashboardFilter";
-import type { DashboardResponse } from "@/types/dashboard";
+import type { DashboardResponse, RecentRun } from "@/types/dashboard";
 
 type TimeRange = '7d' | '30d' | '90d';
 
+// 扩展 DashboardResponse 以包含 recentRuns（用于内部状态管理）
+interface DashboardDataWithRuns extends DashboardResponse {
+  recentRuns?: RecentRun[];
+}
+
 export default function Home() {
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
-  const [dashboardData, setDashboardData] = useState<DashboardResponse | null>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardDataWithRuns | null>(null);
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
   const [, setLoading] = useState(true);
 
   // Filter state management for chart interactions
-  const { filterState, setFilter } = useDashboardFilter();
+  const { filterState } = useDashboardFilter();
 
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      const response = await dashboardApi.getAll(timeRange);
-      if (response.success && response.data) {
-        setDashboardData(response.data);
+
+      // 每次刷新都拉取最新 recentRuns，避免列表长期停留在首次加载的数据
+      const [dashboardResponse, recentRunsResponse] = await Promise.all([
+        dashboardApi.getAll(timeRange),
+        dashboardApi.getRecentRuns(10),
+      ]);
+
+      if (dashboardResponse.success && dashboardResponse.data) {
+        const data = dashboardResponse.data;
+        setDashboardData((prev) => ({
+          ...data,
+          recentRuns: recentRunsResponse.success
+            ? (recentRunsResponse.data || [])
+            : (prev?.recentRuns || []),
+        } as DashboardDataWithRuns));
+        setLastRefreshAt(new Date());
       }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);
@@ -37,7 +55,7 @@ export default function Home() {
             stats: prev?.stats || {
               totalCases: 0,
               todayRuns: 0,
-              todaySuccessRate: null,
+              todaySuccessRate: 0,
               runningTasks: 0
             },
             todayExecution: prev?.todayExecution || {
@@ -49,6 +67,7 @@ export default function Home() {
             trendData: prev?.trendData || [],
             recentRuns: recentRunsResponse.data || []
           }));
+          setLastRefreshAt(new Date());
         }
       } catch (recentError) {
         console.error('Failed to fetch recent runs:', recentError);
@@ -71,7 +90,7 @@ export default function Home() {
               <h2 className="text-slate-900 dark:text-white text-3xl md:text-4xl font-black tracking-tight">
                 仪表盘
               </h2>
-              <p className="text-slate-500 dark:text-[#92c9a9] text-base font-normal">
+              <p className="text-slate-500 dark:text-slate-400 text-base font-normal">
                 自动化测试数据概览
               </p>
             </div>
@@ -91,12 +110,6 @@ export default function Home() {
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
               </div>
-
-              {/* Run Test Button */}
-              <Button className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20">
-                <Play className="h-4 w-4" />
-                <span>执行测试</span>
-              </Button>
             </div>
           </div>
 
@@ -115,9 +128,6 @@ export default function Home() {
             {/* Today's Execution Donut Chart */}
             <TodayExecution
               data={dashboardData || undefined}
-              onRefresh={fetchAllData}
-              onFilterChange={setFilter}
-              selectedFilter={filterState.selectedStatus}
             />
 
             {/* Trend Line Chart */}
@@ -132,8 +142,8 @@ export default function Home() {
           <div className="animate-fade-in-up animate-delay-400">
             <RecentTests
               data={dashboardData || undefined}
-              onRefresh={fetchAllData}
               statusFilter={filterState.selectedStatus}
+              lastRefreshAt={lastRefreshAt}
             />
           </div>
         </div>

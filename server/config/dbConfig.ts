@@ -3,6 +3,8 @@
  * 解决 dataSource.ts 和 database.ts 中重复配置的问题
  */
 
+import { getSecretOrEnv } from '../utils/secrets';
+
 // 配置常量
 export const DB_CONFIG_CONSTANTS = {
   // 连接配置
@@ -12,8 +14,8 @@ export const DB_CONFIG_CONSTANTS = {
   DEFAULT_DATABASE: 'autotest',
 
   // 连接池配置
-  CONNECTION_LIMIT: 10, // 增加连接数以支持更高并发
-  QUEUE_LIMIT: 20, // 设置队列限制避免内存泄漏
+  CONNECTION_LIMIT: 20, // 高并发执行场景下，支持同时处理大量 Jenkins 回调和 DB 写入
+  QUEUE_LIMIT: 30, // 限制排队请求数，防止内存泄漏
   CONNECT_TIMEOUT: 10000, // 10秒连接超时
   IDLE_TIMEOUT: 60000, // 60秒空闲超时
   KEEP_ALIVE_DELAY: 10000, // 10秒保活延迟
@@ -82,7 +84,7 @@ export function getDbConfig(): DbEnvironmentConfig {
     host: process.env.DB_HOST || DB_CONFIG_CONSTANTS.DEFAULT_HOST,
     port: parsePort(process.env.DB_PORT, DB_CONFIG_CONSTANTS.DEFAULT_PORT),
     username: process.env.DB_USER || DB_CONFIG_CONSTANTS.DEFAULT_USER,
-    password: process.env.DB_PASSWORD || '',
+    password: getSecretOrEnv('DB_PASSWORD', ''),  // 支持从 Docker Secrets 读取
     database: process.env.DB_NAME || DB_CONFIG_CONSTANTS.DEFAULT_DATABASE,
   };
 

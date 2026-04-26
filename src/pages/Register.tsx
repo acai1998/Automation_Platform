@@ -103,7 +103,7 @@ export default function Register() {
         // 自动登录
         const loginResult = await login(email, password, false);
         if (loginResult.success) {
-          setTimeout(() => setLocation('/'), 1500);
+          setTimeout(() => setLocation('/dashboard'), 1500);
         } else {
           // 注册成功但自动登录失败，提示用户手动登录
           setError('注册成功！请前往登录页面登录');

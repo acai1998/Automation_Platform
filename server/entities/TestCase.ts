@@ -45,18 +45,11 @@ export class TestCase {
   @Column({ type: 'json', nullable: true })
   tags: string[] | null;
 
-  @Column({ type: 'json', nullable: true })
+  @Column({ type: 'json', nullable: true, name: 'config_json' })
   config: Record<string, unknown> | null;
 
   @Column({ type: 'boolean', name: 'enabled', default: true })
   enabled: boolean;
-
-  @Column({
-    type: 'enum',
-    enum: ['active', 'inactive', 'deprecated', 'draft'],
-    default: 'active'
-  })
-  status: 'active' | 'inactive' | 'deprecated' | 'draft';
 
   @Column({ type: 'varchar', length: 100, name: 'last_sync_commit', nullable: true })
   lastSyncCommit: string | null;

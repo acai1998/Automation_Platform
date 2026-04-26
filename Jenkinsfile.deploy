@@ -1,0 +1,388 @@
+pipeline {
+    agent any
+    
+    environment {
+        IMAGE_NAME  = "docker.cnb.cool/imacaiy/automation_platform"
+        PROJECT_DIR = "/opt/automation-platform"
+        ENV_FILE    = "/opt/.env"
+        // CNB Docker Token：在 Jenkins → 凭据 中添加 Secret text，ID 填 CNB_DOCKER_TOKEN
+        CNB_TOKEN   = credentials('CNB_DOCKER_TOKEN')
+    }
+    
+    parameters {
+        choice(
+            name: 'DEPLOY_ENV',
+            choices: ['production'],
+            description: '部署环境'
+        )
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: 'latest',
+            description: '镜像标签（留空使用 latest，或输入 CNB_COMMIT_SHORT）'
+        )
+        booleanParam(
+            name: 'FORCE_PULL',
+            defaultValue: true,
+            description: '强制拉取最新镜像'
+        )
+        booleanParam(
+            name: 'BACKUP',
+            defaultValue: true,
+            description: '部署前备份当前版本'
+        )
+    }
+    
+    options {
+        // 只保留最近 5 次部署记录，30 天自动过期，减少 JENKINS_HOME 占用
+        buildDiscarder(logRotator(
+            numToKeepStr:         '5',
+            artifactNumToKeepStr: '3',
+            daysToKeepStr:        '30',
+            artifactDaysToKeepStr:'7'
+        ))
+        timeout(time: 15, unit: 'MINUTES')
+        disableConcurrentBuilds()
+    }
+
+    triggers {
+        // 每 5 分钟轮询一次 CNB 仓库，有新 push 就自动触发部署
+        pollSCM('H/5 * * * *')
+    }
+    
+    stages {
+        stage('准备') {
+            steps {
+                script {
+                    echo "========================================"
+                    echo "部署信息"
+                    echo "========================================"
+                    echo "环境: ${params.DEPLOY_ENV}"
+                    echo "镜像: ${IMAGE_NAME}:${params.IMAGE_TAG}"
+                    echo "强制拉取: ${params.FORCE_PULL}"
+                    echo "备份: ${params.BACKUP}"
+                    echo "========================================"
+                    echo ""
+                    
+                    // 如果 IMAGE_TAG 为空，使用 latest
+                    if (!params.IMAGE_TAG?.trim()) {
+                        env.IMAGE_TAG = 'latest'
+                    } else {
+                        env.IMAGE_TAG = params.IMAGE_TAG
+                    }
+                }
+            }
+        }
+        
+        stage('检查环境') {
+            steps {
+                script {
+                    echo "检查服务器环境..."
+                    
+                    // 检查 Docker
+                    sh '''
+                        docker --version
+                        docker compose version
+                    '''
+                    
+                    // 检查项目目录
+                    sh """
+                        if [ ! -d "${PROJECT_DIR}" ]; then
+                            echo "警告: 项目目录不存在: ${PROJECT_DIR}，将在下一步自动创建"
+                        fi
+                    """
+                    
+                    echo "环境检查完成"
+                }
+            }
+        }
+        
+        stage('初始化部署目录') {
+            steps {
+                script {
+                    echo "确保部署目录和配置文件存在..."
+                    sh """
+                        mkdir -p ${PROJECT_DIR}/{logs,data}
+
+                        # 若 .env 不存在则从服务器已有文件或仓库示例生成
+                        if [ ! -f "${ENV_FILE}" ]; then
+                            echo "[INFO] ${ENV_FILE} 不存在，从仓库 .env.example 生成初始配置..."
+                            if [ -f "\$WORKSPACE/.env.example" ]; then
+                                cp "\$WORKSPACE/.env.example" "${ENV_FILE}"
+                                echo "[WARN] 已复制 .env.example → ${ENV_FILE}，请登录服务器补全真实配置后重新部署"
+                            else
+                                # 兜底：生成最小化占位 .env
+                                touch "${ENV_FILE}"
+                                echo "[WARN] 已创建空 ${ENV_FILE}，请登录服务器补全配置后重新部署"
+                            fi
+                            chmod 600 "${ENV_FILE}"
+                        fi
+
+                        # 始终覆写 docker-compose.yml，确保 env_file 使用绝对路径 ${ENV_FILE}
+                        cat > ${PROJECT_DIR}/docker-compose.yml << 'COMPOSE_EOF'
+services:
+  automation-platform:
+    image: docker.cnb.cool/imacaiy/automation_platform:latest
+    container_name: automation-platform
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - /opt/.env
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+COMPOSE_EOF
+                        echo "[INFO] docker-compose.yml 已生成（env_file: /opt/.env）"
+                    """
+                    echo "目录初始化完成"
+                }
+            }
+        }
+
+        stage('登录 CNB 制品库') {
+            steps {
+                script {
+                    echo "登录 CNB Docker 制品库..."
+                    // CNB_TOKEN 由 Jenkins Credentials（ID: CNB_DOCKER_TOKEN）注入
+                    sh 'echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin'
+                    echo "登录成功"
+                }
+            }
+        }
+        
+        stage('拉取镜像') {
+            steps {
+                script {
+                    def pullCmd = params.FORCE_PULL ? 
+                        "docker pull ${IMAGE_NAME}:${env.IMAGE_TAG}" : 
+                        "docker pull ${IMAGE_NAME}:${env.IMAGE_TAG} || echo '镜像已存在，跳过拉取'"
+                    
+                    echo "拉取镜像: ${IMAGE_NAME}:${env.IMAGE_TAG}"
+                    sh "${pullCmd}"
+                    
+                    // 显示镜像信息
+                    sh """
+                        docker images ${IMAGE_NAME}:${env.IMAGE_TAG}
+                    """
+                }
+            }
+        }
+        
+        stage('备份当前版本') {
+            when {
+                expression { params.BACKUP == true }
+            }
+            steps {
+                script {
+                    echo "备份当前版本..."
+                    sh """
+                        BACKUP_TAG="backup-\$(date +%Y%m%d-%H%M%S)"
+                        CURRENT_IMAGE=\$(docker inspect --format='{{.Config.Image}}' automation-platform 2>/dev/null || echo "")
+                        
+                        if [ -n "\$CURRENT_IMAGE" ]; then
+                            docker tag "\$CURRENT_IMAGE" ${IMAGE_NAME}:\$BACKUP_TAG || true
+                            echo "备份标签: \$BACKUP_TAG (来自当前运行镜像: \$CURRENT_IMAGE)"
+                        else
+                            echo "未找到运行中的容器，尝试备份 latest 标签..."
+                            docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:\$BACKUP_TAG || true
+                            echo "备份标签: \$BACKUP_TAG (来自 latest)"
+                        fi
+                    """
+                }
+            }
+        }
+        
+        stage('停止旧容器') {
+            steps {
+                script {
+                    echo "停止旧容器..."
+                    sh """
+                        cd ${PROJECT_DIR}
+                        docker compose down || true
+                    """
+                }
+            }
+        }
+        
+        stage('更新配置') {
+            steps {
+                script {
+                    echo "更新 docker-compose.yml 镜像标签..."
+                    
+                    def targetImage = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG : 'latest'
+                    
+                    sh """
+                        cd ${PROJECT_DIR}
+                        
+                        # 备份原配置
+                        cp docker-compose.yml docker-compose.yml.backup
+                        
+                        # 更新镜像标签
+                        sed -i "s|${IMAGE_NAME}:latest|${IMAGE_NAME}:${targetImage}|g" docker-compose.yml
+                        
+                        echo "配置更新完成"
+                    """
+                }
+            }
+        }
+        
+        stage('启动新容器') {
+            steps {
+                script {
+                    echo "启动新容器..."
+                    sh """
+                        cd ${PROJECT_DIR}
+                        docker compose up -d
+                        
+                        # 显示容器状态
+                        docker compose ps
+                    """
+                }
+            }
+        }
+        
+        stage('健康检查') {
+            steps {
+                script {
+                    echo "执行健康检查..."
+                    
+                    retry(10) {
+                        sleep 5
+                        sh """
+                            curl -f http://localhost:3000/api/health || exit 1
+                        """
+                    }
+                    
+                    echo "健康检查通过"
+                }
+            }
+        }
+        
+        stage('验证部署') {
+            steps {
+                script {
+                    echo "验证部署..."
+                    sh """
+                        # 检查容器状态
+                        docker ps --filter "name=automation-platform"
+                        
+                        # 检查应用日志（最近 20 行）
+                        docker logs --tail=20 automation-platform
+                    """
+                }
+            }
+        }
+        
+        stage('清理') {
+            steps {
+                script {
+                    echo "清理未使用的资源..."
+                    sh """
+                        # 清理悬空镜像（dangling images）
+                        docker image prune -f
+
+                        # 清理已停止容器
+                        docker container prune -f
+
+                        # 清理 24h 以前的 build 缓存
+                        docker builder prune -f --filter until=24h || true
+
+                        # 清理备份标签：只保留最新 3 个 backup 镜像
+                        docker images --format '{{.Repository}}:{{.Tag}}' \
+                            | grep 'backup-' \
+                            | sort -r \
+                            | tail -n +4 \
+                            | xargs -r docker rmi -f || true
+
+                        # 清理备份配置
+                        rm -f ${PROJECT_DIR}/docker-compose.yml.backup || true
+
+                        echo "📊 Docker 磁盘占用情况:"
+                        docker system df
+
+                        echo "清理完成"
+                    """
+
+                    // 登出 Docker
+                    sh 'docker logout docker.cnb.cool || true'
+
+                    // 清理 Jenkins workspace
+                    cleanWs()
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            script {
+                // 从 .env 读取域名展示访问地址（容错处理）
+                def domain = sh(
+                    script: "grep '^DOMAIN=' ${ENV_FILE} 2>/dev/null | cut -d'=' -f2- || echo ''",
+                    returnStdout: true
+                ).trim()
+                def accessUrl = domain ? "http://${domain}" : "http://服务器IP:3000"
+
+                echo ""
+                echo "========================================"
+                echo "✅ 部署成功！"
+                echo "========================================"
+                echo ""
+                echo "访问地址: ${accessUrl}"
+                echo "容器状态: docker ps | grep automation-platform"
+                echo "查看日志: cd ${PROJECT_DIR} && docker-compose logs -f"
+                echo ""
+                echo "========================================"
+            }
+        }
+        
+        failure {
+            script {
+                echo ""
+                echo "========================================"
+                echo "❌ 部署失败"
+                echo "========================================"
+                echo ""
+                
+                // 显示容器日志（容错处理）
+                sh """
+                    cd ${PROJECT_DIR} 2>/dev/null || true
+                    docker compose logs --tail=100 2>/dev/null || true
+                """
+                
+                // 尝试回滚
+                echo ""
+                echo "尝试回滚到之前的版本..."
+                sh """
+                    if [ -f ${PROJECT_DIR}/docker-compose.yml.backup ]; then
+                        cd ${PROJECT_DIR}
+                        mv docker-compose.yml.backup docker-compose.yml
+                        docker compose down || true
+                        docker compose up -d || true
+                        echo "回滚完成"
+                    else
+                        echo "未找到备份配置，跳过回滚"
+                    fi
+                """
+            }
+        }
+        
+        always {
+            script {
+                // 清理临时文件和登出（容错处理）
+                sh """
+                    rm -f ${PROJECT_DIR}/docker-compose.yml.backup 2>/dev/null || true
+                    docker logout docker.cnb.cool 2>/dev/null || true
+                """
+                // 清理 Jenkins workspace，避免磁盘堆积
+                cleanWs()
+            }
+        }
+    }
+}

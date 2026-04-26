@@ -1,0 +1,292 @@
+import { dashboardService } from './DashboardService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS, LOG_EVENTS } from '../config/logging';
+
+/**
+ * 每日汇总数据调度器
+ * 负责定时生成每日汇总数据，确保趋势图有完整的数据源
+ */
+export class DailySummaryScheduler {
+  private dailyTimer: NodeJS.Timeout | null = null;
+  private isRunning = false;
+
+  /**
+   * 本地日期格式化（YYYY-MM-DD）
+   */
+  private formatLocalDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * 启动每日汇总调度器
+   * 在每天午夜 00:05 执行前一天的汇总数据生成
+   */
+  start(): void {
+    if (this.isRunning) {
+      logger.info('Daily summary scheduler is already running', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED }, LOG_CONTEXTS.SCHEDULER);
+      return;
+    }
+
+    logger.info('Starting daily summary scheduler...', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED }, LOG_CONTEXTS.SCHEDULER);
+    this.isRunning = true;
+
+    // 计算到下一个午夜 00:05 的时间
+    this.scheduleNextExecution();
+
+    logger.info('Daily summary scheduler started successfully', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED }, LOG_CONTEXTS.SCHEDULER);
+  }
+
+  /**
+   * 停止每日汇总调度器
+   */
+  stop(): void {
+    logger.info('Stopping daily summary scheduler...', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_COMPLETED }, LOG_CONTEXTS.SCHEDULER);
+    this.isRunning = false;
+
+    if (this.dailyTimer) {
+      clearTimeout(this.dailyTimer);
+      this.dailyTimer = null;
+    }
+
+    logger.info('Daily summary scheduler stopped', { event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_COMPLETED }, LOG_CONTEXTS.SCHEDULER);
+  }
+
+  /**
+   * 计算并调度下一次执行
+   */
+  private scheduleNextExecution(): void {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 5, 0, 0); // 设置为明天 00:05
+
+    const timeUntilNextRun = tomorrow.getTime() - now.getTime();
+
+    logger.debug('Scheduling next daily summary execution', {
+      event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED,
+      currentTime: now.toISOString(),
+      nextRunTime: tomorrow.toISOString(),
+      delayMs: timeUntilNextRun,
+    }, LOG_CONTEXTS.SCHEDULER);
+
+    this.dailyTimer = setTimeout(() => {
+      this.executeDailySummary();
+    }, timeUntilNextRun);
+  }
+
+  /**
+   * 执行每日汇总数据生成
+   */
+  private async executeDailySummary(): Promise<void> {
+    try {
+      // 生成前一天的汇总数据（T-1 逻辑）
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = this.formatLocalDate(yesterday);
+
+      logger.info('Starting daily summary generation', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED,
+        targetDate: yesterdayStr,
+        executionTime: new Date().toISOString(),
+      }, LOG_CONTEXTS.SCHEDULER);
+
+      await dashboardService.refreshDailySummary(yesterdayStr);
+
+      logger.info('Daily summary generation completed successfully', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_COMPLETED,
+        targetDate: yesterdayStr,
+        completedAt: new Date().toISOString(),
+      }, LOG_CONTEXTS.SCHEDULER);
+
+    } catch (error) {
+      logger.errorLog(error, 'Failed to generate daily summary', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_FAILED,
+        scheduledTime: new Date().toISOString(),
+      });
+    } finally {
+      // 调度下一次执行
+      if (this.isRunning) {
+        this.scheduleNextExecution();
+      }
+    }
+  }
+
+  /**
+   * 手动触发每日汇总生成（用于测试或修复）
+   * @param date 可选的日期字符串，格式为 YYYY-MM-DD，默认为昨天
+   */
+  async triggerManualSummary(date?: string): Promise<void> {
+    const targetDate = date || (() => {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      return this.formatLocalDate(yesterday);
+    })();
+
+    logger.info('Manual daily summary generation triggered', {
+      event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_STARTED,
+      targetDate,
+      triggeredAt: new Date().toISOString(),
+    }, LOG_CONTEXTS.SCHEDULER);
+
+    try {
+      await dashboardService.refreshDailySummary(targetDate);
+      logger.info('Manual daily summary generation completed', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_COMPLETED,
+        targetDate,
+        completedAt: new Date().toISOString(),
+      }, LOG_CONTEXTS.SCHEDULER);
+    } catch (error) {
+      logger.errorLog(error, 'Manual daily summary generation failed', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_SUMMARY_FAILED,
+        targetDate,
+        failedAt: new Date().toISOString(),
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * 获取调度器状态
+   */
+  getStatus(): {
+    isRunning: boolean;
+    nextExecution?: string;
+  } {
+    const status = {
+      isRunning: this.isRunning,
+      nextExecution: undefined as string | undefined,
+    };
+
+    if (this.isRunning) {
+      // 计算下一次执行时间
+      const now = new Date();
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(0, 5, 0, 0);
+      status.nextExecution = tomorrow.toISOString();
+    }
+
+    return status;
+  }
+
+  /**
+   * 批量生成历史汇总数据
+   * @param days 要生成的天数，默认90天
+   * @param onlyMissingDates 是否仅回填缺失日期（增量模式）
+   */
+  async backfillHistoricalSummaries(
+    days: number = 90,
+    onlyMissingDates: boolean = true
+  ): Promise<{
+    totalDays: number;
+    successCount: number;
+    failedCount: number;
+    errors: Array<{ date: string; error: string }>;
+    skippedCount?: number;
+    mode: 'incremental' | 'full';
+  }> {
+    logger.info('Starting historical daily summaries backfill (batch mode)', {
+      event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_STARTED,
+      days,
+      startTime: new Date().toISOString(),
+      mode: onlyMissingDates ? 'incremental' : 'full',
+      backfillMode: 'batch_query_optimized',
+    }, LOG_CONTEXTS.SCHEDULER);
+
+    const result: {
+      totalDays: number;
+      successCount: number;
+      failedCount: number;
+      errors: Array<{ date: string; error: string }>;
+      skippedCount?: number;
+      mode: 'incremental' | 'full';
+    } = {
+      totalDays: days,
+      successCount: 0,
+      failedCount: 0,
+      errors: [] as Array<{ date: string; error: string }>,
+      mode: onlyMissingDates ? 'incremental' as const : 'full' as const,
+    };
+
+    try {
+      // 使用批量查询优化方法，大幅减少数据库请求次数
+      const batchResult = await dashboardService.batchRefreshDailySummaries(days, onlyMissingDates);
+      
+      result.successCount = batchResult.successCount;
+      const skippedCount = batchResult.skippedDates?.length ?? 0;
+      if (skippedCount > 0) {
+        result.skippedCount = skippedCount;
+      }
+      
+      logger.info('Historical daily summaries backfill completed (batch mode)', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_COMPLETED,
+        ...result,
+        completedAt: new Date().toISOString(),
+        processedDates: batchResult.processedDates.length,
+        skippedDates: skippedCount,
+        optimization: onlyMissingDates
+          ? (skippedCount === days
+            ? `Incremental backfill: all ${skippedCount} days already exist, no queries executed`
+            : `Incremental backfill: processed ${batchResult.processedDates.length} missing dates, skipped ${skippedCount} existing`)
+          : 'Full backfill: Reduced from ~270 queries to ~4 queries',
+      }, LOG_CONTEXTS.SCHEDULER);
+
+    } catch (error) {
+      // 如果批量处理失败，回退到逐个处理模式
+      logger.warn('Batch backfill failed, falling back to individual mode', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_FAILED,
+        error: error instanceof Error ? error.message : String(error),
+      }, LOG_CONTEXTS.SCHEDULER);
+
+      const today = new Date();
+
+      for (let i = 1; i <= days; i++) {
+        const targetDate = new Date(today);
+        targetDate.setDate(targetDate.getDate() - i);
+        const dateStr = this.formatLocalDate(targetDate);
+
+        try {
+          logger.debug('Generating historical summary (fallback mode)', {
+            event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_STARTED,
+            date: dateStr,
+            progress: `${i}/${days}`,
+          }, LOG_CONTEXTS.SCHEDULER);
+
+          await dashboardService.refreshDailySummary(dateStr);
+          result.successCount++;
+
+          // 添加小延迟，避免数据库负载过高
+          if (i % 10 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+
+        } catch (error) {
+          result.failedCount++;
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          result.errors.push({ date: dateStr, error: errorMessage });
+
+          logger.warn('Failed to generate historical summary', {
+            event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_FAILED,
+            date: dateStr,
+            error: errorMessage,
+            progress: `${i}/${days}`,
+          }, LOG_CONTEXTS.SCHEDULER);
+        }
+      }
+
+      logger.info('Historical daily summaries backfill completed (fallback mode)', {
+        event: LOG_EVENTS.SCHEDULER_DAILY_BACKFILL_COMPLETED,
+        ...result,
+        completedAt: new Date().toISOString(),
+      }, LOG_CONTEXTS.SCHEDULER);
+    }
+
+    return result;
+  }
+}
+
+// 导出单例
+export const dailySummaryScheduler = new DailySummaryScheduler();

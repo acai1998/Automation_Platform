@@ -1,4 +1,7 @@
 import { JenkinsConfig } from './JenkinsService';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
+import { getSecretOrEnv } from '../utils/secrets';
 
 /**
  * Jenkins构建状态
@@ -73,19 +76,128 @@ export interface TestCaseResult {
  * Jenkins状态查询服务
  * 提供主动查询Jenkins构建状态的能力，作为回调机制的备用方案
  */
+export interface MissingScriptPathDiagnostic {
+  nodeId: string;
+  filePath: string;
+}
+
+export interface JenkinsLogDiagnostics {
+  missingScriptPaths: MissingScriptPathDiagnostic[];
+  exitCode?: number;
+  callbackStatus?: string;
+  messages: string[];
+  excerpt: string;
+}
+
+function trimForStorage(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+}
+
+export function extractCaseNameFromNodeId(nodeId: string): string {
+  const cleanNodeId = nodeId.trim();
+  if (!cleanNodeId) {
+    return 'Jenkins diagnostic';
+  }
+
+  const parts = cleanNodeId.split('::').filter(Boolean);
+  if (parts.length > 0) {
+    return parts[parts.length - 1];
+  }
+
+  const filename = cleanNodeId.split(/[\\/]/).pop() ?? cleanNodeId;
+  return filename.replace(/\.[^.]+$/, '') || cleanNodeId;
+}
+
+export function extractJenkinsLogDiagnostics(log: string): JenkinsLogDiagnostics {
+  const lines = log.split(/\r?\n/);
+  const missingScriptPaths: MissingScriptPathDiagnostic[] = [];
+  const notableLineIndexes = new Set<number>();
+
+  lines.forEach((line, index) => {
+    if (
+      line.includes('SCRIPT_PATHS') ||
+      line.includes('exitCode=') ||
+      line.includes('status=') ||
+      line.includes('http_code=') ||
+      line.includes('403 Forbidden') ||
+      line.includes('crumb') ||
+      line.includes('permission')
+    ) {
+      notableLineIndexes.add(index);
+    }
+
+    const missingPathMatch = line.match(/^\s*-\s+(.+?)\s+->\s+(.+?)\s*$/);
+    if (missingPathMatch) {
+      notableLineIndexes.add(index);
+      missingScriptPaths.push({
+        nodeId: missingPathMatch[1].trim(),
+        filePath: missingPathMatch[2].trim(),
+      });
+    }
+  });
+
+  const exitCodeMatches = Array.from(log.matchAll(/exitCode=(\d+)/g));
+  const lastExitCodeMatch = exitCodeMatches[exitCodeMatches.length - 1];
+  const exitCode = lastExitCodeMatch ? Number.parseInt(lastExitCodeMatch[1], 10) : undefined;
+
+  const callbackStatusMatch =
+    log.match(/status=([^\s,\uFF0C]+)/) ??
+    log.match(/callback[^.\n\r]*(?:HTTP|status)[^\d]*(\d{3})/i) ??
+    log.match(/http_code=(\d{3})/);
+  const callbackStatus = callbackStatusMatch?.[1];
+
+  const messages: string[] = [];
+  if (missingScriptPaths.length > 0) {
+    const paths = missingScriptPaths
+      .map((item) => `${item.filePath} (${item.nodeId})`)
+      .join(', ');
+    messages.push(`SCRIPT_PATHS validation failed: missing ${paths}`);
+  }
+  if (typeof exitCode === 'number' && exitCode !== 0) {
+    messages.push(`Jenkins test runner exited with code ${exitCode}`);
+  }
+  if (callbackStatus) {
+    messages.push(`Jenkins callback failed with status ${callbackStatus}`);
+  }
+  if (log.includes('403 Forbidden') && /crumb|permission/i.test(log)) {
+    messages.push('Jenkins returned 403 Forbidden; check crumb, credentials, and Job/Build permission');
+  }
+
+  const excerptLines = Array.from(notableLineIndexes)
+    .sort((a, b) => a - b)
+    .flatMap((index) => {
+      const start = Math.max(0, index - 2);
+      const end = Math.min(lines.length, index + 3);
+      return lines.slice(start, end);
+    });
+  const dedupedExcerpt = Array.from(new Set(excerptLines)).join('\n');
+
+  return {
+    missingScriptPaths,
+    exitCode,
+    callbackStatus,
+    messages,
+    excerpt: trimForStorage(dedupedExcerpt, 4000),
+  };
+}
+
 export class JenkinsStatusService {
   private config: JenkinsConfig;
 
   constructor() {
-    const token = process.env.JENKINS_TOKEN;
+    // 从 Docker Secrets 或环境变量加载 Jenkins 配置
+    const token = getSecretOrEnv('JENKINS_TOKEN');
     if (!token) {
-      throw new Error('JENKINS_TOKEN environment variable is required for Jenkins authentication');
+      logger.warn('JENKINS_TOKEN is required for Jenkins authentication', {
+        event: 'JENKINS_TOKEN_MISSING',
+      }, LOG_CONTEXTS.JENKINS);
     }
 
     this.config = {
-      baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/',
+      baseUrl: process.env.JENKINS_URL || 'http://jenkins.wiac.xyz',
       username: process.env.JENKINS_USER || 'root',
       token,
+      testRepoBranch: (process.env.JENKINS_TEST_REPO_BRANCH || 'master').trim(),
       jobs: {
         api: process.env.JENKINS_JOB_API || 'api-automation',
         ui: process.env.JENKINS_JOB_UI || 'ui-automation',
@@ -130,7 +242,14 @@ export class JenkinsStatusService {
       try {
         const url = `${this.config.baseUrl}/job/${jobName}/${buildId}/api/json`;
 
-        console.log(`Querying build status (attempt ${attempt}/${retryCount}): ${url}`);
+        logger.debug('Querying Jenkins build status', {
+          event: 'JENKINS_BUILD_STATUS_QUERY',
+          attempt,
+          retryCount,
+          jobName,
+          buildId,
+          url,
+        }, LOG_CONTEXTS.JENKINS);
 
         const response = await this.fetchWithTimeout(url, {
           method: 'GET',
@@ -142,13 +261,25 @@ export class JenkinsStatusService {
 
         if (!response.ok) {
           if (response.status === 404) {
-            console.warn(`Build not found: ${jobName}/${buildId}`);
+            logger.warn('Jenkins build not found', {
+              event: 'JENKINS_BUILD_NOT_FOUND',
+              jobName,
+              buildId,
+            }, LOG_CONTEXTS.JENKINS);
             return null;
           }
 
           // For server errors (5xx), retry; for client errors (4xx), don't retry
           if (response.status >= 500 && attempt < retryCount) {
-            console.warn(`Server error ${response.status}, retrying in ${attempt * 1000}ms...`);
+            logger.warn('Jenkins server error when querying build status, retrying', {
+              event: 'JENKINS_BUILD_STATUS_SERVER_ERROR_RETRY',
+              jobName,
+              buildId,
+              status: response.status,
+              retryDelayMs: attempt * 1000,
+              attempt,
+              retryCount,
+            }, LOG_CONTEXTS.JENKINS);
             await new Promise(resolve => setTimeout(resolve, attempt * 1000));
             continue;
           }
@@ -160,17 +291,25 @@ export class JenkinsStatusService {
 
         // Validate essential fields
         if (typeof data.building !== 'boolean') {
-          console.warn(`Invalid building status for ${jobName}/${buildId}: ${data.building}`);
+          logger.warn('Invalid Jenkins building status, fallback to false', {
+            event: 'JENKINS_BUILD_STATUS_INVALID_BUILDING',
+            jobName,
+            buildId,
+            building: data.building,
+          }, LOG_CONTEXTS.JENKINS);
           data.building = false; // Default to not building
         }
 
         // Log status for debugging
-        console.log(`Build status for ${jobName}/${buildId}:`, {
+        logger.info('Jenkins build status fetched', {
+          event: 'JENKINS_BUILD_STATUS_FETCHED',
+          jobName,
+          buildId,
           building: data.building,
           result: data.result,
           number: data.number,
-          duration: data.duration
-        });
+          duration: data.duration,
+        }, LOG_CONTEXTS.JENKINS);
 
         return {
           building: data.building,
@@ -185,18 +324,38 @@ export class JenkinsStatusService {
         };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        console.error(`Failed to get build status for ${jobName}/${buildId} (attempt ${attempt}):`, lastError.message);
+        logger.error('Failed to get Jenkins build status', {
+          event: 'JENKINS_BUILD_STATUS_FAILED',
+          jobName,
+          buildId,
+          attempt,
+          retryCount,
+          error: lastError.message,
+        }, LOG_CONTEXTS.JENKINS);
 
         // If this is not the last attempt, wait before retrying
         if (attempt < retryCount) {
           const delay = Math.min(attempt * 2000, 10000); // Exponential backoff, max 10s
-          console.log(`Retrying in ${delay}ms...`);
+          logger.debug('Retrying Jenkins build status query', {
+            event: 'JENKINS_BUILD_STATUS_RETRY',
+            jobName,
+            buildId,
+            delay,
+            nextAttempt: attempt + 1,
+            retryCount,
+          }, LOG_CONTEXTS.JENKINS);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
 
-    console.error(`All ${retryCount} attempts failed for ${jobName}/${buildId}. Last error:`, lastError?.message);
+    logger.error('All attempts failed when querying Jenkins build status', {
+      event: 'JENKINS_BUILD_STATUS_ALL_RETRIES_FAILED',
+      jobName,
+      buildId,
+      retryCount,
+      lastError: lastError?.message,
+    }, LOG_CONTEXTS.JENKINS);
     return null;
   }
 
@@ -207,7 +366,11 @@ export class JenkinsStatusService {
     try {
       const url = `${this.config.baseUrl}/queue/item/${queueId}/api/json`;
 
-      console.log(`Querying queue status: ${url}`);
+      logger.debug('Querying Jenkins queue status', {
+        event: 'JENKINS_QUEUE_STATUS_QUERY',
+        queueId,
+        url,
+      }, LOG_CONTEXTS.JENKINS);
 
       const response = await this.fetchWithTimeout(url, {
         method: 'GET',
@@ -219,7 +382,10 @@ export class JenkinsStatusService {
 
       if (!response.ok) {
         if (response.status === 404) {
-          console.warn(`Queue item not found: ${queueId}`);
+          logger.warn('Jenkins queue item not found', {
+            event: 'JENKINS_QUEUE_ITEM_NOT_FOUND',
+            queueId,
+          }, LOG_CONTEXTS.JENKINS);
           return null;
         }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -243,7 +409,10 @@ export class JenkinsStatusService {
         params: data.params
       };
     } catch (error) {
-      console.error(`Failed to get queue status for ${queueId}:`, error);
+      logger.errorLog(error, 'Failed to get Jenkins queue status', {
+        event: 'JENKINS_QUEUE_STATUS_FAILED',
+        queueId,
+      });
       return null;
     }
   }
@@ -270,7 +439,10 @@ export class JenkinsStatusService {
       const data = await response.json();
       return data.number || null;
     } catch (error) {
-      console.error(`Failed to get latest build number for ${jobName}:`, error);
+      logger.errorLog(error, 'Failed to get latest Jenkins build number', {
+        event: 'JENKINS_LATEST_BUILD_NUMBER_FAILED',
+        jobName,
+      });
       return null;
     }
   }
@@ -307,7 +479,12 @@ export class JenkinsStatusService {
         size
       };
     } catch (error) {
-      console.error(`Failed to get build log for ${jobName}/${buildId}:`, error);
+      logger.errorLog(error, 'Failed to get Jenkins build log', {
+        event: 'JENKINS_BUILD_LOG_FAILED',
+        jobName,
+        buildId,
+        start,
+      });
       return null;
     }
   }
@@ -334,7 +511,11 @@ export class JenkinsStatusService {
       // 3. 如果无法获取详细测试结果，基于构建状态生成基本结果
       return this.generateBasicResults(buildStatus);
     } catch (error) {
-      console.error(`Failed to parse build results for ${jobName}/${buildId}:`, error);
+      logger.errorLog(error, 'Failed to parse Jenkins build results', {
+        event: 'JENKINS_PARSE_BUILD_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
   }
@@ -357,14 +538,18 @@ export class JenkinsStatusService {
       }
 
       // 方法3: 解析构建日志
-      const logResults = await this.parseLogResults(jobName, buildId);
+      const logResults = await this.parseLogResults(jobName, buildId, buildStatus);
       if (logResults) {
         return logResults;
       }
 
       return null;
     } catch (error) {
-      console.error('Failed to extract test results:', error);
+      logger.errorLog(error, 'Failed to extract Jenkins test results', {
+        event: 'JENKINS_EXTRACT_TEST_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
   }
@@ -419,13 +604,18 @@ export class JenkinsStatusService {
         results
       };
     } catch (error) {
-      console.error('Failed to get JUnit results:', error);
+      logger.errorLog(error, 'Failed to get Jenkins JUnit results', {
+        event: 'JENKINS_JUNIT_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
   }
 
   /**
    * 获取构建artifacts中的结果文件
+   * 优先匹配 pytest-json-report 生成的 test-report.json
    */
   private async getArtifactResults(jobName: string, buildId: string): Promise<TestResults | null> {
     try {
@@ -446,11 +636,18 @@ export class JenkinsStatusService {
 
       const data = await response.json();
 
-      // 查找测试结果文件
-      const resultFile = data.artifacts?.find((artifact: any) =>
-        artifact.fileName?.includes('test-results') ||
-        artifact.fileName?.includes('results.json')
-      );
+      // 优先级：test-report.json > junit.xml > test-results > results.json
+      const ARTIFACT_PRIORITY = [
+        (name: string) => name === 'test-report.json',
+        (name: string) => name === 'junit.xml',
+        (name: string) => name.includes('test-results') || name.includes('results.json'),
+      ];
+
+      let resultFile: any = null;
+      for (const matcher of ARTIFACT_PRIORITY) {
+        resultFile = data.artifacts?.find((artifact: any) => matcher(artifact.fileName ?? ''));
+        if (resultFile) break;
+      }
 
       if (!resultFile) {
         return null;
@@ -474,15 +671,20 @@ export class JenkinsStatusService {
       // 根据文件格式解析结果
       return this.parseResultFile(resultData);
     } catch (error) {
-      console.error('Failed to get artifact results:', error);
+      logger.errorLog(error, 'Failed to get Jenkins artifact results', {
+        event: 'JENKINS_ARTIFACT_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
   }
 
   /**
    * 解析构建日志获取测试结果
+   * 支持 pytest、JUnit 及自定义格式的日志输出
    */
-  private async parseLogResults(jobName: string, buildId: string): Promise<TestResults | null> {
+  private async parseLogResults(jobName: string, buildId: string, buildStatus?: BuildStatus): Promise<TestResults | null> {
     try {
       const logData = await this.getBuildLog(jobName, buildId);
       if (!logData) {
@@ -491,62 +693,172 @@ export class JenkinsStatusService {
 
       const log = logData.text;
 
-      // 使用正则表达式提取测试结果
-      const patterns = {
-        // 匹配 "Tests run: 10, Failures: 2, Errors: 0, Skipped: 1"
-        junit: /Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)/i,
+      const diagnosticResults = this.buildDiagnosticResultsFromLog(jobName, buildId, log, buildStatus);
+      if (diagnosticResults) {
+        return diagnosticResults;
+      }
 
-        // 匹配 "PASSED: 8, FAILED: 2, SKIPPED: 1"
-        custom: /PASSED:\s*(\d+),\s*FAILED:\s*(\d+),\s*SKIPPED:\s*(\d+)/i,
+      // ─── 优先级由高到低的匹配模式 ───────────────────────────────────
+      const patterns: Array<{
+        name: string;
+        pattern: RegExp;
+        extract: (match: RegExpMatchArray) => { passed: number; failed: number; skipped: number; total?: number };
+      }> = [
+        {
+          // pytest 标准摘要行（最后一行）:
+          // "5 passed, 2 failed, 1 error, 1 skipped in 12.34s"
+          // "3 passed in 5.12s"
+          // "1 failed in 1.01s"
+          name: 'pytest-summary',
+          pattern: /(\d+)\s+passed(?:,\s*(\d+)\s+failed)?(?:,\s*(\d+)\s+error)?(?:,\s*(\d+)\s+skipped)?\s+in\s+[\d.]+s/i,
+          extract: (m) => ({
+            passed: parseInt(m[1] ?? '0', 10),
+            failed: (parseInt(m[2] ?? '0', 10)) + (parseInt(m[3] ?? '0', 10)),
+            skipped: parseInt(m[4] ?? '0', 10),
+          }),
+        },
+        {
+          // pytest 仅有失败的情况: "2 failed in 3.45s" (无 passed 关键字)
+          name: 'pytest-failed-only',
+          pattern: /(\d+)\s+failed(?:,\s*(\d+)\s+error)?(?:,\s*(\d+)\s+skipped)?\s+in\s+[\d.]+s/i,
+          extract: (m) => ({
+            passed: 0,
+            failed: (parseInt(m[1] ?? '0', 10)) + (parseInt(m[2] ?? '0', 10)),
+            skipped: parseInt(m[3] ?? '0', 10),
+          }),
+        },
+        {
+          // pytest short test summary (=== short test summary info ===) 末尾行
+          // "= 1 failed, 3 passed, 1 skipped in 8.00s ="
+          name: 'pytest-equals-summary',
+          pattern: /=+\s+(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+passed,\s*)?(?:(\d+)\s+skipped,?\s*)?\d+.*in\s+[\d.]+s\s*=+/i,
+          extract: (m) => ({
+            failed: parseInt(m[1] ?? '0', 10),
+            passed: parseInt(m[2] ?? '0', 10),
+            skipped: parseInt(m[3] ?? '0', 10),
+          }),
+        },
+        {
+          // JUnit: "Tests run: 10, Failures: 2, Errors: 0, Skipped: 1"
+          name: 'junit',
+          pattern: /Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)/i,
+          extract: (m) => {
+            const total = parseInt(m[1], 10);
+            const failed = parseInt(m[2], 10) + parseInt(m[3], 10);
+            const skipped = parseInt(m[4], 10);
+            return { passed: total - failed - skipped, failed, skipped, total };
+          },
+        },
+        {
+          // 自定义: "PASSED: 8, FAILED: 2, SKIPPED: 1"
+          name: 'custom',
+          pattern: /PASSED:\s*(\d+),\s*FAILED:\s*(\d+),\s*SKIPPED:\s*(\d+)/i,
+          extract: (m) => ({
+            passed: parseInt(m[1], 10),
+            failed: parseInt(m[2], 10),
+            skipped: parseInt(m[3], 10),
+          }),
+        },
+        {
+          // 总数格式: "Total: 10, Pass: 8, Fail: 2, Skip: 0"
+          name: 'total',
+          pattern: /Total:\s*(\d+),\s*Pass:\s*(\d+),\s*Fail:\s*(\d+),\s*Skip:\s*(\d+)/i,
+          extract: (m) => ({
+            total: parseInt(m[1], 10),
+            passed: parseInt(m[2], 10),
+            failed: parseInt(m[3], 10),
+            skipped: parseInt(m[4], 10),
+          }),
+        },
+      ];
 
-        // 匹配总数格式
-        total: /Total:\s*(\d+),\s*Pass:\s*(\d+),\s*Fail:\s*(\d+),\s*Skip:\s*(\d+)/i
-      };
-
-      for (const [name, pattern] of Object.entries(patterns)) {
+      for (const { name, pattern, extract } of patterns) {
         const match = log.match(pattern);
         if (match) {
-          console.log(`Found test results using ${name} pattern:`, match);
+          const { passed, failed, skipped, total } = extract(match);
+          const passedCases = isNaN(passed) ? 0 : passed;
+          const failedCases = isNaN(failed) ? 0 : failed;
+          const skippedCases = isNaN(skipped) ? 0 : skipped;
+          const totalCases = total != null && !isNaN(total) ? total : passedCases + failedCases + skippedCases;
 
-          if (name === 'junit') {
-            const [, total, failures, errors, skipped] = match;
-            const totalCases = parseInt(total, 10);
-            const failedCases = parseInt(failures, 10) + parseInt(errors, 10);
-            const skippedCases = parseInt(skipped, 10);
-            const passedCases = totalCases - failedCases - skippedCases;
+          logger.info('Parsed Jenkins test results from build log', {
+            event: 'JENKINS_LOG_RESULTS_PARSED',
+            pattern: name,
+            totalCases,
+            passedCases,
+            failedCases,
+            skippedCases,
+            jobName,
+            buildId,
+          }, LOG_CONTEXTS.JENKINS);
 
-            return {
-              totalCases,
-              passedCases,
-              failedCases,
-              skippedCases,
-              duration: 0,
-              results: []
-            };
-          } else {
-            const [, passed, failed, skipped] = match;
-            const passedCases = parseInt(passed, 10);
-            const failedCases = parseInt(failed, 10);
-            const skippedCases = parseInt(skipped, 10);
-            const totalCases = passedCases + failedCases + skippedCases;
-
-            return {
-              totalCases,
-              passedCases,
-              failedCases,
-              skippedCases,
-              duration: 0,
-              results: []
-            };
-          }
+          return {
+            totalCases,
+            passedCases,
+            failedCases,
+            skippedCases,
+            duration: 0,
+            results: [],
+          };
         }
       }
 
       return null;
     } catch (error) {
-      console.error('Failed to parse log results:', error);
+      logger.errorLog(error, 'Failed to parse Jenkins log results', {
+        event: 'JENKINS_PARSE_LOG_RESULTS_FAILED',
+        jobName,
+        buildId,
+      });
       return null;
     }
+  }
+
+  private buildDiagnosticResultsFromLog(
+    jobName: string,
+    buildId: string,
+    log: string,
+    buildStatus?: BuildStatus
+  ): TestResults | null {
+    const diagnostics = extractJenkinsLogDiagnostics(log);
+    if (diagnostics.messages.length === 0) {
+      return null;
+    }
+
+    const firstMissingPath = diagnostics.missingScriptPaths[0];
+    const caseName = firstMissingPath
+      ? extractCaseNameFromNodeId(firstMissingPath.nodeId)
+      : `Build ${buildStatus?.number ?? buildId}`;
+    const duration = buildStatus?.duration ?? 0;
+    const errorMessage = trimForStorage(diagnostics.messages.join('; '), 2000);
+    const stackTrace = diagnostics.excerpt || errorMessage;
+
+    logger.warn('Parsed Jenkins diagnostic failure from build log', {
+      event: 'JENKINS_LOG_DIAGNOSTIC_PARSED',
+      jobName,
+      buildId,
+      caseName,
+      missingScriptPaths: diagnostics.missingScriptPaths,
+      exitCode: diagnostics.exitCode,
+      callbackStatus: diagnostics.callbackStatus,
+    }, LOG_CONTEXTS.JENKINS);
+
+    return {
+      totalCases: 1,
+      passedCases: 0,
+      failedCases: 1,
+      skippedCases: 0,
+      duration,
+      results: [{
+        caseId: 0,
+        caseName,
+        status: 'failed',
+        duration,
+        errorMessage,
+        stackTrace,
+        logPath: `${this.config.baseUrl}/job/${encodeURIComponent(jobName)}/${encodeURIComponent(buildId)}/console`,
+      }],
+    };
   }
 
   /**
@@ -574,12 +886,73 @@ export class JenkinsStatusService {
 
   /**
    * 解析结果文件
+   * 支持 pytest-json-report 格式（test-report.json）和自定义格式
+   *
+   * pytest-json-report 的 test-report.json 结构示例：
+   * {
+   *   "created": 1234567890,
+   *   "duration": 12.34,
+   *   "exitcode": 0,
+   *   "root": "/path/to/tests",
+   *   "environment": {},
+   *   "summary": { "passed": 3, "failed": 1, "total": 4 },
+   *   "tests": [
+   *     {
+   *       "nodeid": "D/test_xxx.py::TestClass::test_method",
+   *       "outcome": "passed",  // "passed" | "failed" | "error" | "skipped"
+   *       "duration": 1.23,
+   *       "longrepr": "AssertionError: ..."  // 失败时存在
+   *     }
+   *   ]
+   * }
    */
   private parseResultFile(data: any): TestResults | null {
     try {
-      // 支持多种结果文件格式
+      // ─── 格式1: pytest-json-report（test-report.json）─────────────
+      if (data.summary && Array.isArray(data.tests)) {
+        const summary = data.summary as Record<string, number>;
+        const passedCases = summary['passed'] ?? 0;
+        const failedCases = (summary['failed'] ?? 0) + (summary['error'] ?? 0);
+        const skippedCases = summary['skipped'] ?? 0;
+        const totalCases = summary['total'] ?? (passedCases + failedCases + skippedCases);
+        const duration = typeof data.duration === 'number' ? Math.round(data.duration * 1000) : 0;
+
+        const results: TestCaseResult[] = (data.tests as any[]).map((t) => {
+          const outcome: string = String(t.outcome ?? '').toLowerCase();
+          const status = this.mapPytestOutcome(outcome);
+          const nodeId: string = String(t.nodeid ?? '');
+          const caseName = nodeId || 'unknown';
+          // pytest-json-report 不携带 caseId，用 0 作占位，
+          // completeBatchExecution 会按 caseName 做二次匹配
+          const caseId = this.extractCaseId(caseName) ?? 0;
+
+          const errorMessage = typeof t.longrepr === 'string' && t.longrepr.trim()
+            ? t.longrepr.trim().slice(0, 2000)
+            : undefined;
+
+          return {
+            caseId,
+            caseName,
+            status,
+            duration: typeof t.duration === 'number' ? Math.round(t.duration * 1000) : 0,
+            errorMessage,
+          };
+        });
+
+        const exitCode = typeof data.exitcode === 'number' ? data.exitcode : 0;
+        if (totalCases === 0 && results.length === 0 && exitCode !== 0) {
+          logger.warn('Jenkins artifact report had no test cases but non-zero exit code; falling back to console diagnostics', {
+            event: 'JENKINS_ARTIFACT_EMPTY_WITH_EXIT_CODE',
+            exitCode,
+          }, LOG_CONTEXTS.JENKINS);
+          return null;
+        }
+
+        return { totalCases, passedCases, failedCases, skippedCases, duration, results };
+      }
+
+      // ─── 格式2: 自定义格式 ────────────────────────────────────────
       if (data.testResults) {
-        // 自定义格式
         return {
           totalCases: data.totalCases || 0,
           passedCases: data.passedCases || 0,
@@ -592,8 +965,28 @@ export class JenkinsStatusService {
 
       return null;
     } catch (error) {
-      console.error('Failed to parse result file:', error);
+      logger.errorLog(error, 'Failed to parse Jenkins result file', {
+        event: 'JENKINS_PARSE_RESULT_FILE_FAILED',
+      });
       return null;
+    }
+  }
+
+  /**
+   * 映射 pytest 的 outcome 到内部状态
+   */
+  private mapPytestOutcome(outcome: string): 'passed' | 'failed' | 'skipped' | 'error' {
+    switch (outcome) {
+      case 'passed':
+        return 'passed';
+      case 'failed':
+        return 'failed';
+      case 'skipped':
+        return 'skipped';
+      case 'error':
+        return 'error';
+      default:
+        return 'error';
     }
   }
 

@@ -1,13 +1,26 @@
 import { Router, Request, Response } from 'express';
 import { authService } from '../services/AuthService';
 import { authenticate } from '../middleware/auth';
+import {
+  loginRateLimiter,
+  registerRateLimiter,
+  forgotPasswordRateLimiter,
+  resetPasswordRateLimiter,
+  refreshRateLimiter,
+  generalAuthRateLimiter,
+} from '../middleware/authRateLimiter';
+import logger from '../utils/logger';
+import { LOG_CONTEXTS } from '../config/logging';
 
 const router = Router();
 
 // 用户注册
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', registerRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, username } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const email = typeof body['email'] === 'string' ? body['email'] : '';
+    const password = typeof body['password'] === 'string' ? body['password'] : '';
+    const username = typeof body['username'] === 'string' ? body['username'] : '';
 
     // 参数验证
     if (!email || !password || !username) {
@@ -16,7 +29,16 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     // 邮箱格式验证
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    // 先限制长度（防止超长输入对正则引擎造成 ReDoS 攻击）
+    if (email.length > 254) {
+      res.status(400).json({ success: false, message: '邮箱格式不正确' });
+      return;
+    }
+    // 使用明确上界的正则，避免多项式级回溯（Polynomial ReDoS）：
+    // - 本地部分限制在 1~64 个字符（RFC 5321 规范上限）
+    // - 域名部分限制在 1~255 个字符
+    // - 使用具体字符集而非开放的否定字符类 [^\s@]
+    const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?){0,10}\.[a-zA-Z]{2,}$/;
     if (!emailRegex.test(email)) {
       res.status(400).json({ success: false, message: '邮箱格式不正确' });
       return;
@@ -37,15 +59,50 @@ router.post('/register', async (req: Request, res: Response) => {
     const result = await authService.register(email, password, username);
     res.status(result.success ? 201 : 400).json(result);
   } catch (error) {
-    console.error('Register route error:', error);
+    logger.errorLog(error, 'Register route error', {
+      event: 'AUTH_REGISTER_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+// 获取登录加密公钥
+router.get('/public-key', async (_req: Request, res: Response) => {
+  try {
+    const keyInfo = authService.getLoginPublicKey();
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, ...keyInfo });
+  } catch (error) {
+    logger.errorLog(error, 'Get login public key route error', {
+      event: 'AUTH_PUBLIC_KEY_ROUTE_ERROR',
+      endpoint: '/api/auth/public-key',
+      method: 'GET',
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 // 用户登录
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', loginRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, remember = false } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const email = typeof body['email'] === 'string' ? body['email'] : '';
+    const encryptedPassword = typeof body['encryptedPassword'] === 'string' ? body['encryptedPassword'] : '';
+    const plaintextPassword = typeof body['password'] === 'string' ? body['password'] : '';
+    const remember = typeof body['remember'] === 'boolean' ? body['remember'] : false;
+
+    let password = plaintextPassword;
+
+    if (encryptedPassword) {
+      const decryptedPassword = authService.decryptLoginPassword(encryptedPassword);
+      if (!decryptedPassword) {
+        res.status(400).json({ success: false, message: '密码解密失败，请刷新页面后重试' });
+        return;
+      }
+      password = decryptedPassword;
+    }
 
     if (!email || !password) {
       res.status(400).json({ success: false, message: '请提供邮箱和密码' });
@@ -55,13 +112,18 @@ router.post('/login', async (req: Request, res: Response) => {
     const result = await authService.login(email, password, remember);
     res.status(result.success ? 200 : 401).json(result);
   } catch (error) {
-    console.error('Login route error:', error);
+    logger.errorLog(error, 'Login route error', {
+      event: 'AUTH_LOGIN_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 // 用户登出
-router.post('/logout', authenticate, async (req: Request, res: Response) => {
+// generalAuthRateLimiter 放在 authenticate 之前，确保未认证请求（包括暴力攻击）也受速率限制保护
+router.post('/logout', generalAuthRateLimiter, authenticate, async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       res.status(401).json({ success: false, message: '未认证' });
@@ -71,15 +133,21 @@ router.post('/logout', authenticate, async (req: Request, res: Response) => {
     const result = await authService.logout(req.user.id);
     res.json(result);
   } catch (error) {
-    console.error('Logout route error:', error);
+    logger.errorLog(error, 'Logout route error', {
+      event: 'AUTH_LOGOUT_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+      userId: req.user?.id,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 // 忘记密码
-router.post('/forgot-password', async (req: Request, res: Response) => {
+router.post('/forgot-password', forgotPasswordRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const email = typeof body['email'] === 'string' ? body['email'] : '';
 
     if (!email) {
       res.status(400).json({ success: false, message: '请提供邮箱地址' });
@@ -89,15 +157,21 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     const result = await authService.forgotPassword(email);
     res.json(result);
   } catch (error) {
-    console.error('Forgot password route error:', error);
+    logger.errorLog(error, 'Forgot password route error', {
+      event: 'AUTH_FORGOT_PASSWORD_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 // 重置密码
-router.post('/reset-password', async (req: Request, res: Response) => {
+router.post('/reset-password', resetPasswordRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { token, password } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const token = typeof body['token'] === 'string' ? body['token'] : '';
+    const password = typeof body['password'] === 'string' ? body['password'] : '';
 
     if (!token || !password) {
       res.status(400).json({ success: false, message: '请提供重置令牌和新密码' });
@@ -112,13 +186,18 @@ router.post('/reset-password', async (req: Request, res: Response) => {
     const result = await authService.resetPassword(token, password);
     res.status(result.success ? 200 : 400).json(result);
   } catch (error) {
-    console.error('Reset password route error:', error);
+    logger.errorLog(error, 'Reset password route error', {
+      event: 'AUTH_RESET_PASSWORD_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 // 获取当前用户信息
-router.get('/me', authenticate, async (req: Request, res: Response) => {
+// generalAuthRateLimiter 放在 authenticate 之前，确保未认证请求也受速率限制保护
+router.get('/me', generalAuthRateLimiter, authenticate, async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       res.status(401).json({ success: false, message: '未认证' });
@@ -133,15 +212,21 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
 
     res.json({ success: true, user });
   } catch (error) {
-    console.error('Get current user route error:', error);
+    logger.errorLog(error, 'Get current user route error', {
+      event: 'AUTH_ME_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+      userId: req.user?.id,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 // 刷新 Token
-router.post('/refresh', async (req: Request, res: Response) => {
+router.post('/refresh', refreshRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { refreshToken } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const refreshToken = typeof body['refreshToken'] === 'string' ? body['refreshToken'] : '';
 
     if (!refreshToken) {
       res.status(400).json({ success: false, message: '请提供刷新令牌' });
@@ -155,7 +240,11 @@ router.post('/refresh', async (req: Request, res: Response) => {
       res.status(401).json({ success: false, message: result.message });
     }
   } catch (error) {
-    console.error('Refresh token route error:', error);
+    logger.errorLog(error, 'Refresh token route error', {
+      event: 'AUTH_REFRESH_TOKEN_ROUTE_ERROR',
+      endpoint: req.path,
+      method: req.method,
+    });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

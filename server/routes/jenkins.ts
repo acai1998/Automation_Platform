@@ -1,10 +1,502 @@
 import { Router, Request, Response } from 'express';
-import { executionService } from '../services/ExecutionService';
+import { In } from 'typeorm';
+import { executionService, type Auto_TestRunResultsInput } from '../services/ExecutionService';
 import { jenkinsService } from '../services/JenkinsService';
-import { jenkinsAuthMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
+import { taskSchedulerService } from '../services/TaskSchedulerService';
+import { callbackQueue, type CallbackPayload } from '../services/CallbackQueue';
+import { ipWhitelistMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
 import { requestValidator } from '../middleware/RequestValidator';
+import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
+import { optionalAuth } from '../middleware/auth';
+import logger from '../utils/logger';
+import { buildJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDiagnostics';
+import { persistJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDiagnosticArtifact';
+import { validateScriptPathsInTestRepo } from '../utils/testRepoScriptPathValidator';
+import { LOG_CONTEXTS, LOG_EVENTS, createTimer } from '../config/logging';
+import { AppDataSource } from '../config/database';
+import { TestCase } from '../entities/TestCase';
 
 const router = Router();
+
+// ────────────────────────────────────────────────────────────────────────────
+// 常量定义
+// ────────────────────────────────────────────────────────────────────────────
+
+/** 回调兜底同步默认延迟（毫秒） */
+const DEFAULT_CALLBACK_FALLBACK_SYNC_DELAY_MS = 45_000;
+/** 回调兜底同步最小延迟（毫秒） */
+const MIN_CALLBACK_FALLBACK_SYNC_DELAY_MS = 10_000;
+/** Jenkins 健康检查超时（毫秒） */
+const HEALTH_CHECK_TIMEOUT_MS = 5_000;
+/** Jenkins 健康检查默认 URL */
+const DEFAULT_JENKINS_URL = 'http://jenkins.wiac.xyz';
+/** Jenkins 健康检查默认用户 */
+const DEFAULT_JENKINS_USER = 'root';
+/** 触发前 Jenkins 预检查默认超时（毫秒） */
+const DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS = 8_000;
+/** 触发前 Jenkins 预检查超时（毫秒） */
+const TRIGGER_PRECHECK_TIMEOUT_MS = Math.max(
+  1_000,
+  Number.parseInt(
+    process.env.JENKINS_TRIGGER_PRECHECK_TIMEOUT_MS ?? String(DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS),
+    10
+  ) || DEFAULT_TRIGGER_PRECHECK_TIMEOUT_MS
+);
+/** 触发前 Jenkins 预检查重试次数（总尝试次数 = 1 + retries） */
+const TRIGGER_PRECHECK_RETRIES = Math.max(
+  0,
+  Math.min(3, Number.parseInt(process.env.JENKINS_TRIGGER_PRECHECK_RETRIES ?? '1', 10) || 1)
+);
+/** 触发前 Jenkins 预检查重试间隔（毫秒） */
+const TRIGGER_PRECHECK_RETRY_DELAY_MS = Math.max(
+  200,
+  Number.parseInt(process.env.JENKINS_TRIGGER_PRECHECK_RETRY_DELAY_MS ?? '600', 10) || 600
+);
+/** 是否启用触发前 Jenkins 预检查 */
+// 注：Jenkins 预检查默认禁用（当 Jenkins 网络不稳定时）
+// 设置 JENKINS_TRIGGER_PRECHECK_ENABLED=true 以启用
+// 启用后，当 Jenkins 无法连接时，任务触发请求会被拒绝 (503 Service Unavailable)
+const TRIGGER_PRECHECK_ENABLED = (process.env.JENKINS_TRIGGER_PRECHECK_ENABLED ?? 'false') !== 'false';
+
+/**
+ * [P2-B] 注册 CallbackQueue 消费者
+ * 将 completeBatchExecution + releaseSlot 的整个处理流程注入队列 worker
+ * 在路由模块初始化时立即注册，确保消费者在第一个请求到来之前已就绪
+ * 
+ * 支持两种模式：
+ * 1. 全量回调：Jenkins 解析结果后发送完整数据（兼容旧模式）
+ * 2. 轻量化回调：Jenkins 仅发送 buildNumber，服务端主动解析结果
+ */
+callbackQueue.register(async (payload: CallbackPayload) => {
+  let shouldReleaseSlot = false;
+  try {
+    let finalPayload = payload;
+
+    // ─── 轻量化回调：服务端主动解析结果 ─────────────────────────────
+    if (payload.needsServerParsing && payload.buildNumber) {
+      logger.info('[CallbackQueue] Lightweight callback detected, parsing results from Jenkins', {
+        runId: payload.runId,
+        buildNumber: payload.buildNumber,
+      }, LOG_CONTEXTS.JENKINS);
+
+      try {
+        // 从数据库获取执行记录，提取 jenkinsJob 名称
+        const batch = await executionService.getBatchExecution(payload.runId);
+        const execution = batch?.execution;
+
+        if (execution?.jenkinsJob) {
+          const { jenkinsStatusService } = await import('../services/JenkinsStatusService');
+          const testResults = await jenkinsStatusService.parseBuildResults(
+            execution.jenkinsJob as string,
+            String(payload.buildNumber)
+          );
+
+          if (testResults) {
+            // 使用解析结果覆盖 payload
+            finalPayload = {
+              runId: payload.runId,
+              status: testResults.failedCases > 0 ? 'failed' : 'success',
+              passedCases: testResults.passedCases,
+              failedCases: testResults.failedCases,
+              skippedCases: testResults.skippedCases,
+              durationMs: testResults.duration || payload.durationMs,
+              results: testResults.results.map(r => ({
+                caseId: r.caseId,
+                caseName: r.caseName,
+                status: r.status,
+                duration: r.duration,
+                errorMessage: r.errorMessage,
+                stackTrace: r.stackTrace,
+              })),
+            };
+
+            logger.info('[CallbackQueue] Successfully parsed results from Jenkins', {
+              runId: payload.runId,
+              buildNumber: payload.buildNumber,
+              passedCases: finalPayload.passedCases,
+              failedCases: finalPayload.failedCases,
+              skippedCases: finalPayload.skippedCases,
+            }, LOG_CONTEXTS.JENKINS);
+          } else {
+            // 解析失败，降级为使用构建状态
+            logger.warn('[CallbackQueue] Failed to parse results from Jenkins, falling back to build status', {
+              runId: payload.runId,
+              buildNumber: payload.buildNumber,
+              fallbackStatus: payload.status,
+            }, LOG_CONTEXTS.JENKINS);
+          }
+        } else {
+          logger.warn('[CallbackQueue] No jenkinsJob found for execution, cannot parse results', {
+            runId: payload.runId,
+            buildNumber: payload.buildNumber,
+          }, LOG_CONTEXTS.JENKINS);
+        }
+      } catch (parseError) {
+        logger.error('Failed to parse build results in lightweight callback', {
+          event: LOG_EVENTS.JENKINS_CALLBACK_PARSE_FAILED,
+          runId: payload.runId,
+          buildNumber: payload.buildNumber,
+          error: parseError instanceof Error ? parseError.message : String(parseError),
+        }, LOG_CONTEXTS.JENKINS);
+        // 解析异常，继续使用原始 payload（降级处理）
+      }
+    }
+
+    await executionService.completeBatchExecution(finalPayload.runId, {
+      status: finalPayload.status,
+      passedCases: finalPayload.passedCases,
+      failedCases: finalPayload.failedCases,
+      skippedCases: finalPayload.skippedCases,
+      durationMs: finalPayload.durationMs,
+      results: finalPayload.results as Parameters<typeof executionService.completeBatchExecution>[1]['results'],
+    });
+    // 只在成功完成后标记需要释放槽位
+    shouldReleaseSlot = true;
+  } catch (error) {
+    // 如果 completeBatchExecution 失败，让 CallbackQueue 的重试机制处理
+    // 不释放槽位，避免重复释放
+    logger.warn('[CallbackQueue] completeBatchExecution failed, will retry', {
+      runId: payload.runId,
+      error: error instanceof Error ? error.message : String(error),
+    }, LOG_CONTEXTS.EXECUTION);
+    throw error; // 重新抛出错误以触发重试
+  } finally {
+    // 只在成功完成后释放并发槽位
+    if (shouldReleaseSlot) {
+      taskSchedulerService.releaseSlotByRunId(payload.runId);
+      logger.debug('[CallbackQueue] Slot released after successful completion', {
+        runId: payload.runId,
+      }, LOG_CONTEXTS.EXECUTION);
+    }
+  }
+});
+
+const CALLBACK_FALLBACK_SYNC_DELAY_MS = Math.max(
+  MIN_CALLBACK_FALLBACK_SYNC_DELAY_MS,
+  Number.parseInt(
+    process.env.CALLBACK_FALLBACK_SYNC_DELAY_MS ?? String(DEFAULT_CALLBACK_FALLBACK_SYNC_DELAY_MS),
+    10
+  ) || DEFAULT_CALLBACK_FALLBACK_SYNC_DELAY_MS
+);
+
+/**
+ * 当 Jenkins 回调丢失时，延迟触发一次兜底同步，避免状态长时间停留在 running/pending。
+ */
+function scheduleCallbackFallbackSync(runId: number, source: 'run-case' | 'run-batch'): void {
+  const timer = setTimeout(async () => {
+    try {
+      const detail = await executionService.getTestRunDetailRow(runId);
+      const currentStatus = String(detail.status ?? '');
+
+      if (!['pending', 'running'].includes(currentStatus)) {
+        logger.debug('[callback-fallback] execution already finalized, skipping sync', {
+          runId,
+          source,
+          currentStatus,
+        }, LOG_CONTEXTS.JENKINS);
+        return;
+      }
+
+      const syncResult = await executionService.syncExecutionStatusFromJenkins(runId);
+      logger.info('[callback-fallback] fallback sync executed', {
+        runId,
+        source,
+        currentStatus,
+        delayMs: CALLBACK_FALLBACK_SYNC_DELAY_MS,
+        syncSuccess: syncResult.success,
+        syncUpdated: syncResult.updated,
+        jenkinsStatus: syncResult.jenkinsStatus,
+        message: syncResult.message,
+      }, LOG_CONTEXTS.JENKINS);
+    } catch (error) {
+      logger.warn('[callback-fallback] fallback sync failed', {
+        runId,
+        source,
+        delayMs: CALLBACK_FALLBACK_SYNC_DELAY_MS,
+        error: error instanceof Error ? error.message : String(error),
+      }, LOG_CONTEXTS.JENKINS);
+    }
+  }, CALLBACK_FALLBACK_SYNC_DELAY_MS);
+
+  timer.unref?.();
+}
+
+/**
+ * 构造 Jenkins 回调 URL：兼容配置基础地址或完整 callback 路径。
+ */
+function buildCallbackUrl(): string {
+  const configuredBase = (process.env.API_CALLBACK_URL ?? 'http://localhost:3000').trim();
+
+  // 兼容老配置：如果配置已包含 callback 路径，优先直接使用。
+  const trimmed = configuredBase.replace(/\/+$/, '');
+  if (trimmed.endsWith('/api/jenkins/callback')) {
+    warnIfCallbackUrlIsLocal(trimmed);
+    return trimmed;
+  }
+
+  const callbackUrl = `${trimmed}/api/jenkins/callback`;
+  warnIfCallbackUrlIsLocal(callbackUrl);
+  return callbackUrl;
+}
+
+function warnIfCallbackUrlIsLocal(callbackUrl: string): void {
+  try {
+    const callbackHost = new URL(callbackUrl).hostname.toLowerCase();
+    const jenkinsHost = new URL(process.env.JENKINS_URL || DEFAULT_JENKINS_URL).hostname.toLowerCase();
+    const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+
+    if (localHosts.has(callbackHost) && !localHosts.has(jenkinsHost)) {
+      logger.warn('Jenkins callback URL points to localhost while Jenkins is remote', {
+        event: 'JENKINS_CALLBACK_URL_LOCALHOST_FOR_REMOTE',
+        callbackUrl,
+        jenkinsHost,
+        suggestion: 'Set API_CALLBACK_URL to a URL that Jenkins can reach, otherwise callback may fail with 403 or never reach this service.',
+      }, LOG_CONTEXTS.JENKINS);
+    }
+  } catch (error) {
+    logger.warn('Failed to validate Jenkins callback URL', {
+      event: 'JENKINS_CALLBACK_URL_VALIDATE_FAILED',
+      callbackUrl,
+      error: error instanceof Error ? error.message : String(error),
+    }, LOG_CONTEXTS.JENKINS);
+  }
+}
+
+async function recordTriggerFailure(
+  runId: number,
+  caseIds: number[],
+  scriptPaths: string[],
+  callbackUrl: string,
+  source: 'run-case' | 'run-batch',
+  triggerResult: { message: string; errorCategory: 'none' | 'network' | 'auth_failed' | 'not_found' | 'bad_request' | 'rate_limited' | 'server_error' }
+): Promise<void> {
+  const config = jenkinsService.getConfigInfo();
+  const persisted = await persistJenkinsTriggerFailureDiagnostic(triggerResult, {
+    runId,
+    source,
+    baseUrl: config?.baseUrl,
+    jobName: config?.jobs.api,
+    callbackUrl,
+    caseIds,
+    scriptPaths,
+  }).catch(async (error: unknown) => {
+    logger.warn('Failed to persist Jenkins trigger diagnostic artifact', {
+      runId,
+      error: error instanceof Error ? error.message : String(error),
+    }, LOG_CONTEXTS.JENKINS);
+
+    return {
+      publicPath: undefined,
+      diagnostic: buildJenkinsTriggerFailureDiagnostic(triggerResult, {
+        baseUrl: config?.baseUrl,
+        jobName: config?.jobs.api,
+        callbackUrl,
+        caseIds,
+        scriptPaths,
+      }),
+    };
+  });
+
+  await executionService.recordTriggerFailureDiagnostics({
+    runId,
+    caseIds,
+    errorMessage: persisted.diagnostic.errorMessage,
+    errorStack: persisted.diagnostic.errorStack,
+    logPath: persisted.publicPath,
+  });
+  await executionService.markExecutionAborted(runId, persisted.diagnostic.abortReason);
+}
+
+/**
+ * 执行触发前的 Jenkins 连通性预检查。
+ * 目标：在 Jenkins 不可用时快速失败，避免创建后立刻变成 aborted 的运行记录。
+ */
+async function runJenkinsTriggerPrecheck(source: 'run-case' | 'run-batch'): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const configError = jenkinsService.getTriggerConfigurationError();
+  if (configError) {
+    logger.warn('[trigger-precheck] Jenkins trigger configuration invalid', {
+      source,
+      reason: configError,
+    }, LOG_CONTEXTS.JENKINS);
+    return { ok: false, reason: configError };
+  }
+
+  if (!TRIGGER_PRECHECK_ENABLED) {
+    return { ok: true };
+  }
+
+  const maxAttempts = 1 + TRIGGER_PRECHECK_RETRIES;
+  const reasons: string[] = [];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let timeoutId: NodeJS.Timeout | undefined;
+
+    try {
+      const timeoutPromise = new Promise<{ connected: false; message: string }>((resolve) => {
+        timeoutId = setTimeout(() => {
+          resolve({
+            connected: false,
+            message: `Jenkins precheck timeout after ${TRIGGER_PRECHECK_TIMEOUT_MS}ms`,
+          });
+        }, TRIGGER_PRECHECK_TIMEOUT_MS);
+        timeoutId.unref?.();
+      });
+
+      const checkResult = await Promise.race([
+        jenkinsService.testConnection(),
+        timeoutPromise,
+      ]);
+
+      if (checkResult.connected) {
+        if (attempt > 1) {
+          logger.info('[trigger-precheck] Jenkins precheck recovered after retry', {
+            source,
+            attempt,
+            maxAttempts,
+          }, LOG_CONTEXTS.JENKINS);
+        }
+        return { ok: true };
+      }
+
+      const reason = checkResult.message || 'Jenkins unavailable';
+      reasons.push(reason);
+
+      // 配置缺失属于确定性失败，无需重试
+      if (reason.includes('not configured')) {
+        break;
+      }
+
+      logger.warn('[trigger-precheck] Jenkins unavailable in attempt', {
+        source,
+        attempt,
+        maxAttempts,
+        reason,
+        timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
+      }, LOG_CONTEXTS.JENKINS);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      reasons.push(reason);
+      logger.warn('[trigger-precheck] Jenkins precheck attempt failed with exception', {
+        source,
+        attempt,
+        maxAttempts,
+        reason,
+        timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
+      }, LOG_CONTEXTS.JENKINS);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => resolve(), TRIGGER_PRECHECK_RETRY_DELAY_MS);
+        timer.unref?.();
+      });
+    }
+  }
+
+  const reason = reasons[reasons.length - 1] || 'Jenkins unavailable';
+  logger.warn('[trigger-precheck] Jenkins unavailable, rejecting trigger request after retries', {
+    source,
+    maxAttempts,
+    reason,
+    reasons,
+    timeoutMs: TRIGGER_PRECHECK_TIMEOUT_MS,
+    retryDelayMs: TRIGGER_PRECHECK_RETRY_DELAY_MS,
+  }, LOG_CONTEXTS.JENKINS);
+
+  return { ok: false, reason };
+}
+
+/**
+ * 解析并去重脚本路径
+ */
+async function resolveScriptPaths(caseIds: number[]): Promise<{ scriptPaths: string[]; missingCaseIds: number[] }> {
+  if (!Array.isArray(caseIds) || caseIds.length === 0) {
+    return { scriptPaths: [], missingCaseIds: [] };
+  }
+
+  const cases = await AppDataSource.getRepository(TestCase).find({
+    where: {
+      id: In(caseIds),
+      enabled: true,
+    },
+    select: ['id', 'scriptPath'],
+  });
+
+  const scriptPathCaseIds = new Set<number>();
+  const normalizedPaths = new Set<string>();
+
+  for (const item of cases) {
+    const path = item.scriptPath?.trim();
+    if (path) {
+      scriptPathCaseIds.add(item.id);
+      normalizedPaths.add(path);
+    }
+  }
+
+  const missingCaseIds = caseIds.filter(id => !scriptPathCaseIds.has(id));
+
+  return {
+    scriptPaths: Array.from(normalizedPaths),
+    missingCaseIds,
+  };
+}
+
+async function preflightExecutableScriptPaths(caseIds: number[]): Promise<
+  | { ok: true; scriptPaths: string[] }
+  | {
+      ok: false;
+      statusCode: number;
+      message: string;
+      details: {
+        reason: 'missing_script_path' | 'script_path_not_found_in_repo';
+        caseIds?: number[];
+        missingPaths?: string[];
+      };
+    }
+> {
+  const { scriptPaths, missingCaseIds } = await resolveScriptPaths(caseIds);
+
+  if (missingCaseIds.length > 0) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: missingCaseIds.length === 1
+        ? `测试用例 ${missingCaseIds[0]} 未配置 script_path，请先同步或修正后再执行`
+        : `存在未配置 script_path 的测试用例，请先同步或修正后再执行：${missingCaseIds.join(', ')}`,
+      details: {
+        reason: 'missing_script_path',
+        caseIds: missingCaseIds,
+      },
+    };
+  }
+
+  const testRepoConfig = jenkinsService.getTestRepoConfig();
+  const missingPaths = testRepoConfig
+    ? (await validateScriptPathsInTestRepo({
+        repoUrl: testRepoConfig.repoUrl,
+        branch: testRepoConfig.branch,
+        scriptPaths,
+      })).missingPaths
+    : [];
+
+  if (missingPaths.length > 0) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: missingPaths.length === 1
+        ? `测试仓库中不存在脚本路径：${missingPaths[0]}`
+        : `测试仓库中存在无效脚本路径，请先同步或修正后再执行：${missingPaths.join(', ')}`,
+      details: {
+        reason: 'script_path_not_found_in_repo',
+        missingPaths,
+      },
+    };
+  }
+
+  return { ok: true, scriptPaths };
+}
 
 /**
  * 净化错误消息，移除敏感信息以防止信息泄露
@@ -16,18 +508,17 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
   const originalMessage = error instanceof Error ? error.message : 'Unknown error';
 
   // 记录详细错误信息到服务器日志
-  console.error(`[${context}] Detailed error:`, {
+  logger.error(`${context} - Detailed error info`, {
+    event: LOG_EVENTS.JENKINS_TRIGGER_FAILED,
     message: originalMessage,
     stack: error instanceof Error ? error.stack : undefined,
-    timestamp: new Date().toISOString()
-  });
+    timestamp: new Date().toISOString(),
+    context,
+  }, LOG_CONTEXTS.JENKINS);
 
   // 检查是否包含敏感信息关键词
   const sensitiveKeywords = [
     'password', 'token', 'secret', 'key', 'credential',
-    'database', 'connection', 'host', 'port', 'path',
-    'file not found', 'permission denied', 'access denied',
-    'ENOENT', 'EACCES', 'EPERM', 'ETIMEDOUT'
   ];
 
   const lowerMessage = originalMessage.toLowerCase();
@@ -35,40 +526,235 @@ function sanitizeErrorMessage(error: unknown, context: string): string {
     lowerMessage.includes(keyword.toLowerCase())
   );
 
-  if (containsSensitiveInfo || process.env.NODE_ENV === 'production') {
-    // 生产环境或包含敏感信息时返回通用错误消息
+  if (containsSensitiveInfo) {
+    // 包含敏感信息时返回通用错误消息
     return 'An internal error occurred. Please contact support if the issue persists.';
   }
 
-  // 开发环境且不包含敏感信息时返回原始消息
+  // 生产环境返回简化但有意义的错误消息（移除路径、IP 等敏感信息）
+  if (process.env.NODE_ENV === 'production') {
+    return originalMessage
+      .replace(/\/[^\s]+/g, '[path]')  // 替换文件路径
+      .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, '[ip]')  // 替换 IP 地址
+      .replace(/:\d+/g, ':[port]')  // 替换端口号
+      .replace(/localhost/gi, '[host]')  // 替换 localhost
+      .replace(/127\.0\.0\.1/g, '[host]');  // 替换本地 IP
+  }
+
+  // 开发环境返回原始消息
   return originalMessage;
+}
+
+function resolveExecutionBusinessError(error: unknown): {
+  statusCode: number;
+  message: string;
+  details: { reason: 'inactive_case' | 'inactive_cases'; caseIds: number[] };
+} | null {
+  const originalMessage = error instanceof Error ? error.message : String(error ?? '');
+  const noActiveCasesMatch = originalMessage.match(/No active test cases found with IDs:\s*(.+)$/i);
+  if (!noActiveCasesMatch) return null;
+
+  const caseIds = noActiveCasesMatch[1]
+    .split(',')
+    .map(part => Number.parseInt(part.trim(), 10))
+    .filter(Number.isFinite);
+
+  if (caseIds.length === 0) return null;
+
+  if (caseIds.length === 1) {
+    return {
+      statusCode: 400,
+      message: `测试用例 ${caseIds[0]} 未启用，请先启用后再执行`,
+      details: {
+        reason: 'inactive_case',
+        caseIds,
+      },
+    };
+  }
+
+  return {
+    statusCode: 400,
+    message: `存在未启用的测试用例，请先启用后再执行：${caseIds.join(', ')}`,
+    details: {
+      reason: 'inactive_cases',
+      caseIds,
+    },
+  };
+}
+
+/**
+ * 规范化 Jenkins 回调中的 results 载荷，兼容 camelCase/snake_case 字段。
+ * 目标：确保后续 completeBatchExecution 能稳定回写用例明细，避免残留占位 error。
+ */
+function normalizeCallbackResults(results: unknown[]): Auto_TestRunResultsInput[] {
+  const toNumber = (value: unknown): number | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return undefined;
+  };
+
+  const toOptionalString = (value: unknown): string | undefined => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+    return undefined;
+  };
+
+  const normalizeStatus = (value: unknown): Auto_TestRunResultsInput['status'] => {
+    const rawStatus = String(value ?? '').trim().toLowerCase();
+    if (rawStatus === 'passed' || rawStatus === 'success' || rawStatus === 'pass') return 'passed';
+    if (rawStatus === 'failed' || rawStatus === 'fail') return 'failed';
+    if (rawStatus === 'skipped' || rawStatus === 'skip') return 'skipped';
+
+    // 记录未知状态
+    logger.warn('Unknown test result status, treating as error', {
+      rawStatus,
+      originalValue: value,
+    }, LOG_CONTEXTS.JENKINS);
+    return 'error';
+  };
+
+  return results.flatMap((item): Auto_TestRunResultsInput[] => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const row = item as Record<string, unknown>;
+
+    const caseIdRaw = toNumber(row['caseId'] ?? row['case_id']);
+    const caseName = toOptionalString(row['caseName'] ?? row['case_name']);
+
+    // 允许 caseId=0 的结果通过（如 pytest 等框架不携带 caseId 的场景），
+    // 由 updateTestResult 的 caseName fallback 机制完成匹配。
+    // 但若 caseId 和 caseName 同时缺失，则过滤掉（无法匹配任何占位符记录）。
+    const hasValidCaseId = caseIdRaw && caseIdRaw > 0;
+    if (!hasValidCaseId && !caseName) {
+      logger.warn('Filtered out test result: missing both caseId and caseName', {
+        row,
+        caseId: caseIdRaw,
+        caseName,
+      }, LOG_CONTEXTS.JENKINS);
+      return [];
+    }
+
+    if (!hasValidCaseId) {
+      logger.debug('Test result has no valid caseId, will use caseName fallback matching', {
+        caseId: caseIdRaw,
+        caseName,
+      }, LOG_CONTEXTS.JENKINS);
+    }
+
+    const durationRaw = toNumber(row['duration'] ?? row['durationMs'] ?? row['duration_ms']);
+    const assertionsTotal = toNumber(row['assertionsTotal'] ?? row['assertions_total']);
+    const assertionsPassed = toNumber(row['assertionsPassed'] ?? row['assertions_passed']);
+    const startTime = row['startTime'] ?? row['start_time'];
+    const endTime = row['endTime'] ?? row['end_time'];
+    const responseDataRaw = row['responseData'] ?? row['response_data'];
+
+    return [{
+      caseId: caseIdRaw,
+      caseName: caseName || `case_${caseIdRaw}`,
+      status: normalizeStatus(row['status']),
+      duration: durationRaw !== undefined ? Math.max(0, durationRaw) : 0,
+      errorMessage: toOptionalString(row['errorMessage'] ?? row['error_message']),
+      stackTrace: toOptionalString(row['stackTrace'] ?? row['errorStack'] ?? row['error_stack']),
+      screenshotPath: toOptionalString(row['screenshotPath'] ?? row['screenshot_path']),
+      logPath: toOptionalString(row['logPath'] ?? row['log_path']),
+      assertionsTotal,
+      assertionsPassed,
+      responseData: typeof responseDataRaw === 'string'
+        ? responseDataRaw
+        : (responseDataRaw !== undefined ? JSON.stringify(responseDataRaw) : undefined),
+      startTime: typeof startTime === 'string' || typeof startTime === 'number' ? startTime : undefined,
+      endTime: typeof endTime === 'string' || typeof endTime === 'number' ? endTime : undefined,
+    }];
+  });
 }
 
 /**
  * POST /api/jenkins/trigger
  * 触发 Jenkins Job 执行
  *
- * 此接口创建执行记录并返回 executionId，供 Jenkins 后续回调使用
- * 实际触发 Jenkins Job 的逻辑需要在此处或由调用方完成
+ * 此接口创建运行记录并返回 executionId，供 Jenkins 后续回调使用
+ * 支持两种模式：
+ * 1. 直接传入 caseIds 数组
+ * 2. 传入 taskId，自动从数据库查找任务的 caseIds 和任务名称
  */
-router.post('/trigger', async (req: Request, res: Response) => {
+router.post('/trigger', generalAuthRateLimiter, optionalAuth, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
-    const { caseIds, projectId = 1, triggeredBy = 1, jenkinsJobName } = req.body;
+    const triggerBody = (req.body ?? {}) as Record<string, unknown>;
+    let caseIds = triggerBody['caseIds'];
+    const projectId = typeof triggerBody['projectId'] === 'number' ? triggerBody['projectId'] : 1;
+    // 优先使用认证用户 ID，回退到请求体中的 triggeredBy，最后才用默认值 1（系统管理员）
+    const triggeredBy = req.user?.id ?? (typeof triggerBody['triggeredBy'] === 'number' ? triggerBody['triggeredBy'] : 1);
+    const jenkinsJobName = typeof triggerBody['jenkinsJobName'] === 'string' ? triggerBody['jenkinsJobName'] : undefined;
+    const taskId = typeof triggerBody['taskId'] === 'number' ? triggerBody['taskId'] : undefined;
+    let taskName: string | undefined;
+
+    // 如果传入了 taskId，从数据库查找任务信息
+    if (taskId !== undefined) {
+      const { queryOne } = await import('../config/database');
+      const task = await queryOne<{ id: number; name: string; case_ids: string; project_id: number }>(
+        'SELECT id, name, case_ids, project_id FROM Auto_TestCaseTasks WHERE id = ?',
+        [taskId]
+      );
+
+      if (!task) {
+        return res.status(404).json({
+          success: false,
+          message: `Task with id ${taskId} not found`
+        });
+      }
+
+      taskName = task.name;
+
+      // 如果没有直接传入 caseIds，从任务中解析
+      if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
+        try {
+          const parsedCaseIds = JSON.parse(task.case_ids);
+          if (!Array.isArray(parsedCaseIds) || parsedCaseIds.length === 0) {
+            logger.warn('Task has empty or invalid case_ids', {
+              taskId,
+              case_ids: task.case_ids,
+            }, LOG_CONTEXTS.JENKINS);
+            return res.status(400).json({
+              success: false,
+              message: `Task ${taskId} has no valid case_ids configured`
+            });
+          }
+          caseIds = parsedCaseIds as number[];
+        } catch (err) {
+          logger.error('Failed to parse task case_ids', {
+            event: LOG_EVENTS.JENKINS_TRIGGER_FAILED,
+            taskId,
+            case_ids: task.case_ids,
+            error: err instanceof Error ? err.message : String(err),
+          }, LOG_CONTEXTS.JENKINS);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to parse task configuration. Invalid JSON format in case_ids field.'
+          });
+        }
+      }
+    }
 
     if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'caseIds is required and must be a non-empty array'
+        message: 'caseIds is required and must be a non-empty array (or provide a valid taskId with case_ids)'
       });
     }
 
-    // 创建执行记录
+    // 创建运行记录
     const execution = await executionService.triggerTestExecution({
-      caseIds,
+      caseIds: caseIds as number[],
       projectId,
       triggeredBy,
       triggerType: 'jenkins',
       jenkinsJob: jenkinsJobName,
+      taskId,
+      taskName,
     });
 
     res.json({
@@ -82,6 +768,15 @@ router.post('/trigger', async (req: Request, res: Response) => {
       }
     });
   } catch (error: unknown) {
+    const businessError = resolveExecutionBusinessError(error);
+    if (businessError) {
+      return res.status(businessError.statusCode).json({
+        success: false,
+        message: businessError.message,
+        details: businessError.details,
+      });
+    }
+
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_TRIGGER');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
@@ -90,81 +785,185 @@ router.post('/trigger', async (req: Request, res: Response) => {
 /**
  * POST /api/jenkins/run-case
  * 触发单个用例执行
+ *
+ * 异步队列模式：
+ * 1. 立即创建执行记录（status=pending）
+ * 2. 立即返回 runId 给前端（不阻塞）
+ * 3. 后台通过 enqueueDirectJob 等待并发槽位，槽位可用后再触发 Jenkins
  */
 router.post('/run-case', [
+  generalAuthRateLimiter,
+  optionalAuth,
   rateLimitMiddleware.limit,
   requestValidator.validateSingleExecution
 ], async (req: Request, res: Response) => {
+  const timer = createTimer();
+  const { caseId, projectId } = req.body;
+  const triggeredBy: number = req.user?.id ?? (typeof req.body.triggeredBy === 'number' ? req.body.triggeredBy : 1);
+  const slotLabel = `case:${caseId}`;
+
   try {
-    const { caseId, projectId, triggeredBy = 1 } = req.body;
-    
-    console.log(`[/api/jenkins/run-case] Starting single case execution:`, {
+    logger.info('Starting single case execution (async queue mode)', {
       caseId,
       projectId,
       triggeredBy,
-      timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
-    // 创建执行批次记录
+    const precheck = await runJenkinsTriggerPrecheck('run-case');
+    if (!precheck.ok) {
+      return res.status(503).json({
+        success: false,
+        message: `Jenkins 当前不可用，请稍后重试（${precheck.reason}）`,
+        details: {
+          reason: precheck.reason,
+          source: 'run-case-precheck',
+          retryable: true,
+        },
+      });
+    }
+
+    // ── Step 1: 立即创建执行记录（状态 pending）──────────────
+    const scriptPathPreflight = await preflightExecutableScriptPaths([caseId]);
+    if (!scriptPathPreflight.ok) {
+      return res.status(scriptPathPreflight.statusCode).json({
+        success: false,
+        message: scriptPathPreflight.message,
+        details: scriptPathPreflight.details,
+      });
+    }
+
+    const preflightScriptPaths = scriptPathPreflight.scriptPaths;
+
     const execution = await executionService.triggerTestExecution({
       caseIds: [caseId],
       projectId,
       triggeredBy,
       triggerType: 'manual',
     });
-    
-    console.log(`[/api/jenkins/run-case] Execution record created:`, {
+
+    logger.info('Execution record created, returning runId immediately', {
       runId: execution.runId,
-      totalCases: execution.totalCases
-    });
+      executionId: execution.executionId,
+    }, LOG_CONTEXTS.JENKINS);
 
-    // 触发Jenkins Job
-    console.log(`[/api/jenkins/run-case] Triggering Jenkins job...`);
-    const triggerResult = await jenkinsService.triggerBatchJob(
-      execution.runId,
-      [caseId],
-      [],
-      `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`
-    );
-    
-    console.log(`[/api/jenkins/run-case] Jenkins trigger result:`, {
-      success: triggerResult.success,
-      message: triggerResult.message,
-      buildUrl: triggerResult.buildUrl,
-      queueId: triggerResult.queueId
-    });
-
-    if (triggerResult.success) {
-      // 更新Jenkins构建信息
-      if (triggerResult.buildUrl) {
-        // 解析Jenkins URL获取build ID
-        const buildIdMatch = triggerResult.buildUrl.match(/\/(\d+)\/$/);
-        const buildId = buildIdMatch ? buildIdMatch[1] : 'unknown';
-        
-        console.log(`[/api/jenkins/run-case] Updating Jenkins info:`, {
-          runId: execution.runId,
-          buildId,
-          buildUrl: triggerResult.buildUrl
-        });
-        
-        await executionService.updateBatchJenkinsInfo(execution.runId, {
-          buildId,
-          buildUrl: triggerResult.buildUrl,
-        });
-      }
-    } else {
-      console.error(`[/api/jenkins/run-case] Jenkins trigger failed:`, triggerResult.message);
-    }
-
+    // ── Step 2: 立即返回 runId，不等待 Jenkins ───────────────
+    const duration = timer();
     res.json({
-      success: triggerResult.success,
+      success: true,
       data: {
         runId: execution.runId,
-        buildUrl: triggerResult.buildUrl,
+        status: 'queued',
       },
-      message: triggerResult.message,
+      message: '任务已加入执行队列',
+      _concurrency: {
+        slotsUsed: taskSchedulerService.getStatus().running.length,
+        slotsLimit: taskSchedulerService.getStatus().concurrencyLimit,
+        directQueued: taskSchedulerService.getStatus().directQueueDepth,
+      },
     });
+
+    // ── Step 3: 后台异步等待槽位 + 触发 Jenkins ──────────────
+    const capturedRunId = execution.runId;
+
+    try {
+      taskSchedulerService.enqueueDirectJob(slotLabel, async (placeholderRunId: number) => {
+        // 槽位获取后，用真实 runId 替换占位槽位
+        taskSchedulerService.registerDirectSlot(capturedRunId, slotLabel, placeholderRunId);
+
+        try {
+          // 解析脚本路径
+          const callbackUrl = buildCallbackUrl();
+
+          // 触发 Jenkins
+          const triggerResult = await jenkinsService.triggerBatchJob(
+            capturedRunId,
+            [caseId],
+            preflightScriptPaths,
+            callbackUrl,
+            async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
+              const buildId = String(buildNumber);
+              logger.debug('[dev-10] Build resolved via queueId poll, updating Jenkins info', {
+                runId: capturedRunId,
+                buildId,
+                buildUrl,
+                queueWaitMs,
+              }, LOG_CONTEXTS.JENKINS);
+              await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+              scheduleCallbackFallbackSync(capturedRunId, 'run-case');
+            },
+            async (reason: 'cancelled' | 'timeout') => {
+              logger.warn('[dev-11] Jenkins queue cancelled/timeout, marking execution as aborted', {
+                runId: capturedRunId,
+                reason,
+              }, LOG_CONTEXTS.JENKINS);
+              try {
+                await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
+              } catch (err) {
+                logger.warn('[dev-11] Failed to mark execution as aborted', {
+                  runId: capturedRunId,
+                  error: err instanceof Error ? err.message : String(err),
+                }, LOG_CONTEXTS.JENKINS);
+              }
+              taskSchedulerService.releaseSlotByRunId(capturedRunId);
+            }
+          );
+
+          if (!triggerResult.success) {
+            // Jenkins 触发失败，立即释放槽位
+            taskSchedulerService.releaseSlotByRunId(capturedRunId);
+            // 将执行状态标记为失败
+            try {
+              await recordTriggerFailure(capturedRunId, [caseId], preflightScriptPaths, callbackUrl, 'run-case', triggerResult);
+            } catch { /* ignore */ }
+            logger.warn('[run-case] Jenkins trigger failed (async), slot released', {
+              runId: capturedRunId,
+              message: triggerResult.message,
+            }, LOG_CONTEXTS.JENKINS);
+          } else {
+            logger.info('[run-case] Jenkins trigger success (async)', {
+              runId: capturedRunId,
+              queueId: triggerResult.queueId,
+            }, LOG_CONTEXTS.JENKINS);
+          }
+        } catch (jenkinsErr) {
+          // Jenkins 执行异常，释放槽位并标记失败
+          taskSchedulerService.releaseSlotByRunId(capturedRunId);
+          try {
+            await executionService.markExecutionAborted(capturedRunId, `Jenkins error: ${jenkinsErr instanceof Error ? jenkinsErr.message : String(jenkinsErr)}`);
+          } catch { /* ignore */ }
+          logger.errorLog(jenkinsErr, '[run-case] Async Jenkins trigger error', { runId: capturedRunId, caseId });
+        }
+      });
+    } catch (queueErr) {
+      // 仅当队列已满才会到这里（enqueueDirectJob 同步抛出）
+      // runId 已返回给前端，将执行状态标记为失败
+      const queueErrMsg = queueErr instanceof Error ? queueErr.message : '并发队列已满';
+      logger.warn('[run-case] Queue full, marking execution as aborted', {
+        runId: capturedRunId,
+        message: queueErrMsg,
+      }, LOG_CONTEXTS.JENKINS);
+      try {
+        await executionService.markExecutionAborted(capturedRunId, queueErrMsg);
+      } catch { /* ignore */ }
+    }
+
   } catch (error: unknown) {
+    const duration = timer();
+    logger.errorLog(error, 'Single case execution failed (creating record)', {
+      caseId,
+      projectId,
+      durationMs: duration,
+    });
+
+    const businessError = resolveExecutionBusinessError(error);
+    if (businessError) {
+      return res.status(businessError.statusCode).json({
+        success: false,
+        message: businessError.message,
+        details: businessError.details,
+      });
+    }
+
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_CASE');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
@@ -173,82 +972,185 @@ router.post('/run-case', [
 /**
  * POST /api/jenkins/run-batch
  * 触发批量用例执行
+ *
+ * 异步队列模式：
+ * 1. 立即创建执行记录（status=pending）
+ * 2. 立即返回 runId 给前端（不阻塞）
+ * 3. 后台通过 enqueueDirectJob 等待并发槽位，槽位可用后再触发 Jenkins
  */
 router.post('/run-batch', [
+  generalAuthRateLimiter,
+  optionalAuth,
   rateLimitMiddleware.limit,
   requestValidator.validateBatchExecution
 ], async (req: Request, res: Response) => {
+  const timer = createTimer();
+  const { caseIds, projectId } = req.body;
+  const triggeredBy: number = req.user?.id ?? (typeof req.body.triggeredBy === 'number' ? req.body.triggeredBy : 1);
+  // label 展示前几个 caseId，避免过长
+  const labelIds = (caseIds as number[]).slice(0, 3).join(',') + (caseIds.length > 3 ? `…(${caseIds.length})` : '');
+  const slotLabel = `batch:${labelIds}`;
+
   try {
-    const { caseIds, projectId, triggeredBy = 1 } = req.body;
-    
-    console.log(`[/api/jenkins/run-batch] Starting batch case execution:`, {
+    logger.info('Starting batch case execution (async queue mode)', {
       caseCount: caseIds.length,
       caseIds,
       projectId,
       triggeredBy,
-      timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
-    // 创建执行批次记录
+    const precheck = await runJenkinsTriggerPrecheck('run-batch');
+    if (!precheck.ok) {
+      return res.status(503).json({
+        success: false,
+        message: `Jenkins 当前不可用，请稍后重试（${precheck.reason}）`,
+        details: {
+          reason: precheck.reason,
+          source: 'run-batch-precheck',
+          retryable: true,
+        },
+      });
+    }
+
+    // ── Step 1: 立即创建执行记录（状态 pending）──────────────
+    const scriptPathPreflight = await preflightExecutableScriptPaths(caseIds);
+    if (!scriptPathPreflight.ok) {
+      return res.status(scriptPathPreflight.statusCode).json({
+        success: false,
+        message: scriptPathPreflight.message,
+        details: scriptPathPreflight.details,
+      });
+    }
+
+    const preflightScriptPaths = scriptPathPreflight.scriptPaths;
+
     const execution = await executionService.triggerTestExecution({
       caseIds,
       projectId,
       triggeredBy,
       triggerType: 'manual',
     });
-    
-    console.log(`[/api/jenkins/run-batch] Execution record created:`, {
+
+    logger.info('Batch execution record created, returning runId immediately', {
       runId: execution.runId,
-      totalCases: execution.totalCases
-    });
+      executionId: execution.executionId,
+      totalCases: execution.totalCases,
+    }, LOG_CONTEXTS.JENKINS);
 
-    // 触发Jenkins Job
-    console.log(`[/api/jenkins/run-batch] Triggering Jenkins job...`);
-    const triggerResult = await jenkinsService.triggerBatchJob(
-      execution.runId,
-      caseIds,
-      [],
-      `${process.env.API_CALLBACK_URL || 'http://localhost:3000'}/api/jenkins/callback`
-    );
-    
-    console.log(`[/api/jenkins/run-batch] Jenkins trigger result:`, {
-      success: triggerResult.success,
-      message: triggerResult.message,
-      buildUrl: triggerResult.buildUrl,
-      queueId: triggerResult.queueId
-    });
-
-    if (triggerResult.success) {
-      // 更新Jenkins构建信息
-      if (triggerResult.buildUrl) {
-        const buildIdMatch = triggerResult.buildUrl.match(/\/(\d+)\/$/);
-        const buildId = buildIdMatch ? buildIdMatch[1] : 'unknown';
-        
-        console.log(`[/api/jenkins/run-batch] Updating Jenkins info:`, {
-          runId: execution.runId,
-          buildId,
-          buildUrl: triggerResult.buildUrl
-        });
-        
-        await executionService.updateBatchJenkinsInfo(execution.runId, {
-          buildId,
-          buildUrl: triggerResult.buildUrl,
-        });
-      }
-    } else {
-      console.error(`[/api/jenkins/run-batch] Jenkins trigger failed:`, triggerResult.message);
-    }
-
+    // ── Step 2: 立即返回 runId，不等待 Jenkins ───────────────
+    const duration = timer();
     res.json({
-      success: triggerResult.success,
+      success: true,
       data: {
         runId: execution.runId,
         totalCases: execution.totalCases,
-        buildUrl: triggerResult.buildUrl,
+        status: 'queued',
       },
-      message: triggerResult.message,
+      message: '任务已加入执行队列',
+      _concurrency: {
+        slotsUsed: taskSchedulerService.getStatus().running.length,
+        slotsLimit: taskSchedulerService.getStatus().concurrencyLimit,
+        directQueued: taskSchedulerService.getStatus().directQueueDepth,
+      },
     });
+
+    // ── Step 3: 后台异步等待槽位 + 触发 Jenkins ──────────────
+    const capturedRunId = execution.runId;
+
+    try {
+      taskSchedulerService.enqueueDirectJob(slotLabel, async (placeholderRunId: number) => {
+        // 槽位获取后，用真实 runId 替换占位槽位
+        taskSchedulerService.registerDirectSlot(capturedRunId, slotLabel, placeholderRunId);
+
+        try {
+          // 解析脚本路径
+          const callbackUrl = buildCallbackUrl();
+
+          // 触发 Jenkins
+          const triggerResult = await jenkinsService.triggerBatchJob(
+            capturedRunId,
+            caseIds,
+            preflightScriptPaths,
+            callbackUrl,
+            async (buildNumber: number, buildUrl: string, queueWaitMs: number) => {
+              const buildId = String(buildNumber);
+              logger.debug('[dev-10] Build resolved via queueId poll, updating batch Jenkins info', {
+                runId: capturedRunId,
+                buildId,
+                buildUrl,
+                queueWaitMs,
+              }, LOG_CONTEXTS.JENKINS);
+              await executionService.updateBatchJenkinsInfo(capturedRunId, { buildId, buildUrl });
+              scheduleCallbackFallbackSync(capturedRunId, 'run-batch');
+            },
+            async (reason: 'cancelled' | 'timeout') => {
+              logger.warn('[dev-11] Batch Jenkins queue cancelled/timeout, marking execution as aborted', {
+                runId: capturedRunId,
+                reason,
+              }, LOG_CONTEXTS.JENKINS);
+              try {
+                await executionService.markExecutionAborted(capturedRunId, `Jenkins build ${reason}`);
+              } catch (err) {
+                logger.warn('[dev-11] Failed to mark batch execution as aborted', {
+                  runId: capturedRunId,
+                  error: err instanceof Error ? err.message : String(err),
+                }, LOG_CONTEXTS.JENKINS);
+              }
+              taskSchedulerService.releaseSlotByRunId(capturedRunId);
+            }
+          );
+
+          if (!triggerResult.success) {
+            taskSchedulerService.releaseSlotByRunId(capturedRunId);
+            try {
+              await recordTriggerFailure(capturedRunId, caseIds, preflightScriptPaths, callbackUrl, 'run-batch', triggerResult);
+            } catch { /* ignore */ }
+            logger.warn('[run-batch] Jenkins trigger failed (async), slot released', {
+              runId: capturedRunId,
+              message: triggerResult.message,
+            }, LOG_CONTEXTS.JENKINS);
+          } else {
+            logger.info('[run-batch] Jenkins trigger success (async)', {
+              runId: capturedRunId,
+              queueId: triggerResult.queueId,
+            }, LOG_CONTEXTS.JENKINS);
+          }
+        } catch (jenkinsErr) {
+          taskSchedulerService.releaseSlotByRunId(capturedRunId);
+          try {
+            await executionService.markExecutionAborted(capturedRunId, `Jenkins error: ${jenkinsErr instanceof Error ? jenkinsErr.message : String(jenkinsErr)}`);
+          } catch { /* ignore */ }
+          logger.errorLog(jenkinsErr, '[run-batch] Async Jenkins trigger error', { runId: capturedRunId, caseIds });
+        }
+      });
+    } catch (queueErr) {
+      const queueErrMsg = queueErr instanceof Error ? queueErr.message : '并发队列已满';
+      logger.warn('[run-batch] Queue full, marking execution as aborted', {
+        runId: capturedRunId,
+        message: queueErrMsg,
+      }, LOG_CONTEXTS.JENKINS);
+      try {
+        await executionService.markExecutionAborted(capturedRunId, queueErrMsg);
+      } catch { /* ignore */ }
+    }
+
   } catch (error: unknown) {
+    const duration = timer();
+    logger.errorLog(error, 'Batch case execution failed (creating record)', {
+      caseIds,
+      projectId,
+      durationMs: duration,
+    });
+
+    const businessError = resolveExecutionBusinessError(error);
+    if (businessError) {
+      return res.status(businessError.statusCode).json({
+        success: false,
+        message: businessError.message,
+        details: businessError.details,
+      });
+    }
+
     const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_RUN_BATCH');
     res.status(500).json({ success: false, message: sanitizedMessage });
   }
@@ -260,9 +1162,15 @@ router.post('/run-batch', [
  *
  * Jenkins Job 可以调用此接口获取需要执行的用例信息
  */
-router.get('/tasks/:taskId/cases', async (req: Request, res: Response) => {
+router.get('/tasks/:taskId/cases', generalAuthRateLimiter, optionalAuth, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const taskId = parseInt(req.params.taskId);
+    if (isNaN(taskId) || taskId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid taskId parameter. Must be a positive integer.'
+      });
+    }
     const cases = await executionService.getRunCases(taskId);
 
     res.json({
@@ -270,6 +1178,10 @@ router.get('/tasks/:taskId/cases', async (req: Request, res: Response) => {
       data: cases
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get task cases', {
+      event: LOG_EVENTS.JENKINS_TRIGGER_FAILED,
+      taskId: req.params.taskId,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -281,29 +1193,35 @@ router.get('/tasks/:taskId/cases', async (req: Request, res: Response) => {
  *
  * 用于查询 Jenkins Job 的执行状态
  */
-router.get('/status/:executionId', async (req: Request, res: Response) => {
+router.get('/status/:executionId', generalAuthRateLimiter, optionalAuth, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const executionId = parseInt(req.params.executionId);
+    if (isNaN(executionId) || executionId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid executionId parameter. Must be a positive integer.'
+      });
+    }
     const detail = await executionService.getExecutionDetail(executionId);
 
     if (!detail || !detail.execution) {
       return res.status(404).json({ success: false, message: 'Execution not found' });
     }
 
-    const execution = detail.execution as any;
+    const execution = detail.execution as unknown as Record<string, unknown>;
 
     res.json({
       success: true,
       data: {
         executionId,
-        status: execution.status,
-        totalCases: execution.total_cases,
-        passedCases: execution.passed_cases,
-        failedCases: execution.failed_cases,
-        skippedCases: execution.skipped_cases,
-        startTime: execution.start_time,
-        endTime: execution.end_time,
-        duration: execution.duration,
+        status: execution['status'],
+        totalCases: execution['total_cases'],
+        passedCases: execution['passed_cases'],
+        failedCases: execution['failed_cases'],
+        skippedCases: execution['skipped_cases'],
+        startTime: execution['start_time'],
+        endTime: execution['end_time'],
+        duration: execution['duration'],
         // Jenkins 相关字段（预留）
         jenkinsStatus: null,
         buildNumber: null,
@@ -311,6 +1229,10 @@ router.get('/status/:executionId', async (req: Request, res: Response) => {
       }
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get execution status', {
+      event: LOG_EVENTS.JENKINS_TRIGGER_FAILED,
+      executionId: req.params.executionId,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -319,121 +1241,192 @@ router.get('/status/:executionId', async (req: Request, res: Response) => {
 /**
  * POST /api/jenkins/callback
  * Jenkins 执行结果回调接口
+ * 通过 IP 白名单验证，无需额外认证
+ * 注意：此接口不使用 generalAuthRateLimiter，避免高并发回调时触发 429
+ * 安全由 ipWhitelistMiddleware 白名单保护，并使用专用的 rateLimitMiddleware
  */
 router.post('/callback', [
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit,
   requestValidator.validateCallback
-], async (req: Request, res: Response) => {
-  const startTime = Date.now();
-  let callbackStatus = 'unknown';
+], (req: Request, res: Response) => {
+  /**
+   * [P2-B] 快速 ACK 模式
+   * 1. 仅做轻量校验和数据规范化（同步、无 I/O）
+   * 2. 将任务入队到 callbackQueue
+   * 3. 立即返回 202 Accepted，Jenkins 不会超时重试
+   * 4. 后台 worker 异步消费队列，执行 completeBatchExecution + releaseSlot
+   */
+  const receiveTimeMs = Date.now();
+  const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
 
-  try {
-    const { runId, status, passedCases = 0, failedCases = 0, skippedCases = 0, durationMs = 0, results = [] } = req.body;
-    callbackStatus = status;
+  const {
+    runId,
+    status,
+    passedCases: reportedPassedCases = 0,
+    failedCases: reportedFailedCases = 0,
+    skippedCases: reportedSkippedCases = 0,
+    durationMs = 0,
+    results = [],
+    // 轻量化回调模式：仅发送 buildNumber
+    buildNumber,
+  } = req.body;
 
-    // Enhanced logging with more context
-    console.log(`[CALLBACK] Jenkins callback received for runId: ${runId}`, {
-      status,
-      passedCases,
-      failedCases,
-      skippedCases,
-      durationMs,
-      resultsCount: results.length,
-      timestamp: new Date().toISOString(),
-      authSource: req.jenkinsAuth?.source,
-      userAgent: req.get('User-Agent'),
-      remoteIP: req.ip
-    });
+  // 判断是否为轻量化回调（有 buildNumber 但无 results）
+  const isLightweightCallback = !!buildNumber && (!Array.isArray(results) || results.length === 0);
 
-    // Validate data consistency
-    const totalReportedCases = passedCases + failedCases + skippedCases;
-    if (results.length > 0 && totalReportedCases !== results.length) {
-      console.warn(`[CALLBACK] Data inconsistency for runId ${runId}: reported total=${totalReportedCases}, actual results=${results.length}`);
+  const rawResults = Array.isArray(results) ? results : [];
+  const normalizedResults = normalizeCallbackResults(rawResults);
+  let passedCases = typeof reportedPassedCases === 'number' ? reportedPassedCases : 0;
+  let failedCases = typeof reportedFailedCases === 'number' ? reportedFailedCases : 0;
+  let skippedCases = typeof reportedSkippedCases === 'number' ? reportedSkippedCases : 0;
+
+  // 从详细结果推导计数（与旧逻辑一致）
+  if (normalizedResults.length > 0) {
+    let derivedPassed = 0;
+    let derivedFailed = 0;
+    let derivedSkipped = 0;
+
+    for (const result of normalizedResults) {
+      const caseStatus = String(result['status'] || '').toLowerCase();
+      if (caseStatus === 'passed') derivedPassed++;
+      else if (caseStatus === 'failed' || caseStatus === 'error') derivedFailed++;
+      else derivedSkipped++;
     }
 
-    // Validate status value
-    const validStatuses = ['success', 'failed', 'aborted'];
-    if (!validStatuses.includes(status)) {
-      console.warn(`[CALLBACK] Invalid status '${status}' for runId ${runId}, treating as 'failed'`);
+    const totalReported = passedCases + failedCases + skippedCases;
+    const totalDerived  = derivedPassed + derivedFailed + derivedSkipped;
+    const shouldUseDerived = totalReported === 0
+      || totalReported !== normalizedResults.length
+      || totalReported !== totalDerived;
+
+    if (shouldUseDerived) {
+      logger.warn('Callback summary mismatch, using derived counts', {
+        runId,
+        reported: { passedCases, failedCases, skippedCases, total: totalReported },
+        derived:  { passedCases: derivedPassed, failedCases: derivedFailed, skippedCases: derivedSkipped, total: totalDerived },
+        resultsCount: normalizedResults.length,
+      }, LOG_CONTEXTS.JENKINS);
+      passedCases = derivedPassed;
+      failedCases = derivedFailed;
+      skippedCases = derivedSkipped;
     }
+  }
 
-    // 完成执行批次
-    await executionService.completeBatchExecution(runId, {
-      status: validStatuses.includes(status) ? status : 'failed',
-      passedCases,
-      failedCases,
-      skippedCases,
-      durationMs,
-      results,
-    });
+  // 规范化状态值
+  const validStatuses = ['success', 'failed', 'cancelled'] as const;
+  type ValidStatus = typeof validStatuses[number];
+  const normalizedStatus: ValidStatus = (validStatuses as readonly string[]).includes(status)
+    ? (status as ValidStatus)
+    : 'failed';
 
-    const processingTime = Date.now() - startTime;
-    console.log(`[CALLBACK] Successfully processed callback for runId ${runId} in ${processingTime}ms`);
+  if (!validStatuses.includes(status)) {
+    logger.warn('Invalid callback status, treating as failed', {
+      runId,
+      providedStatus: status,
+      validStatuses,
+    }, LOG_CONTEXTS.JENKINS);
+  }
 
-    res.json({
-      success: true,
-      message: 'Callback processed successfully',
-      processingTimeMs: processingTime
-    });
-  } catch (error: unknown) {
-    const processingTime = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+  logger.info('Jenkins callback received, enqueuing for async processing', {
+    runId,
+    status: normalizedStatus,
+    passedCases,
+    failedCases,
+    skippedCases,
+    durationMs,
+    resultsCount: normalizedResults.length,
+    clientIP,
+    userAgent: req.get('User-Agent'),
+    receiveTimeMs,
+    isLightweightCallback,
+    buildNumber,
+  }, LOG_CONTEXTS.JENKINS);
 
-    console.error(`[CALLBACK] Failed to process callback for runId ${req.body?.runId || 'unknown'}:`, {
-      error: errorMessage,
-      status: callbackStatus,
-      processingTimeMs: processingTime,
-      stack: error instanceof Error ? error.stack : undefined
-    });
+  // 入队（非阻塞）
+  const enqueued = callbackQueue.enqueue({
+    runId,
+    status: normalizedStatus,
+    passedCases,
+    failedCases,
+    skippedCases,
+    durationMs,
+    results: normalizedResults,
+    // 轻量化回调参数
+    buildNumber: isLightweightCallback ? buildNumber : undefined,
+    needsServerParsing: isLightweightCallback,
+  });
 
-    // Try to update execution status to failed if we have a runId
-    if (req.body?.runId) {
-      try {
-        console.log(`[CALLBACK] Attempting to mark execution ${req.body.runId} as failed due to callback processing error`);
-        await executionService.completeBatchExecution(req.body.runId, {
-          status: 'failed',
-          passedCases: 0,
-          failedCases: 1,
-          skippedCases: 0,
-          durationMs: 0,
-          results: [{
-            caseId: 0,
-            caseName: 'Callback Processing Error',
-            status: 'failed',
-            duration: 0,
-            errorMessage: `Callback processing failed: ${sanitizeErrorMessage(error, 'CALLBACK_FALLBACK')}`
-          }],
-        });
-        console.log(`[CALLBACK] Successfully marked execution ${req.body.runId} as failed`);
-      } catch (fallbackError) {
-        console.error(`[CALLBACK] Failed to mark execution as failed:`, fallbackError);
-      }
-    }
-
-    const sanitizedMessage = sanitizeErrorMessage(error, 'JENKINS_CALLBACK');
-    res.status(500).json({
+  if (!enqueued) {
+    // 队列已满：返回 429 让 Jenkins 稍后重试
+    rateLimitMiddleware.increment429Count();
+    logger.error('Callback queue full, returning 429', {
+      event: LOG_EVENTS.JENKINS_CALLBACK_QUEUE_FULL,
+      runId,
+      queueMetrics: callbackQueue.getMetrics(),
+    }, LOG_CONTEXTS.JENKINS);
+    return res.status(429).json({
       success: false,
-      message: sanitizedMessage,
-      processingTimeMs: processingTime
+      message: 'Callback queue is full. Please retry later.',
+      retryAfter: 5,
     });
   }
+
+  // 快速 ACK（202 Accepted：已接受，正在异步处理）
+  const ackTimeMs = Date.now() - receiveTimeMs;
+  return res.status(202).json({
+    success: true,
+    message: 'Callback accepted for async processing',
+    ackTimeMs,
+  });
 });
 
 /**
  * GET /api/jenkins/batch/:runId
  * 获取执行批次详情
  */
-router.get('/batch/:runId', async (req: Request, res: Response) => {
+router.get('/batch/:runId', generalAuthRateLimiter, optionalAuth, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.params.runId);
+    if (isNaN(runId) || runId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid runId parameter. Must be a positive integer.'
+      });
+    }
     const batch = await executionService.getBatchExecution(runId);
 
+    const e = batch.execution;
+
+    // 将 TypeORM entity 的 camelCase 字段映射为 snake_case，与前端 TestRunRecord 接口对齐
     res.json({
       success: true,
-      data: batch.execution
+      data: {
+        id: e.id,
+        project_id: e.projectId ?? null,
+        project_name: null,
+        status: e.status,
+        trigger_type: e.triggerType,
+        trigger_by: e.triggerBy,
+        trigger_by_name: e.triggerByName ?? null,
+        jenkins_job: e.jenkinsJob ?? null,
+        jenkins_build_id: e.jenkinsBuildId ?? null,
+        jenkins_url: e.jenkinsUrl ?? null,
+        total_cases: e.totalCases,
+        passed_cases: e.passedCases,
+        failed_cases: e.failedCases,
+        skipped_cases: e.skippedCases,
+        duration_ms: e.durationMs,
+        start_time: e.startTime ?? null,
+        end_time: e.endTime ?? null,
+        created_at: e.createdAt,
+      }
     });
   } catch (error: unknown) {
+    logger.errorLog(error, 'Failed to get batch execution', {
+      event: LOG_EVENTS.JENKINS_CALLBACK_FAILED,
+      runId: req.params.runId,
+    });
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ success: false, message });
   }
@@ -441,12 +1434,13 @@ router.get('/batch/:runId', async (req: Request, res: Response) => {
 
 /**
  * POST /api/jenkins/callback/test
- * 测试回调连接和认证 - 支持传入真实数据进行测试处理
+ * 测试回调连接 - 支持传入真实数据进行测试处理
  * 可选参数: runId, status, passedCases, failedCases, skippedCases, durationMs, results
  * 如果提供了 runId，则会真实处理回调数据；否则仅测试连接
+ * 通过 IP 白名单验证
  */
 router.post('/callback/test', [
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit
 ], async (req: Request, res: Response) => {
   const startTime = Date.now();
@@ -467,9 +1461,9 @@ router.post('/callback/test', [
     } = req.body;
 
     const isRealDataTest = !!runId && !!status;
+    const normalizedInputResults = Array.isArray(results) ? normalizeCallbackResults(results) : [];
 
-    console.log(`[CALLBACK-TEST] Received test callback from ${clientIP}`, {
-      authSource: req.jenkinsAuth?.source,
+    logger.debug(`Received test callback from ${clientIP}`, {
       timestamp,
       isRealDataTest,
       runId,
@@ -477,24 +1471,21 @@ router.post('/callback/test', [
       dataMode: isRealDataTest ? 'REAL_DATA' : 'CONNECTION_TEST',
       headers: {
         contentType: req.headers['content-type'],
-        hasAuth: !!req.headers.authorization,
-        hasApiKey: !!req.headers['x-api-key'],
-        hasSignature: !!req.headers['x-jenkins-signature'],
-      }
-    });
+      },
+      clientIP,
+    }, LOG_CONTEXTS.JENKINS);
 
     // 如果提供了真实回调数据，则处理它
     if (isRealDataTest) {
-      console.log(`[CALLBACK-TEST] Processing real callback data:`, {
+      logger.info(`Processing real callback test data`, {
         runId,
         status,
         passedCases: passedCases || 0,
         failedCases: failedCases || 0,
         skippedCases: skippedCases || 0,
         durationMs: durationMs || 0,
-        resultsCount: results?.length || 0
-      });
-
+        resultsCount: normalizedInputResults.length
+      }, LOG_CONTEXTS.JENKINS);
       try {
         // 真实处理回调
         await executionService.completeBatchExecution(runId, {
@@ -503,12 +1494,15 @@ router.post('/callback/test', [
           failedCases: failedCases || 0,
           skippedCases: skippedCases || 0,
           durationMs: durationMs || 0,
-          results: results || [],
+          results: normalizedInputResults,
         });
-
         const processingTime = Date.now() - startTime;
 
-        console.log(`[CALLBACK-TEST] Successfully processed real callback for runId ${runId} in ${processingTime}ms`);
+        logger.info(`Successfully processed real callback test data for runId ${runId}`, {
+          runId,
+          processingTimeMs: processingTime,
+          dataMode: 'REAL_DATA',
+        }, LOG_CONTEXTS.JENKINS);
 
         res.json({
           success: true,
@@ -516,10 +1510,8 @@ router.post('/callback/test', [
           mode: 'REAL_DATA',
           details: {
             receivedAt: timestamp,
-            authenticationMethod: req.jenkinsAuth?.source || 'unknown',
             clientIP,
             testMessage,
-            metadata: req.jenkinsAuth?.metadata,
             processedData: {
               runId,
               status,
@@ -527,21 +1519,19 @@ router.post('/callback/test', [
               failedCases: failedCases || 0,
               skippedCases: skippedCases || 0,
               durationMs: durationMs || 0,
-              resultsCount: results?.length || 0
+              resultsCount: normalizedInputResults.length
             }
           },
           diagnostics: {
             platform: process.env.NODE_ENV,
             jenkinsUrl: process.env.JENKINS_URL,
             callbackReceived: true,
-            authenticationPassed: true,
             networkConnectivity: 'OK',
             dataProcessing: 'SUCCESS',
             timestamp,
             processingTimeMs: processingTime
           },
           recommendations: [
-            '✅ 认证配置正确',
             '✅ 网络连接正常',
             '✅ 回调数据已成功处理',
             '✅ 可以开始集成 Jenkins'
@@ -551,11 +1541,13 @@ router.post('/callback/test', [
         const errorMessage = processError instanceof Error ? processError.message : 'Unknown error';
         const processingTime = Date.now() - startTime;
 
-        console.error(`[CALLBACK-TEST] Failed to process real callback for runId ${runId}:`, {
+        logger.error(`Failed to process real callback test data for runId ${runId}`, {
+          event: LOG_EVENTS.JENKINS_CALLBACK_TEST_FAILED,
+          runId,
           error: errorMessage,
           stack: processError instanceof Error ? processError.stack : undefined,
           processingTimeMs: processingTime
-        });
+        }, LOG_CONTEXTS.JENKINS);
 
         res.status(500).json({
           success: false,
@@ -582,21 +1574,17 @@ router.post('/callback/test', [
         mode: 'CONNECTION_TEST',
         details: {
           receivedAt: timestamp,
-          authenticationMethod: req.jenkinsAuth?.source || 'unknown',
           clientIP,
           testMessage,
-          metadata: req.jenkinsAuth?.metadata,
         },
         diagnostics: {
           platform: process.env.NODE_ENV,
           jenkinsUrl: process.env.JENKINS_URL,
           callbackReceived: true,
-          authenticationPassed: true,
           networkConnectivity: 'OK',
           timestamp,
         },
         recommendations: [
-          '✅ 认证配置正确',
           '✅ 网络连接正常',
           '✅ 可以开始集成 Jenkins',
           '💡 提示：可以传入 runId、status 等参数来测试真实回调处理'
@@ -605,11 +1593,12 @@ router.post('/callback/test', [
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[CALLBACK-TEST] ❌ Test failed:`, {
+    logger.error(`Test callback failed`, {
+      event: LOG_EVENTS.JENKINS_CALLBACK_FAILED,
       error: message,
       stack: error instanceof Error ? error.stack : undefined,
       timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({ 
       success: false, 
       message,
@@ -628,44 +1617,46 @@ router.post('/callback/test', [
 
 /**
  * POST /api/jenkins/callback/manual-sync/:runId
- * 手动同步执行状态 - 用于修复卡住的执行记录
+ * 手动同步执行状态 - 用于修复卡住的运行记录
  * 从数据库查询当前状态并允许手动更新
+ * 通过 IP 白名单验证
  */
 router.post('/callback/manual-sync/:runId', [
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   rateLimitMiddleware.limit
 ], async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.params.runId);
-    const { 
-      status, 
-      passedCases, 
-      failedCases, 
-      skippedCases, 
-      durationMs, 
-      results,
-      force = false 
-    } = req.body;
+    const syncBody = (req.body ?? {}) as Record<string, unknown>;
+    const status = syncBody['status'];
+    const passedCases = syncBody['passedCases'];
+    const failedCases = syncBody['failedCases'];
+    const skippedCases = syncBody['skippedCases'];
+    const durationMs = syncBody['durationMs'];
+    const results = syncBody['results'];
+    const force = typeof syncBody['force'] === 'boolean' ? syncBody['force'] : false;
+    const normalizedManualResults = Array.isArray(results) ? normalizeCallbackResults(results) : [];
 
-    if (isNaN(runId)) {
+    if (isNaN(runId) || runId <= 0) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid runId - must be a number'
+        message: 'Invalid runId parameter. Must be a positive integer.'
       });
     }
 
-    console.log(`[MANUAL-SYNC] Starting manual sync for runId: ${runId}`, {
+    logger.info(`Starting manual sync for execution`, {
+      runId,
       status,
       passedCases,
       failedCases,
       skippedCases,
       durationMs,
-      resultsCount: results?.length || 0,
+      resultsCount: normalizedManualResults.length,
       force,
       timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
-    // 查询现有执行记录
+    // 查询现有运行记录
     const execution = await executionService.getBatchExecution(runId);
     
     if (!execution.execution) {
@@ -675,22 +1666,22 @@ router.post('/callback/manual-sync/:runId', [
       });
     }
 
-    const executionData = execution.execution as any;
-    const currentStatus = executionData.status;
+    const executionData = execution.execution as unknown as Record<string, unknown>;
+    const currentStatus = executionData['status'];
 
     // 检查是否允许更新
-    if (!force && ['success', 'failed', 'aborted'].includes(currentStatus)) {
+    if (!force && ['success', 'failed', 'cancelled'].includes(currentStatus as string)) {
       return res.status(400).json({
         success: false,
         message: `Execution is already completed with status: ${currentStatus}. Use force=true to override.`,
         current: {
           id: runId,
           status: currentStatus,
-          totalCases: executionData.total_cases,
-          passedCases: executionData.passed_cases,
-          failedCases: executionData.failed_cases,
-          skippedCases: executionData.skipped_cases,
-          updatedAt: executionData.updated_at || executionData.created_at
+          totalCases: executionData['total_cases'],
+          passedCases: executionData['passed_cases'],
+          failedCases: executionData['failed_cases'],
+          skippedCases: executionData['skipped_cases'],
+          updatedAt: executionData['updated_at'] ?? executionData['created_at']
         }
       });
     }
@@ -707,22 +1698,26 @@ router.post('/callback/manual-sync/:runId', [
     const startTime = Date.now();
 
     await executionService.completeBatchExecution(runId, {
-      status: status as 'success' | 'failed' | 'aborted',
-      passedCases: passedCases || 0,
-      failedCases: failedCases || 0,
-      skippedCases: skippedCases || 0,
-      durationMs: durationMs || 0,
-      results: results || [],
+      status: status as 'success' | 'failed' | 'cancelled',
+      passedCases: typeof passedCases === 'number' ? passedCases : 0,
+      failedCases: typeof failedCases === 'number' ? failedCases : 0,
+      skippedCases: typeof skippedCases === 'number' ? skippedCases : 0,
+      durationMs: typeof durationMs === 'number' ? durationMs : 0,
+      results: normalizedManualResults,
     });
 
     const processingTime = Date.now() - startTime;
 
-    console.log(`[MANUAL-SYNC] Successfully synced runId ${runId} in ${processingTime}ms`);
+    logger.info(`Successfully completed manual sync for execution`, {
+      runId,
+      processingTimeMs: processingTime,
+      timestamp: new Date().toISOString(),
+    }, LOG_CONTEXTS.JENKINS);
 
     // 查询更新后的数据
     const updated = await executionService.getBatchExecution(runId);
 
-    const updatedData = updated.execution as any;
+    const updatedData = updated.execution as unknown as Record<string, unknown>;
 
     res.json({
       success: true,
@@ -730,20 +1725,20 @@ router.post('/callback/manual-sync/:runId', [
       previous: {
         id: runId,
         status: currentStatus,
-        totalCases: executionData.total_cases,
-        passedCases: executionData.passed_cases,
-        failedCases: executionData.failed_cases,
-        skippedCases: executionData.skipped_cases
+        totalCases: executionData['total_cases'],
+        passedCases: executionData['passed_cases'],
+        failedCases: executionData['failed_cases'],
+        skippedCases: executionData['skipped_cases']
       },
       updated: {
         id: runId,
-        status: updatedData.status,
-        totalCases: updatedData.total_cases,
-        passedCases: updatedData.passed_cases,
-        failedCases: updatedData.failed_cases,
-        skippedCases: updatedData.skipped_cases,
-        endTime: updatedData.end_time,
-        durationMs: updatedData.duration_ms
+        status: updatedData['status'],
+        totalCases: updatedData['total_cases'],
+        passedCases: updatedData['passed_cases'],
+        failedCases: updatedData['failed_cases'],
+        skippedCases: updatedData['skipped_cases'],
+        endTime: updatedData['end_time'],
+        durationMs: updatedData['duration_ms']
       },
       timing: {
         processingTimeMs: processingTime,
@@ -755,11 +1750,13 @@ router.post('/callback/manual-sync/:runId', [
     const message = error instanceof Error ? error.message : 'Unknown error';
     const errorDetails = error instanceof Error ? error.stack : undefined;
 
-    console.error(`[MANUAL-SYNC] Failed to sync runId:`, {
+    logger.error(`Failed to complete manual sync for execution`, {
+      event: LOG_EVENTS.JENKINS_MANUAL_SYNC_FAILED,
+      runId: req.params.runId,
       error: message,
       stack: errorDetails,
       timestamp: new Date().toISOString()
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
     res.status(500).json({
       success: false,
@@ -780,77 +1777,88 @@ router.post('/callback/manual-sync/:runId', [
 
 /**
  * POST /api/jenkins/callback/diagnose
- * 诊断回调连接问题 - 需要认证以保护系统信息
+ * 诊断回调连接问题 - 通过 IP 白名单验证以保护系统信息
+ *
+ * 安全建议：建议添加管理员权限验证
+ * TODO: 添加 requireAuth 和 requireRole('admin') 中间件以增强安全性
  */
 router.post('/callback/diagnose',
+  generalAuthRateLimiter,
+  optionalAuth,  // 添加可选认证，获取用户信息
   rateLimitMiddleware.limit,
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   async (req: Request, res: Response) => {
+  // 检查用户权限（如果已认证）
+  if (req.user && process.env.NODE_ENV === 'production') {
+    // 在生产环境中，建议检查用户是否为管理员
+    // if (req.user.role !== 'admin') {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: 'Access denied. Admin privileges required.'
+    //   });
+    // }
+    logger.info('Diagnostic request from authenticated user', {
+      userId: req.user.id,
+      userEmail: req.user.email,
+    }, LOG_CONTEXTS.JENKINS);
+  }
   try {
     const clientIP = req.ip || req.socket?.remoteAddress || 'unknown';
     const timestamp = new Date().toISOString();
 
-    console.log(`[CALLBACK-DIAGNOSE] Diagnostic request from ${clientIP}`, {
+    logger.debug(`Received callback diagnostic request`, {
+      clientIP,
       timestamp,
       headers: Object.keys(req.headers).filter(k => k.toLowerCase().includes('auth') || k.toLowerCase().includes('jenkins'))
-    });
+    }, LOG_CONTEXTS.JENKINS);
 
-    // 分析请求中的认证信息
-    const diagnostics: any = {
+    // 分析回调配置
+    const envConfig = {
+      jenkins_url: !!process.env.JENKINS_URL,
+      jenkins_user: !!process.env.JENKINS_USER,
+      jenkins_token: !!process.env.JENKINS_TOKEN,
+      jenkins_allowed_ips: !!process.env.JENKINS_ALLOWED_IPS,
+    };
+    const diagnostics: {
+      timestamp: string;
+      clientIP: string;
+      environmentVariablesConfigured: typeof envConfig;
+      requestHeaders: Record<string, unknown>;
+      suggestions: string[];
+      nextSteps?: string[];
+    } = {
       timestamp,
       clientIP,
-      environmentVariablesConfigured: {
-        jenkins_url: !!process.env.JENKINS_URL,
-        jenkins_user: !!process.env.JENKINS_USER,
-        jenkins_token: !!process.env.JENKINS_TOKEN,
-        jenkins_api_key: !!process.env.JENKINS_API_KEY,
-        jenkins_jwt_secret: !!process.env.JENKINS_JWT_SECRET,
-        jenkins_signature_secret: !!process.env.JENKINS_SIGNATURE_SECRET,
-        jenkins_allowed_ips: !!process.env.JENKINS_ALLOWED_IPS,
-      },
+      environmentVariablesConfigured: envConfig,
       requestHeaders: {
-        hasAuthorization: !!req.headers.authorization,
-        hasApiKey: !!req.headers['x-api-key'],
-        hasSignature: !!req.headers['x-jenkins-signature'],
-        hasTimestamp: !!req.headers['x-jenkins-timestamp'],
         hasContentType: !!req.headers['content-type'],
       },
-      suggestions: [] as string[],
+      suggestions: [],
     };
 
     // 分析问题并给出建议
-    if (!diagnostics.environmentVariablesConfigured.jenkins_api_key) {
-      diagnostics.suggestions.push('❌ 未配置 JENKINS_API_KEY');
+    if (!diagnostics.environmentVariablesConfigured.jenkins_token) {
+      diagnostics.suggestions.push('⚠️  未配置 JENKINS_TOKEN，Jenkins API 集成可能无法正常工作');
     }
-    if (!diagnostics.environmentVariablesConfigured.jenkins_jwt_secret) {
-      diagnostics.suggestions.push('❌ 未配置 JENKINS_JWT_SECRET');
-    }
-    if (!diagnostics.environmentVariablesConfigured.jenkins_signature_secret) {
-      diagnostics.suggestions.push('❌ 未配置 JENKINS_SIGNATURE_SECRET');
-    }
-
-    if (!diagnostics.requestHeaders.hasApiKey && 
-        !diagnostics.requestHeaders.hasAuthorization && 
-        !diagnostics.requestHeaders.hasSignature) {
-      diagnostics.suggestions.push('⚠️  请求中没有任何认证信息（API Key、JWT 或签名）');
+    if (!diagnostics.environmentVariablesConfigured.jenkins_allowed_ips) {
+      diagnostics.suggestions.push('⚠️  未配置 JENKINS_ALLOWED_IPS，将允许所有 IP 访问回调接口');
     }
 
     if (diagnostics.suggestions.length === 0) {
       diagnostics.suggestions.push('✅ 所有必需的环境变量已配置');
-      diagnostics.suggestions.push('✅ 请求包含认证信息');
+      diagnostics.suggestions.push('✅ 回调接口已就绪');
     }
 
     // 提供配置步骤
     diagnostics.nextSteps = [
-      '1️⃣ 确保 .env 文件中配置了所有必需的环境变量',
-      '2️⃣ 选择认证方式：API Key（最简单）、JWT 或签名',
+      '1️⃣ 配置 JENKINS_ALLOWED_IPS 以限制回调源 IP（推荐）',
+      '2️⃣ 配置 JENKINS_URL、JENKINS_USER、JENKINS_TOKEN 用于 API 集成',
       '3️⃣ 使用 curl 测试回调：',
       '   curl -X POST http://localhost:3000/api/jenkins/callback/test \\',
-      '     -H "X-Api-Key: your-api-key" \\',
       '     -H "Content-Type: application/json" \\',
       '     -d \'{"testMessage": "hello"}\'',
       '4️⃣ 如果收到成功响应，可以开始集成 Jenkins',
-      '📚 详细文档：docs/JENKINS_AUTH_QUICK_START.md'
+      '📚 详细文档：docs/JENKINS_CONFIG_GUIDE.md'
     ];
 
     res.json({
@@ -861,7 +1869,10 @@ router.post('/callback/diagnose',
 
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[CALLBACK-DIAGNOSE] Error:`, message);
+    logger.error(`Callback diagnostic failed`, {
+      event: LOG_EVENTS.JENKINS_DIAGNOSE_FAILED,
+      error: message,
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
       success: false,
       message: `Diagnostic failed: ${message}`
@@ -873,25 +1884,59 @@ router.post('/callback/diagnose',
  * GET /api/jenkins/health
  * Jenkins 连接健康检查 - 包括详细的诊断信息
  */
-router.get('/health', async (req: Request, res: Response) => {
+router.get('/health', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
-    console.log(`[/api/jenkins/health] Starting Jenkins health check...`);
+    logger.info(`Starting Jenkins health check...`, {}, LOG_CONTEXTS.JENKINS);
 
     // 测试 Jenkins 连接
-    const jenkinsUrl = process.env.JENKINS_URL || 'http://jenkins.wiac.xyz:8080/';
-    const jenkinsUser = process.env.JENKINS_USER || 'root';
+    // 生产环境强制要求配置 Jenkins 环境变量
+    if (process.env.NODE_ENV === 'production') {
+      if (!process.env.JENKINS_URL || !process.env.JENKINS_USER || !process.env.JENKINS_TOKEN) {
+        return res.status(500).json({
+          success: false,
+          message: 'Jenkins configuration is missing in production environment',
+          data: {
+            connected: false,
+            details: {
+              issues: [
+                '❌ 生产环境缺少必需的 Jenkins 配置',
+                !process.env.JENKINS_URL ? '❌ JENKINS_URL 未配置' : '',
+                !process.env.JENKINS_USER ? '❌ JENKINS_USER 未配置' : '',
+                !process.env.JENKINS_TOKEN ? '❌ JENKINS_TOKEN 未配置' : '',
+              ].filter(Boolean),
+              recommendations: [
+                '请在环境变量中配置 JENKINS_URL',
+                '请在环境变量中配置 JENKINS_USER',
+                '请在环境变量中配置 JENKINS_TOKEN',
+              ],
+            },
+          },
+        });
+      }
+    }
+
+    const jenkinsUrl = process.env.JENKINS_URL || DEFAULT_JENKINS_URL;
+    const jenkinsUser = process.env.JENKINS_USER || DEFAULT_JENKINS_USER;
     const jenkinsToken = process.env.JENKINS_TOKEN || '';
-    
+
     // 健康检查数据
-    const healthCheckData: any = {
+    const healthCheckData: {
+      timestamp: string;
+      duration: number;
+      checks: Record<string, { success: boolean; duration: number }>;
+      diagnostics: Record<string, unknown>;
+      issues: string[];
+      recommendations: string[];
+    } = {
       timestamp: new Date().toISOString(),
       duration: 0,
       checks: {
         connectionTest: { success: false, duration: 0 },
         authenticationTest: { success: false, duration: 0 },
         apiResponseTest: { success: false, duration: 0 },
+        targetJobInspection: { success: false, duration: 0 },
       },
       diagnostics: {
         configPresent: {
@@ -905,7 +1950,9 @@ router.get('/health', async (req: Request, res: Response) => {
     };
 
     // 1. 测试基础连接
-    console.log(`[/api/jenkins/health] Testing connection to:`, jenkinsUrl);
+    logger.debug(`Testing connection to Jenkins`, {
+      jenkinsUrl,
+    }, LOG_CONTEXTS.JENKINS);
     const connStartTime = Date.now();
     
     // 构建 API URL（处理 URL 尾部斜杠）
@@ -915,13 +1962,15 @@ router.get('/health', async (req: Request, res: Response) => {
     }
     apiUrl += 'api/json';
     
-    console.log(`[/api/jenkins/health] Final API URL:`, apiUrl);
+    logger.debug(`Final API URL for health check`, {
+      apiUrl,
+    }, LOG_CONTEXTS.JENKINS);
     
     const credentials = Buffer.from(`${jenkinsUser}:${jenkinsToken}`).toString('base64');
     
     // 设置超时
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+    const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
     
     try {
       const response = await fetch(apiUrl, {
@@ -939,23 +1988,53 @@ router.get('/health', async (req: Request, res: Response) => {
       healthCheckData.diagnostics.connectionStatus = response.status;
       healthCheckData.diagnostics.statusText = response.statusText;
 
-      console.log(`[/api/jenkins/health] Response status:`, response.status);
+      logger.debug(`Jenkins health check response received`, {
+        status: response.status,
+        statusText: response.statusText,
+        duration: healthCheckData.checks.connectionTest.duration,
+      }, LOG_CONTEXTS.JENKINS);
 
       if (response.ok) {
-        const data = await response.json() as any;
+        const data = await response.json() as Record<string, unknown>;
         healthCheckData.checks.authenticationTest.success = true;
         healthCheckData.checks.apiResponseTest.success = true;
+        let triggerReady = false;
+
+        const targetJobStart = Date.now();
+        try {
+          const targetJobInspection = await jenkinsService.inspectConfiguredApiJob();
+          healthCheckData.checks.targetJobInspection.duration = Date.now() - targetJobStart;
+          healthCheckData.checks.targetJobInspection.success = Boolean(targetJobInspection?.triggerReady);
+          healthCheckData.diagnostics.targetJobInspection = targetJobInspection;
+          triggerReady = Boolean(targetJobInspection?.triggerReady);
+
+          if (targetJobInspection) {
+            healthCheckData.issues.push(...targetJobInspection.issues);
+            healthCheckData.recommendations.push(...targetJobInspection.recommendations);
+          }
+        } catch (inspectionError) {
+          healthCheckData.checks.targetJobInspection.duration = Date.now() - targetJobStart;
+          healthCheckData.diagnostics.targetJobInspectionError =
+            inspectionError instanceof Error ? inspectionError.message : String(inspectionError);
+          healthCheckData.issues.push('❌ 无法读取目标 Jenkins Job 的实时配置');
+          healthCheckData.recommendations.push('检查 Jenkins Job 权限，确保当前账号具备读取任务配置的权限。');
+        }
+
+        healthCheckData.duration = Date.now() - startTime;
         
         res.json({
           success: true,
           data: {
             connected: true,
+            triggerReady,
             jenkinsUrl,
-            version: data.version || 'unknown',
+            version: typeof data['version'] === 'string' ? data['version'] : 'unknown',
             timestamp: new Date().toISOString(),
             details: healthCheckData,
           },
-          message: 'Jenkins is healthy'
+          message: triggerReady
+            ? 'Jenkins is healthy'
+            : 'Jenkins is reachable, but the target job needs configuration fixes before the platform can trigger it'
         });
       } else if (response.status === 401 || response.status === 403) {
         healthCheckData.issues.push('❌ 认证失败：API Token 或用户名可能不正确');
@@ -1041,23 +2120,26 @@ router.get('/health', async (req: Request, res: Response) => {
 
 /**
  * GET /api/jenkins/diagnose
- * 诊断执行问题 - 需要认证以保护系统信息
+ * 诊断执行问题 - 通过 IP 白名单验证以保护系统信息
  */
 router.get('/diagnose',
+  generalAuthRateLimiter,
   rateLimitMiddleware.limit,
-  jenkinsAuthMiddleware.verify,
+  ipWhitelistMiddleware.verify,
   async (req: Request, res: Response) => {
   try {
     const runId = parseInt(req.query.runId as string);
-    
-    if (!runId) {
+
+    if (isNaN(runId) || runId <= 0) {
       return res.status(400).json({
         success: false,
-        message: 'runId parameter is required'
+        message: 'Invalid runId parameter. Must be a positive integer.'
       });
     }
 
-    console.log(`[/api/jenkins/diagnose] Diagnosing execution ${runId}...`);
+    logger.info(`Starting execution diagnosis`, {
+      runId,
+    }, LOG_CONTEXTS.JENKINS);
 
     // 获取执行批次信息
     const batch = await executionService.getBatchExecution(runId);
@@ -1194,7 +2276,10 @@ router.get('/diagnose',
 
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[/api/jenkins/diagnose] Error:`, message);
+    logger.error(`Execution diagnosis failed`, {
+      event: LOG_EVENTS.JENKINS_DIAGNOSE_FAILED,
+      error: message,
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
       success: false,
       message: `Diagnosis failed: ${message}`
@@ -1206,9 +2291,9 @@ router.get('/diagnose',
  * GET /api/jenkins/monitoring/stats
  * 获取监控统计信息
  */
-router.get('/monitoring/stats', async (_req, res) => {
+router.get('/monitoring/stats', generalAuthRateLimiter, rateLimitMiddleware.limit, async (_req, res) => {
   try {
-    console.log(`[MONITORING] Getting monitoring statistics...`);
+    logger.info(`Getting monitoring statistics...`, {}, LOG_CONTEXTS.JENKINS);
 
     // 获取混合同步服务的统计信息
     const { hybridSyncService } = await import('../services/HybridSyncService');
@@ -1256,7 +2341,10 @@ router.get('/monitoring/stats', async (_req, res) => {
 
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[MONITORING] Failed to get stats:`, message);
+    logger.error(`Failed to get monitoring statistics`, {
+      event: LOG_EVENTS.JENKINS_MONITORING_STATS_FAILED,
+      error: message,
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
       success: false,
       message: `Failed to get monitoring stats: ${message}`
@@ -1268,11 +2356,16 @@ router.get('/monitoring/stats', async (_req, res) => {
  * POST /api/jenkins/monitoring/fix-stuck
  * 修复卡住的执行
  */
-router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
+router.post('/monitoring/fix-stuck', generalAuthRateLimiter, rateLimitMiddleware.limit, async (req: Request, res: Response) => {
   try {
-    const { timeoutMinutes = 5, dryRun = false } = req.body;
+    const fixBody = (req.body ?? {}) as Record<string, unknown>;
+    const timeoutMinutes = typeof fixBody['timeoutMinutes'] === 'number' ? fixBody['timeoutMinutes'] : 5;
+    const dryRun = typeof fixBody['dryRun'] === 'boolean' ? fixBody['dryRun'] : false;
 
-    console.log(`[MONITORING] ${dryRun ? 'Simulating' : 'Starting'} fix for stuck executions (timeout: ${timeoutMinutes}min)`);
+    logger.info(`${dryRun ? 'Simulating' : 'Starting'} fix for stuck executions`, {
+      timeoutMinutes,
+      dryRun,
+    }, LOG_CONTEXTS.JENKINS);
 
     if (dryRun) {
       // 只查询，不修复
@@ -1317,11 +2410,144 @@ router.post('/monitoring/fix-stuck', async (req: Request, res: Response) => {
 
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[MONITORING] Failed to fix stuck executions:`, message);
+    logger.error(`Failed to fix stuck executions`, {
+      event: LOG_EVENTS.JENKINS_FIX_STUCK_FAILED,
+      error: message,
+    }, LOG_CONTEXTS.JENKINS);
     res.status(500).json({
       success: false,
       message: `Failed to fix stuck executions: ${message}`
     });
+  }
+});
+
+/**
+ * GET /api/jenkins/monitor/status
+ * Get execution monitor service status and statistics
+ */
+router.get('/monitor/status', generalAuthRateLimiter, rateLimitMiddleware.limit, async (_req: Request, res: Response) => {
+  try {
+    const { executionMonitorService } = await import('../services/ExecutionMonitorService');
+
+    const status = executionMonitorService.getStatus();
+    const stats = executionMonitorService.getStats();
+
+    logger.debug('Monitor status requested', {
+      isRunning: status.isRunning,
+      cyclesRun: stats.cyclesRun,
+    }, LOG_CONTEXTS.MONITOR);
+
+    res.json({
+      success: true,
+      data: {
+        status: status.isRunning ? 'running' : 'stopped',
+        isRunning: status.isRunning,
+        config: status.config,
+        stats: {
+          cyclesRun: stats.cyclesRun,
+          totalExecutionsChecked: stats.totalExecutionsChecked,
+          totalExecutionsUpdated: stats.totalExecutionsUpdated,
+          totalCompilationFailures: stats.totalCompilationFailures,
+          totalErrors: stats.totalErrors,
+          lastCycleTime: stats.lastCycleTime,
+          lastCycleDuration: stats.lastCycleDuration,
+          isProcessing: stats.isProcessing,
+        },
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to get monitor status', {
+      event: LOG_EVENTS.JENKINS_MONITOR_STATUS_FAILED,
+      error: message,
+    }, LOG_CONTEXTS.MONITOR);
+    res.status(500).json({
+      success: false,
+      message: `Failed to get monitor status: ${message}`,
+    });
+  }
+});
+
+/**
+ * GET /api/jenkins/metrics
+ * 获取 Jenkins 集成相关的所有监控指标（P2-C）
+ *
+ * 聚合指标：
+ * - rateLimit: 429 次数、每分钟 429 速率、活跃 IP 数
+ * - callbackQueue: 队列深度、总入队/处理/失败数、平均排队时长、重试分布
+ * - jenkinsQueue: queueId 轮询总次数、成功解析数、超时/取消数、平均/最大等待时长
+ * - process: 内存使用、进程运行时长
+ *
+ * 访问控制：需要认证（通过 optionalAuth 获取用户信息，如未认证则仅返回部分指标）
+ */
+router.get('/metrics', [generalAuthRateLimiter, optionalAuth], (_req: Request, res: Response) => {
+  try {
+    const rateLimitMetrics = rateLimitMiddleware.getMetrics();
+    const queueMetrics = callbackQueue.getMetrics();
+    const jenkinsQueueMetrics = jenkinsService.getQueueMetrics();
+    const memUsage = process.memoryUsage();
+
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      data: {
+        /**
+         * 速率限制指标
+         */
+        rateLimit: {
+          total429Count: rateLimitMetrics.total429Count,
+          rate429PerMinute: rateLimitMetrics.rate429PerMinute,
+          activeIPs: rateLimitMetrics.activeIPs,
+        },
+
+        /**
+         * 回调队列指标（P2-B）
+         */
+        callbackQueue: {
+          queueDepth: queueMetrics.queueDepth,
+          workerBusy: queueMetrics.workerBusy,
+          totalEnqueued: queueMetrics.totalEnqueued,
+          totalProcessed: queueMetrics.totalProcessed,
+          totalFailed: queueMetrics.totalFailed,
+          avgWaitMs: queueMetrics.avgWaitMs,
+          maxWaitMs: queueMetrics.maxWaitMs,
+          retryDistribution: queueMetrics.retryDistribution,
+          // 最近 20 条排队时长样本（用于画趋势图）
+          recentWaitSamples: queueMetrics.waitTimeSamples.slice(-20),
+        },
+
+        /**
+         * Jenkins 构建队列指标（P2-A）
+         */
+        jenkinsQueue: {
+          totalPolls: jenkinsQueueMetrics.totalPolls,
+          resolvedCount: jenkinsQueueMetrics.resolvedCount,
+          timeoutCount: jenkinsQueueMetrics.timeoutCount,
+          avgWaitMs: jenkinsQueueMetrics.avgWaitMs,
+          maxWaitMs: jenkinsQueueMetrics.maxWaitMs,
+          resolutionRate: jenkinsQueueMetrics.totalPolls > 0
+            ? Math.round((jenkinsQueueMetrics.resolvedCount / jenkinsQueueMetrics.totalPolls) * 100)
+            : 0,
+          // 最近 20 条 Jenkins 队列等待时长样本
+          recentWaitSamples: jenkinsQueueMetrics.waitTimeSamples.slice(-20),
+        },
+
+        /**
+         * 进程级指标
+         */
+        process: {
+          uptimeSeconds: Math.floor(process.uptime()),
+          memoryMB: {
+            rss: Math.round(memUsage.rss / 1024 / 1024),
+            heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+            heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+          },
+        },
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, message });
   }
 });
 

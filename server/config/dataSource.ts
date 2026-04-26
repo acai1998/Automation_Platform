@@ -1,5 +1,6 @@
 import { DataSource, DataSourceOptions } from 'typeorm';
 import logger from '../utils/logger';
+import { LOG_CONTEXTS } from './logging';
 import { getTypeOrmConfig, sanitizeConfigForLogging, DB_CONFIG_CONSTANTS } from './dbConfig';
 import * as path from 'path';
 
@@ -9,10 +10,17 @@ import * as path from 'path';
  */
 function getEntityPaths(): string[] {
   const isJsRuntime = path.extname(__filename) === '.js';
-  const entityPath = isJsRuntime
-    ? path.resolve(process.cwd(), 'dist', 'server', 'server', 'entities', '*.js')
-    : path.resolve(process.cwd(), 'server', 'entities', '*.ts');
-  return [entityPath];
+  if (isJsRuntime) {
+    // 生产环境：TypeScript 编译时 outDir=dist/server，源码在 server/ 目录
+    // 所以实体文件实际路径是 dist/server/server/entities/*.js
+    // 同时兼容旧路径 dist/server/entities/*.js（以防万一）
+    return [
+      path.resolve(process.cwd(), 'dist', 'server', 'server', 'entities', '*.js'),
+      path.resolve(process.cwd(), 'dist', 'server', 'entities', '*.js'),
+    ];
+  }
+  // 开发环境：直接读取 TypeScript 源文件
+  return [path.resolve(process.cwd(), 'server', 'entities', '*.ts')];
 }
 
 /**
@@ -58,7 +66,7 @@ export async function initializeDataSource(): Promise<DataSource> {
   try {
     if (!AppDataSource.isInitialized) {
       // 记录初始化开始
-      logger.info('Initializing TypeORM DataSource...', sanitizeConfigForLogging(dataSourceOptions));
+      logger.info('Initializing TypeORM DataSource...', sanitizeConfigForLogging(dataSourceOptions), LOG_CONTEXTS.DATABASE);
 
       await AppDataSource.initialize();
 
@@ -69,9 +77,9 @@ export async function initializeDataSource(): Promise<DataSource> {
         entitiesCount: AppDataSource.entityMetadatas.length,
         entityNames: entityNames,
         connectionPoolSize: dataSourceOptions.extra?.connectionLimit || 'default',
-      });
+      }, LOG_CONTEXTS.DATABASE);
     } else {
-      logger.debug('TypeORM DataSource already initialized, skipping...');
+      logger.debug('TypeORM DataSource already initialized, skipping...', {}, LOG_CONTEXTS.DATABASE);
     }
     return AppDataSource;
   } catch (error) {
@@ -85,7 +93,7 @@ export async function initializeDataSource(): Promise<DataSource> {
       config: sanitizeConfigForLogging(dataSourceOptions),
       entityPaths: dataSourceOptions.entities,
       nodeEnv: process.env.NODE_ENV,
-    });
+    }, LOG_CONTEXTS.DATABASE);
 
     // 重新抛出错误，保持原始错误信息
     throw new Error(`Database initialization failed: ${errorMessage}`);
@@ -96,7 +104,7 @@ export async function initializeDataSource(): Promise<DataSource> {
 export async function closeDataSource(): Promise<void> {
   try {
     if (AppDataSource.isInitialized) {
-      logger.info('Closing TypeORM DataSource...');
+      logger.info('Closing TypeORM DataSource...', {}, LOG_CONTEXTS.DATABASE);
 
       // 优雅关闭：等待所有活跃连接完成
       await AppDataSource.destroy();
@@ -104,9 +112,9 @@ export async function closeDataSource(): Promise<void> {
       logger.info('TypeORM DataSource closed successfully', {
         database: (dataSourceOptions as any).database,
         host: (dataSourceOptions as any).host,
-      });
+      }, LOG_CONTEXTS.DATABASE);
     } else {
-      logger.debug('TypeORM DataSource not initialized, nothing to close');
+      logger.debug('TypeORM DataSource not initialized, nothing to close', {}, LOG_CONTEXTS.DATABASE);
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -116,7 +124,7 @@ export async function closeDataSource(): Promise<void> {
       error: errorMessage,
       stack: errorStack,
       config: sanitizeConfigForLogging(dataSourceOptions),
-    });
+    }, LOG_CONTEXTS.DATABASE);
 
     // 重新抛出错误以便调用方处理
     throw new Error(`Database connection close failed: ${errorMessage}`);
@@ -130,21 +138,21 @@ export async function closeDataSource(): Promise<void> {
 export async function checkDataSourceHealth(): Promise<boolean> {
   try {
     if (!AppDataSource.isInitialized) {
-      logger.warn('DataSource not initialized for health check');
+      logger.warn('DataSource not initialized for health check', {}, LOG_CONTEXTS.DATABASE);
       return false;
     }
 
     // 执行简单查询测试连接
     await AppDataSource.query('SELECT 1 as health_check');
 
-    logger.debug('DataSource health check passed');
+    logger.debug('DataSource health check passed', {}, LOG_CONTEXTS.DATABASE);
     return true;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error('DataSource health check failed', {
       error: errorMessage,
       isInitialized: AppDataSource.isInitialized,
-    });
+    }, LOG_CONTEXTS.DATABASE);
     return false;
   }
 }

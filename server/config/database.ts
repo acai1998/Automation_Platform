@@ -2,18 +2,20 @@ import mysql from 'mysql2/promise';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from './logging';
 import { AppDataSource, initializeDataSource } from './dataSource';
+import { getSecretOrEnv } from '../utils/secrets';
 
 // MariaDB 连接配置
-const DB_NAME = process.env.DB_NAME || 'autotest';
+// 使用 getSecretOrEnv 支持从 Docker Secrets 或环境变量读取
+const DB_NAME = getSecretOrEnv('DB_NAME', 'autotest');
 
 const dbConfigWithoutDB = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '3306'),
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD,
+  host: getSecretOrEnv('DB_HOST', 'localhost'),
+  port: parseInt(getSecretOrEnv('DB_PORT', '3306')),
+  user: getSecretOrEnv('DB_USER', 'root'),
+  password: getSecretOrEnv('DB_PASSWORD'),  // 支持从 Docker Secret 读取
   waitForConnections: true,
-  connectionLimit: 5,  // 减少连接数限制
-  queueLimit: 0,
+  connectionLimit: 20,  // 提升连接数上限，支持高并发执行场景
+  queueLimit: 30,       // 限制排队请求数，防止内存泄漏
   enableKeepAlive: true,
   keepAliveInitialDelay: 10000,
   // 连接超时和空闲超时配置
