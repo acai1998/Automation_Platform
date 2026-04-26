@@ -55,7 +55,7 @@ function SummaryStats({ docs }: { docs: AiCaseWorkspaceDocument[] }) {
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div className="grid grid-cols-4 gap-3">
       {cards.map((card) => (
         <div key={card.label} className={`${card.bg} rounded-xl p-4 flex flex-col gap-1`}>
           <span className="text-xs text-slate-500 dark:text-slate-400">{card.label}</span>

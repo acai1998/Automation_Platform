@@ -472,7 +472,7 @@ export default function ReportDetail() {
             </span>
           </nav>
 
-          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+          <div className="flex items-start justify-between gap-6">
             <div className="space-y-2">
               <div className="flex items-center gap-3 flex-wrap">
                 <button
@@ -545,7 +545,7 @@ export default function ReportDetail() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-4 gap-4 mb-6">
           <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden">
             <div className="absolute top-0 right-0 w-16 h-16 bg-primary/5 -mr-8 -mt-8 rounded-full" />
             <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">总用例</p>
@@ -838,8 +838,8 @@ export default function ReportDetail() {
                       {expanded && (
                         <tr className="bg-slate-50 dark:bg-slate-950/50">
                           <td className="p-6" colSpan={6}>
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                              <div className="lg:col-span-2 space-y-4">
+                            <div className="grid grid-cols-3 gap-6">
+                              <div className="col-span-2 space-y-4">
                                                                 {failed ? (
                                   <>
                                     {item.error_message ? (

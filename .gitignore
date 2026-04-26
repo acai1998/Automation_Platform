@@ -24,6 +24,9 @@ CLAUDE.md
 AGENTS.md
 Jenkinsfile.bak
 Jenkinsfile.optimized
+.markdownlint.yaml
+.markdownlint.json
+.docs\报错日志.txt
 
 
 # Distribution / packaging
@@ -192,3 +195,4 @@ secrets/
 db_password.txt
 *_secret.txt
 *.pem
+docs/报错日志.txt

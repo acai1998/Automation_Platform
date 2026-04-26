@@ -19,9 +19,7 @@ import {
   Gauge,
   BrainCircuit,
   PanelLeftClose,
-  PanelLeftOpen,
-  X,
-  Menu,
+  PanelLeftOpen
 } from "lucide-react";
 
 // ----------------------------------------------------------------
@@ -558,7 +556,7 @@ function SidebarContent({ location, onNavigate, mode, onToggle }: SidebarContent
 // ----------------------------------------------------------------
 export function Sidebar() {
   const [location, setLocation] = useLocation();
-  const { navState, isDrawerOpen, toggleNav, openDrawer, closeDrawer } = useNavCollapse();
+  const { navState, toggleNav } = useNavCollapse();
 
   const handleNavigate = useCallback(
     (href: string) => {
@@ -567,92 +565,23 @@ export function Sidebar() {
     [setLocation]
   );
 
-  // ── Desktop sidebar (expanded or icon-only) ──
-  if (navState === "expanded" || navState === "icon-only") {
-    const w = navState === "expanded" ? 200 : 72;
-    return (
-      <aside
-        style={{
-          width: w,
-          minWidth: w,
-          transition: "width 0.28s cubic-bezier(0.4,0,0.2,1), min-width 0.28s cubic-bezier(0.4,0,0.2,1)",
-        }}
-        className="hidden lg:flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200/80 dark:border-slate-800 h-full overflow-hidden"
-      >
-        <SidebarContent
-          location={location}
-          onNavigate={handleNavigate}
-          mode={navState}
-          onToggle={toggleNav}
-        />
-      </aside>
-    );
-  }
+  const w = navState === "expanded" ? 200 : 72;
 
-  // ── Drawer mode (mobile / hidden) ──
   return (
-    <>
-      {/* Mobile hamburger trigger — fixed top-left since Header is removed */}
-      <button
-        type="button"
-        onClick={openDrawer}
-        title="打开导航菜单"
-        className="
-          lg:hidden fixed top-3 left-3 z-30
-          flex items-center justify-center w-9 h-9
-          rounded-lg bg-white/90 dark:bg-slate-900/90
-          backdrop-blur-sm
-          border border-slate-200/80 dark:border-slate-700/80
-          shadow-sm shadow-slate-200/60 dark:shadow-slate-900/60
-          text-slate-500 dark:text-slate-400
-          hover:bg-slate-50 dark:hover:bg-slate-800
-          hover:text-slate-700 dark:hover:text-white
-          active:scale-95
-          transition-all duration-200
-        "
-      >
-        <Menu className="h-4 w-4" />
-      </button>
-
-      {/* Backdrop */}
-      {isDrawerOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[1px] lg:hidden
-            animate-in fade-in-0 duration-200"
-          onClick={closeDrawer}
-          aria-hidden="true"
-        />
-      )}
-
-      {/* Drawer panel */}
-      <div
-        style={{
-          width: "min(70vw, 300px)",
-          transform: isDrawerOpen ? "translateX(0)" : "translateX(-100%)",
-          transition: "transform 0.28s cubic-bezier(0.4,0,0.2,1)",
-        }}
-        className="fixed left-0 top-0 z-50 h-full
-          bg-white dark:bg-slate-900 border-r border-slate-200/80 dark:border-slate-800
-          flex flex-col shadow-2xl lg:hidden"
-      >
-        {/* Drawer close button */}
-        <button
-          type="button"
-          onClick={closeDrawer}
-          className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-        >
-          <X className="h-4 w-4" />
-        </button>
-
-        <SidebarContent
-          location={location}
-          onNavigate={(href) => {
-            handleNavigate(href);
-            closeDrawer();
-          }}
-          mode="expanded"
-        />
-      </div>
-    </>
+    <aside
+      style={{
+        width: w,
+        minWidth: w,
+        transition: "width 0.28s cubic-bezier(0.4,0,0.2,1), min-width 0.28s cubic-bezier(0.4,0,0.2,1)",
+      }}
+      className="flex h-full flex-col overflow-hidden border-r border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-900"
+    >
+      <SidebarContent
+        location={location}
+        onNavigate={handleNavigate}
+        mode={navState}
+        onToggle={toggleNav}
+      />
+    </aside>
   );
 }

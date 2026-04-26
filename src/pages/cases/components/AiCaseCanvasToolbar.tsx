@@ -187,8 +187,8 @@ export function AiCaseCanvasToolbar({
           {/* 面板按钮（桌端显示） */}
           {onTogglePanel ? (
             <>
-              <div className="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5 hidden lg:block" />
-              <div className="hidden lg:block">
+              <div className="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5" />
+              <div>
                 <ToolbarButton
                   tooltip={panelOpen ? '关闭工作台面板' : '打开工作台面板'}
                   onClick={onTogglePanel}

@@ -88,7 +88,7 @@ function SummaryStats({ docs }: { docs: AiCaseWorkspaceDocument[] }) {
   ], [docs.length, s.totalCases, s.passRate, s.syncedDocs]);
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div className="grid grid-cols-4 gap-3">
       {cards.map((card) => (
         <div
           key={card.label}
@@ -166,7 +166,7 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
 
   return (
     <Sheet open={open} onOpenChange={handleClose}>
-      <SheetContent className="w-full sm:max-w-lg flex flex-col gap-0 p-0 overflow-hidden" preventClose={isSubmitting}>
+      <SheetContent className="w-full max-w-lg flex flex-col gap-0 p-0 overflow-hidden" preventClose={isSubmitting}>
         <SheetHeader className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-sm shadow-indigo-500/25 flex-shrink-0">
@@ -358,7 +358,7 @@ export default function AICaseCreate() {
               <h1 className="text-sm font-semibold text-slate-900 dark:text-white leading-tight truncate">
                 AI 生成用例
               </h1>
-              <p className="text-xs text-slate-400 dark:text-slate-500 leading-tight mt-0.5 hidden sm:block">
+              <p className="text-xs text-slate-400 dark:text-slate-500 leading-tight mt-0.5">
                 输入需求，AI 自动为你生成完整测试用例脑图
               </p>
             </div>
@@ -400,7 +400,7 @@ export default function AICaseCreate() {
           {loading && (
             <>
               {/* 统计卡片 skeleton */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-4 gap-3">
                 {[1, 2, 3, 4].map((i) => (
                   <div key={i} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-xl px-4 py-3 animate-pulse">
                     <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded w-2/3 mb-2" />

@@ -83,10 +83,10 @@ export default function SystemSettings() {
   const statusTone = getStatusTone(!jenkinsHealth, isConnected);
 
   return (
-    <div className="h-full overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
+    <div className="h-full overflow-y-auto px-6 py-6">
       <div className="mx-auto max-w-7xl space-y-5">
         <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-white via-white to-slate-50/70 shadow-sm dark:border-slate-800 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900/80">
-          <CardContent className="flex flex-col gap-3 p-5 sm:p-6">
+          <CardContent className="flex flex-col gap-3 p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">系统设置</h1>
@@ -101,7 +101,7 @@ export default function SystemSettings() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-2 gap-4">
           <Card className="border-slate-200/80 bg-white/95 shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-950/70">
             <CardHeader className="pb-3">
               <div className="flex flex-wrap items-start justify-between gap-3">

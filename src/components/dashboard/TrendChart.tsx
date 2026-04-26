@@ -558,7 +558,7 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
 
   return (
     <div
-      className="xl:col-span-2 rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark p-6 flex flex-col transition-all duration-200 hover:shadow-lg hover:border-primary/10"
+      className="rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark p-6 flex flex-col transition-all duration-200 hover:shadow-lg hover:border-primary/10"
       role="region"
       aria-label={TIME_RANGE_LABELS[timeRange]}
     >

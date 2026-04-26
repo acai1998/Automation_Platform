@@ -1,5 +1,5 @@
 import { useState, ReactNode, useMemo, useCallback, useEffect } from 'react';
-import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, User, X, ChevronDown } from 'lucide-react';
+import { Search, Play, ChevronLeft, ChevronRight, Loader2, RefreshCw, FileText, X, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -289,17 +289,17 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
   const ownerOptions: MultiSelectOption[] = ownerList.map(o => ({ value: o, label: o }));
 
   return (
-    <div className="min-h-full flex flex-col p-4 sm:p-6">
+    <div className="min-h-full flex flex-col p-6">
       {/* 整体卡片容器 - 统一边框和圆角，flex-1 撑满可用高度 */}
       <div className="flex-1 flex flex-col rounded-xl border border-slate-200/80 dark:border-slate-700/50 shadow-sm overflow-hidden">
       {/* 顶部标题区 - 带渐变背景 */}
-      <div className={`relative h-20 px-4 sm:px-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl flex items-center`}>
+      <div className={`relative h-20 px-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl flex items-center`}>
         <div className="flex items-center gap-3">
           <div className={`p-2.5 rounded-xl ${theme.iconBg} shadow-sm`}>
             {icon}
           </div>
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
               {title}
             </h1>
             {description && (
@@ -312,7 +312,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
       </div>
 
       {/* 筛选栏 */}
-      <div className="relative z-30 overflow-visible px-4 sm:px-6 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-t border-b border-slate-200/80 dark:border-slate-700/50">
+      <div className="relative z-30 overflow-visible px-6 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-t border-b border-slate-200/80 dark:border-slate-700/50">
         <div className="flex flex-wrap items-center gap-3">
           {/* 搜索输入框 */}
           <div className="relative flex-1 min-w-[200px] max-w-[320px]">
@@ -411,7 +411,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
         ) : (
           <div className="flex-1 flex flex-col">
             {/* 桌面端表格 */}
-            <div className="hidden lg:block overflow-x-auto flex-1">
+            <div className="overflow-x-auto flex-1">
               <table className="w-full min-w-[800px]">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
@@ -450,124 +450,11 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
             </div>
 
             {/* 平板端表格（简化列） */}
-            <div className="hidden md:block lg:hidden overflow-x-auto flex-1">
-              <table className="w-full">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase">#</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase">用例</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase">优先级</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase">负责人</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase">状态</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {data?.data.map((record, index) => (
-                    <tr
-                      key={record.id}
-                      className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors duration-150"
-                    >
-                      <td className="px-4 py-3 text-sm">
-                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-800 text-xs font-medium text-slate-500">
-                          {(page - 1) * pageSize + index + 1}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="max-w-[200px]">
-                          <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{record.name}</p>
-                          {record.description && (
-                            <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">{record.description}</p>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {columns.find(c => c.key === 'priority')?.render?.(record.priority, record, index) ?? record.priority}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-400">
-                        {record.owner || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Button
-                          size="sm"
-                          variant="default"
-                          disabled={loadingCaseIds.has(record.id)}
-                          onClick={() => handleRunCase(record.id, record.name, record.project_id)}
-                          className="h-8 px-3"
-                        >
-                          {loadingCaseIds.has(record.id) ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Play className="h-3.5 w-3.5" />
-                          )}
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* 移动端卡片列表 */}
-            <div className="md:hidden flex-1">
-              <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {data?.data.map((record, index) => (
-                  <div
-                    key={record.id}
-                    className="p-4 hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors duration-150"
-                  >
-                    {/* 卡片头部 */}
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">
-                            {(page - 1) * pageSize + index + 1}
-                          </span>
-                          {columns.find(c => c.key === 'priority')?.render?.(record.priority, record, index)}
-                        </div>
-                        <h3 className="font-medium text-slate-900 dark:text-white text-sm leading-snug line-clamp-2">
-                          {record.name}
-                        </h3>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="default"
-                        disabled={loadingCaseIds.has(record.id)}
-                        onClick={() => handleRunCase(record.id, record.name, record.project_id)}
-                        className="shrink-0 h-8 w-8 p-0"
-                      >
-                        {loadingCaseIds.has(record.id) ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Play className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
-
-                    {/* 卡片详情 */}
-                    <div className="space-y-1.5 text-xs text-slate-500 dark:text-slate-400">
-                      {record.owner && (
-                        <div className="flex items-center gap-1.5">
-                          <User className="h-3 w-3" />
-                          <span>{record.owner}</span>
-                        </div>
-                      )}
-                      {record.description && (
-                        <p className="line-clamp-2 leading-relaxed">{record.description}</p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 分页 - sticky 贴底，内容不足一屏时仍在视口底部 */}
-            {data && data.total > 0 && (
-              <div className="sticky bottom-0 z-20 flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm">
+            <div className="sticky bottom-0 z-20 flex items-center justify-between gap-3 px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm">
                 {/* 左侧：每页数量选择 + 统计信息 */}
-                <div className="flex items-center gap-4 order-2 sm:order-1">
+                <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">每页</span>
+                    <span className="text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">每页</span>
                     <select
                       aria-label="每页显示条数"
                       value={pageSize}
@@ -585,8 +472,8 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                     </select>
                     <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">条</span>
                   </div>
-                  <div className="hidden sm:block h-4 w-px bg-slate-200 dark:bg-slate-700" />
-                  <div className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+                  <div className="h-4 w-px bg-slate-200 dark:bg-slate-700" />
+                  <div className="text-sm text-slate-500 dark:text-slate-400">
                     第 <span className="font-medium text-slate-700 dark:text-slate-300">{pagination.startIndex}</span>-
                     <span className="font-medium text-slate-700 dark:text-slate-300">{pagination.endIndex}</span> 条，
                     共 <span className="font-medium text-slate-700 dark:text-slate-300">{data.total}</span> 条
@@ -594,7 +481,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                 </div>
 
                 {/* 右侧：分页按钮 */}
-                <div className="flex items-center gap-1.5 order-1 sm:order-2">
+                <div className="flex items-center gap-1.5">
                   <Button
                     variant="outline"
                     size="sm"
