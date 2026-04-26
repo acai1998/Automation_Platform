@@ -3,7 +3,6 @@ import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-e
 import 'mind-elixir/style.css';
 import {
   Activity,
-  BarChart3,
   Bot,
   BrainCircuit,
   Bug,
@@ -12,7 +11,6 @@ import {
   GitBranch,
   GripHorizontal,
   History,
-  LayoutGrid,
   Link2,
   ListTree,
   Loader2,
@@ -74,6 +72,7 @@ import {
   type AiCaseAttachmentPreview,
   type AiCaseMindData,
   type AiCaseNode,
+  type AiCaseNodeMetadata,
   type AiCaseNodeStatus,
   type AiCaseWorkspaceDocument,
   type AiCaseSyncMode,
@@ -182,9 +181,10 @@ function collectGeneratedCases(mapData: AiCaseMindData): GeneratedCaseListItem[]
       ? moduleNode.topic.trim()
       : '未命名模块';
 
-    for (const caseNode of moduleNode.children ?? []) {
-      const priority = caseNode.metadata?.priority ?? 'P2';
-      const status = caseNode.metadata?.status ?? 'todo';
+    for (const caseNode of ((moduleNode.children ?? []) as AiCaseNode[])) {
+      const metadata = caseNode.metadata as Partial<AiCaseNodeMetadata> | undefined;
+      const priority = metadata?.priority ?? 'P2';
+      const status = metadata?.status ?? 'todo';
 
       items.push({
         id: caseNode.id,
@@ -2839,6 +2839,73 @@ onTogglePanel={() => setPanelOpen((v) => !v)}
       </div>
 
       {/* 需求编辑弹窗 */}
+      {!isCanvasFullscreen && activeTab === 'results' && resultViewMode === 'list' ? (
+        <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+          <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+            <WorkspacePanelCard title="测试用例列表" description="从脑图中派生出的结构化列表，后续将支持更多筛选与批量操作。">
+              {generatedCases.length > 0 ? (
+                <div className="space-y-2">
+                  {generatedCases.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleFocusGeneratedCase(item.id)}
+                      className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                        selectedNodeId === item.id
+                          ? 'border-indigo-300 bg-indigo-50 dark:border-indigo-500/60 dark:bg-indigo-500/10'
+                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800/70'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-slate-900 dark:text-white">{item.title}</div>
+                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.moduleName} · {item.priority} · {item.sourceLabel}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                            item.riskLevel === 'high'
+                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300'
+                              : item.riskLevel === 'medium'
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+                                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+                          }`}>
+                            {item.riskLevel === 'high' ? '高风险' : item.riskLevel === 'medium' ? '中风险' : '低风险'}
+                          </span>
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                            {item.status}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                  暂无生成结果，先回到“输入材料”补充需求后再执行 AI 生成。
+                </div>
+              )}
+            </WorkspacePanelCard>
+
+            <WorkspacePanelCard title="结果说明" description="Phase 1 先把结果审阅骨架搭起来。">
+              <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
+                <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                  <div className="text-xs text-slate-500 dark:text-slate-400">当前结果规模</div>
+                  <div className="mt-1 font-medium text-slate-900 dark:text-white">{generatedCases.length} 条测试点</div>
+                </div>
+                <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                  <div className="text-xs text-slate-500 dark:text-slate-400">高风险结果</div>
+                  <div className="mt-1 font-medium text-slate-900 dark:text-white">{highRiskCases.length} 条</div>
+                </div>
+                <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                  <div className="text-xs text-slate-500 dark:text-slate-400">后续扩展</div>
+                  <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">这里后续会补充来源说明、风险说明、批量编辑和补充生成入口。</div>
+                </div>
+              </div>
+            </WorkspacePanelCard>
+          </div>
+        </section>
+      ) : null}
+
       <Dialog open={isRequirementDialogOpen} onOpenChange={setIsRequirementDialogOpen}>
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
