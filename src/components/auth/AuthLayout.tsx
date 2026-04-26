@@ -75,34 +75,105 @@ function AuthBrandPanel() {
         <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.12)_1px,transparent_1px)] [background-size:42px_42px]" />
       </div>
 
-      <div className="relative z-10 mx-auto flex h-full max-w-[640px] flex-col justify-between">
-        <div className="space-y-6">
-          <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 w-fit">
-            AutoTest Platform
-          </div>
+      <div className="relative z-10 flex h-full items-center justify-center">
+        <div className="relative w-full max-w-[640px]">
+          <div className="absolute inset-x-10 top-10 h-36 rounded-full bg-cyan-400/10 blur-3xl" />
+          <div className="absolute inset-x-20 bottom-0 h-40 rounded-full bg-indigo-500/16 blur-3xl" />
 
-          <div className="space-y-4">
-            <h2 className="text-[42px] font-black leading-[1.08] tracking-[-0.04em] text-white">
-              统一入口，统一风格
-            </h2>
-            <p className="max-w-lg text-base leading-7 text-slate-300">
-              登录、注册、找回密码和重置密码共享同一套桌面认证界面，不再在不同页面之间切换成完全不同的视觉语言。
-            </p>
-          </div>
-        </div>
+          <div
+            data-testid="auth-terminal-demo"
+            className="relative overflow-hidden rounded-[28px] border border-white/10 bg-[#0b1224]/94 shadow-[0_32px_120px_rgba(2,6,23,0.68)] backdrop-blur-xl"
+          >
+            <div className="flex items-center gap-2 border-b border-white/8 bg-white/[0.04] px-6 py-4">
+              <span className="h-3 w-3 rounded-full bg-[#ef6b57]" />
+              <span className="h-3 w-3 rounded-full bg-[#f5c64f]" />
+              <span className="h-3 w-3 rounded-full bg-[#69cb63]" />
+              <span className="ml-auto text-sm font-semibold text-slate-400">autotest.platform</span>
+            </div>
 
-        <div className="space-y-4 rounded-[28px] border border-white/10 bg-white/[0.03] p-6 backdrop-blur-md">
-          <div>
-            <p className="text-sm font-semibold text-white">保留的重点</p>
-            <p className="mt-2 text-sm leading-6 text-slate-300">
-              只保留与进入平台直接相关的信息，把多余介绍移除，让用户更快完成认证操作。
-            </p>
-          </div>
+            <div className="space-y-4 px-8 py-8 font-mono text-[14px] leading-7">
+              <div className="grid gap-4">
+                <div className="rounded-2xl border border-cyan-400/12 bg-white/[0.03] p-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-[12px] font-semibold uppercase tracking-[0.2em] text-cyan-300">
+                      AI 用例生成
+                    </span>
+                    <span className="rounded-full bg-cyan-400/10 px-2.5 py-1 text-[11px] text-cyan-200">
+                      active
+                    </span>
+                  </div>
+                  <div className="text-cyan-300">
+                    <span className="mr-3 text-slate-500">$</span>
+                    ai-case generate --source=prd --with-risk-analysis
+                  </div>
+                  <div className="mt-3 space-y-1 text-slate-200">
+                    <div>
+                      <span className="mr-2 text-slate-500">→</span>
+                      解析需求上下文
+                      <span className="ml-2 text-emerald-300">完成</span>
+                    </div>
+                    <div>
+                      <span className="mr-2 text-slate-500">→</span>
+                      生成 128 条候选测试点
+                    </div>
+                    <div className="text-violet-300">高风险场景: 支付回调 / 权限越权 / 并发写入</div>
+                  </div>
+                </div>
 
-          <div className="space-y-3 text-sm text-slate-300">
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">统一品牌氛围</div>
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">统一表单与状态提示</div>
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">仅保留必要操作入口</div>
+                <div className="rounded-2xl border border-indigo-400/12 bg-white/[0.03] p-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-[12px] font-semibold uppercase tracking-[0.2em] text-indigo-300">
+                      自动化执行 / Jenkins
+                    </span>
+                    <span className="rounded-full bg-indigo-400/10 px-2.5 py-1 text-[11px] text-indigo-200">
+                      running
+                    </span>
+                  </div>
+                  <div className="text-cyan-300">
+                    <span className="mr-3 text-slate-500">$</span>
+                    auto-test run --suite=regression --parallel
+                  </div>
+                  <div className="mt-3 space-y-1 text-slate-200">
+                    <div>
+                      <span className="mr-2 text-slate-500">→</span>
+                      Jenkins 流水线已触发
+                    </div>
+                    <div>
+                      <span className="mr-2 text-slate-500">→</span>
+                      <span className="text-emerald-300">✓</span>
+                      <span className="ml-2">用户登录流程</span>
+                      <span className="ml-2 text-slate-400">(1.2s)</span>
+                    </div>
+                    <div>
+                      <span className="mr-2 text-slate-500">→</span>
+                      <span className="text-emerald-300">✓</span>
+                      <span className="ml-2">支付网关集成</span>
+                      <span className="ml-2 text-slate-400">(3.4s)</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-violet-400/12 bg-white/[0.03] p-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-[12px] font-semibold uppercase tracking-[0.2em] text-violet-300">
+                      质量门禁 / 发布保障
+                    </span>
+                    <span className="rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] text-emerald-200">
+                      passed
+                    </span>
+                  </div>
+                  <div className="text-cyan-300">
+                    <span className="mr-3 text-slate-500">$</span>
+                    quality-gate verify --release=v3.0
+                  </div>
+                  <div className="mt-3 space-y-1 text-slate-200">
+                    <div>覆盖率: <span className="text-violet-300">96.4%</span></div>
+                    <div>通过率: <span className="text-violet-300">100%</span></div>
+                    <div>质量结论: <span className="text-emerald-300">满足发布阈值，允许上线</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

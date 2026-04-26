@@ -193,11 +193,11 @@ function renderLegend() {
   return (
     <div className="flex items-center justify-center gap-5 mt-1 text-xs text-slate-500 dark:text-gray-400">
       <span className="flex items-center gap-1.5">
-        <span className="inline-block w-5 h-0.5 rounded" style={{ background: CHART_CONFIG.colors.primary }} />
+        <span className="inline-block w-5 h-0.5 rounded bg-[#39E079]" />
         成功率（左轴）
       </span>
       <span className="flex items-center gap-1.5">
-        <span className="inline-block w-3 h-3 rounded-sm" style={{ background: CHART_CONFIG.colors.danger, opacity: 0.7 }} />
+        <span className="inline-block w-3 h-3 rounded-sm bg-[#f87171] opacity-70" />
         失败用例数（右轴）
       </span>
     </div>
@@ -254,7 +254,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
           onClick={() => onChartTypeChange('line')}
           disabled={isLoading}
           aria-label="切换为折线图"
-          aria-pressed={chartType === 'line' ? 'true' : 'false'}
+          aria-pressed={chartType === 'line'}
           className={`p-2 rounded-lg transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
             chartType === 'line'
               ? 'bg-primary/10 text-primary'
@@ -268,7 +268,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
           onClick={() => onChartTypeChange('bar')}
           disabled={isLoading}
           aria-label="切换为柱状图"
-          aria-pressed={chartType === 'bar' ? 'true' : 'false'}
+          aria-pressed={chartType === 'bar'}
           className={`p-2 rounded-lg transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
             chartType === 'bar'
               ? 'bg-primary/10 text-primary'

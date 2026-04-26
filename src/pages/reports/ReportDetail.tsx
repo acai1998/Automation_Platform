@@ -478,6 +478,8 @@ export default function ReportDetail() {
                 <button
                   onClick={() => navigate("/reports")}
                   className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg -ml-2"
+                  aria-label="返回报告列表"
+                  title="返回报告列表"
                 >
                   <ArrowLeft className="h-5 w-5" />
                 </button>
@@ -705,6 +707,7 @@ export default function ReportDetail() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索用例名/模块..."
+                aria-label="搜索用例名或模块"
                 className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary h-10"
               />
             </div>
@@ -712,6 +715,7 @@ export default function ReportDetail() {
             <select
               value={statusFilter}
               onChange={(e) => applyFilter(() => setStatusFilter(e.target.value as TestRunResultStatus))}
+              aria-label="按执行状态筛选"
               className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm h-10 px-3 min-w-[120px]"
             >
               <option value="all">All Status</option>
@@ -727,6 +731,7 @@ export default function ReportDetail() {
                 onChange={(e) =>
                   applyFilter(() => setStatusFilter(e.target.checked ? "failed" : "all"))
                 }
+                aria-label="仅查看失败用例"
                 className="rounded text-rose-500 focus:ring-rose-500 border-rose-500/50 bg-transparent"
               />
               <span className="text-xs font-bold text-rose-600 dark:text-rose-400 uppercase">仅看失败</span>
@@ -736,7 +741,12 @@ export default function ReportDetail() {
 
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-500 font-medium">Sort by:</span>
-              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)} className="bg-transparent border-none text-sm font-bold">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortBy)}
+                aria-label="选择排序方式"
+                className="bg-transparent border-none text-sm font-bold"
+              >
                 <option value="failed_first">失败优先</option>
                 <option value="default">Default</option>
                 <option value="duration_desc">耗时降序</option>
@@ -955,6 +965,8 @@ export default function ReportDetail() {
                   disabled={currentPage === 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   className="p-2 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors disabled:opacity-30"
+                  aria-label="上一页"
+                  title="上一页"
                 >
                   <ChevronDown className="h-4 w-4 rotate-90" />
                 </button>

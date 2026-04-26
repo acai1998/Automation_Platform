@@ -11,6 +11,7 @@ import {
   BarChart3,
   Plus,
   Search,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Pencil,
@@ -65,6 +66,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useTasks,
@@ -907,10 +909,22 @@ export default function Tasks() {
             <span className="text-slate-500">常用:</span>
             {savedFilters.map((item) => (
               <div key={item.name} className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 pl-2 pr-1 dark:border-slate-700 dark:bg-slate-800">
-                <button className="py-1 text-slate-700 dark:text-slate-300" onClick={() => applySavedFilter(item.name)}>
+                <button
+                  type="button"
+                  className="py-1 text-slate-700 dark:text-slate-300"
+                  onClick={() => applySavedFilter(item.name)}
+                  aria-label={`应用筛选 ${item.name}`}
+                  title={`应用筛选 ${item.name}`}
+                >
                   {item.name}
                 </button>
-                <button className="ml-1 rounded-full p-0.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700" onClick={() => removeSavedFilter(item.name)}>
+                <button
+                  type="button"
+                  className="ml-1 rounded-full p-0.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  onClick={() => removeSavedFilter(item.name)}
+                  aria-label={`删除筛选 ${item.name}`}
+                  title={`删除筛选 ${item.name}`}
+                >
                   <X className="h-3 w-3" />
                 </button>
               </div>
@@ -1667,19 +1681,18 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
                         {stats.trend.map((item) => (
                           <div key={item.day} className="flex items-center gap-3 text-sm">
                             <span className="w-24 shrink-0 text-slate-500 text-xs">{item.day}</span>
-                            <div className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
-                              <div
-                                className={cn(
-                                  'h-full rounded-full transition-all',
-                                  item.successRate >= 80
-                                    ? 'bg-green-500'
-                                    : item.successRate >= 50
-                                    ? 'bg-orange-400'
-                                    : 'bg-red-400'
-                                )}
-                                style={{ width: `${Math.max(2, item.successRate)}%` }}
-                              />
-                            </div>
+                            <Progress
+                              value={Math.max(2, item.successRate)}
+                              className={cn(
+                                'h-2 flex-1',
+                                item.successRate >= 80
+                                  ? '[&>div]:bg-green-500'
+                                  : item.successRate >= 50
+                                  ? '[&>div]:bg-orange-400'
+                                  : '[&>div]:bg-red-400'
+                              )}
+                              aria-label={`${item.day} 成功率 ${item.successRate}%`}
+                            />
                             <span className={cn('w-10 text-right font-bold text-xs shrink-0', successRateColor(item.successRate))}>
                               {item.successRate}%
                             </span>
@@ -1864,21 +1877,18 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
                 <span>并发使用率</span>
                 <span>{status.running.length} / {status.concurrencyLimit}</span>
               </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
-                <div
-                  className={cn(
-                    'h-full rounded-full transition-all',
-                    status.running.length >= status.concurrencyLimit
-                      ? 'bg-red-500'
-                      : status.running.length >= status.concurrencyLimit * 0.7
-                      ? 'bg-amber-400'
-                      : 'bg-blue-500'
-                  )}
-                  style={{
-                    width: `${Math.min(100, (status.running.length / Math.max(1, status.concurrencyLimit)) * 100)}%`,
-                  }}
-                />
-              </div>
+              <Progress
+                value={Math.min(100, (status.running.length / Math.max(1, status.concurrencyLimit)) * 100)}
+                className={cn(
+                  'h-2 w-full',
+                  status.running.length >= status.concurrencyLimit
+                    ? '[&>div]:bg-red-500'
+                    : status.running.length >= status.concurrencyLimit * 0.7
+                    ? '[&>div]:bg-amber-400'
+                    : '[&>div]:bg-blue-500'
+                )}
+                aria-label={`并发使用率 ${status.running.length} / ${status.concurrencyLimit}`}
+              />
             </div>
 
             {/* 运行中的任务（P1：显示 taskId + runId + 已运行时长） */}
@@ -2258,8 +2268,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                       ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-500'
                       : 'border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:text-slate-400'
                   )}
-                  role="radio"
-                  aria-checked={triggerType === value}
+                  aria-pressed={triggerType === value}
                 >
                   {label}
                 </button>
@@ -2437,7 +2446,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                 </div>
 
                 {/* 候选用例列表 */}
-                <div className="overflow-y-auto" style={{ maxHeight: '200px' }}>
+                <div className="max-h-[200px] overflow-y-auto">
                   {casesLoading ? (
                     <div className="flex items-center justify-center py-6 text-slate-400">
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />

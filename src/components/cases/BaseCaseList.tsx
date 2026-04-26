@@ -449,8 +449,9 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
               </table>
             </div>
 
-            {/* 平板端表格（简化列） */}
-            <div className="sticky bottom-0 z-20 flex items-center justify-between gap-3 px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm">
+            {/* Desktop pagination */}
+            {data && data.total > 0 && (
+              <div className="sticky bottom-0 z-20 flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/80 px-6 py-3 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/80">
                 {/* 左侧：每页数量选择 + 统计信息 */}
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
@@ -470,7 +471,7 @@ export function BaseCaseList({ type, title, icon, columns, description }: BaseCa
                         </option>
                       ))}
                     </select>
-                    <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">条</span>
+                    <span className="text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">条</span>
                   </div>
                   <div className="h-4 w-px bg-slate-200 dark:bg-slate-700" />
                   <div className="text-sm text-slate-500 dark:text-slate-400">

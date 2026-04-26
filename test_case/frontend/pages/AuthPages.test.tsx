@@ -59,6 +59,7 @@ describe('Auth pages', () => {
     expect(screen.getByTestId('auth-shell')).toBeInTheDocument();
     expect(screen.getByTestId('auth-surface')).toBeInTheDocument();
     expect(screen.getByTestId('auth-brand-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('auth-terminal-demo')).toBeInTheDocument();
   });
 
   it('keeps reset password in the shared shell when token is missing', () => {
@@ -66,5 +67,6 @@ describe('Auth pages', () => {
 
     expect(screen.getByTestId('auth-shell')).toBeInTheDocument();
     expect(screen.getByTestId('auth-brand-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('auth-terminal-demo')).toBeInTheDocument();
   });
 });

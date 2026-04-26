@@ -1,4 +1,4 @@
-/**
+﻿/**
  * TaskSchedulerService - 任务定时调度引擎
  *
  * 功能：
@@ -13,7 +13,6 @@
  * 依赖：croner（零依赖、原生 TS 支持的 cron 解析库）
  */
 
-import { Cron } from 'croner';
 import { query, queryOne, getPool } from '../../config/database';
 import logger from '../../utils/logger';
 import { LOG_CONTEXTS, LOG_EVENTS } from '../../config/logging';
@@ -24,200 +23,43 @@ import { TestCase } from '../../entities/TestCase';
 import { In } from 'typeorm';
 import { buildJenkinsTriggerFailureDiagnostic } from '../../utils/jenkinsTriggerDiagnostics';
 import { persistJenkinsTriggerFailureDiagnostic } from '../../utils/jenkinsTriggerDiagnosticArtifact';
+import { warnIfCallbackUrlIsLocal } from './callbackUrl';
+import {
+  CONCURRENCY_LIMIT,
+  MAX_MISSED_WINDOW_MS,
+  MAX_QUEUE_DEPTH,
+  PRIORITY_MANUAL,
+  PRIORITY_RETRY,
+  PRIORITY_SCHEDULED,
+  QUEUE_ITEM_TIMEOUT_MS,
+  SCHEDULER_USER_ID,
+  SLOT_HOLD_TIMEOUT_MS,
+  SLOT_RECONCILE_INTERVAL_MS,
+} from './config';
+import { getNextCronTime, getPrevCronTime } from './cron';
+import {
+  loadAllScheduledTasks,
+  loadLastRunAt,
+  loadScheduledTaskById,
+  loadScheduledTaskPollRows,
+  mapPollRowToScheduledTask,
+} from './taskQueries';
+import { TaskSchedulerRegistryHelper } from './registry';
+import type {
+  DirectQueueItem,
+  QueueItem,
+  RetryState,
+  RunningSlot,
+  ScheduledTask,
+} from './types';
 // ──────────────────────────────────────────────────────────
 // 类型定义
 // ──────────────────────────────────────────────────────────
 
-const DEFAULT_JENKINS_URL = 'http://jenkins.wiac.xyz';
-
-function warnIfCallbackUrlIsLocal(callbackUrl: string, traceId?: string): void {
-  try {
-    const callbackHost = new URL(callbackUrl).hostname.toLowerCase();
-    const jenkinsHost = new URL(process.env.JENKINS_URL || DEFAULT_JENKINS_URL).hostname.toLowerCase();
-    const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
-
-    if (localHosts.has(callbackHost) && !localHosts.has(jenkinsHost)) {
-      logger.warn('Jenkins callback URL points to localhost while Jenkins is remote', {
-        event: 'JENKINS_CALLBACK_URL_LOCALHOST_FOR_REMOTE',
-        callbackUrl,
-        jenkinsHost,
-        traceId,
-        suggestion: 'Set API_CALLBACK_URL to a URL that Jenkins can reach, otherwise scheduled callbacks may fail with 403 or never reach this service.',
-      }, LOG_CONTEXTS.EXECUTION);
-    }
-  } catch (error) {
-    logger.warn('Failed to validate Jenkins callback URL', {
-      event: 'JENKINS_CALLBACK_URL_VALIDATE_FAILED',
-      callbackUrl,
-      traceId,
-      error: error instanceof Error ? error.message : String(error),
-    }, LOG_CONTEXTS.EXECUTION);
-  }
-}
-
-export interface ScheduledTask {
-  id: number;
-  name: string;
-  cronExpression: string;
-  caseIds: number[];
-  projectId: number;
-  environmentId?: number;
-  status: 'active' | 'paused' | 'archived';
-  // 重试配置（存储在 DB，默认值由调度器提供）
-  maxRetries: number;
-  retryDelayMs: number;
-  // 上次执行时间（UTC）
-  lastRunAt: Date | null;
-}
-
-/**
- * 队列项（P1：替代原来的 number[]，携带完整调度元信息）
- */
-export interface QueueItem {
-  taskId: number;
-  triggerReason: 'scheduled' | 'manual' | 'retry';
-  operatorId?: number;
-  /** 入队时间（ms） */
-  enqueuedAt: number;
-  /** 优先级（数字越小优先级越高），manual > scheduled > retry */
-  priority: number;
-  /** 队列超时 timer handle */
-  timeoutTimer?: NodeJS.Timeout;
-}
-
-/**
- * 运行中槽位（P1：以 runId 为维度，替代原来的 taskId）
- * label：用于直连执行（run-case/run-batch），标识来源（如 "case:123" / "batch:123"）
- */
-interface RunningSlot {
-  /** taskId：任务调度时填写；直连执行时为 0 */
-  taskId: number;
-  runId: number;
-  startedAt: number;
-  /** 执行超时 timer handle */
-  timeoutTimer: NodeJS.Timeout;
-  /** 直连执行标签（如 "case:123" / "batch:5,6,7"），调度执行时为 undefined */
-  label?: string;
-}
-
-/**
- * 直连等待队列项（run-case / run-batch 专用）
- * 与 QueueItem 分开，避免混入任务优先级队列
- */
-interface DirectQueueItem {
-  /** 入队时间（ms） */
-  enqueuedAt: number;
-  /** 标识来源（如 "case:123" / "batch:5,6,7"） */
-  label: string;
-  /** 队列超时 timer handle */
-  timeoutTimer?: NodeJS.Timeout;
-  /** resolve：槽位可用时通知等待方，传入占位 runId 供 job 替换 */
-  resolve: (placeholderRunId: number) => void;
-  /** reject：超时或队列满时通知等待方 */
-  reject: (err: Error) => void;
-}
-
-interface RetryState {
-  taskId: number;
-  attempt: number;
-  maxRetries: number;
-  retryDelayMs: number;
-  timer?: NodeJS.Timeout;
-}
-
-// ──────────────────────────────────────────────────────────
-// 内部常量
-// ──────────────────────────────────────────────────────────
-
-/** 全局最大并发执行任务数 */
-const CONCURRENCY_LIMIT = parseInt(process.env.TASK_CONCURRENCY_LIMIT || '3', 10);
-
-/**
- * 系统自动操作时 operator_id 使用 null（调度引擎、补偿触发等）
- * ⚠️ 重要：不能使用 0，因为 Auto_Users 表中不存在 id=0 的用户，
- *   而 Auto_TestCaseTaskExecutions.executed_by 有外键约束 → 插入会失败！
- */
-const SCHEDULER_USER_ID: null = null;
-
-/** 最大漏触发补偿窗口（毫秒），默认 24 小时 */
-const MAX_MISSED_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-/** [P1] 等待队列最大深度，超过后拒绝新入队（防止内存无限增长） */
-const MAX_QUEUE_DEPTH = parseInt(process.env.TASK_MAX_QUEUE_DEPTH || '50', 10);
-
-/** [P1] 队列项最长等待时间（毫秒），超时后自动从队列中移除，默认 10 分钟 */
-const QUEUE_ITEM_TIMEOUT_MS = parseInt(process.env.TASK_QUEUE_TIMEOUT_MS || String(10 * 60 * 1000), 10);
-
-/** [P1] 运行中槽位最长持有时间（毫秒），超时后强制释放，默认 30 分钟 */
-const SLOT_HOLD_TIMEOUT_MS = parseInt(process.env.TASK_SLOT_TIMEOUT_MS || String(30 * 60 * 1000), 10);
-
-/** [P1] 运行槽位与 DB 状态对账间隔（毫秒），默认 5 秒 */
-const SLOT_RECONCILE_INTERVAL_MS = parseInt(process.env.TASK_SLOT_RECONCILE_INTERVAL_MS || '5000', 10);
-
-/** [P1] 队列优先级：手动触发 > 定时触发 > 重试 */
-const PRIORITY_MANUAL = 1;
-const PRIORITY_SCHEDULED = 2;
-const PRIORITY_RETRY = 3;
-
-// ──────────────────────────────────────────────────────────
-// Cron 工具函数（基于 croner 库，零依赖、原生 TS 支持）
-// ──────────────────────────────────────────────────────────
-
-/**
- * 根据 cron 表达式计算下次触发时间（基于 croner）
- * 已导出，供路由层（cron/preview 接口）直接复用
- *
- * @param expr  标准 5 段 cron 表达式（分 时 日 月 周）
- * @param from  基准时间，默认当前时间
- * @returns     下次触发时间；表达式非法时返回 null
- */
-export function getNextCronTime(expr: string, from: Date = new Date()): Date | null {
-  try {
-    const job = new Cron(expr, { paused: true });
-    return job.nextRun(from) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 计算指定时间点之前最近一次应触发的时间（用于漏触发检测）
- *
- * 性能优化策略：
- * - 仅在 maxWindowMs（默认 24h）内向前遍历
- * - 增加 safetyLimit 防止极端高频 cron 场景下无限循环
- * - 最大迭代次数 = maxWindowMs / 60s ≈ 1440（即每分钟触发也只遍历 1440 次）
- *
- * @param expr       标准 5 段 cron 表达式
- * @param before     参考时间（通常为 now），返回此时间之前的最近一次触发时间
- * @param maxWindowMs 最大向前查找范围（默认与漏触发补偿窗口一致）
- * @returns          上一次应触发的时间；无法解析时返回 null
- */
-function getPrevCronTime(expr: string, before: Date, maxWindowMs = MAX_MISSED_WINDOW_MS): Date | null {
-  try {
-    const job = new Cron(expr, { paused: true });
-    const windowStart = new Date(before.getTime() - maxWindowMs);
-    let prev: Date | null = null;
-    let cursor = windowStart;
-    // 安全上限：maxWindowMs 内最多触发 maxWindowMs/60s 次（每分钟 cron 为最高频）
-    let safetyLimit = Math.ceil(maxWindowMs / 60_000) + 10;
-    while (safetyLimit-- > 0) {
-      const next = job.nextRun(cursor);
-      if (!next || next >= before) break;
-      prev = next;
-      cursor = next;
-    }
-    return prev;
-  } catch {
-    return null;
-  }
-}
-
-// ──────────────────────────────────────────────────────────
-// TaskSchedulerService 类
-// ──────────────────────────────────────────────────────────
 
 export class TaskSchedulerService {
+  private readonly registryHelper: TaskSchedulerRegistryHelper;
+
   /** taskId → setInterval / setTimeout handle */
   private timers: Map<number, NodeJS.Timeout> = new Map();
 
@@ -265,6 +107,16 @@ export class TaskSchedulerService {
 
   /** [P1] 避免并发执行多次槽位对账 */
   private slotReconcileInFlight = false;
+
+  constructor() {
+    this.registryHelper = new TaskSchedulerRegistryHelper({
+      taskCache: this.taskCache,
+      timers: this.timers,
+      dispatchTask: (taskId, triggerReason, operatorId) => this.dispatchTask(taskId, triggerReason, operatorId),
+      recordAuditLog: (taskId, action, operatorId, metadata) => this.recordAuditLog(taskId, action, operatorId, metadata),
+      unregisterTask: (taskId) => this.unregisterTask(taskId),
+    });
+  }
 
   // ─────────────────────────────────────────────
   // 生命周期
@@ -500,11 +352,11 @@ export class TaskSchedulerService {
 
   /** 添加或更新单个任务的调度（任务创建/更新时调用） */
   async registerTask(taskId: number): Promise<void> {
-    const task = await this.loadTaskFromDb(taskId);
+    const task = await this.registryHelper.loadTaskFromDb(taskId);
     if (!task) return;
     this.unregisterTask(taskId);
     if (task.status === 'active' && task.cronExpression) {
-      this.scheduleTask(task);
+      this.registryHelper.scheduleTask(task);
     }
   }
 
@@ -878,100 +730,11 @@ export class TaskSchedulerService {
   // ─────────────────────────────────────────────
 
   private async loadAndRegisterAllTasks(): Promise<void> {
-    interface TaskRow {
-      id: number;
-      name: string;
-      cron_expression: string;
-      case_ids: string;
-      project_id: number;
-      environment_id: number | null;
-      status: 'active' | 'paused' | 'archived';
-      max_retries: number | null;
-      retry_delay_ms: number | null;
-      last_run_at: string | null;
-    }
-
-    const rows = await query<TaskRow[]>(`
-      SELECT t.id, t.name, t.cron_expression, t.case_ids, t.project_id,
-             t.environment_id, t.status,
-             t.max_retries, t.retry_delay_ms,
-             (SELECT MAX(created_at) FROM Auto_TestCaseTaskExecutions WHERE task_id = t.id) as last_run_at
-      FROM Auto_TestCaseTasks t
-      WHERE t.trigger_type = 'scheduled'
-        AND t.status IN ('active', 'paused')
-    `);
-
-    logger.info(`Loaded ${rows.length} scheduled tasks from DB`, { event: LOG_EVENTS.SCHEDULER_STARTED, count: rows.length }, LOG_CONTEXTS.EXECUTION);
-
-    for (const row of rows) {
-      let caseIds: number[] = [];
-      try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
-
-      const task: ScheduledTask = {
-        id: row.id,
-        name: row.name,
-        cronExpression: row.cron_expression,
-        caseIds,
-        projectId: row.project_id || 1,
-        environmentId: row.environment_id ?? undefined,
-        status: row.status,
-        maxRetries: row.max_retries ?? 1,
-        retryDelayMs: row.retry_delay_ms ?? 30_000,
-        lastRunAt: row.last_run_at ? new Date(row.last_run_at) : null,
-      };
-
-      this.taskCache.set(task.id, task);
-
-      if (task.status !== 'active') continue;
-
-      // 漏触发补偿
-      await this.compensateMissedFires(task);
-
-      // 注册下次触发
-      this.scheduleTask(task);
-    }
+    await this.registryHelper.loadAndRegisterAllTasks();
   }
 
   private async loadTaskFromDb(taskId: number): Promise<ScheduledTask | null> {
-    interface TaskRow {
-      id: number;
-      name: string;
-      cron_expression: string | null;
-      case_ids: string | null;
-      project_id: number | null;
-      environment_id: number | null;
-      status: 'active' | 'paused' | 'archived';
-      max_retries: number | null;
-      retry_delay_ms: number | null;
-      trigger_type: string;
-      last_run_at: string | null;
-    }
-
-    const row = await queryOne<TaskRow>(
-      `SELECT t.id, t.name, t.cron_expression, t.case_ids, t.project_id, t.environment_id,
-              t.status, t.max_retries, t.retry_delay_ms, t.trigger_type,
-              (SELECT MAX(created_at) FROM Auto_TestCaseTaskExecutions WHERE task_id = t.id) as last_run_at
-       FROM Auto_TestCaseTasks t WHERE t.id = ?`,
-      [taskId]
-    );
-
-    if (!row || row.trigger_type !== 'scheduled' || !row.cron_expression) return null;
-
-    let caseIds: number[] = [];
-    try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
-
-    return {
-      id: row.id,
-      name: row.name,
-      cronExpression: row.cron_expression,
-      caseIds,
-      projectId: row.project_id || 1,
-      environmentId: row.environment_id ?? undefined,
-      status: row.status,
-      maxRetries: row.max_retries ?? 1,
-      retryDelayMs: row.retry_delay_ms ?? 30_000,
-      lastRunAt: row.last_run_at ? new Date(row.last_run_at) : null,
-    };
+    return this.registryHelper.loadTaskFromDb(taskId);
   }
 
   /**
@@ -983,64 +746,7 @@ export class TaskSchedulerService {
    * 3. 同时要求漏触发时间在 MAX_MISSED_WINDOW_MS（24h）内，避免长时间停机后批量补偿
    */
   private async compensateMissedFires(task: ScheduledTask): Promise<void> {
-    if (!task.lastRunAt) {
-      // 从未执行过，不需要补偿
-      return;
-    }
-
-    const now = new Date();
-    const elapsed = now.getTime() - task.lastRunAt.getTime();
-
-    // 超出补偿窗口，跳过（防止停机过久后批量触发）
-    if (elapsed > MAX_MISSED_WINDOW_MS) {
-      logger.info(`Task ${task.id} (${task.name}) elapsed ${Math.floor(elapsed / 60_000)} min > MAX_MISSED_WINDOW, skip compensation`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_SKIPPED,
-        taskId: task.id,
-        lastRunAt: task.lastRunAt,
-        elapsed,
-        maxWindowMs: MAX_MISSED_WINDOW_MS,
-      }, LOG_CONTEXTS.EXECUTION);
-      return;
-    }
-
-    // 用 croner 精确计算：自 lastRunAt 以来，在 now 之前是否有应触发的时间点
-    const prevShouldRun = getPrevCronTime(task.cronExpression, now);
-
-    if (!prevShouldRun || prevShouldRun <= task.lastRunAt) {
-      // 没有漏触发（上一个应触发时间 ≤ 上次执行时间）
-      return;
-    }
-
-    // 有漏触发：prevShouldRun > lastRunAt，且在 MAX_MISSED_WINDOW 内
-    logger.info(`Task ${task.id} (${task.name}) missed fire detected. prevShouldRun=${prevShouldRun.toISOString()}, lastRunAt=${task.lastRunAt.toISOString()}, compensating...`, {
-      event: LOG_EVENTS.SCHEDULER_TASK_MISSED_FIRE,
-      taskId: task.id,
-      lastRunAt: task.lastRunAt,
-      prevShouldRun,
-      elapsed,
-    }, LOG_CONTEXTS.EXECUTION);
-
-    // 记录补偿日志到审计表
-    await this.recordAuditLog(task.id, 'compensated', SCHEDULER_USER_ID, {
-      reason: 'missed_fire_compensation',
-      lastRunAt: task.lastRunAt,
-      prevShouldRun,
-      elapsedMs: elapsed,
-    });
-
-    // 异步触发，不阻塞启动
-    setImmediate(() => {
-      logger.info(`Task ${task.id} compensation dispatch enqueued`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_COMPENSATION_DISPATCHED,
-        taskId: task.id,
-        source: 'missed_fire_compensation',
-        prevShouldRun: prevShouldRun.toISOString(),
-        lastRunAt: task.lastRunAt?.toISOString() ?? null,
-      }, LOG_CONTEXTS.EXECUTION);
-      this.dispatchTask(task.id, 'scheduled').catch(err => {
-        logger.errorLog(err, `Compensation dispatch failed for task ${task.id}`, { event: LOG_EVENTS.SCHEDULER_TASK_COMPENSATION_FAILED });
-      });
-    });
+    await this.registryHelper.compensateMissedFires(task);
   }
 
   /**
@@ -1048,55 +754,7 @@ export class TaskSchedulerService {
    * 注意：调用前会自动清除同一任务的旧 timer，防止重复注册导致多次触发
    */
   private scheduleTask(task: ScheduledTask): void {
-    // 先清除同一任务可能已存在的旧 timer，防止重复注册
-    const existingTimer = this.timers.get(task.id);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-      this.timers.delete(task.id);
-    logger.debug(`Task ${task.id} cleared existing timer before re-scheduling`, {
-      event: LOG_EVENTS.SCHEDULER_TASK_REGISTERED,
-      taskId: task.id,
-    }, LOG_CONTEXTS.EXECUTION);
-    }
-
-    const next = getNextCronTime(task.cronExpression);
-    if (!next) {
-      logger.warn(`Cannot compute next run time for task ${task.id}, expr=${task.cronExpression}`, {}, LOG_CONTEXTS.EXECUTION);
-      return;
-    }
-
-    const delayMs = Math.max(0, next.getTime() - Date.now());
-
-    const timer = setTimeout(async () => {
-      this.timers.delete(task.id);
-
-      const freshTask = this.taskCache.get(task.id);
-      if (!freshTask || freshTask.status !== 'active') return;
-
-      logger.info(`Task ${task.id} timer fired, dispatching scheduled execution`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_DISPATCHED,
-        taskId: task.id,
-        dueAt: next.toISOString(),
-      }, LOG_CONTEXTS.EXECUTION);
-
-      await this.dispatchTask(task.id, 'scheduled').catch(err => {
-        logger.errorLog(err, `Scheduled dispatch failed for task ${task.id}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED });
-      });
-
-      // 重新调度下次触发
-      const updatedTask = this.taskCache.get(task.id);
-      if (updatedTask && updatedTask.status === 'active') {
-        this.scheduleTask(updatedTask);
-      }
-    }, delayMs);
-
-    if (timer.unref) timer.unref();
-    this.timers.set(task.id, timer);
-
-    logger.debug(`Task ${task.id} scheduled at ${next.toISOString()} (in ${Math.round(delayMs / 1000)}s)`, {
-      event: LOG_EVENTS.SCHEDULER_TASK_REGISTERED,
-      taskId: task.id,
-    }, LOG_CONTEXTS.EXECUTION);
+    this.registryHelper.scheduleTask(task);
   }
 
   // ─────────────────────────────────────────────
@@ -1207,7 +865,11 @@ export class TaskSchedulerService {
    */
   private async isDuplicateScheduledWindow(taskId: number, cronExpression: string): Promise<{ duplicated: boolean; windowStart: Date | null; reason?: string }> {
     const now = new Date();
-    const windowStart = getPrevCronTime(cronExpression, new Date(now.getTime() + 1000));
+    const windowStart = getPrevCronTime(
+      cronExpression,
+      new Date(now.getTime() + 1000),
+      MAX_MISSED_WINDOW_MS,
+    );
     if (!windowStart) {
       logger.debug(`Unable to compute previous cron window for task ${taskId}`, {
         event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
@@ -1760,131 +1422,7 @@ export class TaskSchedulerService {
   // ─────────────────────────────────────────────
 
   private async pollTaskChanges(): Promise<void> {
-    try {
-      interface TaskPollRow {
-        id: number;
-        name: string;
-        cron_expression: string | null;
-        case_ids: string | null;
-        project_id: number | null;
-        environment_id: number | null;
-        status: 'active' | 'paused' | 'archived';
-        max_retries: number | null;
-        retry_delay_ms: number | null;
-        trigger_type: string;
-      }
-
-      const rows = await query<TaskPollRow[]>(`
-        SELECT id, name, cron_expression, case_ids, project_id, environment_id, status, max_retries, retry_delay_ms, trigger_type
-        FROM Auto_TestCaseTasks
-        WHERE trigger_type = 'scheduled'
-      `);
-
-      const dbIds = new Set(rows.map(r => r.id));
-
-      // 移除已在调度中但 DB 已删除的任务
-      for (const [id] of this.taskCache) {
-        if (!dbIds.has(id)) {
-          this.unregisterTask(id);
-          logger.info(`Task ${id} removed from scheduler (deleted from DB)`, {}, LOG_CONTEXTS.EXECUTION);
-        }
-      }
-
-      // 注册新增的或状态变为 active 的任务
-      for (const row of rows) {
-        if (!row.cron_expression) continue;
-        const cached = this.taskCache.get(row.id);
-
-        if (!cached && row.status === 'active') {
-          // 新任务：从 DB 查询上次执行时间，并做漏触发补偿（与重新激活路径保持一致）
-          let caseIds: number[] = [];
-          try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
-
-          // Bug Fix: 新任务也需要查 DB 获取 lastRunAt，否则会错误跳过漏触发补偿
-          // 使用 created_at 而非 start_time：start_time 在 Jenkins 未启动时为 null，
-          // 导致调度器误认为「从未执行」并在每次重启时重复补偿触发
-          let lastRunAt: Date | null = null;
-          try {
-            const lastRunRow = await queryOne<{ last_run_at: string | null }>(
-              `SELECT MAX(created_at) as last_run_at FROM Auto_TestCaseTaskExecutions WHERE task_id = ?`,
-              [row.id]
-            );
-            lastRunAt = lastRunRow?.last_run_at ? new Date(lastRunRow.last_run_at) : null;
-          } catch {
-            // 查询失败时使用 null，补偿逻辑会跳过（从未执行过视为无需补偿）
-          }
-
-          const newTask: ScheduledTask = {
-            id: row.id,
-            name: row.name,
-            cronExpression: row.cron_expression,
-            caseIds,
-            projectId: row.project_id || 1,
-            environmentId: row.environment_id ?? undefined,
-            status: row.status,
-            maxRetries: row.max_retries ?? 1,
-            retryDelayMs: row.retry_delay_ms ?? 30_000,
-            lastRunAt,
-          };
-          this.taskCache.set(row.id, newTask);
-          // Bug Fix: 新任务也需要做漏触发补偿（与 loadAndRegisterAllTasks 和重新激活路径保持一致）
-          await this.compensateMissedFires(newTask);
-          this.scheduleTask(newTask);
-          logger.info(`New task ${row.id} registered by poll`, { event: LOG_EVENTS.SCHEDULER_TASK_REGISTERED, taskId: row.id, lastRunAt }, LOG_CONTEXTS.EXECUTION);
-        } else if (cached && cached.status !== row.status) {
-          // 状态变更
-          if (row.status !== 'active') {
-            this.unregisterTask(row.id);
-          } else {
-            // 重新激活：先 unregister 清除旧 timer 和 cache，再重新注册
-            this.unregisterTask(row.id);
-            let caseIds: number[] = [];
-            try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
-
-            // Bug Fix: 从 DB 查询上次执行时间，防止 lastRunAt=null 导致跳过漏触发补偿检测
-            // 使用 created_at 而非 start_time：start_time 在 Jenkins 未启动时为 null，
-            // 导致调度器误认为「从未执行」并在每次重启时重复补偿触发
-            let lastRunAt: Date | null = null;
-            try {
-              const lastRunRow = await queryOne<{ last_run_at: string | null }>(
-                `SELECT MAX(created_at) as last_run_at FROM Auto_TestCaseTaskExecutions WHERE task_id = ?`,
-                [row.id]
-              );
-              lastRunAt = lastRunRow?.last_run_at ? new Date(lastRunRow.last_run_at) : null;
-            } catch {
-              // 查询失败时使用 null，补偿逻辑会跳过（从未执行过视为无需补偿）
-            }
-
-            const reactivatedTask: ScheduledTask = {
-              id: row.id,
-              name: row.name,
-              cronExpression: row.cron_expression!,
-              caseIds,
-              projectId: row.project_id || 1,
-              environmentId: row.environment_id ?? undefined,
-              status: row.status as 'active',
-              maxRetries: row.max_retries ?? 1,
-              retryDelayMs: row.retry_delay_ms ?? 30_000,
-              lastRunAt,
-            };
-            this.taskCache.set(row.id, reactivatedTask);
-            // 重新激活时也做漏触发补偿
-            await this.compensateMissedFires(reactivatedTask);
-            this.scheduleTask(reactivatedTask);
-          }
-        } else if (cached && cached.cronExpression !== row.cron_expression) {
-          // Cron 表达式变更，重新调度
-          cached.cronExpression = row.cron_expression;
-          this.unregisterTask(row.id);
-          this.taskCache.set(row.id, cached);
-          if (row.status === 'active') {
-            this.scheduleTask(cached);
-          }
-        }
-      }
-    } catch (err) {
-      logger.errorLog(err, 'TaskScheduler poll failed', { event: LOG_EVENTS.SCHEDULER_STARTED });
-    }
+    await this.registryHelper.pollTaskChanges();
   }
 
   // ─────────────────────────────────────────────

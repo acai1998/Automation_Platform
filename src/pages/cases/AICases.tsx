@@ -1,6 +1,7 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-elixir';
 import 'mind-elixir/style.css';
+import './AICases.css';
 import {
   Activity,
   Bot,
@@ -14,10 +15,8 @@ import {
   Link2,
   ListTree,
   Loader2,
-  Menu,
   PlayCircle,
   ShieldAlert,
-  X,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -111,7 +110,6 @@ const MAX_CANVAS_SCALE = 1.8;
 const CANVAS_SCALE_STEP = 0.1;
 const NODE_TAG_VISIBILITY_STORAGE_KEY = 'ai-case-node-tags-visible';
 const WAIT_COPY_MAGIC = 'MIND-ELIXIR-WAIT-COPY';
-const SIDEBAR_WIDTH = 320;
 const FLOAT_PANEL_WIDTH = 300;
 const FLOAT_PANEL_DEFAULT_RIGHT = 16;
 const FLOAT_PANEL_DEFAULT_TOP = 8;
@@ -475,6 +473,7 @@ function AiCasesInner() {
 const mapContainerRef = useRef<HTMLDivElement | null>(null);
 const canvasSectionRef = useRef<HTMLElement | null>(null);
 const canvasDivRef = useRef<HTMLDivElement | null>(null);
+  const floatPanelRef = useRef<HTMLDivElement | null>(null);
   const mindRef = useRef<MindElixirInstance | null>(null);
   const docRef = useRef<AiCaseWorkspaceDocument | null>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -525,7 +524,6 @@ const canvasDivRef = useRef<HTMLDivElement | null>(null);
   const [mindThemeId, setMindThemeId] = useState<AiCaseMindThemeId>(() => readMindThemePreference());
   const [isImportingMindNodes, setIsImportingMindNodes] = useState(false);
 // 移动端侧边栏抽屉
-const [sidebarOpen, setSidebarOpen] = useState(false);
 // 浮动面板（桌端）
 const [panelOpen, setPanelOpen] = useState(false);
 // 浮动面板拖拽
@@ -564,6 +562,26 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
       mindRef.current.changeTheme(resolveMindTheme(mindThemeId, resolvedTheme === 'dark'));
     }
   }, [mindThemeId, resolvedTheme]);
+
+  useEffect(() => {
+    const panel = floatPanelRef.current;
+    if (!panel) {
+      return;
+    }
+
+    panel.style.left = '';
+    panel.style.right = '';
+    panel.style.top = '';
+
+    if (panelPos) {
+      panel.style.left = `${panelPos.x}px`;
+      panel.style.top = `${panelPos.y}px`;
+      return;
+    }
+
+    panel.style.right = `${FLOAT_PANEL_DEFAULT_RIGHT}px`;
+    panel.style.top = `${FLOAT_PANEL_DEFAULT_TOP}px`;
+  }, [panelPos, panelOpen]);
 
   // 当全局 dark/light 模式切换时，同步更新脑图主题
   useEffect(() => {
@@ -2294,15 +2312,6 @@ const applyWorkspaceDetail = useCallback(
         <header className="shrink-0 h-12 flex items-center justify-between px-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
           <div className="flex items-center gap-2.5">
             {/* 移动端汉堡菜单 */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="lg:hidden h-8 w-8 p-0"
-              onClick={() => setSidebarOpen((v) => !v)}
-            >
-              {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-            </Button>
             <div className="p-1.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-300">
               <BrainCircuit className="h-4 w-4" />
             </div>
@@ -2317,7 +2326,7 @@ const applyWorkspaceDetail = useCallback(
               onClick={() => setIsRequirementDialogOpen(true)}
             >
               <FileText className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">需求信息</span>
+              <span className="">需求信息</span>
             </Button>
             <Button
               type="button"
@@ -2327,10 +2336,10 @@ const applyWorkspaceDetail = useCallback(
               onClick={() => setLocation('/cases/ai-create')}
             >
               <History className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">用例记录</span>
+              <span className="">用例记录</span>
             </Button>
-            <span className="hidden sm:block">{saveStateText}</span>
-            <span className="hidden md:block">{remoteStatusText}</span>
+            <span className="">{saveStateText}</span>
+            <span className="">{remoteStatusText}</span>
           </div>
         </header>
       ) : null}
@@ -2338,7 +2347,7 @@ const applyWorkspaceDetail = useCallback(
       {!isCanvasFullscreen ? (
         <>
           <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950 px-4 py-3">
-            <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+            <div className="grid grid-cols-5 gap-3">
               <WorkspaceSummaryCard label="输入材料" value={`${workspaceSummary.materialCount}`} hint="需求、附件和远端上下文" />
               <WorkspaceSummaryCard label="生成用例" value={`${workspaceSummary.caseCount}`} hint="当前工作台中的测试点数量" />
               <WorkspaceSummaryCard label="高风险项" value={`${workspaceSummary.highRiskCount}`} hint="按优先级和状态初步推断" />
@@ -2367,7 +2376,7 @@ const applyWorkspaceDetail = useCallback(
       {/* 主体：左侧边栏 + 右侧画布 */}
       {!isCanvasFullscreen && activeTab === 'materials' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+          <div className="grid gap-4 grid-cols-[1.6fr_1fr]">
             <WorkspacePanelCard
               title="需求与附件"
               description="这里先承接当前最核心的输入材料，确保 AI 生成入口不变。"
@@ -2406,7 +2415,7 @@ const applyWorkspaceDetail = useCallback(
                   </div>
 
                   {attachments.length > 0 ? (
-                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    <div className="mt-3 grid grid-cols-2 gap-2">
                       {attachments.slice(0, 6).map((attachment) => (
                         <div key={attachment.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2">
                           <div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{attachment.name}</div>
@@ -2486,7 +2495,7 @@ const applyWorkspaceDetail = useCallback(
 
       {!isCanvasFullscreen && activeTab === 'results' ? (
         <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-slate-900 dark:text-white">生成结果</div>
               <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">保留现有脑图工作区，并补上结构化列表视图，方便后续审阅和批量操作。</div>
@@ -2520,14 +2529,14 @@ const applyWorkspaceDetail = useCallback(
       {!isCanvasFullscreen && activeTab === 'coverage' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
           <div className="grid gap-4">
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="grid grid-cols-4 gap-4">
               <WorkspaceSummaryCard label="高风险项" value={`${highRiskCases.length}`} hint="优先级 P0 / 失败项优先展示" />
               <WorkspaceSummaryCard label="待补充项" value={`${coverageGapCases.length}`} hint="待执行、阻塞和失败项合并展示" />
               <WorkspaceSummaryCard label="模块数" value={`${moduleCoverage.length}`} hint="按脑图模块节点聚合" />
               <WorkspaceSummaryCard label="总体覆盖率" value={`${progress.completionRate}%`} hint="基于节点进度的临时口径" />
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+            <div className="grid gap-4 grid-cols-[1.2fr_1fr]">
               <WorkspacePanelCard title="高风险点" description="Phase 1 先基于优先级和执行状态生成静态风险清单。">
                 {highRiskCases.length > 0 ? (
                   <div className="space-y-2">
@@ -2564,9 +2573,11 @@ const applyWorkspaceDetail = useCallback(
                           <div className="text-sm font-medium text-slate-900 dark:text-white">{item.moduleName}</div>
                           <div className="text-xs text-slate-500 dark:text-slate-400">{item.done}/{item.total} · 高风险 {item.highRisk}</div>
                         </div>
-                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                          <div className="h-full rounded-full bg-indigo-500" style={{ width: `${item.completionRate}%` }} />
-                        </div>
+                        <progress
+                          className="ai-cases-progress ai-cases-progress--indigo mt-2 h-2 w-full overflow-hidden rounded-full"
+                          max={100}
+                          value={item.completionRate}
+                        />
                       </div>
                     ))}
                   </div>
@@ -2583,7 +2594,7 @@ const applyWorkspaceDetail = useCallback(
 
       {!isCanvasFullscreen && activeTab === 'execution' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr]">
+          <div className="grid gap-4 grid-cols-[1.1fr_1fr]">
             <div className="grid gap-4">
               <WorkspacePanelCard
                 title="发布"
@@ -2601,7 +2612,7 @@ const applyWorkspaceDetail = useCallback(
                   </Button>
                 )}
               >
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
                     <div className="text-xs text-slate-500 dark:text-slate-400">远端状态</div>
                     <div className="mt-1 font-medium text-slate-900 dark:text-white">{remoteStatusText}</div>
@@ -2614,7 +2625,7 @@ const applyWorkspaceDetail = useCallback(
               </WorkspacePanelCard>
 
               <WorkspacePanelCard title="执行触发骨架" description="Phase 1 先把执行入口布局搭好，后续对接 Jenkins 真实触发。">
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid grid-cols-3 gap-3">
                   <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
                     <div className="text-xs text-slate-500 dark:text-slate-400">执行范围</div>
                     <div className="mt-1 font-medium text-slate-900 dark:text-white">全部 / 按模块 / 高风险</div>
@@ -2668,59 +2679,7 @@ const applyWorkspaceDetail = useCallback(
 
       <div className={`flex-1 min-h-0 flex relative ${(activeTab === 'results' && resultViewMode === 'mind') || isCanvasFullscreen ? 'flex' : 'hidden'}`}>
 
-        {/* 移动端侧边栏 Drawer（全屏时隐藏） */}
-        {!isCanvasFullscreen && sidebarOpen ? (
-          <div className="lg:hidden absolute inset-0 z-40 flex">
-            {/* 遮罩 */}
-            <div
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-              onClick={() => setSidebarOpen(false)}
-            />
-            {/* 侧边栏内容 */}
-            <div
-              className="relative z-50 h-full overflow-y-auto overflow-x-hidden bg-white dark:bg-slate-900 shadow-2xl"
-              style={{ width: SIDEBAR_WIDTH }}
-            >
-              <AiCaseSidebar
-                isGenerating={isGenerating}
-                generationProgress={generationProgress}
-                generationStageText={generationStageText}
-                onGenerate={() => setIsRequirementDialogOpen(true)}
-                progress={progress}
-                selectedNode={selectedNode}
-                selectedNodeStatus={selectedNodeStatus}
-                canEditSelectedNode={canEditSelectedNode}
-                isMultiSelect={isMultiSelect}
-                selectedTestcaseCount={selectedTestcaseNodeIds.length}
-                canEditAnySelectedNode={canEditAnySelectedNode}
-                isUpdatingNodeStatus={isUpdatingNodeStatus}
-                onStatusChange={handleStatusChange}
-                attachments={attachments}
-                isUploading={isUploading}
-                onUploadAttachment={handleUploadAttachment}
-                onDeleteAttachment={handleDeleteAttachment}
-                isRemoteLinked={isRemoteLinked}
-                remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
-                isPublishingRemote={isPublishingRemote}
-                isSyncingRemote={isSyncingRemote}
-                onPublishRemote={handlePublishRemote}
-                onSyncFromRemote={handleSyncFromRemote}
-                onResetTemplate={handleResetTemplate}
-                onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
-                mindData={mindData}
-              />
-            </div>
-          </div>
-        ) : null}
-
-        {/* 右侧画布区域 */}
-        <section
-          ref={canvasSectionRef}
-          className={`flex-1 min-w-0 flex flex-col overflow-hidden ${
-            isCanvasFullscreen ? 'fixed inset-0 z-50 bg-white dark:bg-slate-900' : ''
-          }`}
-        >
-<AiCaseCanvasToolbar
+        <AiCaseCanvasToolbar
 scalePercent={canvasScalePercent}
 isFullscreen={isCanvasFullscreen}
 showNodeKindTags={showNodeKindTags}
@@ -2745,13 +2704,9 @@ onTogglePanel={() => setPanelOpen((v) => !v)}
             {/* 桌端浮动面板（全屏时也可显示，在 XMind 画布内可拖拽） */}
             {panelOpen ? (
               <div
+                ref={floatPanelRef}
                 data-float-panel
-                className="hidden lg:flex absolute z-40 flex-col rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden select-none"
-                style={
-                  panelPos
-                    ? { width: FLOAT_PANEL_WIDTH, maxHeight: 'calc(100% - 16px)', left: panelPos.x, top: panelPos.y }
-                    : { width: FLOAT_PANEL_WIDTH, maxHeight: 'calc(100% - 16px)', right: FLOAT_PANEL_DEFAULT_RIGHT, top: FLOAT_PANEL_DEFAULT_TOP }
-                }
+                className="absolute z-40 flex w-[300px] max-h-[calc(100%-16px)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl select-none dark:border-slate-700 dark:bg-slate-900"
               >
                 {/* 拖拽把手 */}
                 <div
@@ -2824,24 +2779,22 @@ onTogglePanel={() => setPanelOpen((v) => !v)}
                       <span>生成进度</span>
                       <span className="font-medium tabular-nums">{generationProgress}%</span>
                     </div>
-                    <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500 ease-out"
-                        style={{ width: `${generationProgress}%` }}
-                      />
-                    </div>
+                    <progress
+                      className="ai-cases-progress ai-cases-progress--gradient h-1.5 w-full overflow-hidden rounded-full"
+                      max={100}
+                      value={generationProgress}
+                    />
                   </div>
                 </div>
               </div>
             )}
           </div>
-        </section>
-      </div>
+        </div>
 
       {/* 需求编辑弹窗 */}
       {!isCanvasFullscreen && activeTab === 'results' && resultViewMode === 'list' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+          <div className="grid gap-4 grid-cols-[1.6fr_1fr]">
             <WorkspacePanelCard title="测试用例列表" description="从脑图中派生出的结构化列表，后续将支持更多筛选与批量操作。">
               {generatedCases.length > 0 ? (
                 <div className="space-y-2">
@@ -2907,7 +2860,7 @@ onTogglePanel={() => setPanelOpen((v) => !v)}
       ) : null}
 
       <Dialog open={isRequirementDialogOpen} onOpenChange={setIsRequirementDialogOpen}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="max-w-[600px]">
           <DialogHeader>
             <DialogTitle>需求信息</DialogTitle>
           </DialogHeader>
