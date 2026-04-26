@@ -124,18 +124,20 @@ export default function Home() {
           </div>
 
           {/* Charts Section */}
-          <div className="grid grid-cols-3 gap-6 animate-fade-in-up animate-delay-300">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in-up animate-delay-300">
             {/* Today's Execution Donut Chart */}
             <TodayExecution
               data={dashboardData || undefined}
             />
 
             {/* Trend Line Chart */}
-            <TrendChart
-              timeRange={timeRange}
-              data={dashboardData || undefined}
-              onRefresh={fetchAllData}
-            />
+            <div className="lg:col-span-2">
+              <TrendChart
+                timeRange={timeRange}
+                data={dashboardData || undefined}
+                onRefresh={fetchAllData}
+              />
+            </div>
           </div>
 
           {/* Recent Test Runs */}

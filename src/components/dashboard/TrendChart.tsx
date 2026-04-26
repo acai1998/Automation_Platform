@@ -217,7 +217,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
             <UiTooltipTrigger asChild>
               <button
                 type="button"
-                className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
                 aria-label="查看趋势图说明"
               >
                 <HelpCircle className="h-4 w-4" />
@@ -253,8 +253,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
           type="button"
           onClick={() => onChartTypeChange('line')}
           disabled={isLoading}
-          aria-label="切换为折线图"
-          aria-pressed={chartType === 'line'}
+          aria-label={`切换为折线图${chartType === 'line' ? '（当前选中）' : ''}`}
           className={`p-2 rounded-lg transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
             chartType === 'line'
               ? 'bg-primary/10 text-primary'
@@ -267,8 +266,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
           type="button"
           onClick={() => onChartTypeChange('bar')}
           disabled={isLoading}
-          aria-label="切换为柱状图"
-          aria-pressed={chartType === 'bar'}
+          aria-label={`切换为柱状图${chartType === 'bar' ? '（当前选中）' : ''}`}
           className={`p-2 rounded-lg transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
             chartType === 'bar'
               ? 'bg-primary/10 text-primary'

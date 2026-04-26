@@ -10,7 +10,7 @@
     "dist"
   ],
   "compilerOptions": {
-    "moduleResolution": "node",
+    "moduleResolution": "Node16",
     "skipLibCheck": true,
     "rootDir": "..",
     "forceConsistentCasingInFileNames": true,

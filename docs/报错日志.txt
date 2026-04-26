@@ -66,3 +66,77 @@ server\services\AiCaseService.ts
 
 ## 输出要求
 先输出分析报告（第一阶段），等我确认后再动手改代码。
+
+
+这个取测试结果有问题，不能以Pipeline的结果为准，应该是以真正的测试用例执行结果为准，如果既有成功也有失败，那么运行详情页则展示真实的结果
+比如case 1 pass 则回调pass，case 2 fail 则回调 fail ，不能统一全部展示失败，但是这个就会存在一个问题
+运行记录列表页也有一个状态的展示，这个应该怎么展示呢？这个展示运行完成的结果比较好一些，因为用例统计有展示成功和失败的条数
+
+[4/5] 执行测试...
+  命令: pytest examples/D/test_console_logging.py::TestConsoleLogging::test_console_logging examples/D/test_line_chart.py::MyChartMakerClass::test_line_chart examples/B/test_scrape_bing.py::ScrapeBingTests::test_scrape_bing     --json-report     --json-report-file=/workspace/test-report.json     --junitxml=/workspace/junit.xml     -v
+
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.0.2, pluggy-1.6.0 -- /usr/local/bin/python3.11
+metadata: {'Python': '3.11.15', 'Platform': 'Linux-5.14.0-587.el9.x86_64-x86_64-with-glibc2.41', 'Packages': {'pytest': '9.0.2', 'pluggy': '1.6.0'}, 'Plugins': {'allure-pytest': '2.15.3', 'json-report': '1.5.0', 'seleniumbase': '4.47.9', 'rerunfailures': '16.1', 'xdist': '3.8.0', 'html': '4.0.2', 'metadata': '3.1.1', 'ordering': '0.6'}, 'RUN_ID': '4966'}
+rootdir: /workspace/repo
+configfile: pytest.ini
+plugins: allure-pytest-2.15.3, json-report-1.5.0, seleniumbase-4.47.9, rerunfailures-16.1, xdist-3.8.0, html-4.0.2, metadata-3.1.1, ordering-0.6
+collecting ... collected 3 items
+
+examples/D/test_console_logging.py::TestConsoleLogging::test_console_logging PASSED [ 33%]
+examples/D/test_line_chart.py::MyChartMakerClass::test_line_chart PASSED [ 66%]
+examples/B/test_scrape_bing.py::ScrapeBingTests::test_scrape_bing FAILED [100%]
+=> Fail Page: https://cn.bing.com/search?q=SeleniumBase+GitHub&qs=n&form=QBRE&rdr=1&rdrig=BBF15B4EBEE642FEB75B780F0ABA0AA0
+
+
+=================================== FAILURES ===================================
+_______________________ ScrapeBingTests.test_scrape_bing _______________________
+
+self = <test_scrape_bing.ScrapeBingTests testMethod=test_scrape_bing>
+
+    @pytest.mark.owner('lisi')
+    @pytest.mark.priority('P3')
+    @pytest.mark.description('验证从必应搜索结果页面爬取数据')
+    def test_scrape_bing(self):
+        if self._multithreaded:
+            self.open_if_not_url("about:blank")
+            self.skip("Skipping test in multi-threaded mode.")
+        self.open("www.bing.com/search?q=SeleniumBase+GitHub&qs=n&form=QBRE")
+>       self.wait_for_element("main h2 a")
+
+examples/B/test_scrape_bing.py:15: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/local/lib/python3.11/site-packages/seleniumbase/fixtures/base_case.py:10013: in wait_for_element
+    return page_actions.wait_for_element_visible(
+/usr/local/lib/python3.11/site-packages/seleniumbase/fixtures/page_actions.py:524: in wait_for_element_visible
+    timeout_exception(ElementNotVisibleException, message)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+exception = <class 'selenium.common.exceptions.ElementNotVisibleException'>
+message = 'Element {main h2 a} was not visible after 10 seconds!'
+
+    def timeout_exception(exception, message):
+        exc, msg = shared_utils.format_exc(exception, message)
+>       raise exc(msg)
+E       seleniumbase.common.exceptions.ElementNotVisibleException: Message: 
+E        Element {main h2 a} was not visible after 10 seconds!
+
+/usr/local/lib/python3.11/site-packages/seleniumbase/fixtures/page_actions.py:270: ElementNotVisibleException
+--------------------------- Captured stdout teardown ---------------------------
+
+=> Fail Page: https://cn.bing.com/search?q=SeleniumBase+GitHub&qs=n&form=QBRE&rdr=1&rdrig=BBF15B4EBEE642FEB75B780F0ABA0AA0
+------------------- generated xml file: /workspace/junit.xml -------------------
+--------------------------------- JSON report ----------------------------------
+report saved to: /workspace/test-report.json
+---------------- Latest Logs dir: /workspace/repo/latest_logs/ -----------------
+=========================== short test summary info ============================
+FAILED examples/B/test_scrape_bing.py::ScrapeBingTests::test_scrape_bing - se...
+========================= 1 failed, 2 passed in 14.33s =========================
+
+  ❌ pytest 执行完成（存在失败用例），exit code: 1
+
+▶ [5/5] 回调平台...
+  payload: {"runId":4966,"status":"failed","durationMs":18839}
+  attempt=1 curl_exit=0 http_code=202
+  response: {"success":true,"message":"Callback accepted for async processing","ackTimeMs":0}
+  ✅ 回调成功
