@@ -2365,7 +2365,308 @@ const applyWorkspaceDetail = useCallback(
       ) : null}
 
       {/* 主体：左侧边栏 + 右侧画布 */}
-      <div className="flex-1 min-h-0 flex relative">
+      {!isCanvasFullscreen && activeTab === 'materials' ? (
+        <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+          <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+            <WorkspacePanelCard
+              title="需求与附件"
+              description="这里先承接当前最核心的输入材料，确保 AI 生成入口不变。"
+              action={(
+                <Button type="button" size="sm" className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white" onClick={() => setIsRequirementDialogOpen(true)}>
+                  <Bot className="h-3.5 w-3.5" />
+                  编辑需求
+                </Button>
+              )}
+            >
+              <div className="space-y-4">
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-slate-900 dark:text-white">需求描述 / PRD</div>
+                      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">当前工作台生成所依赖的主需求文本</div>
+                    </div>
+                    <span className="rounded-full bg-indigo-100 px-2 py-1 text-[11px] font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+                      {requirementText.trim() ? '已准备' : '待补充'}
+                    </span>
+                  </div>
+                  <div className="mt-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                    {requirementText.trim() || '还没有填写需求内容，建议先补充 PRD 或功能描述，再执行 AI 生成。'}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-slate-900 dark:text-white">附件材料</div>
+                      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">复用当前工作台附件能力，后续扩展到接口文档、截图和说明材料。</div>
+                    </div>
+                    <span className="rounded-full bg-slate-200 px-2 py-1 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                      {attachments.length} 个
+                    </span>
+                  </div>
+
+                  {attachments.length > 0 ? (
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      {attachments.slice(0, 6).map((attachment) => (
+                        <div key={attachment.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2">
+                          <div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{attachment.name}</div>
+                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{(attachment.size / 1024).toFixed(1)} KB</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm text-slate-500 dark:text-slate-400">
+                      当前还没有上传附件。后续这里会统一展示 PRD、接口文档、截图和辅助材料。
+                    </div>
+                  )}
+                </div>
+              </div>
+            </WorkspacePanelCard>
+
+            <div className="grid gap-4">
+              <WorkspacePanelCard title="外部来源骨架" description="Phase 1 先把结构搭好，Phase 2 再逐步接真实平台。">
+                <div className="space-y-3">
+                  {[
+                    { icon: <Link2 className="h-4 w-4" />, title: '接口文档', desc: 'OpenAPI / Swagger 导入入口预留' },
+                    { icon: <GitBranch className="h-4 w-4" />, title: '代码变更', desc: 'PR / MR / Commit 影响面摘要预留' },
+                    { icon: <Bug className="h-4 w-4" />, title: '缺陷单', desc: '缺陷来源和高频问题预留' },
+                    { icon: <Activity className="h-4 w-4" />, title: '流量摘要', desc: '热门接口与异常热点预留' },
+                  ].map((item) => (
+                    <div key={item.title} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                      <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
+                        {item.icon}
+                        {item.title}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.desc}</div>
+                      <div className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">待接入</div>
+                    </div>
+                  ))}
+                </div>
+              </WorkspacePanelCard>
+
+              <WorkspacePanelCard
+                title="本次生成材料摘要"
+                description="确认当前工作台是否具备执行 AI 生成的最基本条件。"
+                action={(
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+                    onClick={() => void handleGenerate()}
+                    disabled={isGenerating || !requirementText.trim()}
+                  >
+                    {isGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />}
+                    AI 生成
+                  </Button>
+                )}
+              >
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">需求文本</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{requirementText.trim() ? '已填写' : '未填写'}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">附件数</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{attachments.length}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">远端状态</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{isRemoteLinked ? '已关联远端' : '仅本地工作台'}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">建议动作</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{requirementText.trim() ? '可开始生成' : '先补需求'}</div>
+                  </div>
+                </div>
+              </WorkspacePanelCard>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {!isCanvasFullscreen && activeTab === 'results' ? (
+        <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-slate-900 dark:text-white">生成结果</div>
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">保留现有脑图工作区，并补上结构化列表视图，方便后续审阅和批量操作。</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={resultViewMode === 'mind' ? 'default' : 'outline'}
+                className={resultViewMode === 'mind' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : ''}
+                onClick={() => setResultViewMode('mind')}
+              >
+                <BrainCircuit className="mr-1.5 h-3.5 w-3.5" />
+                脑图视图
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={resultViewMode === 'list' ? 'default' : 'outline'}
+                className={resultViewMode === 'list' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : ''}
+                onClick={() => setResultViewMode('list')}
+              >
+                <ListTree className="mr-1.5 h-3.5 w-3.5" />
+                列表视图
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {!isCanvasFullscreen && activeTab === 'coverage' ? (
+        <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+          <div className="grid gap-4">
+            <div className="grid gap-4 md:grid-cols-4">
+              <WorkspaceSummaryCard label="高风险项" value={`${highRiskCases.length}`} hint="优先级 P0 / 失败项优先展示" />
+              <WorkspaceSummaryCard label="待补充项" value={`${coverageGapCases.length}`} hint="待执行、阻塞和失败项合并展示" />
+              <WorkspaceSummaryCard label="模块数" value={`${moduleCoverage.length}`} hint="按脑图模块节点聚合" />
+              <WorkspaceSummaryCard label="总体覆盖率" value={`${progress.completionRate}%`} hint="基于节点进度的临时口径" />
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+              <WorkspacePanelCard title="高风险点" description="Phase 1 先基于优先级和执行状态生成静态风险清单。">
+                {highRiskCases.length > 0 ? (
+                  <div className="space-y-2">
+                    {highRiskCases.slice(0, 6).map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleFocusGeneratedCase(item.id)}
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 text-left hover:border-indigo-300 hover:bg-indigo-50/40 dark:hover:border-indigo-500/60 dark:hover:bg-indigo-500/10 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-medium text-slate-900 dark:text-white">{item.title}</div>
+                            <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.moduleName} · {item.priority}</div>
+                          </div>
+                          <span className="rounded-full bg-rose-100 px-2 py-1 text-[11px] font-medium text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">高风险</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                    还没有高风险点，先生成测试用例后这里会出现分析结果。
+                  </div>
+                )}
+              </WorkspacePanelCard>
+
+              <WorkspacePanelCard title="模块覆盖" description="这里先展示每个模块的完成率骨架，后续再接真实覆盖口径。">
+                {moduleCoverage.length > 0 ? (
+                  <div className="space-y-3">
+                    {moduleCoverage.map((item) => (
+                      <div key={item.moduleName} className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-medium text-slate-900 dark:text-white">{item.moduleName}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">{item.done}/{item.total} · 高风险 {item.highRisk}</div>
+                        </div>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                          <div className="h-full rounded-full bg-indigo-500" style={{ width: `${item.completionRate}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                    暂无模块覆盖数据。
+                  </div>
+                )}
+              </WorkspacePanelCard>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {!isCanvasFullscreen && activeTab === 'execution' ? (
+        <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+          <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr]">
+            <div className="grid gap-4">
+              <WorkspacePanelCard
+                title="发布"
+                description="沿用当前远端工作台发布能力，作为执行前的统一入口。"
+                action={(
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+                    onClick={() => void handlePublishRemote()}
+                    disabled={isPublishingRemote || isGenerating}
+                  >
+                    {isPublishingRemote ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                    发布工作台
+                  </Button>
+                )}
+              >
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">远端状态</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{remoteStatusText}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">本地保存</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{saveStateText}</div>
+                  </div>
+                </div>
+              </WorkspacePanelCard>
+
+              <WorkspacePanelCard title="执行触发骨架" description="Phase 1 先把执行入口布局搭好，后续对接 Jenkins 真实触发。">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">执行范围</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">全部 / 按模块 / 高风险</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">执行环境</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">待接入</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">Jenkins</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">保留现有执行链路</div>
+                  </div>
+                </div>
+              </WorkspacePanelCard>
+            </div>
+
+            <div className="grid gap-4">
+              <WorkspacePanelCard title="最近执行摘要" description="这里先展示工作台现状与后续回流入口。">
+                <div className="space-y-3">
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">当前工作台</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{workspaceName}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">结果规模</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{generatedCases.length} 条测试点</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">当前进度</div>
+                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{progress.done}/{progress.total} 已完成</div>
+                  </div>
+                </div>
+              </WorkspacePanelCard>
+
+              <WorkspacePanelCard title="质量回流骨架" description="后续这里会承接质量评分、知识库回流和执行反馈。">
+                <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
+                  <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-4">
+                    <div className="font-medium text-slate-900 dark:text-white">质量评分</div>
+                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Phase 1 先放置入口，后续对接人工评分与系统评分。</div>
+                  </div>
+                  <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-4">
+                    <div className="font-medium text-slate-900 dark:text-white">知识库回流</div>
+                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">优质工作台后续可在这里直接加入知识库。</div>
+                  </div>
+                </div>
+              </WorkspacePanelCard>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      <div className={`flex-1 min-h-0 flex relative ${(activeTab === 'results' && resultViewMode === 'mind') || isCanvasFullscreen ? 'flex' : 'hidden'}`}>
 
         {/* 移动端侧边栏 Drawer（全屏时隐藏） */}
         {!isCanvasFullscreen && sidebarOpen ? (
