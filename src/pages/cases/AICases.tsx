@@ -531,7 +531,7 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
   // 需求编辑弹窗
   const [isRequirementDialogOpen, setIsRequirementDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('results');
-  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>('mind');
+  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>('list');
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
@@ -2498,19 +2498,9 @@ const applyWorkspaceDetail = useCallback(
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-slate-900 dark:text-white">生成结果</div>
-              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">保留现有脑图工作区，并补上结构化列表视图，方便后续审阅和批量操作。</div>
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">以结构化列表作为默认结果视图，方便审阅、筛选和批量操作；脑图视图暂作为兼容入口保留。</div>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant={resultViewMode === 'mind' ? 'default' : 'outline'}
-                className={resultViewMode === 'mind' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : ''}
-                onClick={() => setResultViewMode('mind')}
-              >
-                <BrainCircuit className="mr-1.5 h-3.5 w-3.5" />
-                脑图视图
-              </Button>
               <Button
                 type="button"
                 size="sm"
@@ -2520,6 +2510,16 @@ const applyWorkspaceDetail = useCallback(
               >
                 <ListTree className="mr-1.5 h-3.5 w-3.5" />
                 列表视图
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={resultViewMode === 'mind' ? 'default' : 'outline'}
+                className={resultViewMode === 'mind' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : ''}
+                onClick={() => setResultViewMode('mind')}
+              >
+                <BrainCircuit className="mr-1.5 h-3.5 w-3.5" />
+                脑图视图
               </Button>
             </div>
           </div>

@@ -3,6 +3,7 @@ import { useLocation } from 'wouter';
 import {
   BrainCircuit, Bot, Loader2, Plus, Search,
   ChevronDown, ChevronUp, Filter, RefreshCw, ArrowUpRight,
+  FileText, ShieldAlert, PlayCircle, History,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -101,6 +102,157 @@ function SummaryStats({ docs }: { docs: AiCaseWorkspaceDocument[] }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function formatRelativeTime(ts: number): string {
+  const diff = Math.floor((Date.now() - ts) / 60_000);
+  if (diff < 1) return '刚刚';
+  if (diff < 60) return `${diff} 分钟前`;
+  const hours = Math.floor(diff / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  return new Date(ts).toLocaleDateString('zh-CN');
+}
+
+function EmptyWorkspaceGuide({ onCreate }: { onCreate: () => void }) {
+  const cards = [
+    {
+      icon: <FileText className="h-4 w-4" />,
+      title: '先准备什么',
+      items: ['需求描述 / PRD', '接口文档或截图', '代码变更和缺陷上下文'],
+      tone: 'from-sky-50 to-cyan-50 border-sky-100 text-sky-700 dark:from-sky-900/20 dark:to-cyan-900/20 dark:border-sky-800/40 dark:text-sky-300',
+    },
+    {
+      icon: <ShieldAlert className="h-4 w-4" />,
+      title: '生成后看什么',
+      items: ['结构化用例列表', '高风险和待补充项', '来源、覆盖和执行状态'],
+      tone: 'from-amber-50 to-orange-50 border-amber-100 text-amber-700 dark:from-amber-900/20 dark:to-orange-900/20 dark:border-amber-800/40 dark:text-amber-300',
+    },
+    {
+      icon: <PlayCircle className="h-4 w-4" />,
+      title: '建议工作流',
+      items: ['先生成首版用例', '筛选高风险项补充', '发布并进入执行回流'],
+      tone: 'from-emerald-50 to-teal-50 border-emerald-100 text-emerald-700 dark:from-emerald-900/20 dark:to-teal-900/20 dark:border-emerald-800/40 dark:text-emerald-300',
+    },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.14),_transparent_36%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.12),_transparent_34%)] px-6 py-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl">
+              <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 dark:border-indigo-800/40 dark:bg-indigo-500/10 dark:text-indigo-300">
+                <BrainCircuit className="h-3.5 w-3.5" />
+                AI 工作台首页
+              </div>
+              <h2 className="mt-3 text-xl font-semibold text-slate-900 dark:text-white">
+                先输入需求，再把 AI 结果收敛成可执行的结构化测试用例
+              </h2>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300">
+                这里不只是“生成一下用例”。后续你会在同一个工作台里继续做筛选、补充、评审、执行和回流，所以首页应该先告诉用户要准备什么、会得到什么。
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm shadow-indigo-600/20"
+                onClick={onCreate}
+              >
+                <Plus className="h-4 w-4" />
+                新增需求
+              </Button>
+              <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-xs text-slate-500 backdrop-blur dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
+                首次建议至少准备：
+                <div className="mt-1 font-medium text-slate-700 dark:text-slate-200">
+                  需求文本 + 1 份辅助材料
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {cards.map((card) => (
+          <div
+            key={card.title}
+            className={`rounded-2xl border bg-gradient-to-br px-5 py-4 ${card.tone}`}
+          >
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              {card.icon}
+              {card.title}
+            </div>
+            <div className="mt-3 space-y-2 text-sm leading-6">
+              {card.items.map((item) => (
+                <div key={item}>{item}</div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RecentWorkspaceStrip({
+  docs,
+  onOpen,
+}: {
+  docs: AiCaseWorkspaceDocument[];
+  onOpen: (id: string) => void;
+}) {
+  const recentDocs = docs.slice(0, 3);
+
+  if (recentDocs.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-slate-900 dark:text-white">继续最近工作台</div>
+          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            首页建议只透出最值得继续的少量记录，避免一进来就被完整历史列表淹没。
+          </div>
+        </div>
+        <div className="flex items-center gap-1 text-xs text-slate-400">
+          <History className="h-3.5 w-3.5" />
+          最近 3 条
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        {recentDocs.map((doc) => {
+          const progress = computeProgress(doc.mapData);
+          return (
+            <button
+              key={doc.id}
+              type="button"
+              onClick={() => onOpen(doc.id)}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/60 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-indigo-500/50 dark:hover:bg-indigo-500/10"
+            >
+              <div className="line-clamp-1 text-sm font-semibold text-slate-900 dark:text-white">{doc.name}</div>
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{formatRelativeTime(doc.updatedAt)}</div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg bg-white px-3 py-2 text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                  <div className="text-slate-400 dark:text-slate-500">用例数</div>
+                  <div className="mt-1 font-semibold text-slate-900 dark:text-white">{progress.total}</div>
+                </div>
+                <div className="rounded-lg bg-white px-3 py-2 text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                  <div className="text-slate-400 dark:text-slate-500">完成率</div>
+                  <div className="mt-1 font-semibold text-slate-900 dark:text-white">{progress.completionRate}%</div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -356,10 +508,10 @@ export default function AICaseCreate() {
             </div>
             <div className="min-w-0">
               <h1 className="text-sm font-semibold text-slate-900 dark:text-white leading-tight truncate">
-                AI 生成用例
+                AI 工作台
               </h1>
               <p className="text-xs text-slate-400 dark:text-slate-500 leading-tight mt-0.5">
-                输入需求，AI 自动为你生成完整测试用例脑图
+                输入需求并生成结构化测试用例，继续完成筛选、补充、执行与回流
               </p>
             </div>
           </div>
@@ -433,6 +585,10 @@ export default function AICaseCreate() {
             <>
               {/* Summary stats：有数据时显示 */}
               {hasData && <SummaryStats docs={docs} />}
+
+              {hasData && (
+                <RecentWorkspaceStrip docs={displayed} onOpen={handleOpen} />
+              )}
 
               {/* Toolbar：有数据时显示（搜索/排序/过滤） */}
               {hasData && (
@@ -523,21 +679,11 @@ export default function AICaseCreate() {
 
               {/* Empty state：无数据时居中展示，不再放重复按钮 */}
               {docs.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-24 text-center select-none">
-                  {/* 图标 */}
-                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-900/20 dark:to-indigo-900/20 border border-violet-100 dark:border-violet-800/30 flex items-center justify-center mb-4">
-                    <BrainCircuit className="h-7 w-7 text-violet-400 dark:text-violet-500" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    还没有生成记录
-                  </h3>
-                  <p className="text-xs text-slate-400 dark:text-slate-500 max-w-56 leading-relaxed mb-4">
-                    输入需求描述，让 AI 自动生成完整的测试用例脑图
-                  </p>
-                  {/* 指引文案替代重复按钮：箭头 + 文字指向右上角 */}
-                  <div className="flex items-center gap-1.5 text-xs text-indigo-500 dark:text-indigo-400 font-medium">
+                <div className="space-y-4 py-6">
+                  <EmptyWorkspaceGuide onCreate={() => setSheetOpen(true)} />
+                  <div className="flex items-center justify-center gap-1.5 text-xs text-indigo-500 dark:text-indigo-400 font-medium select-none">
                     <ArrowUpRight className="h-3.5 w-3.5" />
-                    <span>点击右上角「新增需求」开始生成</span>
+                    <span>点击右上角「新增需求」开始生成你的第一个 AI 工作台</span>
                   </div>
                 </div>
               )}

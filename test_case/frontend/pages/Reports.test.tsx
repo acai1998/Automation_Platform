@@ -40,6 +40,7 @@ vi.mock('@/components/ui/checkbox', () => ({
       checked={checked}
       onChange={(event) => onCheckedChange?.(event.target.checked)}
       readOnly={!onCheckedChange}
+      aria-label="checkbox"
     />
   ),
 }));
