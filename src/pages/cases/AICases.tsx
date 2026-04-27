@@ -11,7 +11,6 @@ import {
   FileText,
   GitBranch,
   GripHorizontal,
-  History,
   Link2,
   ListTree,
   Loader2,
@@ -24,6 +23,9 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import { useAiGeneration } from '@/contexts/AiGenerationContext';
 import { AiCaseSidebar } from './components/AiCaseSidebar';
 import { AiCaseCanvasToolbar } from './components/AiCaseCanvasToolbar';
+import { AiWorkspaceHeader } from './components/AiWorkspaceHeader';
+import { AiWorkspaceSummaryBar } from './components/AiWorkspaceSummaryBar';
+import { AiWorkspaceTabs, type AiWorkspaceTabItem } from './components/AiWorkspaceTabs';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -128,12 +130,7 @@ interface GeneratedCaseListItem {
   sourceLabel: string;
 }
 
-const WORKSPACE_TAB_ITEMS: Array<{
-  id: WorkspaceTab;
-  label: string;
-  description: string;
-  icon: ReactNode;
-}> = [
+const WORKSPACE_TAB_ITEMS: AiWorkspaceTabItem<WorkspaceTab>[] = [
   {
     id: 'materials',
     label: '输入材料',
@@ -197,58 +194,6 @@ function collectGeneratedCases(mapData: AiCaseMindData): GeneratedCaseListItem[]
   }
 
   return items;
-}
-
-function WorkspaceSummaryCard({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint: string;
-}) {
-  return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-      <div className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</div>
-      <div className="mt-1 text-xl font-semibold text-slate-900 dark:text-white">{value}</div>
-      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{hint}</div>
-    </div>
-  );
-}
-
-function WorkspaceTabButton({
-  active,
-  icon,
-  label,
-  description,
-  onClick,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  description: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`min-w-[180px] rounded-xl border px-4 py-3 text-left transition-colors ${
-        active
-          ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/60 dark:bg-indigo-500/10 dark:text-indigo-300'
-          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-700 dark:hover:bg-slate-800/80'
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        <span className={active ? '' : 'text-slate-400 dark:text-slate-500'}>{icon}</span>
-        <span className="text-sm font-semibold">{label}</span>
-      </div>
-      <div className={`mt-1 text-xs ${active ? 'text-indigo-600/80 dark:text-indigo-300/80' : 'text-slate-500 dark:text-slate-400'}`}>
-        {description}
-      </div>
-    </button>
-  );
 }
 
 function WorkspacePanelCard({
@@ -2309,67 +2254,32 @@ const applyWorkspaceDetail = useCallback(
 
       {/* 顶部标题栏（全屏时隐藏） */}
       {!isCanvasFullscreen ? (
-        <header className="shrink-0 h-12 flex items-center justify-between px-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-          <div className="flex items-center gap-2.5">
-            {/* 移动端汉堡菜单 */}
-            <div className="p-1.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-300">
-              <BrainCircuit className="h-4 w-4" />
-            </div>
-            <h1 className="text-sm font-semibold text-slate-900 dark:text-white">AI 用例工作台</h1>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs gap-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
-              onClick={() => setIsRequirementDialogOpen(true)}
-            >
-              <FileText className="h-3.5 w-3.5" />
-              <span className="">需求信息</span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs gap-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
-              onClick={() => setLocation('/cases/ai-create')}
-            >
-              <History className="h-3.5 w-3.5" />
-              <span className="">用例记录</span>
-            </Button>
-            <span className="">{saveStateText}</span>
-            <span className="">{remoteStatusText}</span>
-          </div>
-        </header>
+        <AiWorkspaceHeader
+          title="AI 用例工作台"
+          saveStateText={saveStateText}
+          remoteStatusText={remoteStatusText}
+          onOpenRequirement={() => setIsRequirementDialogOpen(true)}
+          onOpenHistory={() => setLocation('/cases/ai-history')}
+        />
       ) : null}
 
       {!isCanvasFullscreen ? (
         <>
-          <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950 px-4 py-3">
-            <div className="grid grid-cols-5 gap-3">
-              <WorkspaceSummaryCard label="输入材料" value={`${workspaceSummary.materialCount}`} hint="需求、附件和远端上下文" />
-              <WorkspaceSummaryCard label="生成用例" value={`${workspaceSummary.caseCount}`} hint="当前工作台中的测试点数量" />
-              <WorkspaceSummaryCard label="高风险项" value={`${workspaceSummary.highRiskCount}`} hint="按优先级和状态初步推断" />
-              <WorkspaceSummaryCard label="当前覆盖率" value={workspaceSummary.coverageRate} hint="基于节点状态的阶段性指标" />
-              <WorkspaceSummaryCard label="执行状态" value={workspaceSummary.executionState} hint={isRemoteLinked ? remoteStatusText : '尚未发布到远端工作台'} />
-            </div>
-          </div>
+          <AiWorkspaceSummaryBar
+            items={[
+              { label: '输入材料', value: `${workspaceSummary.materialCount}`, hint: '需求、附件和远端上下文' },
+              { label: '生成用例', value: `${workspaceSummary.caseCount}`, hint: '当前工作台中的测试点数量' },
+              { label: '高风险项', value: `${workspaceSummary.highRiskCount}`, hint: '按优先级和状态初步推断' },
+              { label: '当前覆盖率', value: workspaceSummary.coverageRate, hint: '基于节点状态的阶段性指标' },
+              { label: '执行状态', value: workspaceSummary.executionState, hint: isRemoteLinked ? remoteStatusText : '尚未发布到远端工作台' },
+            ]}
+          />
 
-          <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {WORKSPACE_TAB_ITEMS.map((tab) => (
-                <WorkspaceTabButton
-                  key={tab.id}
-                  active={activeTab === tab.id}
-                  icon={tab.icon}
-                  label={tab.label}
-                  description={tab.description}
-                  onClick={() => setActiveTab(tab.id)}
-                />
-              ))}
-            </div>
-          </div>
+          <AiWorkspaceTabs
+            activeTab={activeTab}
+            items={WORKSPACE_TAB_ITEMS}
+            onChange={setActiveTab}
+          />
         </>
       ) : null}
 
@@ -2529,12 +2439,15 @@ const applyWorkspaceDetail = useCallback(
       {!isCanvasFullscreen && activeTab === 'coverage' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
           <div className="grid gap-4">
-            <div className="grid grid-cols-4 gap-4">
-              <WorkspaceSummaryCard label="高风险项" value={`${highRiskCases.length}`} hint="优先级 P0 / 失败项优先展示" />
-              <WorkspaceSummaryCard label="待补充项" value={`${coverageGapCases.length}`} hint="待执行、阻塞和失败项合并展示" />
-              <WorkspaceSummaryCard label="模块数" value={`${moduleCoverage.length}`} hint="按脑图模块节点聚合" />
-              <WorkspaceSummaryCard label="总体覆盖率" value={`${progress.completionRate}%`} hint="基于节点进度的临时口径" />
-            </div>
+            <AiWorkspaceSummaryBar
+              items={[
+                { label: '高风险项', value: `${highRiskCases.length}`, hint: '优先级 P0 / 失败项优先展示' },
+                { label: '待补充项', value: `${coverageGapCases.length}`, hint: '待执行、阻塞和失败项合并展示' },
+                { label: '模块数', value: `${moduleCoverage.length}`, hint: '按脑图模块节点聚合' },
+                { label: '总体覆盖率', value: `${progress.completionRate}%`, hint: '基于节点进度的临时口径' },
+              ]}
+              gridClassName="grid-cols-4"
+            />
 
             <div className="grid gap-4 grid-cols-[1.2fr_1fr]">
               <WorkspacePanelCard title="高风险点" description="Phase 1 先基于优先级和执行状态生成静态风险清单。">

@@ -198,7 +198,7 @@ export default function AICaseHistory() {
               <BrainCircuit className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900 dark:text-white">用例记录</h1>
+              <h1 className="text-lg font-bold text-slate-900 dark:text-white">全部记录</h1>
               <p className="text-xs text-slate-500 dark:text-slate-400">搜索、筛选并分页管理所有 AI 工作台历史记录</p>
             </div>
           </div>
