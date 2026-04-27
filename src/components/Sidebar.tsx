@@ -97,17 +97,18 @@ function MiniDrawer({ item, anchorRect, onClose, location, onNavigate }: MiniDra
 
   const top = anchorRect.top;
 
+  // Apply dynamic top via DOM (avoids inline styles)
+  useEffect(() => {
+    if (overlayRef.current) {
+      overlayRef.current.style.top = `${top}px`;
+    }
+  }, [top]);
+
   return createPortal(
     <div
       ref={overlayRef}
-      style={{
-        position: "fixed",
-        left: 72,
-        top,
-        zIndex: 50,
-        minWidth: 180,
-      }}
       className="
+        fixed left-[72px] z-50 min-w-[180px]
         bg-white dark:bg-slate-900
         border border-slate-200 dark:border-slate-700
         rounded-xl shadow-xl shadow-slate-200/60 dark:shadow-slate-900/60
@@ -557,6 +558,7 @@ function SidebarContent({ location, onNavigate, mode, onToggle }: SidebarContent
 export function Sidebar() {
   const [location, setLocation] = useLocation();
   const { navState, toggleNav } = useNavCollapse();
+  const asideRef = useRef<HTMLElement>(null);
 
   const handleNavigate = useCallback(
     (href: string) => {
@@ -567,14 +569,17 @@ export function Sidebar() {
 
   const w = navState === "expanded" ? 200 : 72;
 
+  useEffect(() => {
+    if (asideRef.current) {
+      asideRef.current.style.width = `${w}px`;
+      asideRef.current.style.minWidth = `${w}px`;
+    }
+  }, [w]);
+
   return (
     <aside
-      style={{
-        width: w,
-        minWidth: w,
-        transition: "width 0.28s cubic-bezier(0.4,0,0.2,1), min-width 0.28s cubic-bezier(0.4,0,0.2,1)",
-      }}
-      className="flex h-full flex-col overflow-hidden border-r border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-900"
+      ref={asideRef}
+      className="transition-[width,min-width] duration-[280ms] ease-[cubic-bezier(0.4,0,0.2,1)] flex h-full flex-col overflow-hidden border-r border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-900"
     >
       <SidebarContent
         location={location}

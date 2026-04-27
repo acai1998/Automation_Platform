@@ -1,5 +1,7 @@
 import { Cron } from 'croner';
 
+const SCHEDULED_FIRE_LOOKAHEAD_MS = 1000;
+
 export function getNextCronTime(expr: string, from: Date = new Date()): Date | null {
   try {
     const job = new Cron(expr, { paused: true });
@@ -30,4 +32,35 @@ export function getPrevCronTime(
   } catch {
     return null;
   }
+}
+
+export interface ScheduledFireWindowCheck {
+  expectedDueAt: Date | null;
+  shouldDispatch: boolean;
+}
+
+export function evaluateScheduledFireWindow(
+  expr: string,
+  dueAt: Date,
+  now: Date,
+  maxWindowMs: number,
+  lookAheadMs: number = SCHEDULED_FIRE_LOOKAHEAD_MS,
+): ScheduledFireWindowCheck {
+  const expectedDueAt = getPrevCronTime(
+    expr,
+    new Date(now.getTime() + lookAheadMs),
+    maxWindowMs,
+  );
+
+  if (!expectedDueAt) {
+    return {
+      expectedDueAt: null,
+      shouldDispatch: false,
+    };
+  }
+
+  return {
+    expectedDueAt,
+    shouldDispatch: Math.abs(expectedDueAt.getTime() - dueAt.getTime()) <= lookAheadMs,
+  };
 }

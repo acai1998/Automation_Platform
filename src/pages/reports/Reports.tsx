@@ -198,7 +198,7 @@ export default function Reports() {
                       用例统计
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-                      开始时间
+                      触发时间
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
                       耗时
@@ -249,7 +249,9 @@ export default function Reports() {
                         />
                       </td>
                       <td className="px-4 py-3.5 text-xs text-slate-600 dark:text-slate-400">
-                        {record.start_time ? new Date(record.start_time).toLocaleString() : '-'}
+                        {(record.created_at ?? record.start_time)
+                          ? new Date(record.created_at ?? record.start_time ?? '').toLocaleString()
+                          : '-'}
                       </td>
                       <td className="px-4 py-3.5 text-xs text-slate-600 dark:text-slate-400">
                         {formatDuration(record.duration_ms)}

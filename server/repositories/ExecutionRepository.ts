@@ -727,14 +727,14 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
     }
 
     if (filters.startDate) {
-      // 数据库 start_time 字段存储的是北京时间（CST），直接与日期字符串比较即可
-      conditions.push('tr.start_time >= ?');
+      // 报表页展示的是触发时间，因此筛选也按 created_at 对齐
+      conditions.push('tr.created_at >= ?');
       params.push(`${filters.startDate} 00:00:00`);
     }
 
     if (filters.endDate) {
       // 结束日期：当天 23:59:59（北京时间）
-      conditions.push('tr.start_time <= ?');
+      conditions.push('tr.created_at <= ?');
       params.push(`${filters.endDate} 23:59:59`);
     }
 
@@ -762,6 +762,7 @@ export class ExecutionRepository extends BaseRepository<TaskExecution> {
         tr.failed_cases,
         tr.skipped_cases,
         tr.duration_ms,
+        tr.created_at,
         tr.start_time,
         tr.end_time
       FROM Auto_TestRun tr

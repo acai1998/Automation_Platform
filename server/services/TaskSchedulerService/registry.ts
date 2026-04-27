@@ -4,7 +4,11 @@ import {
   MAX_MISSED_WINDOW_MS,
   SCHEDULER_USER_ID,
 } from './config';
-import { getNextCronTime, getPrevCronTime } from './cron';
+import {
+  evaluateScheduledFireWindow,
+  getNextCronTime,
+  getPrevCronTime,
+} from './cron';
 import {
   loadAllScheduledTasks,
   loadLastRunAt,
@@ -122,6 +126,32 @@ export class TaskSchedulerRegistryHelper {
 
       const freshTask = this.deps.taskCache.get(task.id);
       if (!freshTask || freshTask.status !== 'active') return;
+
+      const firedAt = new Date();
+      const fireWindow = evaluateScheduledFireWindow(
+        freshTask.cronExpression,
+        next,
+        firedAt,
+        MAX_MISSED_WINDOW_MS,
+      );
+
+      if (!fireWindow.shouldDispatch) {
+        logger.warn(`Task ${task.id} timer fired outside the current cron window, skipping stale dispatch`, {
+          event: LOG_EVENTS.SCHEDULER_TASK_SKIPPED,
+          taskId: task.id,
+          dueAt: next.toISOString(),
+          firedAt: firedAt.toISOString(),
+          expectedDueAt: fireWindow.expectedDueAt?.toISOString() ?? null,
+          cronExpression: freshTask.cronExpression,
+          reason: 'stale_timer_callback',
+        }, LOG_CONTEXTS.EXECUTION);
+
+        const updatedTask = this.deps.taskCache.get(task.id);
+        if (updatedTask && updatedTask.status === 'active') {
+          this.scheduleTask(updatedTask);
+        }
+        return;
+      }
 
       logger.info(`Task ${task.id} timer fired, dispatching scheduled execution`, {
         event: LOG_EVENTS.SCHEDULER_TASK_DISPATCHED,
