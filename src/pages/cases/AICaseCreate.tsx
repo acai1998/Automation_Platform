@@ -1,8 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'wouter';
 import {
-  BrainCircuit, Bot, Loader2, Plus, Search,
-  ChevronDown, ChevronUp, Filter, RefreshCw, ArrowUpRight,
+  BrainCircuit, Bot, Loader2, Plus, RefreshCw, ArrowUpRight,
   FileText, ShieldAlert, PlayCircle, History,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -19,32 +18,12 @@ import { toast } from 'sonner';
 import { listAllWorkspaceDocuments } from '@/lib/aiCaseStorage';
 import { computeProgress } from '@/lib/aiCaseMindMap';
 import { type AiCaseWorkspaceDocument } from '@/types/aiCases';
-import { AiCaseHistoryCard } from './components/AiCaseHistoryCard';
 import { useAiGeneration } from '@/contexts/AiGenerationContext';
-
-// ── Types ─────────────────────────────────────────────────────────
-
-type SortKey = 'updatedAt' | 'createdAt' | 'total' | 'completionRate';
-type FilterMode = 'all' | 'synced' | 'local-only';
 
 /** 生成工作台文档的唯一 ID */
 function generateWorkspaceId(): string {
   return `ai-ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
-
-// 常量定义在模块级别，避免每次渲染重建
-const SORT_OPTS: Array<{ key: SortKey; label: string }> = [
-  { key: 'updatedAt', label: '最近更新' },
-  { key: 'createdAt', label: '创建时间' },
-  { key: 'total', label: '用例数' },
-  { key: 'completionRate', label: '通过率' },
-];
-
-const FILTER_LABELS: Record<FilterMode, string> = {
-  all: '全部',
-  synced: '已同步',
-  'local-only': '仅本地',
-};
 
 // ── Summary Stats ─────────────────────────────────────────────────
 
@@ -201,11 +180,13 @@ function EmptyWorkspaceGuide({ onCreate }: { onCreate: () => void }) {
 function RecentWorkspaceStrip({
   docs,
   onOpen,
+  onViewAll,
 }: {
   docs: AiCaseWorkspaceDocument[];
   onOpen: (id: string) => void;
+  onViewAll: () => void;
 }) {
-  const recentDocs = docs.slice(0, 3);
+  const recentDocs = docs.slice(0, 5);
 
   if (recentDocs.length === 0) {
     return null;
@@ -217,16 +198,27 @@ function RecentWorkspaceStrip({
         <div>
           <div className="text-sm font-semibold text-slate-900 dark:text-white">继续最近工作台</div>
           <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            首页建议只透出最值得继续的少量记录，避免一进来就被完整历史列表淹没。
+            首页只透出最近 5 条工作台，搜索、筛选和分页统一放到“全部记录”页。
           </div>
         </div>
-        <div className="flex items-center gap-1 text-xs text-slate-400">
-          <History className="h-3.5 w-3.5" />
-          最近 3 条
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 text-xs text-slate-400">
+            <History className="h-3.5 w-3.5" />
+            最近 5 条
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs"
+            onClick={onViewAll}
+          >
+            查看全部记录
+          </Button>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+      <div className="mt-4 grid gap-3 lg:grid-cols-5">
         {recentDocs.map((doc) => {
           const progress = computeProgress(doc.mapData);
           return (
@@ -391,23 +383,11 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
 // ── Main Page ─────────────────────────────────────────────────────
 
 /** 上次在脑图页面打开的文档 ID，用于列表页标识「当前工作区」 */
-const LAST_OPENED_DOC_KEY = 'ai-case-last-opened-doc-id';
-
 export default function AICaseCreate() {
   const [, setLocation] = useLocation();
   const [sheetOpen, setSheetOpen] = useState(false);
-  // 读取最后一次在脑图页面打开的文档 ID
-  const [lastOpenedDocId] = useState(() =>
-    window.localStorage.getItem(LAST_OPENED_DOC_KEY) ?? undefined
-  );
   const [docs, setDocs] = useState<AiCaseWorkspaceDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('updatedAt');
-  const [sortDesc, setSortDesc] = useState(true);
-  const [filter, setFilter] = useState<FilterMode>('all');
-  const [showFilterMenu, setShowFilterMenu] = useState(false);
-  const filterRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -421,7 +401,7 @@ export default function AICaseCreate() {
   }, []);
 
   // 订阅 AI 生成状态：当 generatingDocId 从「有→无」时，说明生成结束，自动刷新列表
-  const { generatingDocId, progress: aiProgress } = useAiGeneration();
+  const { generatingDocId } = useAiGeneration();
   const prevGeneratingDocIdRef = useRef<string | null>(generatingDocId);
   useEffect(() => {
     const prev = prevGeneratingDocIdRef.current;
@@ -432,17 +412,6 @@ export default function AICaseCreate() {
     }
   }, [generatingDocId, load]);
 
-  // Close filter menu on outside click
-  useEffect(() => {
-    if (!showFilterMenu) return;
-    const h = (e: MouseEvent) => {
-      if (filterRef.current && !filterRef.current.contains(e.target as Node))
-        setShowFilterMenu(false);
-    };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [showFilterMenu]);
-
   useEffect(() => { load(); }, [load]);
 
   const handleOpen = useCallback(
@@ -450,48 +419,7 @@ export default function AICaseCreate() {
     [setLocation]
   );
 
-  const handleDeleted = useCallback(
-    (id: string) => setDocs((prev) => prev.filter((d) => d.id !== id)),
-    []
-  );
-
-  // 预计算所有 doc 的 progress，避免排序时重复调用 computeProgress
-  const progressCache = useMemo(
-    () => new Map(docs.map((d) => [d.id, computeProgress(d.mapData)])),
-    [docs]
-  );
-
-  const displayed = useMemo(() => {
-    let r = [...docs];
-    if (search.trim()) {
-      const kw = search.trim().toLowerCase();
-      r = r.filter((d) =>
-        d.name.toLowerCase().includes(kw) || d.requirement.toLowerCase().includes(kw)
-      );
-    }
-    if (filter === 'synced') r = r.filter((d) => d.syncMode === 'hybrid' && d.remoteWorkspaceId);
-    if (filter === 'local-only') r = r.filter((d) => !d.remoteWorkspaceId);
-
-    r.sort((a, b) => {
-      let va: number, vb: number;
-      if (sortKey === 'updatedAt') { va = a.updatedAt; vb = b.updatedAt; }
-      else if (sortKey === 'createdAt') { va = a.createdAt; vb = b.createdAt; }
-      else if (sortKey === 'total') {
-        va = progressCache.get(a.id)?.total ?? 0;
-        vb = progressCache.get(b.id)?.total ?? 0;
-      } else {
-        va = progressCache.get(a.id)?.completionRate ?? 0;
-        vb = progressCache.get(b.id)?.completionRate ?? 0;
-      }
-      return sortDesc ? vb - va : va - vb;
-    });
-    return r;
-  }, [docs, progressCache, search, filter, sortKey, sortDesc]);
-
-  const toggleSort = useCallback((k: SortKey) => {
-    if (sortKey === k) setSortDesc((v) => !v);
-    else { setSortKey(k); setSortDesc(true); }
-  }, [sortKey]);
+  const recentDocs = useMemo(() => docs.slice(0, 5), [docs]);
 
   // 是否有真实数据（不含正在生成的临时占位）
   const hasData = docs.length > 0;
@@ -587,94 +515,11 @@ export default function AICaseCreate() {
               {hasData && <SummaryStats docs={docs} />}
 
               {hasData && (
-                <RecentWorkspaceStrip docs={displayed} onOpen={handleOpen} />
-              )}
-
-              {/* Toolbar：有数据时显示（搜索/排序/过滤） */}
-              {hasData && (
-                <div className="flex items-center gap-2.5 flex-wrap">
-                  {/* Search */}
-                  <div className="relative flex-1 min-w-44">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                    <Input
-                      className="pl-8 h-8 text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700"
-                      placeholder="搜索名称或需求内容…"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                    />
-                  </div>
-
-                  {/* Sort tabs */}
-                  <div className="flex items-center gap-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-1 py-1">
-                    {SORT_OPTS.map((o) => (
-                      <button
-                        key={o.key}
-                        type="button"
-                        onClick={() => toggleSort(o.key)}
-                        className={[
-                          'px-2 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-0.5 cursor-pointer',
-                          sortKey === o.key
-                            ? 'bg-primary text-white shadow-sm'
-                            : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200',
-                        ].join(' ')}
-                      >
-                        {o.label}
-                        {sortKey === o.key && (
-                          sortDesc
-                            ? <ChevronDown className="h-3 w-3" />
-                            : <ChevronUp className="h-3 w-3" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Filter */}
-                  <div className="relative" ref={filterRef}>
-                    <button
-                      type="button"
-                      onClick={() => setShowFilterMenu((v) => !v)}
-                      className={[
-                        'flex items-center gap-1.5 px-2.5 h-8 rounded-lg text-xs font-medium border transition-all cursor-pointer',
-                        filter !== 'all'
-                          ? 'border-primary bg-primary/5 text-primary dark:bg-primary/10'
-                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
-                      ].join(' ')}
-                    >
-                      <Filter className="h-3.5 w-3.5" />
-                      {FILTER_LABELS[filter]}
-                      <ChevronDown className={`h-3 w-3 transition-transform ${showFilterMenu ? 'rotate-180' : ''}`} />
-                    </button>
-                    {showFilterMenu && (
-                      <div className="absolute right-0 top-full mt-1.5 z-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 min-w-28 animate-in fade-in-0 slide-in-from-top-2 duration-150">
-                        {(['all', 'synced', 'local-only'] as FilterMode[]).map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => { setFilter(m); setShowFilterMenu(false); }}
-                            className={[
-                              'w-full text-left px-3 py-1.5 text-xs transition-colors cursor-pointer',
-                              filter === m
-                                ? 'text-primary font-medium bg-primary/5'
-                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800',
-                            ].join(' ')}
-                          >
-                            {FILTER_LABELS[m]}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Result count hint */}
-              {hasData && (
-                <p className="text-xs text-slate-400 -mt-1">
-                  共 {displayed.length} 条记录
-                  {(search || filter !== 'all') && docs.length !== displayed.length
-                    ? `（已过滤，全部共 ${docs.length} 条）`
-                    : null}
-                </p>
+                <RecentWorkspaceStrip
+                  docs={recentDocs}
+                  onOpen={handleOpen}
+                  onViewAll={() => setLocation('/cases/ai-history')}
+                />
               )}
 
               {/* Empty state：无数据时居中展示，不再放重复按钮 */}
@@ -688,37 +533,27 @@ export default function AICaseCreate() {
                 </div>
               )}
 
-              {/* No search results */}
-              {hasData && displayed.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Search className="h-7 w-7 text-slate-300 dark:text-slate-600 mb-3" />
-                  <p className="text-sm text-slate-500 dark:text-slate-400">没有匹配的记录</p>
-                  <button
-                    type="button"
-                    className="mt-2 text-xs text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300 cursor-pointer underline-offset-2 hover:underline transition-colors"
-                    onClick={() => { setSearch(''); setFilter('all'); }}
-                  >
-                    清除筛选条件
-                  </button>
+              {hasData ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900 dark:text-white">历史记录入口</div>
+                      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        搜索、筛选、分页和批量管理统一放到“全部记录”页，这里只保留最近工作台入口。
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 gap-2 text-sm"
+                      onClick={() => setLocation('/cases/ai-history')}
+                    >
+                      <History className="h-4 w-4" />
+                      查看全部记录
+                    </Button>
+                  </div>
                 </div>
-              )}
-
-              {/* Record list */}
-              {displayed.length > 0 && (
-                <div className="space-y-3">
-                  {displayed.map((doc) => (
-                    <AiCaseHistoryCard
-                      key={doc.id}
-                      doc={doc}
-                      onOpen={handleOpen}
-                      onDeleted={handleDeleted}
-                      currentDocId={lastOpenedDocId}
-                      generatingDocId={generatingDocId ?? undefined}
-                      generationProgress={aiProgress}
-                    />
-                  ))}
-                </div>
-              )}
+              ) : null}
             </>
           )}
 

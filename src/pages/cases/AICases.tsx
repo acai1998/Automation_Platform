@@ -1,6 +1,6 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-elixir';
-import 'mind-elixir/dist/MindElixir.css';
+import 'mind-elixir/style';
 import './AICases.css';
 import {
   Activity,
