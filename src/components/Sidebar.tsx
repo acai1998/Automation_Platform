@@ -49,7 +49,7 @@ const navItems: NavItem[] = [
       { label: "性能自动化", href: "/cases/performance", icon: <Gauge className="h-4 w-4" /> },
     ],
   },
-  { icon: <BrainCircuit className="h-5 w-5" />, label: "AI 用例", href: "/cases/ai-create" },
+  { icon: <BrainCircuit className="h-5 w-5" />, label: "AI 工作台", href: "/cases/ai-create" },
   { icon: <Boxes className="h-5 w-5" />, label: "任务管理", href: "/tasks" },
   { icon: <BarChart3 className="h-5 w-5" />, label: "运行记录", href: "/reports" },
   { icon: <Settings className="h-5 w-5" />, label: "系统设置", href: "/settings" },
@@ -421,8 +421,8 @@ function SidebarContent({ location, onNavigate, mode, onToggle }: SidebarContent
       <nav className={`flex-1 overflow-y-auto py-4 ${isExpanded ? "px-3" : "px-2"}`}>
         <div className={`space-y-1 ${!isExpanded ? "flex flex-col items-stretch gap-1" : ""}`}>
           {navItems.map((item) => {
-            // 仅对"AI 用例"菜单项在生成中时展示角标
-            const isAiCaseItem = item.label === "AI 用例";
+            // 仅对"AI 工作台"菜单项在生成中时展示角标
+            const isAiCaseItem = item.label === "AI 工作台";
             const badge =
               isAiCaseItem && isGenerating ? (
                 <AiGeneratingBadge progress={progress} mode={isExpanded ? 'expanded' : 'icon-only'} />

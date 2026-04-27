@@ -26,7 +26,7 @@ export interface CallbackJob {
 /** Jenkins 回调载荷 */
 export interface CallbackPayload {
   runId: number;
-  status: 'success' | 'failed' | 'cancelled';
+  status: 'success' | 'failed' | 'aborted' | 'cancelled';
   passedCases: number;
   failedCases: number;
   skippedCases: number;

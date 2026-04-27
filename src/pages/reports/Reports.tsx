@@ -474,13 +474,16 @@ function StatusBadge({ status, reason }: { status: string; reason?: string | nul
   };
 
   const config = configs[status] || { label: status, variant: 'outline', icon: AlertCircle };
-  const Icon = config.icon;
+  const resolvedConfig = status === 'success' || status === 'failed'
+    ? { ...config, label: '已完成' }
+    : config;
+  const Icon = resolvedConfig.icon;
   const title = status === 'aborted' && reason ? `中止原因: ${reason}` : undefined;
 
   return (
-    <Badge variant={config.variant} className="gap-1.5 px-2 py-0.5 font-medium" title={title}>
+    <Badge variant={resolvedConfig.variant} className="gap-1.5 px-2 py-0.5 font-medium" title={title}>
       <Icon className={cn('h-3 w-3', status === 'running' && 'animate-spin')} />
-      {config.label}
+      {resolvedConfig.label}
     </Badge>
   );
 }

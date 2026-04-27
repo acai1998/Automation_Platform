@@ -1,3 +1,35 @@
+当前AI工作台的大屏展示页面前端我们应该怎么设计？
+这里我们需要展示哪些信息，我们可以探讨可考虑一下
+基于我们后面的考虑，文件如下：docs\AI 智能用例生成\AI工作台改造大纲.md 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -140,3 +172,7 @@ FAILED examples/B/test_scrape_bing.py::ScrapeBingTests::test_scrape_bing - se...
   attempt=1 curl_exit=0 http_code=202
   response: {"success":true,"message":"Callback accepted for async processing","ackTimeMs":0}
   ✅ 回调成功
+
+
+有一个问题，我当前有两个定时任务在运行中，但是我发现运行记录却不是按照10分钟执行一次来的，帮助我排查解决这个问题
+你需要先获取定时任务是否为每10分支执行一次，然后再次排查是否为定时任务的问题，然后再去尝试解决修复这个问题
