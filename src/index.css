@@ -122,14 +122,18 @@
    * 支持 Webkit (Chrome, Safari, Edge) 和 Firefox
    * ---------------------------------------- */
 
-  /* Firefox 滚动条支持 */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: rgb(203 213 225) transparent;
+  /* Firefox 滚动条支持 - @supports 避免不支持浏览器报警告 */
+  @supports (scrollbar-width: thin) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgb(203 213 225) transparent;
+    }
   }
 
-  .dark * {
-    scrollbar-color: rgb(37 45 61) transparent;
+  @supports (scrollbar-color: rgb(203 213 225) transparent) {
+    .dark * {
+      scrollbar-color: rgb(37 45 61) transparent;
+    }
   }
 
   /* Webkit 滚动条样式 */
@@ -263,14 +267,19 @@
 }
 
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
+    @supports (text-wrap: balance) {
+      .text-balance {
+        text-wrap: balance;
+      }
+    }
+    .progress-fill {
+      width: 0%;
+    }
+    .text-crisp {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
   }
-  .text-crisp {
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-}
 
 /* ============================================
  * 可访问性 - 尊重用户的减少动画偏好
