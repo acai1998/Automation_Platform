@@ -1,7 +1,5 @@
 import type { ResultSetHeader } from 'mysql2/promise';
 import { query, queryOne } from '../config/database';
-import logger from '../utils/logger';
-import { LOG_CONTEXTS } from '../config/logging';
 import {
   calculateWorkspaceCounters,
   normalizeMapData,

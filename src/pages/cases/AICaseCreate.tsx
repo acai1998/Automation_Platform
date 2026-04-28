@@ -1,31 +1,37 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'wouter';
 import {
-  Bot,
-  Loader2,
-  Plus,
-  FileText,
-  ShieldAlert,
-  PlayCircle,
-  Search,
   ArrowRight,
-  Clock3,
-  Inbox,
-  Filter,
   ArrowUpDown,
-  CheckCircle2,
+  BookOpen,
+  Bot,
+  Bug,
+  ChevronRight,
+  Clock3,
+  Code2,
+  FileText,
+  Filter,
+  FolderUp,
+  Inbox,
+  Loader2,
+  NotebookTabs,
+  PencilLine,
+  Plus,
+  RefreshCcw,
+  Search,
+  Sparkles,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetDescription,
 } from '@/components/ui/sheet';
-import { toast } from 'sonner';
 import { listAllWorkspaceDocuments } from '@/lib/aiCaseStorage';
 import { computeProgress } from '@/lib/aiCaseMindMap';
 import type {
@@ -50,32 +56,43 @@ interface WorkspaceMetrics {
   highestPriority: AiCaseNodePriority;
 }
 
-const HOME_GUIDE_CARDS = [
+interface MaterialChip {
+  label: string;
+  icon: typeof FileText;
+  tone: string;
+}
+
+interface QuickStartCardItem {
+  title: string;
+  description: string;
+  actionLabel: string;
+  icon: typeof FileText;
+  iconTone: string;
+  onClick: () => void;
+}
+
+const MATERIAL_CHIPS: MaterialChip[] = [
   {
-    key: 'prepare',
-    title: '先准备什么',
-    description: '把需求输入整理成 AI 能直接吸收的上下文，避免生成结果只有标题没有细节。',
-    items: ['明确的业务需求文档或产品原型', '核心用户流程与边界条件说明'],
+    label: 'PRD / 需求文档',
     icon: FileText,
-    iconTone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+    tone: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300',
   },
   {
-    key: 'review',
-    title: '生成后看什么',
-    description: '结果页重点不是“看 AI 说了什么”，而是判断覆盖、风险和可执行性是否到位。',
-    items: ['检查覆盖率与关键路径是否遗漏', '验证前置条件与预期结果是否准确'],
-    icon: ShieldAlert,
-    iconTone: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300',
+    label: 'OpenAPI / 接口文档',
+    icon: NotebookTabs,
+    tone: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300',
   },
   {
-    key: 'workflow',
-    title: '建议工作流',
-    description: '首页负责进入和继续，真正的筛选、补充、执行与回流都在工作台详情内完成。',
-    items: ['AI 生成 > 人工筛选 > 补充细节', '归档优质用例并进入后续执行'],
-    icon: PlayCircle,
-    iconTone: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
+    label: '缺陷单',
+    icon: Bug,
+    tone: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300',
   },
-] as const;
+  {
+    label: '代码变更',
+    icon: Code2,
+    tone: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300',
+  },
+];
 
 const HISTORY_FILTER_LABELS: Record<HistoryFilterMode, string> = {
   all: '全部',
@@ -94,6 +111,37 @@ const PRIORITY_RANK: Record<AiCaseNodePriority, number> = {
   P2: 2,
   P3: 3,
 };
+
+const FIRST_USE_STEPS = [
+  {
+    title: '准备输入',
+    description: '整理业务需求、接口文档与边界条件',
+    icon: FileText,
+    tone: 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
+    indexTone: 'bg-violet-600 text-white',
+  },
+  {
+    title: '生成结果',
+    description: 'AI 生成结构化测试点与用例',
+    icon: Sparkles,
+    tone: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
+    indexTone: 'bg-emerald-600 text-white',
+  },
+  {
+    title: '补充优化',
+    description: '人工筛选、补点并确认覆盖风险',
+    icon: PencilLine,
+    tone: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300',
+    indexTone: 'bg-amber-500 text-white',
+  },
+  {
+    title: '执行回流',
+    description: '执行高风险范围并沉淀结果',
+    icon: RefreshCcw,
+    tone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+    indexTone: 'bg-blue-600 text-white',
+  },
+] as const;
 
 function walkNodes(node: AiCaseNode, visit: (current: AiCaseNode) => void): void {
   visit(node);
@@ -124,6 +172,16 @@ function collectWorkspaceMetrics(doc: AiCaseWorkspaceDocument): WorkspaceMetrics
     moduleCount,
     highestPriority,
   };
+}
+
+function countModules(data: AiCaseMindData): number {
+  let moduleCount = 0;
+  walkNodes(data.nodeData, (node) => {
+    if (node.metadata?.kind === 'module') {
+      moduleCount += 1;
+    }
+  });
+  return moduleCount;
 }
 
 function formatRelativeTime(ts: number): string {
@@ -185,16 +243,6 @@ function resolveWorkspaceStatus(
   };
 }
 
-function countModules(data: AiCaseMindData): number {
-  let moduleCount = 0;
-  walkNodes(data.nodeData, (node) => {
-    if (node.metadata?.kind === 'module') {
-      moduleCount += 1;
-    }
-  });
-  return moduleCount;
-}
-
 interface NewRequirementSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -216,7 +264,6 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
     setIsSubmitting(true);
     try {
       const docId = generateWorkspaceId();
-
       notifyStart(docId);
 
       onOpenChange(false);
@@ -247,10 +294,10 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
 
   return (
     <Sheet open={open} onOpenChange={handleClose}>
-      <SheetContent className="w-full max-w-lg flex flex-col gap-0 overflow-hidden p-0" preventClose={isSubmitting}>
+      <SheetContent className="flex w-full max-w-lg flex-col gap-0 overflow-hidden p-0" preventClose={isSubmitting}>
         <SheetHeader className="flex-shrink-0 border-b border-slate-100 px-6 pb-4 pt-6 dark:border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-blue-500 shadow-sm shadow-indigo-500/25">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 shadow-sm shadow-indigo-500/25">
               <Bot className="h-5 w-5 text-white" />
             </div>
             <div>
@@ -258,7 +305,7 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
                 新增需求
               </SheetTitle>
               <SheetDescription className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                输入需求上下文，AI 将生成结构化测试用例并进入工作台继续补充和执行。
+                输入 PRD、接口说明或业务上下文，AI 将生成结构化测试用例。
               </SheetDescription>
             </div>
           </div>
@@ -285,7 +332,7 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
               onChange={(event) => setRequirementText(event.target.value)}
               rows={14}
               className="resize-none leading-relaxed"
-              placeholder="粘贴 PRD、需求描述或技术方案，AI 将自动分析并生成结构化测试用例..."
+              placeholder="粘贴 PRD、需求描述、接口背景或测试上下文，AI 将自动分析并生成结构化测试用例..."
             />
           </div>
         </div>
@@ -324,169 +371,312 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
   );
 }
 
-interface HomeGuideCardsProps {
+interface HeroSectionProps {
   onCreate: () => void;
+  onCreateFromTemplate: () => void;
+  onViewExample: () => void;
 }
 
-function HomeGuideCards({ onCreate }: HomeGuideCardsProps) {
+function HeroSection({
+  onCreate,
+  onCreateFromTemplate,
+  onViewExample,
+}: HeroSectionProps) {
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-        <div className="max-w-3xl">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-4xl">
-            AI 工作台
-          </h1>
-          <p className="mt-3 text-base leading-7 text-slate-600 dark:text-slate-300">
-            输入需求并生成结构化测试用例，继续完成筛选、补充、执行与回流。
-          </p>
-        </div>
+    <section className="relative overflow-hidden rounded-[32px] border border-slate-200/80 bg-white px-8 py-8 shadow-[0_24px_80px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-[radial-gradient(circle,_rgba(99,102,241,0.16),_transparent_68%)]" />
+      <div className="pointer-events-none absolute right-20 top-0 h-64 w-64 rounded-full bg-[radial-gradient(circle,_rgba(191,219,254,0.28),_transparent_68%)]" />
+      <div className="pointer-events-none absolute right-0 top-8 h-56 w-[420px] rounded-full bg-[conic-gradient(from_210deg_at_50%_50%,rgba(255,255,255,0)_0deg,rgba(129,140,248,0.12)_80deg,rgba(255,255,255,0)_210deg)] blur-2xl" />
 
+      <div className="relative flex flex-col gap-8">
+        <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+          <div className="max-w-3xl">
+            <h1 className="text-4xl font-black tracking-tight text-slate-900 dark:text-white sm:text-5xl">
+              AI 工作台
+            </h1>
+            <p className="mt-4 text-lg leading-8 text-slate-600 dark:text-slate-300">
+              输入需求并生成结构化测试用例，继续完成筛选、补充、执行与回流。
+            </p>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              {MATERIAL_CHIPS.map((chip) => {
+                const Icon = chip.icon;
+                return (
+                  <span
+                    key={chip.label}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-medium ${chip.tone}`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {chip.label}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+            <Button
+              type="button"
+              size="lg"
+              className="h-12 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 hover:bg-indigo-700"
+              onClick={onCreate}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              新增需求
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
+              className="h-12 rounded-xl border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              onClick={onCreateFromTemplate}
+            >
+              <BookOpen className="mr-2 h-4 w-4" />
+              从模板创建
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-12 rounded-xl px-3 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
+              onClick={onViewExample}
+            >
+              查看示例
+            </Button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+interface QuickStartSectionProps {
+  items: QuickStartCardItem[];
+}
+
+function QuickStartSection({ items }: QuickStartSectionProps) {
+  return (
+    <section className="space-y-4">
+      <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">快速开始</h2>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.title}
+              type="button"
+              onClick={item.onClick}
+              className="group rounded-[26px] border border-slate-200 bg-white p-5 text-left shadow-[0_18px_45px_rgba(15,23,42,0.04)] transition-all hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_20px_50px_rgba(79,70,229,0.08)] dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-500/30"
+            >
+              <div className="flex items-start gap-4">
+                <div className={`flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl ${item.iconTone}`}>
+                  <Icon className="h-7 w-7" />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-2xl font-semibold text-slate-900 dark:text-white">
+                        {item.title}
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                        {item.description}
+                      </div>
+                    </div>
+                    <ChevronRight className="mt-1 h-5 w-5 flex-shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-500 dark:text-slate-600" />
+                  </div>
+
+                  <div className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-indigo-600 dark:text-indigo-300">
+                    {item.actionLabel}
+                    <ArrowRight className="h-4 w-4" />
+                  </div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+interface RecentWorkspacePanelProps {
+  docs: AiCaseWorkspaceDocument[];
+  metrics: Map<string, WorkspaceMetrics>;
+  onOpen: (id: string) => void;
+  onCreate: () => void;
+  onCreateFromTemplate: () => void;
+  onViewAll: () => void;
+  onViewExample: () => void;
+}
+
+function RecentWorkspacePanel({
+  docs,
+  metrics,
+  onOpen,
+  onCreate,
+  onCreateFromTemplate,
+  onViewAll,
+  onViewExample,
+}: RecentWorkspacePanelProps) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <h3 className="text-2xl font-semibold text-slate-900 dark:text-white">最近继续</h3>
         <Button
           type="button"
-          size="lg"
-          className="h-12 gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 hover:bg-indigo-700"
-          onClick={onCreate}
+          variant="ghost"
+          className="px-0 text-sm font-semibold text-indigo-600 hover:bg-transparent hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+          onClick={onViewAll}
         >
-          <Plus className="h-4 w-4" />
-          新增需求
+          查看全部
+          <ArrowRight className="ml-1 h-4 w-4" />
         </Button>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-3">
-        {HOME_GUIDE_CARDS.map((card) => {
-          const Icon = card.icon;
-          return (
-            <div
-              key={card.key}
-              className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm shadow-slate-200/45 dark:border-slate-800 dark:bg-slate-900 dark:shadow-slate-950/30"
+      {docs.length === 0 ? (
+        <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50/60 px-6 py-12 text-center dark:border-slate-800 dark:bg-slate-950/40">
+          <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-full bg-[radial-gradient(circle_at_50%_40%,rgba(129,140,248,0.18),rgba(255,255,255,0)_70%)]">
+            <Clock3 className="h-12 w-12 text-slate-400 dark:text-slate-500" />
+          </div>
+          <div className="mt-5 text-4xl font-bold tracking-tight text-slate-900 dark:text-white">
+            暂无最近工作台
+          </div>
+          <p className="mx-auto mt-3 max-w-xl text-base leading-7 text-slate-500 dark:text-slate-400">
+            创建第一条需求后，你可以在这里继续未完成的 AI 工作台。
+          </p>
+
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <Button
+              type="button"
+              className="h-11 rounded-xl bg-indigo-600 px-6 text-sm font-semibold text-white hover:bg-indigo-700"
+              onClick={onCreate}
             >
-              <div className={`inline-flex h-14 w-14 items-center justify-center rounded-2xl ${card.iconTone}`}>
-                <Icon className="h-7 w-7" />
-              </div>
-              <h2 className="mt-5 text-2xl font-semibold text-slate-900 dark:text-white">{card.title}</h2>
-              <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
-                {card.description}
-              </p>
-              <div className="mt-5 space-y-3">
-                {card.items.map((item) => (
-                  <div key={item} className="flex items-start gap-3 text-sm leading-6 text-slate-700 dark:text-slate-200">
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-indigo-600 dark:text-indigo-300" />
-                    <span>{item}</span>
+              新增需求
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 rounded-xl border-slate-200 bg-white px-6 text-sm font-semibold dark:border-slate-700 dark:bg-slate-900"
+              onClick={onCreateFromTemplate}
+            >
+              从模板创建
+            </Button>
+          </div>
+
+          <div className="mt-8 border-t border-slate-200 pt-5 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+            也可以先
+            <button
+              type="button"
+              className="mx-1 font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+              onClick={onViewExample}
+            >
+              查看示例
+            </button>
+            ，了解完整工作流。
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {docs.map((doc) => {
+            const currentMetrics = metrics.get(doc.id) ?? {
+              progress: computeProgress(doc.mapData),
+              moduleCount: countModules(doc.mapData),
+              highestPriority: 'P3' as AiCaseNodePriority,
+            };
+            const status = resolveWorkspaceStatus(doc, currentMetrics.progress);
+
+            return (
+              <button
+                key={doc.id}
+                type="button"
+                onClick={() => onOpen(doc.id)}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-left transition-colors hover:border-indigo-200 hover:bg-white dark:border-slate-800 dark:bg-slate-950 dark:hover:border-indigo-500/30 dark:hover:bg-slate-900"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="line-clamp-1 text-lg font-semibold text-slate-900 dark:text-white">
+                      {doc.name}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      最近更新：{formatRelativeTime(doc.updatedAt)}
+                    </div>
                   </div>
-                ))}
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${status.className}`}>
+                      {status.label}
+                    </span>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
+                      模块 {currentMetrics.moduleCount}
+                    </span>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
+                      用例 {currentMetrics.progress.total}
+                    </span>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
+                      完成率 {currentMetrics.progress.completionRate}%
+                    </span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FirstUseTipsPanel({ onViewExample }: { onViewExample: () => void }) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-5 text-2xl font-semibold text-slate-900 dark:text-white">首次使用建议</div>
+
+      <div className="space-y-5">
+        {FIRST_USE_STEPS.map((step, index) => {
+          const Icon = step.icon;
+          const isLast = index === FIRST_USE_STEPS.length - 1;
+
+          return (
+            <div key={step.title} className="relative flex gap-4">
+              {!isLast ? (
+                <div className="absolute left-[16px] top-9 h-[calc(100%+12px)] w-px border-l border-dashed border-slate-200 dark:border-slate-700" />
+              ) : null}
+
+              <div className="relative flex flex-col items-center">
+                <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${step.indexTone}`}>
+                  {index + 1}
+                </div>
+              </div>
+
+              <div className="flex min-w-0 flex-1 gap-3 rounded-2xl bg-slate-50/80 px-3 py-3 dark:bg-slate-950/50">
+                <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl ${step.tone}`}>
+                  <Icon className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-lg font-semibold text-slate-900 dark:text-white">
+                    {step.title}
+                  </div>
+                  <div className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                    {step.description}
+                  </div>
+                </div>
               </div>
             </div>
           );
         })}
       </div>
+
+      <Button
+        type="button"
+        variant="ghost"
+        className="mt-6 h-11 w-full rounded-2xl bg-slate-50 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:bg-slate-950 dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
+        onClick={onViewExample}
+      >
+        查看完整工作流
+        <ArrowRight className="ml-1 h-4 w-4" />
+      </Button>
     </div>
-  );
-}
-
-interface RecentWorkspaceSectionProps {
-  docs: AiCaseWorkspaceDocument[];
-  metrics: Map<string, WorkspaceMetrics>;
-  onOpen: (id: string) => void;
-  onViewAll: () => void;
-}
-
-function RecentWorkspaceSection({
-  docs,
-  metrics,
-  onOpen,
-  onViewAll,
-}: RecentWorkspaceSectionProps) {
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-semibold text-slate-900 dark:text-white">最近的工作台</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            首页默认保留最近 5 条，更多记录统一进入“全部记录”页检索。
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          className="gap-1.5 px-0 text-sm font-semibold text-indigo-600 hover:bg-transparent hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
-          onClick={onViewAll}
-        >
-          查看全部
-          <ArrowRight className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/45 dark:border-slate-800 dark:bg-slate-900 dark:shadow-slate-950/30">
-        {docs.length === 0 ? (
-          <div className="flex min-h-[240px] flex-col items-center justify-center gap-4 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500">
-              <Clock3 className="h-8 w-8" />
-            </div>
-            <div>
-              <div className="text-base font-medium text-slate-900 dark:text-white">暂无最近活动</div>
-              <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                创建第一条需求后，这里会展示最近继续过的 AI 工作台。
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="grid gap-4 xl:grid-cols-3">
-            {docs.map((doc) => {
-              const currentMetrics = metrics.get(doc.id) ?? {
-                progress: computeProgress(doc.mapData),
-                moduleCount: countModules(doc.mapData),
-                highestPriority: 'P3' as AiCaseNodePriority,
-              };
-              const status = resolveWorkspaceStatus(doc, currentMetrics.progress);
-
-              return (
-                <button
-                  key={doc.id}
-                  type="button"
-                  onClick={() => onOpen(doc.id)}
-                  className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-left transition-all hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-white hover:shadow-md hover:shadow-indigo-100/60 dark:border-slate-800 dark:bg-slate-950 dark:hover:border-indigo-500/30 dark:hover:bg-slate-900 dark:hover:shadow-none"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="line-clamp-1 text-base font-semibold text-slate-900 dark:text-white">
-                        {doc.name}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        最近更新：{formatRelativeTime(doc.updatedAt)}
-                      </div>
-                    </div>
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${status.className}`}>
-                      {status.label}
-                    </span>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-3 gap-3">
-                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-slate-800 dark:bg-slate-900">
-                      <div className="text-xs text-slate-400 dark:text-slate-500">模块数</div>
-                      <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
-                        {currentMetrics.moduleCount}
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-slate-800 dark:bg-slate-900">
-                      <div className="text-xs text-slate-400 dark:text-slate-500">用例数</div>
-                      <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
-                        {currentMetrics.progress.total}
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-slate-800 dark:bg-slate-900">
-                      <div className="text-xs text-slate-400 dark:text-slate-500">完成率</div>
-                      <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
-                        {currentMetrics.progress.completionRate}%
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </section>
   );
 }
 
@@ -516,165 +706,158 @@ function HistoryPreviewSection({
   onViewAll,
 }: HistoryPreviewSectionProps) {
   return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+    <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-slate-900 dark:text-white">全部历史记录</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            先在首页快速检索，深度搜索、筛选和分页仍然由“全部记录”页承接。
-          </p>
+          <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">全部历史记录</h2>
         </div>
         <Button
           type="button"
           variant="ghost"
-          className="gap-1.5 px-0 text-sm font-semibold text-indigo-600 hover:bg-transparent hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+          className="px-0 text-sm font-semibold text-indigo-600 hover:bg-transparent hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
           onClick={onViewAll}
         >
           查看全部
-          <ArrowRight className="h-4 w-4" />
+          <ArrowRight className="ml-1 h-4 w-4" />
         </Button>
       </div>
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/45 dark:border-slate-800 dark:bg-slate-900 dark:shadow-slate-950/30">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative w-full max-w-xl">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input
-              value={searchValue}
-              onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="搜索历史记录..."
-              className="h-11 rounded-xl border-slate-200 pl-11 text-sm dark:border-slate-700"
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 gap-2 rounded-xl border-slate-200 px-4 text-sm dark:border-slate-700"
-              onClick={onToggleFilter}
-            >
-              <Filter className="h-4 w-4" />
-              筛选 · {HISTORY_FILTER_LABELS[historyFilter]}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 gap-2 rounded-xl border-slate-200 px-4 text-sm dark:border-slate-700"
-              onClick={onToggleSort}
-            >
-              <ArrowUpDown className="h-4 w-4" />
-              排序 · {HISTORY_SORT_LABELS[historySort]}
-            </Button>
-          </div>
+      <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="relative w-full max-w-[520px]">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            value={searchValue}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="搜索工作台名称..."
+            className="h-11 rounded-xl border-slate-200 bg-white pl-11 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
         </div>
 
-        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
-          {docs.length === 0 ? (
-            <div className="flex min-h-[360px] flex-col items-center justify-center gap-4 bg-white text-center dark:bg-slate-900">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 rounded-xl border-slate-200 bg-white px-4 text-sm font-medium dark:border-slate-700 dark:bg-slate-900"
+            onClick={onToggleFilter}
+          >
+            <Filter className="mr-2 h-4 w-4" />
+            筛选: {HISTORY_FILTER_LABELS[historyFilter]}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 rounded-xl border-slate-200 bg-white px-4 text-sm font-medium dark:border-slate-700 dark:bg-slate-900"
+            onClick={onToggleSort}
+          >
+            <ArrowUpDown className="mr-2 h-4 w-4" />
+            排序: {HISTORY_SORT_LABELS[historySort]}
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-[24px] border border-slate-200 dark:border-slate-800">
+        {docs.length === 0 ? (
+          <div className="flex min-h-[240px] items-center justify-center bg-white px-6 py-10 dark:bg-slate-900">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-50 text-violet-500 dark:bg-violet-500/10 dark:text-violet-300">
                 <Inbox className="h-8 w-8" />
               </div>
               <div>
-                <div className="text-base font-medium text-slate-900 dark:text-white">暂无记录</div>
-                <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  生成第一批 AI 用例后，这里会出现工作台历史记录预览。
+                <div className="text-2xl font-semibold text-slate-900 dark:text-white">暂无历史记录</div>
+                <div className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                  创建第一条需求后，这里会展示你的历史工作台。
                 </div>
               </div>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
-                <thead className="bg-slate-50 dark:bg-slate-950/60">
-                  <tr className="text-left text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    <th className="px-5 py-3">名称</th>
-                    <th className="px-5 py-3">更新时间</th>
-                    <th className="px-5 py-3">模块数</th>
-                    <th className="px-5 py-3">用例数</th>
-                    <th className="px-5 py-3">优先级</th>
-                    <th className="px-5 py-3">状态</th>
-                    <th className="px-5 py-3">进度</th>
-                    <th className="px-5 py-3 text-right">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-800 dark:bg-slate-900">
-                  {docs.map((doc) => {
-                    const currentMetrics = metrics.get(doc.id) ?? {
-                      progress: computeProgress(doc.mapData),
-                      moduleCount: countModules(doc.mapData),
-                      highestPriority: 'P3' as AiCaseNodePriority,
-                    };
-                    const status = resolveWorkspaceStatus(doc, currentMetrics.progress);
-
-                    return (
-                      <tr key={doc.id} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-950/60">
-                        <td className="px-5 py-4">
-                          <div className="max-w-[260px]">
-                            <div className="line-clamp-1 font-medium text-slate-900 dark:text-white">
-                              {doc.name}
-                            </div>
-                            <div className="mt-1 line-clamp-1 text-xs text-slate-500 dark:text-slate-400">
-                              {doc.requirement}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
-                          {formatDateTime(doc.updatedAt)}
-                        </td>
-                        <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
-                          {currentMetrics.moduleCount}
-                        </td>
-                        <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
-                          {currentMetrics.progress.total}
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                            {currentMetrics.highestPriority}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${status.className}`}>
-                            {status.label}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4">
-                          <div className="min-w-[120px]">
-                            <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                              <span>{currentMetrics.progress.done}/{currentMetrics.progress.total}</span>
-                              <span>{currentMetrics.progress.completionRate}%</span>
-                            </div>
-                            <div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800">
-                              <div
-                                className="progress-fill h-2 rounded-full bg-indigo-500 transition-all"
-                                style={{ width: `${Math.min(currentMetrics.progress.completionRate, 100)}%` }}
-                              />
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4 text-right">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            className="h-8 px-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
-                            onClick={() => onOpen(doc.id)}
-                          >
-                            打开
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        {docs.length > 0 ? (
-          <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-            首页仅展示前 5 条匹配结果，更多记录请前往“全部记录”页继续检索和分页浏览。
           </div>
-        ) : null}
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+              <thead className="bg-slate-50 dark:bg-slate-950/60">
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  <th className="px-5 py-3">名称</th>
+                  <th className="px-5 py-3">更新时间</th>
+                  <th className="px-5 py-3">模块数</th>
+                  <th className="px-5 py-3">用例数</th>
+                  <th className="px-5 py-3">优先级</th>
+                  <th className="px-5 py-3">状态</th>
+                  <th className="px-5 py-3">进度</th>
+                  <th className="px-5 py-3 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-800 dark:bg-slate-900">
+                {docs.map((doc) => {
+                  const currentMetrics = metrics.get(doc.id) ?? {
+                    progress: computeProgress(doc.mapData),
+                    moduleCount: countModules(doc.mapData),
+                    highestPriority: 'P3' as AiCaseNodePriority,
+                  };
+                  const status = resolveWorkspaceStatus(doc, currentMetrics.progress);
+
+                  return (
+                    <tr key={doc.id} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-950/60">
+                      <td className="px-5 py-4">
+                        <div className="max-w-[280px]">
+                          <div className="line-clamp-1 font-semibold text-slate-900 dark:text-white">
+                            {doc.name}
+                          </div>
+                          <div className="mt-1 line-clamp-1 text-xs text-slate-500 dark:text-slate-400">
+                            {doc.requirement}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
+                        {formatDateTime(doc.updatedAt)}
+                      </td>
+                      <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
+                        {currentMetrics.moduleCount}
+                      </td>
+                      <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
+                        {currentMetrics.progress.total}
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                          {currentMetrics.highestPriority}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${status.className}`}>
+                          {status.label}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="min-w-[140px]">
+                          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                            <span>
+                              {currentMetrics.progress.done}/{currentMetrics.progress.total}
+                            </span>
+                            <span>{currentMetrics.progress.completionRate}%</span>
+                          </div>
+                          <div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800">
+                            <div
+                              className="h-2 rounded-full bg-indigo-500 transition-all"
+                              style={{ width: `${Math.min(currentMetrics.progress.completionRate, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-8 px-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
+                          onClick={() => onOpen(doc.id)}
+                        >
+                          打开
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -730,7 +913,6 @@ export default function AICaseCreate() {
 
   const historyPreviewDocs = useMemo(() => {
     const keyword = historySearch.trim().toLowerCase();
-
     let nextDocs = [...sortedDocs];
 
     if (keyword) {
@@ -754,7 +936,7 @@ export default function AICaseCreate() {
     );
 
     return nextDocs.slice(0, 5);
-  }, [docs, historyFilter, historySearch, historySort, sortedDocs]);
+  }, [historyFilter, historySearch, historySort, sortedDocs]);
 
   const handleOpen = useCallback(
     (id: string) => setLocation(`/cases/ai?docId=${encodeURIComponent(id)}`),
@@ -764,6 +946,18 @@ export default function AICaseCreate() {
   const handleViewAll = useCallback(() => {
     setLocation('/cases/ai-history');
   }, [setLocation]);
+
+  const handleCreateFromTemplate = useCallback(() => {
+    toast.info('模板创建能力正在接入，当前可先通过新增需求创建工作台');
+  }, []);
+
+  const handleViewExample = useCallback(() => {
+    toast.info('示例工作台入口预留中，当前可先创建一条需求体验完整流程');
+  }, []);
+
+  const handleImportMaterials = useCallback(() => {
+    toast.info('资料导入入口预留中，当前可先把核心内容粘贴到新增需求中');
+  }, []);
 
   const toggleHistoryFilter = useCallback(() => {
     setHistoryFilter((current) => {
@@ -777,56 +971,111 @@ export default function AICaseCreate() {
     setHistorySort((current) => (current === 'updatedAt' ? 'createdAt' : 'updatedAt'));
   }, []);
 
+  const quickStartItems = useMemo<QuickStartCardItem[]>(
+    () => [
+      {
+        title: '新建需求',
+        description: '从 PRD、需求描述或原型开始生成测试用例',
+        actionLabel: '立即创建',
+        icon: FileText,
+        iconTone: 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
+        onClick: () => setSheetOpen(true),
+      },
+      {
+        title: '导入资料',
+        description: '上传接口文档、附件、缺陷单和代码变更',
+        actionLabel: '去导入',
+        icon: FolderUp,
+        iconTone: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
+        onClick: handleImportMaterials,
+      },
+      {
+        title: '查看示例',
+        description: '查看一条完整的 AI 工作台示例，快速理解流程',
+        actionLabel: '查看示例',
+        icon: BookOpen,
+        iconTone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+        onClick: handleViewExample,
+      },
+    ],
+    [handleImportMaterials, handleViewExample]
+  );
+
   return (
-    <div className="h-full overflow-y-auto bg-slate-50 dark:bg-slate-950">
-      <div className="mx-auto max-w-6xl px-6 py-8">
+    <div className="h-full overflow-y-auto bg-[#f6f8fc] dark:bg-slate-950">
+      <div className="mx-auto max-w-[1320px] px-6 py-8">
         {loading ? (
-          <div className="space-y-8">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-3">
-                <div className="h-10 w-48 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
-                <div className="h-5 w-96 max-w-full animate-pulse rounded-lg bg-slate-200 dark:bg-slate-800" />
+          <div className="space-y-6">
+            <div className="rounded-[32px] border border-slate-200 bg-white px-8 py-8 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                <div className="space-y-4">
+                  <div className="h-12 w-52 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-6 w-[420px] max-w-full animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="flex flex-wrap gap-3">
+                    {[1, 2, 3, 4].map((item) => (
+                      <div key={item} className="h-10 w-36 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="h-12 w-32 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-12 w-36 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+                </div>
               </div>
-              <div className="h-12 w-36 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
             </div>
 
-            <div className="grid gap-5 xl:grid-cols-3">
+            <div className="grid gap-4 xl:grid-cols-3">
               {[1, 2, 3].map((item) => (
                 <div
                   key={item}
-                  className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm shadow-slate-200/45 dark:border-slate-800 dark:bg-slate-900 dark:shadow-slate-950/30"
+                  className="rounded-[26px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900"
                 >
-                  <div className="h-14 w-14 animate-pulse rounded-2xl bg-slate-100 dark:bg-slate-800" />
-                  <div className="mt-5 h-8 w-40 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
-                  <div className="mt-4 space-y-3">
-                    <div className="h-4 w-full animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
-                    <div className="h-4 w-4/5 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
-                    <div className="h-4 w-3/4 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+                  <div className="flex gap-4">
+                    <div className="h-14 w-14 animate-pulse rounded-2xl bg-slate-100 dark:bg-slate-800" />
+                    <div className="flex-1 space-y-3">
+                      <div className="h-8 w-32 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
+                      <div className="h-4 w-full animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+                      <div className="h-4 w-2/3 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
 
-            {[1, 2].map((item) => (
-              <div
-                key={item}
-                className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/45 dark:border-slate-800 dark:bg-slate-900 dark:shadow-slate-950/30"
-              >
-                <div className="h-7 w-44 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
-                <div className="mt-5 h-64 animate-pulse rounded-2xl bg-slate-100 dark:bg-slate-800" />
-              </div>
-            ))}
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+              {[1, 2].map((item) => (
+                <div
+                  key={item}
+                  className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900"
+                >
+                  <div className="h-8 w-44 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
+                  <div className="mt-5 h-64 animate-pulse rounded-[24px] bg-slate-100 dark:bg-slate-800" />
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
-          <div className="space-y-10">
-            <HomeGuideCards onCreate={() => setSheetOpen(true)} />
-
-            <RecentWorkspaceSection
-              docs={recentDocs}
-              metrics={metricsById}
-              onOpen={handleOpen}
-              onViewAll={handleViewAll}
+          <div className="space-y-6">
+            <HeroSection
+              onCreate={() => setSheetOpen(true)}
+              onCreateFromTemplate={handleCreateFromTemplate}
+              onViewExample={handleViewExample}
             />
+
+            <QuickStartSection items={quickStartItems} />
+
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+              <RecentWorkspacePanel
+                docs={recentDocs}
+                metrics={metricsById}
+                onOpen={handleOpen}
+                onCreate={() => setSheetOpen(true)}
+                onCreateFromTemplate={handleCreateFromTemplate}
+                onViewAll={handleViewAll}
+                onViewExample={handleViewExample}
+              />
+              <FirstUseTipsPanel onViewExample={handleViewExample} />
+            </section>
 
             <HistoryPreviewSection
               docs={historyPreviewDocs}
