@@ -3,13 +3,13 @@ import {
   type AiCaseNodeKind,
   type AiCaseNodeMetadata,
 } from '@shared/types/aiCaseNodeMetadata';
-import type { AiCaseMapData, AiCaseMapNode } from '@shared/types/aiCaseMap';
+import type { AiCaseStructureData, AiCaseStructureNode } from '@shared/types/aiCaseStructure';
 
-export function cloneMapData(data: AiCaseMapData): AiCaseMapData {
+export function cloneStructureData(data: AiCaseStructureData): AiCaseStructureData {
   if (typeof structuredClone === 'function') {
     return structuredClone(data);
   }
-  return JSON.parse(JSON.stringify(data)) as AiCaseMapData;
+  return JSON.parse(JSON.stringify(data)) as AiCaseStructureData;
 }
 
 export function inferNodeKind(depth: number, childCount: number): AiCaseNodeKind {
@@ -19,7 +19,7 @@ export function inferNodeKind(depth: number, childCount: number): AiCaseNodeKind
   return 'scenario';
 }
 
-function normalizeNode(node: AiCaseMapNode, depth: number): AiCaseMapNode {
+function normalizeNode(node: AiCaseStructureNode, depth: number): AiCaseStructureNode {
   const children = Array.isArray(node.children) ? node.children : [];
   const inferredKind = inferNodeKind(depth, children.length);
 
@@ -39,17 +39,25 @@ function normalizeNode(node: AiCaseMapNode, depth: number): AiCaseMapNode {
   return node;
 }
 
-export function normalizeMapData(raw: unknown): AiCaseMapData {
+export function normalizeStructureData(raw: unknown): AiCaseStructureData {
   if (!raw || typeof raw !== 'object') {
-    throw new Error('mapData 必须是对象');
+    throw new Error('mapData must be an object');
   }
 
-  const candidate = raw as Partial<AiCaseMapData>;
+  const candidate = raw as Partial<AiCaseStructureData>;
   if (!candidate.nodeData || typeof candidate.nodeData !== 'object') {
-    throw new Error('mapData.nodeData 缺失或格式不正确');
+    throw new Error('mapData.nodeData is missing or invalid');
   }
 
-  const cloned = cloneMapData(candidate as AiCaseMapData);
+  const cloned = cloneStructureData(candidate as AiCaseStructureData);
   cloned.nodeData = normalizeNode(cloned.nodeData, 0);
   return cloned;
+}
+
+export function cloneMapData(data: AiCaseStructureData): AiCaseStructureData {
+  return cloneStructureData(data);
+}
+
+export function normalizeMapData(raw: unknown): AiCaseStructureData {
+  return normalizeStructureData(raw);
 }

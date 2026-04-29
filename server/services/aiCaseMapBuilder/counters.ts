@@ -1,8 +1,8 @@
 import { parseStatus } from '@shared/types/aiCaseNodeMetadata';
-import type { AiCaseMapData, AiCaseMapNode, AiCaseWorkspaceCounters } from '@shared/types/aiCaseMap';
+import type { AiCaseStructureData, AiCaseStructureNode, AiCaseWorkspaceCounters } from '@shared/types/aiCaseStructure';
 import { inferNodeKind } from './normalization';
 
-export function calculateWorkspaceCounters(mapData: AiCaseMapData): AiCaseWorkspaceCounters {
+export function calculateWorkspaceCounters(structureData: AiCaseStructureData): AiCaseWorkspaceCounters {
   const stats: AiCaseWorkspaceCounters = {
     totalCases: 0,
     todoCases: 0,
@@ -13,7 +13,7 @@ export function calculateWorkspaceCounters(mapData: AiCaseMapData): AiCaseWorksp
     skippedCases: 0,
   };
 
-  const visit = (node: AiCaseMapNode, depth: number): void => {
+  const visit = (node: AiCaseStructureNode, depth: number): void => {
     const children = Array.isArray(node.children) ? node.children : [];
     const kind = node.metadata?.kind ?? inferNodeKind(depth, children.length);
     const shouldCount = kind === 'testcase';
@@ -32,6 +32,6 @@ export function calculateWorkspaceCounters(mapData: AiCaseMapData): AiCaseWorksp
     children.forEach((child) => visit(child, depth + 1));
   };
 
-  visit(mapData.nodeData, 0);
+  visit(structureData.nodeData, 0);
   return stats;
 }

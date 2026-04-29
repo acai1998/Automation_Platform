@@ -124,7 +124,7 @@ const WORKSPACE_TAB_ITEMS: AiWorkspaceTabItem<WorkspaceTab>[] = [
   {
     id: 'results',
     label: '生成结果',
-    description: '查看脑图与结构化结果',
+    description: '查看结构化结果与详情',
     icon: <BrainCircuit className="h-4 w-4" />,
   },
   {
@@ -322,7 +322,6 @@ function AiCasesInner() {
   const [location, setLocation] = useLocation();
   // 全局 AI 生成状态：用于切换页面后仍能显示进度角标、弹跨页通知
   const { notifyStart, notifyProgress, notifyDone } = useAiGeneration();
-  // 获取全局 dark/light 模式，用于联动脑图主题
 
   // 从 URL 参数读取要打开的文档 ID；未指定时回退到固定的默认工作区
   // 使用 state 而非 useMemo，确保 URL 变化时能响应式更新
@@ -367,7 +366,7 @@ function AiCasesInner() {
   const [requirementText, setRequirementText] = useState('');
   const [mindData, setMindData] = useState<AiCaseMindData | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  // 多选节点 ID 列表（MindElixir 支持 Ctrl/Shift 多选）
+  // 多选节点 ID 列表
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -380,7 +379,6 @@ function AiCasesInner() {
   const [attachmentReloadSeed, setAttachmentReloadSeed] = useState(0);
   const [attachments, setAttachments] = useState<AiCaseAttachmentPreview[]>([]);
   const [remoteSyncMeta, setRemoteSyncMeta] = useState<RemoteSyncMeta>(DEFAULT_REMOTE_SYNC_META);
-  const isCanvasFullscreen = false;
   const [isImportingMindNodes, setIsImportingMindNodes] = useState(false);
 // 移动端侧边栏抽屉
 // 浮动面板（桌端）
@@ -601,11 +599,11 @@ function AiCasesInner() {
             // 移除 URL 参数避免刷新重复触发
             const newUrl = window.location.pathname;
             window.history.replaceState({}, '', newUrl);
-            // 立即进入"生成中"状态，避免短暂闪出默认脑图
+            // 立即进入"生成中"状态，避免短暂闪出默认模板
             setIsGenerating(true);
             setGenerationProgress(2);
             setGenerationStageText('正在连接后端流式通道...');
-            // 延迟一点执行，确保 MindElixir 实例已挂载
+            // 延迟一点执行，确保页面初始化完成
             autoGenerateTimerRef.current = window.setTimeout(() => {
               autoGenerateTimerRef.current = null;
               handleGenerateRef.current?.();
@@ -662,11 +660,11 @@ function AiCasesInner() {
           if (searchParamsAutoGen.get('autoGenerate') === 'true') {
             // 移除 URL 参数避免刷新重复触发
             window.history.replaceState({}, '', window.location.pathname);
-            // 立即进入"生成中"状态，避免短暂闪出默认脑图
+            // 立即进入"生成中"状态，避免短暂闪出默认模板
             setIsGenerating(true);
             setGenerationProgress(2);
             setGenerationStageText('正在连接后端流式通道...');
-            // 延迟一点执行，确保 MindElixir 实例已挂载
+            // 延迟一点执行，确保页面初始化完成
             autoGenerateTimerRef.current = window.setTimeout(() => {
               autoGenerateTimerRef.current = null;
               handleGenerateRef.current?.();
@@ -966,7 +964,7 @@ function AiCasesInner() {
     let buffer = '';
     let finalPayload: StreamGenerateResultPayload | null = null;
 
-    // 渐进式渲染：收到第一个 node_module 时初始化骨架脑图
+    // 渐进式渲染：收到第一个 node_module 时初始化骨架结构
     let skeletonData: AiCaseMindData | null = null;
 
     const processEventBlock = (block: string): void => {
@@ -1009,7 +1007,7 @@ function AiCasesInner() {
         return;
       }
 
-      // 渐进式节点推送：每收到一个 module 节点，立即按索引位置替换到骨架脑图
+      // 渐进式节点推送：每收到一个 module 节点，立即按索引位置替换到骨架结构
       if (eventName === 'node_module') {
         const moduleNode = payload?.moduleNode;
         const moduleIndex: number = typeof payload?.moduleIndex === 'number' ? payload.moduleIndex : 0;
@@ -1064,7 +1062,8 @@ function AiCasesInner() {
         };
         skeletonData = nextSkeletonData;
 
-        // 实时刷新脑图（使用 mindRef 直接刷新，不触发 schedulePersist 避免频繁写 IndexedDB）        setMindData(nextSkeletonData);
+        // 实时刷新结构数据，不触发 schedulePersist，避免频繁写 IndexedDB
+        setMindData(nextSkeletonData);
         mindDataRef.current = nextSkeletonData;
 
         // 更新进度提示
@@ -1079,7 +1078,7 @@ function AiCasesInner() {
       if (eventName === 'result') {
         finalPayload = (payload?.data ?? null) as StreamGenerateResultPayload | null;
 
-        // 流式渲染结束时，立即用 AI 生成的 workspaceName 更新骨架脑图根节点 topic
+        // 流式渲染结束时，立即用 AI 生成的 workspaceName 更新骨架根节点 topic
         if (finalPayload !== null && typeof finalPayload === 'object') {
           const fp = finalPayload as Record<string, unknown>;
           const resultGenerated = 'generated' in fp
@@ -1383,7 +1382,7 @@ const applyWorkspaceDetail = useCallback(
             try {
               const currentData = mindDataRef.current;
               if (!currentData) {
-                toast.error('当前脑图未初始化，无法导入复制节点');
+                toast.error('当前工作区数据未初始化，无法导入复制节点');
                 return;
               }
 
@@ -1508,7 +1507,7 @@ const applyWorkspaceDetail = useCallback(
             }
           : generated.mapData;
 
-      setGenerationStageText('正在回写脑图节点与结构化步骤...');
+      setGenerationStageText('正在回写节点结构与结构化步骤...');
       const normalized = normalizeMindData(finalMapData, {
         showNodeKindTags: showNodeKindTagsRef.current,
       });
@@ -1535,7 +1534,7 @@ const applyWorkspaceDetail = useCallback(
       // 判断用户是否已离开 AI 用例页，若已离开则弹跨页面 toast
       const isOnAiPage = window.location.pathname === '/cases/ai';
       if (isOnAiPage) {
-        toast.success(`AI 用例脑图生成完成（${generated.source === 'llm' ? '大模型' : '回退模板'}）`);
+        toast.success(`AI 用例生成完成（${generated.source === 'llm' ? '大模型' : '回退模板'}）`);
       } else {
         toast.success('AI 用例生成完成，点击返回查看', {
           duration: 8000,
@@ -1628,7 +1627,7 @@ const applyWorkspaceDetail = useCallback(
 
   const handlePublishRemote = useCallback(async () => {
     if (!mindData) {
-      toast.error('脑图尚未初始化，无法发布');
+      toast.error('工作区数据尚未初始化，无法发布');
       return;
     }
 
@@ -1705,7 +1704,7 @@ const applyWorkspaceDetail = useCallback(
     });
     await cleanupStaleAttachments(next);
     setAttachmentReloadSeed((value) => value + 1);
-    toast.success('已恢复默认脑图模板');
+    toast.success('已恢复默认工作区模板');
   }, [workspaceName, setDataAndSync, cleanupStaleAttachments]);
 
   const handleStatusChange = useCallback(async (status: AiCaseNodeStatus) => {
@@ -1855,18 +1854,14 @@ const applyWorkspaceDetail = useCallback(
     <div className="h-full flex flex-col bg-white dark:bg-slate-950 overflow-hidden">
 
       {/* 顶部标题栏（全屏时隐藏） */}
-      {!isCanvasFullscreen ? (
-        <AiWorkspaceHeader
+      <AiWorkspaceHeader
           title="AI 用例工作台"
           saveStateText={saveStateText}
           remoteStatusText={remoteStatusText}
           onOpenRequirement={() => setIsRequirementDialogOpen(true)}
           onOpenHistory={() => setLocation('/cases/ai-history')}
         />
-      ) : null}
-
-      {!isCanvasFullscreen ? (
-        <>
+      
           <AiWorkspaceSummaryBar
             items={[
               { label: '输入材料', value: `${workspaceSummary.materialCount}`, hint: '需求、附件和远端上下文' },
@@ -1882,11 +1877,10 @@ const applyWorkspaceDetail = useCallback(
             items={WORKSPACE_TAB_ITEMS}
             onChange={setActiveTab}
           />
-        </>
-      ) : null}
+      
 
-      {/* 主体：左侧边栏 + 右侧画布 */}
-      {!isCanvasFullscreen && activeTab === 'materials' ? (
+      {/* 主体内容 */}
+      {activeTab === 'materials' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
           <div className="grid gap-4 grid-cols-[1.6fr_1fr]">
             <WorkspacePanelCard
@@ -2005,12 +1999,12 @@ const applyWorkspaceDetail = useCallback(
         </section>
       ) : null}
 
-      {!isCanvasFullscreen && activeTab === 'results' ? (
+      {activeTab === 'results' ? (
         <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-slate-900 dark:text-white">生成结果</div>
-              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">以结构化列表作为默认结果视图，方便审阅、筛选和批量操作；脑图视图暂作为兼容入口保留。</div>
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">以结构化列表作为默认结果视图，方便审阅、筛选和批量操作。</div>
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -2026,14 +2020,14 @@ const applyWorkspaceDetail = useCallback(
         </div>
       ) : null}
 
-      {!isCanvasFullscreen && activeTab === 'coverage' ? (
+      {activeTab === 'coverage' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
           <div className="grid gap-4">
             <AiWorkspaceSummaryBar
               items={[
                 { label: '高风险项', value: `${highRiskCases.length}`, hint: '优先级 P0 / 失败项优先展示' },
                 { label: '待补充项', value: `${coverageGapCases.length}`, hint: '待执行、阻塞和失败项合并展示' },
-                { label: '模块数', value: `${moduleCoverage.length}`, hint: '按脑图模块节点聚合' },
+                { label: '模块数', value: `${moduleCoverage.length}`, hint: '按模块节点聚合' },
                 { label: '总体覆盖率', value: `${progress.completionRate}%`, hint: '基于节点进度的临时口径' },
               ]}
               gridClassName="grid-cols-4"
@@ -2095,7 +2089,7 @@ const applyWorkspaceDetail = useCallback(
         </section>
       ) : null}
 
-      {!isCanvasFullscreen && activeTab === 'execution' ? (
+      {activeTab === 'execution' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
           <div className="grid gap-4 grid-cols-[1.1fr_1fr]">
             <div className="grid gap-4">
@@ -2184,7 +2178,7 @@ const applyWorkspaceDetail = useCallback(
       {activeTab === 'results' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
           <div className="grid gap-4 grid-cols-[1.6fr_1fr]">
-            <WorkspacePanelCard title="测试用例列表" description="从脑图中派生出的结构化列表，后续将支持更多筛选与批量操作。">
+            <WorkspacePanelCard title="测试用例列表" description="从当前工作区结构中派生出的结构化列表，后续将支持更多筛选与批量操作。">
               {generatedCases.length > 0 ? (
                 <div className="space-y-2">
                   {generatedCases.map((item) => (
@@ -2288,7 +2282,7 @@ const applyWorkspaceDetail = useCallback(
                 onChange={(e) => setRequirementText(e.target.value)}
                 rows={10}
                 className="w-full resize-none rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-sm leading-relaxed text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-colors"
-                placeholder="粘贴 PRD、需求描述或技术方案，点击「AI 生成」按钮自动生成测试用例脑图..."
+                placeholder="粘贴 PRD、需求描述或技术方案，点击「AI 生成」按钮自动生成测试用例结构..."
               />
             </div>
           </div>

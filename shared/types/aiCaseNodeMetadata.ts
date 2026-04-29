@@ -6,7 +6,7 @@
  * 2. 节点元数据字段校验规则（priority / status / statusHistory / attachmentIds）
  *
  * 前端引用：src/types/aiCases.ts 导出的 `createAiCaseNodeId` 应转发自此处
- * 后端引用：server/services/aiCaseMapBuilder.ts 的 `createAiCaseNodeId` 应转发自此处
+ * 后端引用：server/services/aiCaseStructureBuilder.ts 的 `createAiCaseNodeId` 应转发自此处
  *
  * @module shared/types/aiCaseNodeMetadata
  */

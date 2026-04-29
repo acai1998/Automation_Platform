@@ -3,7 +3,7 @@ import { query } from '../config/database';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS } from '../config/logging';
 import { embeddingService } from './EmbeddingService';
-import type { AiCaseMapData } from './aiCaseMapBuilder';
+import type { AiCaseStructureData } from './aiCaseStructureBuilder';
 
 // ─── 知识库检索配置 ──────────────────────────────────────────────────────────
 /** 默认返回的相关用例数量 */
@@ -26,7 +26,7 @@ export interface KnowledgeCaseItem {
   id: number;
   name: string;
   requirementText: string | null;
-  mapData: AiCaseMapData;
+  mapData: AiCaseStructureData;
   qualityScore: number;
   similarity: number;
 }
@@ -74,10 +74,14 @@ function parseEmbedding(raw: string | null): number[] | null {
 }
 
 /**
- * 将脑图数据格式化为人类可读的 few-shot 示例文本
+ * 将工作区结构格式化为人类可读的 few-shot 示例文本
  * 目的：让 LLM 能理解示例的结构和颗粒度，不需要完整 JSON
  */
-function formatMapDataAsFewShot(name: string, requirementText: string | null, mapData: AiCaseMapData): string {
+function formatStructureDataAsFewShot(
+  name: string,
+  requirementText: string | null,
+  structureData: AiCaseStructureData,
+): string {
   const lines: string[] = [];
   lines.push(`示例工作台名称：${name}`);
 
@@ -88,7 +92,7 @@ function formatMapDataAsFewShot(name: string, requirementText: string | null, ma
 
   lines.push('示例用例结构：');
 
-  const rootNode = mapData.nodeData;
+  const rootNode = structureData.nodeData;
   if (!rootNode || !Array.isArray(rootNode.children)) {
     return lines.join('\n');
   }
@@ -175,9 +179,9 @@ export class CaseKnowledgeRetrievalService {
           const similarity = cosineSimilarity(queryVector, embedding);
           if (similarity < MIN_SIMILARITY_THRESHOLD) return null;
 
-          let mapData: AiCaseMapData | null = null;
+          let mapData: AiCaseStructureData | null = null;
           try {
-            mapData = JSON.parse(row.map_data) as AiCaseMapData;
+            mapData = JSON.parse(row.map_data) as AiCaseStructureData;
           } catch {
             return null;
           }
@@ -229,7 +233,7 @@ export class CaseKnowledgeRetrievalService {
 
     const blocks = items.map((item, index) => {
       const header = `【参考示例 ${index + 1}（相似度 ${(item.similarity * 100).toFixed(0)}%，质量分 ${item.qualityScore}）】`;
-      const content = formatMapDataAsFewShot(item.name, item.requirementText, item.mapData);
+      const content = formatStructureDataAsFewShot(item.name, item.requirementText, item.mapData);
       return `${header}\n${content}`;
     });
 

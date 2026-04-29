@@ -14,8 +14,10 @@ import { buildJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDia
 import { persistJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDiagnosticArtifact';
 import { validateScriptPathsInTestRepo } from '../utils/testRepoScriptPathValidator';
 import { LOG_CONTEXTS, LOG_EVENTS, createTimer } from '../config/logging';
-import { AppDataSource } from '../config/database';
+import { AppDataSource, query, queryOne } from '../config/database';
 import { TestCase } from '../entities/TestCase';
+import { hybridSyncService } from '../services/HybridSyncService';
+import { executionMonitorService } from '../services/ExecutionMonitorService';
 import {
   CALLBACK_TERMINAL_STATUSES,
   deriveCallbackTerminalStatus,
@@ -723,7 +725,6 @@ router.post('/trigger', generalAuthRateLimiter, optionalAuth, rateLimitMiddlewar
 
     // 如果传入了 taskId，从数据库查找任务信息
     if (taskId !== undefined) {
-      const { queryOne } = await import('../config/database');
       const task = await queryOne<{ id: number; name: string; case_ids: string; project_id: number }>(
         'SELECT id, name, case_ids, project_id FROM Auto_TestCaseTasks WHERE id = ?',
         [taskId]
@@ -2189,7 +2190,6 @@ router.get('/diagnose',
     let jenkinsConnectivity: any = null;
     if (execution.jenkinsJob && execution.jenkinsBuildId) {
       try {
-        const { jenkinsStatusService } = await import('../services/JenkinsStatusService');
         const buildStatus = await jenkinsStatusService.getBuildStatus(
           execution.jenkinsJob as string,
           execution.jenkinsBuildId as string
@@ -2331,7 +2331,6 @@ router.get('/monitoring/stats', generalAuthRateLimiter, rateLimitMiddleware.limi
     logger.info(`Getting monitoring statistics...`, {}, LOG_CONTEXTS.JENKINS);
 
     // 获取混合同步服务的统计信息
-    const { hybridSyncService } = await import('../services/HybridSyncService');
     const syncStats = hybridSyncService.getMonitoringStats();
 
     // 获取最近的执行统计
@@ -2407,7 +2406,6 @@ router.post('/monitoring/fix-stuck', generalAuthRateLimiter, rateLimitMiddleware
       const timeoutMs = timeoutMinutes * 60 * 1000;
       const timeoutThreshold = new Date(Date.now() - timeoutMs);
 
-      const { query } = await import('../config/database');
       const stuckExecutions = await query(`
         SELECT id, status, jenkins_job, jenkins_build_id, jenkins_url,
                start_time, TIMESTAMPDIFF(MINUTE, start_time, NOW()) as duration_minutes
@@ -2462,8 +2460,6 @@ router.post('/monitoring/fix-stuck', generalAuthRateLimiter, rateLimitMiddleware
  */
 router.get('/monitor/status', generalAuthRateLimiter, rateLimitMiddleware.limit, async (_req: Request, res: Response) => {
   try {
-    const { executionMonitorService } = await import('../services/ExecutionMonitorService');
-
     const status = executionMonitorService.getStatus();
     const stats = executionMonitorService.getStats();
 

@@ -9,10 +9,10 @@ import type {
   AiCaseGenerationPlan,
   AiCaseGenerationPlanCase,
   AiCaseGenerationPlanModule,
-  AiCaseMapData,
-  AiCaseMapNode,
-} from '@shared/types/aiCaseMap';
-import { normalizeMapData } from './normalization';
+  AiCaseStructureData,
+  AiCaseStructureNode,
+} from '@shared/types/aiCaseStructure';
+import { normalizeStructureData } from './normalization';
 
 function createMetadata(kind: AiCaseNodeKind, now: number): AiCaseNodeMetadata {
   return {
@@ -41,16 +41,16 @@ function createNode(
     priority?: AiCaseNodePriority;
     note?: string;
     aiGenerated?: boolean;
-    children?: AiCaseMapNode[];
-    tags?: AiCaseMapNode['tags'];
+    children?: AiCaseStructureNode[];
+    tags?: AiCaseStructureNode['tags'];
   },
-): AiCaseMapNode {
+): AiCaseStructureNode {
   const now = Date.now();
   const metadata = createMetadata(kind, now);
   metadata.priority = options?.priority ?? 'P2';
   metadata.aiGenerated = options?.aiGenerated ?? false;
 
-  const node: AiCaseMapNode = {
+  const node: AiCaseStructureNode = {
     id: createAiCaseNodeId(),
     topic,
     expanded: true,
@@ -73,18 +73,18 @@ function sanitizeChecklist(lines: string[] | undefined, fallback: string[]): str
 
   const next = lines
     .map((line) => (typeof line === 'string' ? line.trim() : ''))
-    .filter((line) => Boolean(line));
+    .filter(Boolean);
 
   return next.length > 0 ? next : fallback;
 }
 
-function fmtInline(items: string[]): string {
+function formatInline(items: string[]): string {
   if (items.length === 0) return '';
   if (items.length === 1) return items[0];
-  return items.map((item, i) => `${i + 1}.${item}`).join('；');
+  return items.map((item, index) => `${index + 1}. ${item}`).join('；');
 }
 
-function buildCaseChainNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[] {
+function buildCaseChainNodes(testCase: AiCaseGenerationPlanCase): AiCaseStructureNode[] {
   const hint = typeof testCase.note === 'string' ? testCase.note.trim() : '';
 
   const preconditions = sanitizeChecklist(testCase.preconditions, [
@@ -94,7 +94,7 @@ function buildCaseChainNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[
   const steps = sanitizeChecklist(testCase.steps, [
     '进入目标功能页面或接口入口',
     hint || `执行测试点：${testCase.title}`,
-    '记录执行结果并保存关键截图',
+    '记录执行结果并保留关键截图',
   ]);
 
   const expectedResults = sanitizeChecklist(testCase.expectedResults, [
@@ -102,23 +102,27 @@ function buildCaseChainNodes(testCase: AiCaseGenerationPlanCase): AiCaseMapNode[
     '业务数据与页面状态符合需求描述',
   ]);
 
-  const expectedNode = createNode(fmtInline(expectedResults), 'scenario', {
+  const expectedNode = createNode(formatInline(expectedResults), 'scenario', {
     aiGenerated: true,
     tags: [{ text: '预期结果', style: SECTION_TAG_STYLES['预期结果'] }],
   });
-  const stepsNode = createNode(fmtInline(steps), 'scenario', {
+
+  const stepsNode = createNode(formatInline(steps), 'scenario', {
     aiGenerated: true,
     children: [expectedNode],
     tags: [{ text: '测试步骤', style: SECTION_TAG_STYLES['测试步骤'] }],
   });
-  return [createNode(fmtInline(preconditions), 'scenario', {
-    aiGenerated: true,
-    children: [stepsNode],
-    tags: [{ text: '前置条件', style: SECTION_TAG_STYLES['前置条件'] }],
-  })];
+
+  return [
+    createNode(formatInline(preconditions), 'scenario', {
+      aiGenerated: true,
+      children: [stepsNode],
+      tags: [{ text: '前置条件', style: SECTION_TAG_STYLES['前置条件'] }],
+    }),
+  ];
 }
 
-export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData {
+export function buildStructureDataFromPlan(plan: AiCaseGenerationPlan): AiCaseStructureData {
   const root = createNode(plan.workspaceName, 'root', {
     aiGenerated: true,
     children: plan.modules.map((module) => {
@@ -131,6 +135,7 @@ export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData 
           }),
         ),
       );
+
       return createNode(module.name, 'module', {
         aiGenerated: true,
         children: caseNodes,
@@ -138,7 +143,11 @@ export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseMapData 
     }),
   });
 
-  return normalizeMapData({ nodeData: root });
+  return normalizeStructureData({ nodeData: root });
+}
+
+export function buildMapDataFromPlan(plan: AiCaseGenerationPlan): AiCaseStructureData {
+  return buildStructureDataFromPlan(plan);
 }
 
 function shortAnchor(input: string): string {

@@ -1,8 +1,8 @@
 import type {
   AiCaseGenerationPlan,
-  AiCaseMapData,
+  AiCaseStructureData,
   AiCaseNodePriority,
-} from '../aiCaseMapBuilder';
+} from '../aiCaseStructureBuilder';
 
 export interface OpenAiChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -41,7 +41,7 @@ export interface AiCaseGenerationResult {
   provider: string;
   model: string;
   workspaceName: string;
-  mapData: AiCaseMapData;
+  mapData: AiCaseStructureData;
   counters: {
     totalCases: number;
     todoCases: number;
@@ -62,13 +62,13 @@ export interface AiCaseGenerationProgressEvent {
 }
 
 export interface AiCaseGenerationNodeEvent {
-  moduleNode: AiCaseMapData['nodeData'];
+  moduleNode: AiCaseStructureData['nodeData'];
   moduleIndex: number;
   totalModules: number;
 }
 
 export type {
   AiCaseGenerationPlan,
-  AiCaseMapData,
+  AiCaseStructureData,
   AiCaseNodePriority,
 };

@@ -3,10 +3,16 @@ export type {
   AiCaseGenerationPlanCase,
   AiCaseGenerationPlanModule,
   AiCaseGenerationPlanScenario,
+  AiCaseStructureData,
+  AiCaseStructureNode,
+  AiCaseStructureStatusUpdateResult,
+  AiCaseWorkspaceCounters,
+} from '@shared/types/aiCaseStructure';
+
+export type {
   AiCaseMapData,
   AiCaseMapNode,
   AiCaseNodeStatusUpdateResult,
-  AiCaseWorkspaceCounters,
 } from '@shared/types/aiCaseMap';
 
 export type {

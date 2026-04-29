@@ -3,12 +3,12 @@ import logger from '../../utils/logger';
 import { LOG_CONTEXTS } from '../../config/logging';
 import {
   buildFallbackPlan,
-  buildMapDataFromPlan,
+  buildStructureDataFromPlan,
   calculateWorkspaceCounters,
   type AiCaseGenerationPlan,
-  type AiCaseMapData,
+  type AiCaseStructureData,
   type AiCaseNodePriority,
-} from '../aiCaseMapBuilder';
+} from '../aiCaseStructureBuilder';
 import { caseKnowledgeRetrievalService } from '../CaseKnowledgeRetrievalService';
 
 interface OpenAiChatMessage {
@@ -48,7 +48,7 @@ export interface AiCaseGenerationResult {
   provider: string;
   model: string;
   workspaceName: string;
-  mapData: AiCaseMapData;
+  mapData: AiCaseStructureData;
   counters: {
     totalCases: number;
     todoCases: number;
@@ -72,8 +72,8 @@ export interface AiCaseGenerationProgressEvent {
  * 流式节点推送事件：每生成一个 module（含其下所有 testcase），推送一次
  */
 export interface AiCaseGenerationNodeEvent {
-  /** 当前 module 节点的脑图数据（含子 testcase 节点） */
-  moduleNode: AiCaseMapData['nodeData'];
+  /** 当前 module 节点的结构数据（含子 testcase 节点） */
+  moduleNode: AiCaseStructureData['nodeData'];
   /** 当前 module 在 modules 列表中的索引（0-based） */
   moduleIndex: number;
   /** modules 总数 */
@@ -438,16 +438,16 @@ export class AiCaseGenerationService {
   }
 
   private async streamModuleNodes(
-    mapData: AiCaseMapData,
+    structureData: AiCaseStructureData,
     onNode: ((event: AiCaseGenerationNodeEvent) => void) | undefined,
     delayMs = 80
   ): Promise<void> {
-    if (!onNode || !mapData.nodeData.children) {
+    if (!onNode || !structureData.nodeData.children) {
       return;
     }
-    const totalModules = mapData.nodeData.children.length;
+    const totalModules = structureData.nodeData.children.length;
     for (let moduleIndex = 0; moduleIndex < totalModules; moduleIndex++) {
-      onNode({ moduleNode: mapData.nodeData.children[moduleIndex], moduleIndex, totalModules });
+      onNode({ moduleNode: structureData.nodeData.children[moduleIndex], moduleIndex, totalModules });
       if (moduleIndex < totalModules - 1) {
         await sleep(delayMs);
       }
@@ -509,11 +509,11 @@ export class AiCaseGenerationService {
       });
 
       const fallbackPlan = buildFallbackPlan(requirementText, workspaceName);
-      const mapData = buildMapDataFromPlan(fallbackPlan);
-      const counters = calculateWorkspaceCounters(mapData);
+      const structureData = buildStructureDataFromPlan(fallbackPlan);
+      const counters = calculateWorkspaceCounters(structureData);
 
       // 逐个推送 fallback 的每个 module 节点（各模块间加延迟让前端可见流式效果）
-      await this.streamModuleNodes(mapData, onNode);
+      await this.streamModuleNodes(structureData, onNode);
 
       this.pushProgress(onProgress, {
         progress: 95,
@@ -526,7 +526,7 @@ export class AiCaseGenerationService {
         provider: this.config.provider,
         model: this.config.model,
         workspaceName: fallbackPlan.workspaceName,
-        mapData,
+        mapData: structureData,
         counters,
         message: 'AI_CASE_LLM_API_KEY 未配置，返回规则引擎生成结果',
       };
@@ -543,15 +543,15 @@ export class AiCaseGenerationService {
 
       this.pushProgress(onProgress, {
         progress: 88,
-        stage: '正在组装脑图节点结构',
+        stage: '正在组装工作区节点结构',
         source: 'llm',
       });
 
-      const mapData = buildMapDataFromPlan(plan);
-      const counters = calculateWorkspaceCounters(mapData);
+      const structureData = buildStructureDataFromPlan(plan);
+      const counters = calculateWorkspaceCounters(structureData);
 
       // 逐个推送 module 节点（各模块间加延迟让前端可见渐进式渲染效果）
-      await this.streamModuleNodes(mapData, onNode);
+      await this.streamModuleNodes(structureData, onNode);
 
       this.pushProgress(onProgress, {
         progress: 98,
@@ -564,7 +564,7 @@ export class AiCaseGenerationService {
         provider: this.config.provider,
         model: this.config.model,
         workspaceName: plan.workspaceName,
-        mapData,
+        mapData: structureData,
         counters,
         message: '大模型生成成功',
       };
@@ -582,11 +582,11 @@ export class AiCaseGenerationService {
       });
 
       const fallbackPlan = buildFallbackPlan(requirementText, workspaceName);
-      const mapData = buildMapDataFromPlan(fallbackPlan);
-      const counters = calculateWorkspaceCounters(mapData);
+      const structureData = buildStructureDataFromPlan(fallbackPlan);
+      const counters = calculateWorkspaceCounters(structureData);
 
       // 逐个推送 fallback 的每个 module 节点（各模块间加延迟让前端可见流式效果）
-      await this.streamModuleNodes(mapData, onNode);
+      await this.streamModuleNodes(structureData, onNode);
 
       this.pushProgress(onProgress, {
         progress: 95,
@@ -599,7 +599,7 @@ export class AiCaseGenerationService {
         provider: this.config.provider,
         model: this.config.model,
         workspaceName: fallbackPlan.workspaceName,
-        mapData,
+        mapData: structureData,
         counters,
         message: `大模型调用失败，已回退模板：${error instanceof Error ? error.message : String(error)}`,
       };
@@ -620,7 +620,7 @@ export class AiCaseGenerationService {
       // ── 第一层：角色人格 + 思维链引导 ─────────────────────────────────────────
       const roleLayer = [
         '你是一位在互联网行业拥有 10 年经验的资深测试专家，以严谨、细致、不放过任何角落著称。',
-        '你的职责是：根据需求文本，生成一份真正可执行、覆盖全面的测试用例脑图计划。',
+        '你的职责是：根据需求文本，生成一份真正可执行、覆盖全面的测试用例结构化计划。',
         '',
         '在生成测试用例之前，你必须先在内心完成以下分析（不在输出中体现，但必须作为生成依据）：',
         '1. 识别需求类型：这是 CRUD 操作、业务流程、权限管理、支付交易，还是搜索/列表功能？',

@@ -5,22 +5,27 @@ import {
   type AiCaseNodeMetadata,
   type AiCaseNodeStatus,
 } from '@shared/types/aiCaseNodeMetadata';
-import type { AiCaseMapData, AiCaseMapNode, AiCaseNodeStatusUpdateResult } from '@shared/types/aiCaseMap';
-import { cloneMapData, normalizeMapData } from './normalization';
+import type {
+  AiCaseStructureData,
+  AiCaseStructureNode,
+  AiCaseStructureStatusUpdateResult,
+} from '@shared/types/aiCaseStructure';
+import type { AiCaseNodeStatusUpdateResult } from '@shared/types/aiCaseMap';
+import { cloneStructureData, normalizeStructureData } from './normalization';
 
-export function updateNodeStatusInMap(
-  mapData: AiCaseMapData,
+export function updateNodeStatusInStructure(
+  structureData: AiCaseStructureData,
   nodeId: string,
   nextStatus: AiCaseNodeStatus,
-): AiCaseNodeStatusUpdateResult {
-  const normalized = normalizeMapData(mapData);
-  const next = cloneMapData(normalized);
+): AiCaseStructureStatusUpdateResult {
+  const normalized = normalizeStructureData(structureData);
+  const next = cloneStructureData(normalized);
   let previousStatus: AiCaseNodeStatus | null = null;
   let nodeTopic = '';
   let nodePath: string | null = null;
   let updated = false;
 
-  const visit = (node: AiCaseMapNode, path: string[]): boolean => {
+  const visit = (node: AiCaseStructureNode, path: string[]): boolean => {
     const currentPath = [...path, node.topic];
     if (node.id === nodeId) {
       const metadata = node.metadata as AiCaseNodeMetadata;
@@ -57,6 +62,18 @@ export function updateNodeStatusInMap(
     currentStatus: nextStatus,
     nodeTopic,
     nodePath,
-    mapData: next,
+    structureData: next,
+  };
+}
+
+export function updateNodeStatusInMap(
+  structureData: AiCaseStructureData,
+  nodeId: string,
+  nextStatus: AiCaseNodeStatus,
+): AiCaseNodeStatusUpdateResult {
+  const result = updateNodeStatusInStructure(structureData, nodeId, nextStatus);
+  return {
+    ...result,
+    mapData: result.structureData,
   };
 }

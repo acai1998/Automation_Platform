@@ -4,6 +4,9 @@ export type {
   AiCaseGenerationPlanCase,
   AiCaseGenerationPlanModule,
   AiCaseGenerationPlanScenario,
+  AiCaseStructureData,
+  AiCaseStructureNode,
+  AiCaseStructureStatusUpdateResult,
   AiCaseMapData,
   AiCaseMapNode,
   AiCaseNodeKind,
@@ -15,6 +18,18 @@ export type {
   AiCaseWorkspaceCounters,
 } from './types';
 export { calculateWorkspaceCounters } from './counters';
-export { normalizeMapData } from './normalization';
-export { buildFallbackPlan, buildMapDataFromPlan } from './plan';
-export { updateNodeStatusInMap } from './statusUpdate';
+export {
+  cloneStructureData,
+  cloneMapData,
+  normalizeStructureData,
+  normalizeMapData,
+} from './normalization';
+export {
+  buildFallbackPlan,
+  buildStructureDataFromPlan,
+  buildMapDataFromPlan,
+} from './plan';
+export {
+  updateNodeStatusInStructure,
+  updateNodeStatusInMap,
+} from './statusUpdate';
