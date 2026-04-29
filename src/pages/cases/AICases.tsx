@@ -1,6 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-elixir';
-import 'mind-elixir/style';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import './AICases.css';
 import {
   Activity,
@@ -10,7 +8,6 @@ import {
   CheckCircle2,
   FileText,
   GitBranch,
-  GripHorizontal,
   Link2,
   ListTree,
   Loader2,
@@ -18,11 +15,9 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
-import { useTheme } from '@/contexts/ThemeContext';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { useAiGeneration } from '@/contexts/AiGenerationContext';
 import { AiCaseSidebar } from './components/AiCaseSidebar';
-import { AiCaseCanvasToolbar } from './components/AiCaseCanvasToolbar';
 import { AiWorkspaceHeader } from './components/AiWorkspaceHeader';
 import { AiWorkspaceSummaryBar } from './components/AiWorkspaceSummaryBar';
 import { AiWorkspaceTabs, type AiWorkspaceTabItem } from './components/AiWorkspaceTabs';
@@ -53,10 +48,6 @@ import {
   normalizeMindData,
   removeNodeAttachmentId,
   setNodeStatus,
-  readMindThemePreference,
-  resolveMindTheme,
-  MIND_THEME_STORAGE_KEY,
-  type AiCaseMindThemeId,
 } from '@/lib/aiCaseMindMap';
 import {
   deleteNodeAttachment,
@@ -107,17 +98,10 @@ type StreamGenerateResultPayload =
   | AiCaseGenerationResult
   | { generated: AiCaseGenerationResult; workspace: AiCaseWorkspaceDetail };
 
-const MIN_CANVAS_SCALE = 0.6;
-const MAX_CANVAS_SCALE = 1.8;
-const CANVAS_SCALE_STEP = 0.1;
 const NODE_TAG_VISIBILITY_STORAGE_KEY = 'ai-case-node-tags-visible';
 const WAIT_COPY_MAGIC = 'MIND-ELIXIR-WAIT-COPY';
-const FLOAT_PANEL_WIDTH = 300;
-const FLOAT_PANEL_DEFAULT_RIGHT = 16;
-const FLOAT_PANEL_DEFAULT_TOP = 8;
 
 type WorkspaceTab = 'materials' | 'results' | 'coverage' | 'execution';
-type ResultViewMode = 'mind' | 'list';
 type RiskLevel = 'high' | 'medium' | 'low';
 
 interface GeneratedCaseListItem {
@@ -194,6 +178,10 @@ function collectGeneratedCases(mapData: AiCaseMindData): GeneratedCaseListItem[]
   }
 
   return items;
+}
+
+function getFirstGeneratedCaseId(mapData: AiCaseMindData): string | null {
+  return collectGeneratedCases(mapData)[0]?.id ?? null;
 }
 
 function WorkspacePanelCard({
