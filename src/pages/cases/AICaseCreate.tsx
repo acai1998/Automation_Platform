@@ -414,6 +414,7 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
                 所属模块 <span className="text-xs font-normal text-slate-400">（可选）</span>
               </label>
               <select
+                aria-label="所属模块"
                 value={workspaceModule}
                 onChange={(event) => setWorkspaceModule(event.target.value)}
                 className="flex h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-violet-300 focus:ring-2 focus:ring-violet-100"
@@ -1037,8 +1038,10 @@ function HistoryPreviewSection({
                           </div>
                           <div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800">
                             <div
+                              ref={(el) => {
+                                if (el) el.style.width = `${Math.min(currentMetrics.progress.completionRate, 100)}%`;
+                              }}
                               className="h-2 rounded-full bg-indigo-500 transition-all"
-                              style={{ width: `${Math.min(currentMetrics.progress.completionRate, 100)}%` }}
                             />
                           </div>
                         </div>
