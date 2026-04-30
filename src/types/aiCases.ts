@@ -1,5 +1,3 @@
-import type { MindElixirData, NodeObj } from 'mind-elixir';
-
 export const AI_CASE_WORKSPACE_ID = 'ai-case-workspace-default';
 
 export type AiCaseNodeStatus = 'todo' | 'doing' | 'blocked' | 'passed' | 'failed' | 'skipped';
@@ -25,10 +23,26 @@ export interface AiCaseNodeMetadata {
   statusHistory: AiCaseStatusHistoryItem[];
 }
 
-export type AiCaseNode = NodeObj<AiCaseNodeMetadata>;
+export interface AiCaseNodeTag {
+  text: string;
+  style?: Record<string, string>;
+}
 
-export interface AiCaseMindData extends Omit<MindElixirData, 'nodeData'> {
+export interface AiCaseNode {
+  id: string;
+  topic: string;
+  children?: AiCaseNode[];
+  expanded?: boolean;
+  note?: string;
+  tags?: AiCaseNodeTag[];
+  style?: Record<string, string>;
+  metadata?: AiCaseNodeMetadata;
+  [key: string]: unknown;
+}
+
+export interface AiCaseMindData {
   nodeData: AiCaseNode;
+  [key: string]: unknown;
 }
 
 export interface AiCaseWorkspaceDocument {
@@ -83,7 +97,6 @@ export const AI_CASE_NODE_STATUS_ORDER: AiCaseNodeStatus[] = [
   'skipped',
 ];
 
-// ID 生成规则统一维护在 shared 层，此处转发以保持向后兼容
 export { createAiCaseNodeId } from '@shared/types/aiCaseNodeMetadata';
 
 export function createAiCaseAttachmentId(): string {

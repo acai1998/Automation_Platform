@@ -10,7 +10,7 @@ import {
   type AiCaseGenerationNodeEvent,
 } from '../services/AiCaseGenerationService';
 import { caseKnowledgeRetrievalService } from '../services/CaseKnowledgeRetrievalService';
-import type { AiCaseNodeStatus } from '../services/aiCaseMapBuilder';
+import type { AiCaseNodeStatus } from '../services/aiCaseStructureBuilder';
 import type {
   AiCaseStorageProvider,
   AiCaseSyncSource,
@@ -92,7 +92,7 @@ router.use(authenticate);
 
 /**
  * POST /api/ai-cases/generate
- * 调用大模型生成测试脑图草稿
+ * 调用大模型生成测试用例结构草稿
  */
 router.post('/generate', async (req, res) => {
   try {
@@ -362,7 +362,7 @@ router.post('/workspaces', async (req, res) => {
 
 /**
  * PUT /api/ai-cases/workspaces/:id
- * 更新工作台（支持 mapData 覆盖更新）
+ * 更新工作台（支持工作区结构覆盖更新，兼容 mapData 字段）
  */
 router.put('/workspaces/:id', async (req, res) => {
   try {

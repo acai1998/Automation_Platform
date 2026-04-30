@@ -168,7 +168,7 @@ export function StatsCards({ data }: StatsCardsProps) {
   // Show skeleton when no data is available
   if (!data || !stats) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, index) => (
           <div key={index} className="animate-fade-in-up" style={{ animationDelay: `${index * 100}ms` }}>
             <StatCardSkeleton />
@@ -180,7 +180,7 @@ export function StatsCards({ data }: StatsCardsProps) {
 
   return (
     <TooltipProvider>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 overflow-visible">
+      <div className="grid grid-cols-4 gap-4 overflow-visible">
         {cardsConfig.map((config, index) => (
           <div key={index} className="animate-fade-in-up overflow-visible" style={{ animationDelay: `${index * 100}ms` }}>
             <StatCard

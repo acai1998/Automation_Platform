@@ -11,6 +11,7 @@ import {
   BarChart3,
   Plus,
   Search,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Pencil,
@@ -32,10 +33,8 @@ import {
   Monitor,
   CheckSquare,
   ListChecks,
-  ChevronDown,
   LayoutGrid,
   List,
-  SlidersHorizontal,
   Save,
   Download,
   ShieldAlert,
@@ -67,6 +66,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useTasks,
@@ -92,7 +92,6 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import type { CheckedState } from '@radix-ui/react-checkbox';
 import { BatchConfirmDialog } from '@/components/tasks/BatchConfirmDialog';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useAllCasesForSelect, type TestCase as CaseItem, type CaseType } from '@/hooks/useCases';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -244,7 +243,6 @@ export default function Tasks() {
   const [viewMode, setViewMode] = useState<TaskViewMode>('cards');
   const [sortKey, setSortKey] = useState<TaskSortKey>('latestRun');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [viewportWidth, setViewportWidth] = useState<number>(typeof window === 'undefined' ? 1440 : window.innerWidth);
   const [savedFilters, setSavedFilters] = useState<Array<{
     name: string;
     keyword: string;
@@ -271,23 +269,6 @@ export default function Tasks() {
     latestRun: true,
     successRate: true,
   };
-
-  const isWideDesktop = viewportWidth >= 1440;
-  const isFilterPopoverMode = viewportWidth >= 1024 && viewportWidth < 1440;
-  const isTablet = viewportWidth >= 768 && viewportWidth < 1024;
-  const isMobile = viewportWidth < 768;
-
-  useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  useEffect(() => {
-    if (viewportWidth < 1024) {
-      setViewMode('cards');
-    }
-  }, [viewportWidth]);
 
   useEffect(() => {
     try {
@@ -714,7 +695,7 @@ export default function Tasks() {
   return (
     <div className="space-y-8 p-6">
       {/* 顶部标题 */}
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
             <Boxes className="h-8 w-8 text-emerald-600" />
@@ -745,41 +726,36 @@ export default function Tasks() {
             </div>
           )}
 
-          {!isMobile && (
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={() => setSchedulerOpen(true)}
-              title="查看调度器运行状态"
-            >
-              <Monitor className="h-4 w-4 text-blue-500" />
-              调度器监控
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => setSchedulerOpen(true)}
+            title="查看调度器运行状态"
+          >
+            <Monitor className="h-4 w-4 text-blue-500" />
+            调度器监控
+          </Button>
 
-          {!isMobile && (
-            <>
-              <Button
-                variant={viewMode === 'cards' ? 'default' : 'outline'}
-                size="sm"
-                className="gap-2"
-                onClick={() => setViewMode('cards')}
-              >
-                <LayoutGrid className="h-4 w-4" />
-                卡片
-              </Button>
-              <Button
-                variant={viewMode === 'table' ? 'default' : 'outline'}
-                size="sm"
-                className="gap-2"
-                onClick={() => setViewMode('table')}
-                disabled={isTablet}
-              >
-                <List className="h-4 w-4" />
-                表格
-              </Button>
-            </>
-          )}
+          <>
+            <Button
+              variant={viewMode === 'cards' ? 'default' : 'outline'}
+              size="sm"
+              className="gap-2"
+              onClick={() => setViewMode('cards')}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              卡片
+            </Button>
+            <Button
+              variant={viewMode === 'table' ? 'default' : 'outline'}
+              size="sm"
+              className="gap-2"
+              onClick={() => setViewMode('table')}
+            >
+              <List className="h-4 w-4" />
+              表格
+            </Button>
+          </>
 
           <Button
             className="gap-2 bg-emerald-600 hover:bg-emerald-700"
@@ -821,7 +797,7 @@ export default function Tasks() {
       )}
 
       {/* 统计卡片 */}
-      <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-4">
+      <div className="grid grid-cols-4 gap-4">
         <Card className="bg-gradient-to-br from-blue-500/10 to-transparent border-blue-100 dark:border-blue-900/30">
           <CardHeader className="pb-2">
             <CardDescription className="text-blue-600 dark:text-blue-400 font-medium">
@@ -895,48 +871,7 @@ export default function Tasks() {
           )}
         </div>
 
-        {isFilterPopoverMode ? (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1.5">
-                <SlidersHorizontal className="h-4 w-4" />
-                筛选条件
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-[420px] p-4">
-              <div className="space-y-3">
-                <FilterGroup
-                  label="状态"
-                  options={TASK_STATUS_FILTER_OPTIONS.map((v) => ({ value: v, label: v === '' ? '全部状态' : STATUS_LABELS[v] }))}
-                  value={statusFilter}
-                  onChange={(v) => {
-                    setStatusFilter(v as TaskStatusFilter);
-                    setPage(1);
-                  }}
-                />
-                <FilterGroup
-                  label="触发方式"
-                  options={TASK_TRIGGER_FILTER_OPTIONS.map((v) => ({ value: v, label: v === '' ? '全部触发' : TRIGGER_TYPE_LABELS[v] }))}
-                  value={triggerFilter}
-                  onChange={(v) => {
-                    setTriggerFilter(v as TaskTriggerFilter);
-                    setPage(1);
-                  }}
-                />
-                <FilterGroup
-                  label="标签"
-                  options={TASK_TAG_FILTER_OPTIONS}
-                  value={tagFilter}
-                  onChange={(v) => {
-                    setTagFilter(v as TaskTagFilter);
-                    setPage(1);
-                  }}
-                />
-              </div>
-            </PopoverContent>
-          </Popover>
-        ) : (
-          <div className="space-y-2">
+        <div className="space-y-2">
             <FilterGroup
               label="状态"
               compact
@@ -967,18 +902,29 @@ export default function Tasks() {
                 setPage(1);
               }}
             />
-          </div>
-        )}
+        </div>
 
         {savedFilters.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-slate-500">常用:</span>
             {savedFilters.map((item) => (
               <div key={item.name} className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 pl-2 pr-1 dark:border-slate-700 dark:bg-slate-800">
-                <button className="py-1 text-slate-700 dark:text-slate-300" onClick={() => applySavedFilter(item.name)}>
+                <button
+                  type="button"
+                  className="py-1 text-slate-700 dark:text-slate-300"
+                  onClick={() => applySavedFilter(item.name)}
+                  aria-label={`应用筛选 ${item.name}`}
+                  title={`应用筛选 ${item.name}`}
+                >
                   {item.name}
                 </button>
-                <button className="ml-1 rounded-full p-0.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700" onClick={() => removeSavedFilter(item.name)}>
+                <button
+                  type="button"
+                  className="ml-1 rounded-full p-0.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  onClick={() => removeSavedFilter(item.name)}
+                  aria-label={`删除筛选 ${item.name}`}
+                  title={`删除筛选 ${item.name}`}
+                >
                   <X className="h-3 w-3" />
                 </button>
               </div>
@@ -1022,11 +968,7 @@ export default function Tasks() {
       ) : (
         <>
           {viewMode === 'cards' ? (
-            <div className={cn(
-              'grid gap-6',
-              isWideDesktop ? '2xl:grid-cols-4 xl:grid-cols-4 lg:grid-cols-3 md:grid-cols-2' : 'xl:grid-cols-2 md:grid-cols-2',
-              (isTablet || isMobile) && 'grid-cols-1'
-            )}>
+            <div className="grid grid-cols-4 gap-6">
               {sortedTasks.map((task) => (
                 <TaskCard
                   key={task.id}
@@ -1191,7 +1133,7 @@ export default function Tasks() {
 
       {/* 保存常用筛选名称对话框 */}
       <Dialog open={filterNameDialogOpen} onOpenChange={setFilterNameDialogOpen}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>保存常用筛选</DialogTitle>
             <DialogDescription>
@@ -1441,7 +1383,7 @@ const TaskCard = memo(function TaskCard({
       "group hover:shadow-xl transition-all duration-300 border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col hover:-translate-y-0.5",
       isSelected && "ring-2 ring-blue-500 border-blue-500"
     )}>
-      <CardHeader className="pb-3 sm:pb-4">
+      <CardHeader className="pb-4">
         <div className="flex items-start justify-between gap-2">
           {/* 批量模式下显示复选框 */}
           {isBatchMode && (
@@ -1452,7 +1394,7 @@ const TaskCard = memo(function TaskCard({
             />
           )}
           <div className="space-y-1 min-w-0 flex-1">
-            <CardTitle className="text-base sm:text-xl font-bold group-hover:text-blue-600 transition-colors truncate">
+            <CardTitle className="text-xl font-bold group-hover:text-blue-600 transition-colors truncate">
               {task.name}
             </CardTitle>
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -1516,13 +1458,13 @@ const TaskCard = memo(function TaskCard({
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 space-y-3 sm:space-y-4">
-        <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-1 sm:line-clamp-2 min-h-[1.5rem] sm:min-h-[2.5rem]">
+      <CardContent className="flex-1 space-y-4">
+        <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-2 min-h-[2.5rem]">
           {task.description || TASK_MESSAGES.NO_DESCRIPTION}
         </p>
 
         {/* 触发类型 & 成功率 */}
-        <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center justify-between gap-2 text-sm">
           <div className="flex items-center gap-2 text-slate-500">
             <Calendar className="h-4 w-4" />
             <span>
@@ -1580,7 +1522,7 @@ const TaskCard = memo(function TaskCard({
         </div>
       </CardContent>
 
-      <CardFooter className="pt-3 sm:pt-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+      <CardFooter className="pt-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
         <Button
           onClick={handleRun}
           disabled={isRunning || isQueued || task.status === 'archived'}
@@ -1705,7 +1647,7 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
               ) : stats ? (
                 <div className="space-y-6">
                   {/* 摘要卡片 */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-4 gap-4">
                     <div className="rounded-xl bg-slate-50 dark:bg-slate-800 p-4 text-center">
                       <p className="text-2xl font-bold">{stats.summary.total}</p>
                       <p className="text-xs text-slate-500 mt-1">总执行次数</p>
@@ -1739,19 +1681,18 @@ function TaskStatsDialog({ task, onClose }: { task: Task; onClose: () => void })
                         {stats.trend.map((item) => (
                           <div key={item.day} className="flex items-center gap-3 text-sm">
                             <span className="w-24 shrink-0 text-slate-500 text-xs">{item.day}</span>
-                            <div className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
-                              <div
-                                className={cn(
-                                  'h-full rounded-full transition-all',
-                                  item.successRate >= 80
-                                    ? 'bg-green-500'
-                                    : item.successRate >= 50
-                                    ? 'bg-orange-400'
-                                    : 'bg-red-400'
-                                )}
-                                style={{ width: `${Math.max(2, item.successRate)}%` }}
-                              />
-                            </div>
+                            <Progress
+                              value={Math.max(2, item.successRate)}
+                              className={cn(
+                                'h-2 flex-1',
+                                item.successRate >= 80
+                                  ? '[&>div]:bg-green-500'
+                                  : item.successRate >= 50
+                                  ? '[&>div]:bg-orange-400'
+                                  : '[&>div]:bg-red-400'
+                              )}
+                              aria-label={`${item.day} 成功率 ${item.successRate}%`}
+                            />
                             <span className={cn('w-10 text-right font-bold text-xs shrink-0', successRateColor(item.successRate))}>
                               {item.successRate}%
                             </span>
@@ -1936,21 +1877,18 @@ function SchedulerMonitorDialog({ onClose }: { onClose: () => void }) {
                 <span>并发使用率</span>
                 <span>{status.running.length} / {status.concurrencyLimit}</span>
               </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
-                <div
-                  className={cn(
-                    'h-full rounded-full transition-all',
-                    status.running.length >= status.concurrencyLimit
-                      ? 'bg-red-500'
-                      : status.running.length >= status.concurrencyLimit * 0.7
-                      ? 'bg-amber-400'
-                      : 'bg-blue-500'
-                  )}
-                  style={{
-                    width: `${Math.min(100, (status.running.length / Math.max(1, status.concurrencyLimit)) * 100)}%`,
-                  }}
-                />
-              </div>
+              <Progress
+                value={Math.min(100, (status.running.length / Math.max(1, status.concurrencyLimit)) * 100)}
+                className={cn(
+                  'h-2 w-full',
+                  status.running.length >= status.concurrencyLimit
+                    ? '[&>div]:bg-red-500'
+                    : status.running.length >= status.concurrencyLimit * 0.7
+                    ? '[&>div]:bg-amber-400'
+                    : '[&>div]:bg-blue-500'
+                )}
+                aria-label={`并发使用率 ${status.running.length} / ${status.concurrencyLimit}`}
+              />
             </div>
 
             {/* 运行中的任务（P1：显示 taskId + runId + 已运行时长） */}
@@ -2330,8 +2268,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                       ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-500'
                       : 'border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:text-slate-400'
                   )}
-                  role="radio"
-                  aria-checked={triggerType === value}
+                  aria-pressed={triggerType === value}
                 >
                   {label}
                 </button>
@@ -2509,7 +2446,7 @@ function TaskFormDialog({ open, task, onClose, onSave, isSaving }: TaskFormDialo
                 </div>
 
                 {/* 候选用例列表 */}
-                <div className="overflow-y-auto" style={{ maxHeight: '200px' }}>
+                <div className="max-h-[200px] overflow-y-auto">
                   {casesLoading ? (
                     <div className="flex items-center justify-center py-6 text-slate-400">
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />

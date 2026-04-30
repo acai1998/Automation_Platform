@@ -22,6 +22,7 @@ import UICases from "./pages/cases/UICases";
 import PerformanceCases from "./pages/cases/PerformanceCases";
 import AICases from "./pages/cases/AICases";
 import AICaseCreate from "./pages/cases/AICaseCreate";
+import AICaseHistory from "./pages/cases/AICaseHistory";
 import Reports from "./pages/reports/Reports";
 import ReportDetail from "./pages/reports/ReportDetail";
 import SystemSettings from "./pages/settings/SystemSettings";
@@ -178,7 +179,11 @@ function Router() {
           {null}
         </Route>
         <Route path="/cases/ai-history">
-          <Redirect to="/cases/ai-create" />
+          <ProtectedRoute>
+            <Layout>
+              <AICaseHistory />
+            </Layout>
+          </ProtectedRoute>
         </Route>
 
         <Route path="/tasks">

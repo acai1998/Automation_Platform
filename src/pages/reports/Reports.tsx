@@ -1,64 +1,59 @@
 import { useState } from 'react';
 import { Link } from 'wouter';
-import { 
-  BarChart3, 
-  ChevronLeft, 
-  ChevronRight, 
-  ChevronDown,
-  Loader2, 
-  CheckCircle2, 
-  XCircle, 
-  Clock, 
+import {
   AlertCircle,
+  BarChart3,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
   ExternalLink,
   FileText,
   History,
-  Calendar,
+  Loader2,
+  type LucideIcon,
   X,
+  XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
-import { useTestRuns, TestRunFilters } from '@/hooks/useExecutions';
+import { Progress } from '@/components/ui/progress';
+import { useTestRuns, type TestRunFilters } from '@/hooks/useExecutions';
 import { cn } from '@/lib/utils';
 
-/**
- * 将毫秒时长格式化为可读字符串（与仪表盘口径一致）
- * 例：1279600ms → "21m 20s"，39000ms → "39s"
- */
+type MultiSelectOption = {
+  value: string;
+  label: string;
+};
+
 function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || ms <= 0) return '-';
+
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+
+  const minutes = Math.floor(seconds / 60);
+  const remainSeconds = seconds % 60;
+  return remainSeconds > 0 ? `${minutes}m ${remainSeconds}s` : `${minutes}m`;
 }
 
-/**
- * 运行记录页面
- * 采用与用例管理一致的现代化 SaaS Dashboard 风格
- * 数据读取自 Auto_TestRun 表
- */
 export default function Reports() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-
-  // 筛选状态
   const [filters, setFilters] = useState<TestRunFilters>({});
 
-  const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
-
-  const TRIGGER_TYPE_OPTIONS: MultiSelectOption[] = [
+  const pageSizeOptions = [10, 20, 50] as const;
+  const triggerTypeOptions: MultiSelectOption[] = [
     { value: 'manual', label: '手动' },
     { value: 'jenkins', label: 'Jenkins' },
     { value: 'schedule', label: '定时' },
     { value: 'ci_triggered', label: 'CI' },
   ];
-
-  const STATUS_OPTIONS: MultiSelectOption[] = [
+  const statusOptions: MultiSelectOption[] = [
     { value: 'success', label: '成功' },
     { value: 'failed', label: '失败' },
     { value: 'running', label: '运行中' },
@@ -66,19 +61,13 @@ export default function Reports() {
     { value: 'aborted', label: '已中止' },
   ];
 
-
-  // 获取运行记录
   const { data, isLoading, error, refetch } = useTestRuns(page, pageSize, filters);
-
-  // 历史等待中治理（默认阈值与后端 monitor 一致）
-
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
   const startIndex = (page - 1) * pageSize + 1;
   const endIndex = Math.min(page * pageSize, data?.total || 0);
 
-  // 更新多选筛选项，同时重置到第一页
-  const handleMultiFilterChange = (key: "triggerType" | "status", values: string[]) => {
-    setFilters(prev => ({
+  const handleMultiFilterChange = (key: 'triggerType' | 'status', values: string[]) => {
+    setFilters((prev) => ({
       ...prev,
       [key]: values.length > 0 ? values : undefined,
     }));
@@ -86,7 +75,7 @@ export default function Reports() {
   };
 
   const handleDateRangeChange = (range: { startDate?: string; endDate?: string }) => {
-    setFilters(prev => ({
+    setFilters((prev) => ({
       ...prev,
       startDate: range.startDate,
       endDate: range.endDate,
@@ -94,48 +83,40 @@ export default function Reports() {
     setPage(1);
   };
 
-  // 清除所有筛选
   const handleClearAll = () => {
     setFilters({});
     setPage(1);
   };
 
-  // 是否有活跃筛选
-  const hasActiveFilters = !!((filters.triggerType?.length ?? 0) || (filters.status?.length ?? 0) || filters.startDate || filters.endDate);
-  const theme = {
-    gradient: 'from-blue-500/20 via-blue-500/5 to-transparent',
-    iconBg: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-  };
+  const hasActiveFilters = Boolean(
+    (filters.triggerType?.length ?? 0) ||
+      (filters.status?.length ?? 0) ||
+      filters.startDate ||
+      filters.endDate
+  );
 
   return (
-    <div className="h-full flex flex-col min-h-0">
-      {/* 顶部标题区 - 带渐变背景 */}
-      <div className={`relative h-20 px-4 sm:px-6 bg-gradient-to-r ${theme.gradient} dark:from-slate-800/50 dark:via-transparent rounded-t-xl flex items-center`}>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between w-full">
-          <div className="flex items-center gap-3">
-            <div className={`p-2.5 rounded-xl ${theme.iconBg} shadow-sm`}>
-              <BarChart3 className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-                运行记录
-              </h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                查看和分析自动化测试运行历史记录
-              </p>
-            </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="relative flex h-20 items-center rounded-t-xl bg-gradient-to-r from-blue-500/20 via-blue-500/5 to-transparent px-6 dark:from-slate-800/50 dark:via-transparent">
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-blue-500/10 p-2.5 text-blue-600 shadow-sm dark:text-blue-400">
+            <BarChart3 className="h-6 w-6" />
           </div>
-
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">运行记录</h1>
+            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+              查看和分析自动化测试运行历史
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* 筛选栏 */}
-      <div className="relative z-30 overflow-visible px-3 sm:px-4 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-700/50">
+      <div className="relative z-30 overflow-visible border-b border-slate-200/80 bg-white/50 px-4 py-3 backdrop-blur-sm dark:border-slate-700/50 dark:bg-slate-900/50">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">触发方式</span>
+            <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">触发方式</span>
             <FilterMultiSelect
-              options={TRIGGER_TYPE_OPTIONS}
+              options={triggerTypeOptions}
               value={filters.triggerType || []}
               onChange={(values) => handleMultiFilterChange('triggerType', values)}
               placeholder="全部"
@@ -143,9 +124,9 @@ export default function Reports() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">状态</span>
+            <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">状态</span>
             <FilterMultiSelect
-              options={STATUS_OPTIONS}
+              options={statusOptions}
               value={filters.status || []}
               onChange={(values) => handleMultiFilterChange('status', values)}
               placeholder="全部"
@@ -153,112 +134,143 @@ export default function Reports() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0">时间范围</span>
+            <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">时间范围</span>
             <DateRangePicker
               value={{ startDate: filters.startDate, endDate: filters.endDate }}
               onChange={handleDateRangeChange}
             />
           </div>
 
-          {hasActiveFilters && (
+          {hasActiveFilters ? (
             <Button
               variant="ghost"
               size="sm"
               onClick={handleClearAll}
-              className="h-8 gap-1.5 text-xs text-slate-500 hover:text-slate-700 ml-auto"
+              className="ml-auto h-8 gap-1.5 text-xs text-slate-500 hover:text-slate-700"
             >
               <X className="h-3 w-3" />
               清空筛选
             </Button>
-          )}
+          ) : null}
         </div>
       </div>
 
-      {/* 列表内容区 */}
-      <div className="flex-1 min-h-0 overflow-hidden bg-white dark:bg-slate-900 rounded-b-xl shadow-sm border border-t-0 border-slate-200/80 dark:border-slate-700/50">
+      <div className="flex-1 min-h-0 overflow-hidden rounded-b-xl border border-t-0 border-slate-200/80 bg-white shadow-sm dark:border-slate-700/50 dark:bg-slate-900">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-3">
+          <div className="flex h-64 flex-col items-center justify-center gap-3">
             <Loader2 className="h-10 w-10 animate-spin text-blue-500" />
             <span className="text-sm text-slate-500 dark:text-slate-400">加载中...</span>
           </div>
         ) : error ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-4">
+          <div className="flex h-64 flex-col items-center justify-center gap-4">
             <AlertCircle className="h-10 w-10 text-red-500" />
-            <p className="text-red-600 text-sm">加载失败: {(error as Error).message}</p>
-            <Button variant="outline" size="sm" onClick={() => refetch()}>重试</Button>
+            <p className="text-sm text-red-600">加载失败: {(error as Error).message}</p>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              重试
+            </Button>
           </div>
         ) : data?.data.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-500 dark:text-slate-400">
+          <div className="flex h-64 flex-col items-center justify-center gap-3 text-slate-500 dark:text-slate-400">
             <History className="h-10 w-10 opacity-20" />
-            <p className="font-medium">{hasActiveFilters ? '没有符合筛选条件的记录' : '暂无运行记录'}</p>
-            {hasActiveFilters && (
-              <Button variant="outline" size="sm" onClick={handleClearAll}>清空筛选条件</Button>
-            )}
+            <p className="font-medium">{hasActiveFilters ? '没有符合条件的记录' : '暂无运行记录'}</p>
+            {hasActiveFilters ? (
+              <Button variant="outline" size="sm" onClick={handleClearAll}>
+                清空筛选
+              </Button>
+            ) : null}
           </div>
         ) : (
-          <div className="h-full flex flex-col">
-            {/* 桌面端表格 */}
-            <div className="hidden lg:block flex-1 overflow-auto">
+          <div className="flex h-full flex-col">
+            <div className="flex-1 overflow-auto">
               <table className="w-full min-w-[1000px]">
                 <thead className="sticky top-0 z-10">
-                  <tr className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">执行编号</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">触发信息</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">状态</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">用例统计</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">开始时间</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">耗时</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">操作</th>
+                  <tr className="border-b border-slate-200 bg-slate-50/95 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/95">
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                      执行编号
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                      触发信息
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                      状态
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                      用例统计
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                      触发时间
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                      耗时
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                      操作
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {data?.data.map((record) => (
-                    <tr key={record.id} className="group hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors duration-150">
-                      <td className="px-4 py-3.5 text-sm font-mono text-slate-700 dark:text-slate-300">{record.id}</td>
+                  {(data?.data ?? []).map((record) => (
+                    <tr
+                      key={record.id}
+                      className="group transition-colors duration-150 hover:bg-slate-50/80 dark:hover:bg-slate-800/50"
+                    >
+                      <td className="px-4 py-3.5 font-mono text-sm text-slate-700 dark:text-slate-300">
+                        {record.id}
+                      </td>
                       <td className="px-4 py-3.5">
-                        <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                        <div className="flex items-center gap-1 text-[10px] text-slate-400">
                           <TriggerTypeBadge type={record.trigger_type} />
                           <span>by {record.trigger_by_name || '系统'}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
                         <StatusBadge status={record.status} reason={record.abort_reason} />
-                        {record.status === 'aborted' && record.abort_reason && (
-                          <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400 max-w-[220px] truncate" title={record.abort_reason}>
+                        {record.status === 'aborted' && record.abort_reason ? (
+                          <div
+                            className="mt-1 max-w-[220px] truncate text-[10px] text-amber-600 dark:text-amber-400"
+                            title={record.abort_reason}
+                          >
                             原因: {record.abort_reason}
                           </div>
-                        )}
+                        ) : null}
                       </td>
                       <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-1.5 text-xs mb-1">
-                          <span className="text-green-600 font-medium">{record.passed_cases} 通过</span>
-                          <span className="text-slate-300">·</span>
-                          <span className="text-red-500 font-medium">{record.failed_cases} 失败</span>
-                          <span className="text-slate-300">·</span>
+                        <div className="mb-1 flex items-center gap-1.5 text-xs">
+                          <span className="font-medium text-green-600">{record.passed_cases} 通过</span>
+                          <span className="text-slate-300">/</span>
+                          <span className="font-medium text-red-500">{record.failed_cases} 失败</span>
+                          <span className="text-slate-300">/</span>
                           <span className="text-slate-400">{record.total_cases} 总计</span>
                         </div>
-                        <div className="w-24 bg-slate-100 dark:bg-slate-800 rounded-full h-1 overflow-hidden">
-                          <div 
-                            className="bg-green-500 h-full transition-all duration-500" 
-                            style={{ width: `${(record.passed_cases / (record.total_cases || 1)) * 100}%` }}
-                          />
-                        </div>
+                        <Progress
+                          value={(record.passed_cases / (record.total_cases || 1)) * 100}
+                          className="h-1 w-24 [&>div]:bg-green-500"
+                          aria-label={`通过率 ${record.passed_cases}/${record.total_cases || 0}`}
+                        />
                       </td>
                       <td className="px-4 py-3.5 text-xs text-slate-600 dark:text-slate-400">
-                        {record.start_time ? new Date(record.start_time).toLocaleString() : '-'}
+                        {(record.created_at ?? record.start_time)
+                          ? new Date(record.created_at ?? record.start_time ?? '').toLocaleString()
+                          : '-'}
                       </td>
                       <td className="px-4 py-3.5 text-xs text-slate-600 dark:text-slate-400">
                         {formatDuration(record.duration_ms)}
                       </td>
                       <td className="px-4 py-3.5 text-right">
                         <div className="flex justify-end gap-2">
-                          {record.jenkins_url && (
+                          {record.jenkins_url ? (
                             <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="查看 Jenkins">
-                              <a href={record.jenkins_url} target="_blank" rel="noreferrer">
+                              <a
+                                href={record.jenkins_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                aria-label="查看 Jenkins"
+                                title="查看 Jenkins"
+                              >
                                 <ExternalLink className="h-4 w-4 text-slate-400" />
                               </a>
                             </Button>
-                          )}
+                          ) : null}
                           <Button variant="outline" size="sm" className="h-8 gap-1.5" asChild>
                             <Link href={`/reports/${record.id}`}>
                               <FileText className="h-3.5 w-3.5" />
@@ -273,77 +285,55 @@ export default function Reports() {
               </table>
             </div>
 
-            {/* 移动端卡片列表 */}
-            <div className="lg:hidden flex-1 overflow-auto">
-              <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {data?.data.map((record) => (
-                  <div key={record.id} className="p-4 hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors">
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span className="text-[10px] font-mono text-slate-400">{record.id}</span>
-                          <StatusBadge status={record.status} reason={record.abort_reason} />
-                        </div>
-                        <div className="flex items-center gap-1 mt-1">
-                          <TriggerTypeBadge type={record.trigger_type} />
-                          <span className="text-[10px] text-slate-400">by {record.trigger_by_name || '系统'}</span>
-                        </div>
-                      </div>
-                      <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" asChild>
-                        <Link href={`/reports/${record.id}`}>
-                          <FileText className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-y-2 text-xs text-slate-500 dark:text-slate-400">
-                      <div className="flex items-center gap-1.5">
-                        <CheckCircle2 className="h-3 w-3 text-green-500" />
-                        <span>通过: {record.passed_cases}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <XCircle className="h-3 w-3 text-red-500" />
-                        <span>失败: {record.failed_cases}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className="h-3 w-3" />
-                        <span>{record.start_time ? new Date(record.start_time).toLocaleDateString() : '-'}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Clock className="h-3 w-3" />
-                        <span>{formatDuration(record.duration_ms)}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 分页 */}
-            <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
-              <div className="flex items-center gap-4 order-2 sm:order-1">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/50 px-6 py-3 dark:border-slate-700 dark:bg-slate-800/30">
+              <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">每页</span>
+                  <span id="reports-page-size-label" className="text-xs text-slate-500">每页</span>
                   <select
                     value={pageSize}
-                    onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                    className="h-8 w-16 text-sm rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                    onChange={(event) => {
+                      setPageSize(Number(event.target.value));
+                      setPage(1);
+                    }}
+                    aria-labelledby="reports-page-size-label"
+                    title="选择每页条数"
+                    className="h-8 w-16 rounded-md border border-slate-200 bg-white text-sm dark:border-slate-700 dark:bg-slate-800"
                   >
-                    {PAGE_SIZE_OPTIONS.map(size => <option key={size} value={size}>{size}</option>)}
+                    {pageSizeOptions.map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
                   </select>
                 </div>
+
                 <div className="text-xs text-slate-500">
-                  第 <span className="font-medium text-slate-700 dark:text-slate-300">{startIndex}</span>-
-                  <span className="font-medium text-slate-700 dark:text-slate-300">{endIndex}</span> 条，
-                  共 <span className="font-medium text-slate-700 dark:text-slate-300">{data?.total || 0}</span> 条
+                  第 <span className="font-medium text-slate-700 dark:text-slate-300">{startIndex}</span> -
+                  <span className="font-medium text-slate-700 dark:text-slate-300"> {endIndex}</span> 条，共{' '}
+                  <span className="font-medium text-slate-700 dark:text-slate-300">{data?.total ?? 0}</span> 条
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 order-1 sm:order-2">
-                <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)} className="h-8 w-8 p-0">
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page === 1}
+                  onClick={() => setPage((current) => current - 1)}
+                  className="h-8 w-8 p-0"
+                >
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
-                <div className="text-xs font-medium px-2">第 {page} / {totalPages || 1} 页</div>
-                <Button variant="outline" size="sm" disabled={page === totalPages} onClick={() => setPage(p => p + 1)} className="h-8 w-8 p-0">
+                <div className="px-2 text-xs font-medium">
+                  第 {page} / {totalPages || 1} 页
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page === totalPages}
+                  onClick={() => setPage((current) => current + 1)}
+                  className="h-8 w-8 p-0"
+                >
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -355,18 +345,11 @@ export default function Reports() {
   );
 }
 
-// ─── 子组件 ───────────────────────────────────────────────────────────────────
-
-type MultiSelectOption = {
-  value: string;
-  label: string;
-};
-
 function FilterMultiSelect({
   options,
   value,
   onChange,
-  placeholder = "请选择",
+  placeholder = '请选择',
 }: {
   options: MultiSelectOption[];
   value: string[];
@@ -388,54 +371,54 @@ function FilterMultiSelect({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="min-h-8 min-w-[180px] max-w-[320px] px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-left text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+          className="min-h-8 min-w-[180px] max-w-[320px] rounded-md border border-slate-200 bg-white px-2 py-1 text-left text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-800"
         >
           <div className="flex items-center gap-2">
-            <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
               {value.length === 0 ? (
                 <span className="text-slate-400">{placeholder}</span>
               ) : (
                 value.map((item) => (
                   <span
                     key={item}
-                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800"
+                    className="inline-flex items-center rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-600 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400"
                   >
                     {optionMap.get(item) || item}
                   </span>
                 ))
               )}
             </div>
-            <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
           </div>
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6} className="w-52 p-1.5">
-        <div className="space-y-0.5 max-h-56 overflow-auto">
+        <div className="max-h-56 space-y-0.5 overflow-auto">
           {options.map((option) => (
             <label
               key={option.value}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800"
             >
               <Checkbox
                 checked={value.includes(option.value)}
                 onCheckedChange={() => toggleOption(option.value)}
-                className="h-3.5 w-3.5 rounded border-slate-300 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+                className="h-3.5 w-3.5 rounded border-slate-300 data-[state=checked]:border-blue-500 data-[state=checked]:bg-blue-500"
               />
               <span className="text-xs text-slate-700 dark:text-slate-300">{option.label}</span>
             </label>
           ))}
         </div>
-        {value.length > 0 && (
-          <div className="pt-1.5 mt-1.5 border-t border-slate-100 dark:border-slate-800">
+        {value.length > 0 ? (
+          <div className="mt-1.5 border-t border-slate-100 pt-1.5 dark:border-slate-800">
             <button
               type="button"
-              className="w-full text-left px-2 py-1 text-xs text-slate-500 hover:text-blue-600 transition-colors"
+              className="w-full px-2 py-1 text-left text-xs text-slate-500 transition-colors hover:text-blue-600"
               onClick={() => onChange([])}
             >
               清空选择
             </button>
           </div>
-        )}
+        ) : null}
       </PopoverContent>
     </Popover>
   );
@@ -443,21 +426,47 @@ function FilterMultiSelect({
 
 function TriggerTypeBadge({ type }: { type: string }) {
   const configs: Record<string, { label: string; className: string }> = {
-    manual: { label: '手动', className: 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800' },
-    jenkins: { label: 'Jenkins', className: 'bg-orange-50 text-orange-600 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-800' },
-    schedule: { label: '定时', className: 'bg-purple-50 text-purple-600 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800' },
-    ci_triggered: { label: 'CI', className: 'bg-green-50 text-green-600 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800' },
+    manual: {
+      label: '手动',
+      className: 'border-blue-200 bg-blue-50 text-blue-600 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
+    },
+    jenkins: {
+      label: 'Jenkins',
+      className:
+        'border-orange-200 bg-orange-50 text-orange-600 dark:border-orange-800 dark:bg-orange-900/20 dark:text-orange-400',
+    },
+    schedule: {
+      label: '定时',
+      className:
+        'border-purple-200 bg-purple-50 text-purple-600 dark:border-purple-800 dark:bg-purple-900/20 dark:text-purple-400',
+    },
+    ci_triggered: {
+      label: 'CI',
+      className: 'border-green-200 bg-green-50 text-green-600 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400',
+    },
   };
-  const config = configs[type] || { label: type, className: 'bg-slate-50 text-slate-500 border-slate-200' };
+
+  const config = configs[type] || {
+    label: type,
+    className: 'border-slate-200 bg-slate-50 text-slate-500',
+  };
+
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border ${config.className}`}>
+    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-medium ${config.className}`}>
       {config.label}
     </span>
   );
 }
 
 function StatusBadge({ status, reason }: { status: string; reason?: string | null }) {
-  const configs: Record<string, { label: string, variant: "success" | "destructive" | "secondary" | "outline" | "warning", icon: any }> = {
+  const configs: Record<
+    string,
+    {
+      label: string;
+      variant: 'success' | 'destructive' | 'secondary' | 'outline' | 'warning';
+      icon: LucideIcon;
+    }
+  > = {
     success: { label: '成功', variant: 'success', icon: CheckCircle2 },
     failed: { label: '失败', variant: 'destructive', icon: XCircle },
     running: { label: '运行中', variant: 'secondary', icon: Loader2 },
@@ -467,13 +476,16 @@ function StatusBadge({ status, reason }: { status: string; reason?: string | nul
   };
 
   const config = configs[status] || { label: status, variant: 'outline', icon: AlertCircle };
-  const Icon = config.icon;
+  const resolvedConfig = status === 'success' || status === 'failed'
+    ? { ...config, label: '已完成' }
+    : config;
+  const Icon = resolvedConfig.icon;
   const title = status === 'aborted' && reason ? `中止原因: ${reason}` : undefined;
 
   return (
-    <Badge variant={config.variant} className="gap-1.5 px-2 py-0.5 font-medium" title={title}>
-      <Icon className={cn("h-3 w-3", status === 'running' && "animate-spin")} />
-      {config.label}
+    <Badge variant={resolvedConfig.variant} className="gap-1.5 px-2 py-0.5 font-medium" title={title}>
+      <Icon className={cn('h-3 w-3', status === 'running' && 'animate-spin')} />
+      {resolvedConfig.label}
     </Badge>
   );
 }

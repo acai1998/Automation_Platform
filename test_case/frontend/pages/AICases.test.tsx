@@ -8,7 +8,6 @@ import * as aiCaseStorage from '@/lib/aiCaseStorage';
 import { aiCasesApi } from '@/api';
 import {
   AI_CASE_WORKSPACE_ID,
-  type AiCaseAttachmentRecord,
   type AiCaseNode,
   type AiCaseWorkspaceDocument,
 } from '@/types/aiCases';
@@ -17,60 +16,6 @@ import { toast } from 'sonner';
 // ─── Mock aiCaseStorage 新增的工具函数 ────────────────────────────────────────
 // 原有 mock 已覆盖 aiCaseStorage，这里仅在 module mock 内声明，
 // 具体 mock 实现在 beforeEach 中追加。
-
-interface MockMindBus {
-  addListener: ReturnType<typeof vi.fn>;
-  removeListener: ReturnType<typeof vi.fn>;
-}
-
-interface MockMindInstance {
-  init: ReturnType<typeof vi.fn>;
-  toCenter: ReturnType<typeof vi.fn>;
-  refresh: ReturnType<typeof vi.fn>;
-  findEle: ReturnType<typeof vi.fn>;
-  selectNode: ReturnType<typeof vi.fn>;
-  getData: ReturnType<typeof vi.fn>;
-  destroy: ReturnType<typeof vi.fn>;
-  bus: MockMindBus;
-}
-
-let latestMindInstance: MockMindInstance | null = null;
-
-function createMockMindInstance(): MockMindInstance {
-  let currentData: unknown = null;
-
-  return {
-    init: vi.fn((initialData: unknown) => {
-      currentData = initialData;
-      return null;
-    }),
-    toCenter: vi.fn(),
-    refresh: vi.fn((nextData: unknown) => {
-      currentData = nextData;
-    }),
-    findEle: vi.fn(() => document.createElement('div')),
-    selectNode: vi.fn(),
-    getData: vi.fn(() => currentData),
-    destroy: vi.fn(),
-    bus: {
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-    },
-  };
-}
-
-vi.mock('mind-elixir', () => {
-  function MindElixirMock() {
-    latestMindInstance = createMockMindInstance();
-    return latestMindInstance;
-  }
-
-  (MindElixirMock as unknown as { SIDE: string }).SIDE = 'SIDE';
-
-  return {
-    default: MindElixirMock,
-  };
-});
 
 vi.mock('@/components/ErrorBoundary', () => ({
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -167,7 +112,6 @@ function renderAICases() {
 describe('AICases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    latestMindInstance = null;
 
     Object.defineProperty(URL, 'createObjectURL', {
       writable: true,
@@ -197,129 +141,6 @@ describe('AICases', () => {
     vi.mocked(aiCaseStorage.deleteStaleWorkspaceAttachments).mockResolvedValue(0);
   });
 
-  it('初始化失败后应回退到默认脑图而不是永久 loading', async () => {
-    vi.mocked(aiCaseStorage.getWorkspaceDocument).mockRejectedValue(new Error('indexeddb unavailable'));
-
-    renderAICases();
-
-    await waitFor(() => {
-      expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
-    });
-
-    expect(screen.queryByText('初始化 AI 用例工作台...')).not.toBeInTheDocument();
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('初始化 AI 用例工作台失败，请刷新页面重试');
-  });
-
-  it('AI 生成和重置模板都应触发历史附件清理', async () => {
-    vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
-
-    renderAICases();
-
-    await waitFor(() => {
-      expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
-    });
-
-    // 需求信息 Dialog 中含有 PRD 输入框和 AI 生成按钮，先点击顶栏"需求信息"按钮打开弹窗
-    const requirementBtn = screen.getByRole('button', { name: /需求信息/i });
-    fireEvent.click(requirementBtn);
-
-    const requirementInput = await screen.findByPlaceholderText(/粘贴 PRD/);
-    fireEvent.change(requirementInput, {
-      target: { value: '登录流程支持手机号 + 验证码，需覆盖异常和权限场景' },
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: /AI 生成测试用例/i }));
-
-    await waitFor(() => {
-      expect(aiCaseStorage.deleteStaleWorkspaceAttachments).toHaveBeenCalledTimes(1);
-    });
-
-    // 重置模板按钮在浮动面板的"工作台操作" section，先打开面板
-    const panelToggleBtn = screen.getByRole('button', { name: /工作台面板|打开工作台面板/i });
-    fireEvent.click(panelToggleBtn);
-
-    const opsSectionBtn = await screen.findByRole('button', { name: /工作台操作/i });
-    fireEvent.click(opsSectionBtn);
-
-    const resetBtn = await screen.findByRole('button', { name: /重置模板/ });
-    fireEvent.click(resetBtn);
-
-    await waitFor(() => {
-      expect(aiCaseStorage.deleteStaleWorkspaceAttachments).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  it('附件列表刷新不应中断已排队的自动保存', async () => {
-    vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
-
-    let resolveAttachments: ((rows: AiCaseAttachmentRecord[]) => void) | null = null;
-    const pendingAttachments = new Promise<AiCaseAttachmentRecord[]>((resolve) => {
-      resolveAttachments = resolve;
-    });
-
-    vi.mocked(aiCaseStorage.listNodeAttachments)
-      .mockReturnValueOnce(pendingAttachments)
-      .mockResolvedValue([]);
-
-    renderAICases();
-
-    await waitFor(() => {
-      expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
-    });
-
-    const saveWorkspaceDocumentMock = vi.mocked(aiCaseStorage.saveWorkspaceDocument);
-    saveWorkspaceDocumentMock.mockClear();
-
-    // 工作台名称输入框在顶栏 需求信息 Dialog 中，先打开弹窗
-    const requirementBtn = screen.getByRole('button', { name: /需求信息/i });
-    fireEvent.click(requirementBtn);
-    const nameInput = await screen.findByPlaceholderText('输入工作台标题');
-    fireEvent.change(nameInput, { target: { value: '新的工作台名称' } });
-
-    await act(async () => {
-      resolveAttachments?.([]);
-      await Promise.resolve();
-    });
-
-    await waitFor(
-      () => {
-        expect(saveWorkspaceDocumentMock).toHaveBeenCalled();
-      },
-      { timeout: 1500 }
-    );
-  });
-
-  it('节点删除后应即时清理附件并展示清理数量', async () => {
-    vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc());
-    vi.mocked(aiCaseStorage.deleteStaleWorkspaceAttachments).mockResolvedValue(3);
-
-    renderAICases();
-
-    await waitFor(() => {
-      expect(screen.getByText('AI 用例工作台')).toBeInTheDocument();
-    });
-
-    const operationHandler = latestMindInstance?.bus.addListener.mock.calls.find((call) => call[0] === 'operation')?.[1] as
-      | (() => void)
-      | undefined;
-
-    expect(operationHandler).toBeDefined();
-
-    const reducedData = createInitialMindData('节点删除后');
-    reducedData.nodeData.children = [];
-    latestMindInstance?.getData.mockReturnValue(reducedData);
-
-    await act(async () => {
-      operationHandler?.();
-      await Promise.resolve();
-    });
-
-    await waitFor(() => {
-      expect(aiCaseStorage.deleteStaleWorkspaceAttachments).toHaveBeenCalled();
-    });
-
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('检测到节点删除，已清理 3 条附件');
-  });
 
   it('复制截图后可直接粘贴上传到当前测试节点', async () => {
     vi.mocked(aiCaseStorage.getWorkspaceDocument).mockResolvedValue(createStoredDoc({ selectTestcase: true }));
@@ -364,7 +185,6 @@ describe('AICases', () => {
 describe('AICases – 新双栏布局', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    latestMindInstance = null;
 
     Object.defineProperty(URL, 'createObjectURL', {
       writable: true, configurable: true,

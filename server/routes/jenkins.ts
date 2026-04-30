@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { In } from 'typeorm';
 import { executionService, type Auto_TestRunResultsInput } from '../services/ExecutionService';
 import { jenkinsService } from '../services/JenkinsService';
+import { jenkinsStatusService } from '../services/JenkinsStatusService';
 import { taskSchedulerService } from '../services/TaskSchedulerService';
 import { callbackQueue, type CallbackPayload } from '../services/CallbackQueue';
 import { ipWhitelistMiddleware, rateLimitMiddleware } from '../middleware/JenkinsAuthMiddleware';
@@ -13,8 +14,15 @@ import { buildJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDia
 import { persistJenkinsTriggerFailureDiagnostic } from '../utils/jenkinsTriggerDiagnosticArtifact';
 import { validateScriptPathsInTestRepo } from '../utils/testRepoScriptPathValidator';
 import { LOG_CONTEXTS, LOG_EVENTS, createTimer } from '../config/logging';
-import { AppDataSource } from '../config/database';
+import { AppDataSource, query, queryOne } from '../config/database';
 import { TestCase } from '../entities/TestCase';
+import { hybridSyncService } from '../services/HybridSyncService';
+import { executionMonitorService } from '../services/ExecutionMonitorService';
+import {
+  CALLBACK_TERMINAL_STATUSES,
+  deriveCallbackTerminalStatus,
+  normalizeCallbackTerminalStatus,
+} from '../services/ExecutionService/callbackStatus';
 
 const router = Router();
 
@@ -73,7 +81,7 @@ callbackQueue.register(async (payload: CallbackPayload) => {
     let finalPayload = payload;
 
     // ─── 轻量化回调：服务端主动解析结果 ─────────────────────────────
-    if (payload.needsServerParsing && payload.buildNumber) {
+    if (payload.needsServerParsing) {
       logger.info('[CallbackQueue] Lightweight callback detected, parsing results from Jenkins', {
         runId: payload.runId,
         buildNumber: payload.buildNumber,
@@ -83,19 +91,25 @@ callbackQueue.register(async (payload: CallbackPayload) => {
         // 从数据库获取执行记录，提取 jenkinsJob 名称
         const batch = await executionService.getBatchExecution(payload.runId);
         const execution = batch?.execution;
+        const buildNumber = payload.buildNumber ?? execution?.jenkinsBuildId;
 
-        if (execution?.jenkinsJob) {
-          const { jenkinsStatusService } = await import('../services/JenkinsStatusService');
+        if (execution?.jenkinsJob && buildNumber) {
           const testResults = await jenkinsStatusService.parseBuildResults(
             execution.jenkinsJob as string,
-            String(payload.buildNumber)
+            String(buildNumber)
           );
 
           if (testResults) {
+            const reportedStatus = normalizeCallbackTerminalStatus(payload.status);
             // 使用解析结果覆盖 payload
             finalPayload = {
               runId: payload.runId,
-              status: testResults.failedCases > 0 ? 'failed' : 'success',
+              status: deriveCallbackTerminalStatus({
+                reportedStatus,
+                passedCases: testResults.passedCases,
+                failedCases: testResults.failedCases,
+                skippedCases: testResults.skippedCases,
+              }),
               passedCases: testResults.passedCases,
               failedCases: testResults.failedCases,
               skippedCases: testResults.skippedCases,
@@ -112,7 +126,8 @@ callbackQueue.register(async (payload: CallbackPayload) => {
 
             logger.info('[CallbackQueue] Successfully parsed results from Jenkins', {
               runId: payload.runId,
-              buildNumber: payload.buildNumber,
+              buildNumber,
+              status: finalPayload.status,
               passedCases: finalPayload.passedCases,
               failedCases: finalPayload.failedCases,
               skippedCases: finalPayload.skippedCases,
@@ -121,14 +136,16 @@ callbackQueue.register(async (payload: CallbackPayload) => {
             // 解析失败，降级为使用构建状态
             logger.warn('[CallbackQueue] Failed to parse results from Jenkins, falling back to build status', {
               runId: payload.runId,
-              buildNumber: payload.buildNumber,
+              buildNumber,
               fallbackStatus: payload.status,
             }, LOG_CONTEXTS.JENKINS);
           }
         } else {
-          logger.warn('[CallbackQueue] No jenkinsJob found for execution, cannot parse results', {
+          logger.warn('[CallbackQueue] No jenkins job/build number found for execution, cannot parse results', {
             runId: payload.runId,
-            buildNumber: payload.buildNumber,
+            buildNumber,
+            jenkinsJob: execution?.jenkinsJob,
+            jenkinsBuildId: execution?.jenkinsBuildId,
           }, LOG_CONTEXTS.JENKINS);
         }
       } catch (parseError) {
@@ -141,6 +158,20 @@ callbackQueue.register(async (payload: CallbackPayload) => {
         // 解析异常，继续使用原始 payload（降级处理）
       }
     }
+
+    const normalizedReportedStatus = normalizeCallbackTerminalStatus(finalPayload.status);
+    const hasCallbackSummary = (finalPayload.passedCases + finalPayload.failedCases + finalPayload.skippedCases) > 0;
+    finalPayload = {
+      ...finalPayload,
+      status: hasCallbackSummary
+        ? deriveCallbackTerminalStatus({
+            reportedStatus: normalizedReportedStatus,
+            passedCases: finalPayload.passedCases,
+            failedCases: finalPayload.failedCases,
+            skippedCases: finalPayload.skippedCases,
+          })
+        : normalizedReportedStatus,
+    };
 
     await executionService.completeBatchExecution(finalPayload.runId, {
       status: finalPayload.status,
@@ -694,7 +725,6 @@ router.post('/trigger', generalAuthRateLimiter, optionalAuth, rateLimitMiddlewar
 
     // 如果传入了 taskId，从数据库查找任务信息
     if (taskId !== undefined) {
-      const { queryOne } = await import('../config/database');
       const task = await queryOne<{ id: number; name: string; case_ids: string; project_id: number }>(
         'SELECT id, name, case_ids, project_id FROM Auto_TestCaseTasks WHERE id = ?',
         [taskId]
@@ -1273,7 +1303,7 @@ router.post('/callback', [
   } = req.body;
 
   // 判断是否为轻量化回调（有 buildNumber 但无 results）
-  const isLightweightCallback = !!buildNumber && (!Array.isArray(results) || results.length === 0);
+  const isLightweightCallback = !Array.isArray(results) || results.length === 0;
 
   const rawResults = Array.isArray(results) ? results : [];
   const normalizedResults = normalizeCallbackResults(rawResults);
@@ -1314,19 +1344,25 @@ router.post('/callback', [
   }
 
   // 规范化状态值
-  const validStatuses = ['success', 'failed', 'cancelled'] as const;
-  type ValidStatus = typeof validStatuses[number];
-  const normalizedStatus: ValidStatus = (validStatuses as readonly string[]).includes(status)
-    ? (status as ValidStatus)
-    : 'failed';
+  const normalizedReportedStatus = normalizeCallbackTerminalStatus(status);
 
-  if (!validStatuses.includes(status)) {
+  if (normalizedReportedStatus !== status) {
     logger.warn('Invalid callback status, treating as failed', {
       runId,
       providedStatus: status,
-      validStatuses,
+      validStatuses: CALLBACK_TERMINAL_STATUSES,
     }, LOG_CONTEXTS.JENKINS);
   }
+
+  const hasCallbackSummary = (passedCases + failedCases + skippedCases) > 0;
+  const normalizedStatus = hasCallbackSummary
+    ? deriveCallbackTerminalStatus({
+        reportedStatus: normalizedReportedStatus,
+        passedCases,
+        failedCases,
+        skippedCases,
+      })
+    : normalizedReportedStatus;
 
   logger.info('Jenkins callback received, enqueuing for async processing', {
     runId,
@@ -2154,7 +2190,6 @@ router.get('/diagnose',
     let jenkinsConnectivity: any = null;
     if (execution.jenkinsJob && execution.jenkinsBuildId) {
       try {
-        const { jenkinsStatusService } = await import('../services/JenkinsStatusService');
         const buildStatus = await jenkinsStatusService.getBuildStatus(
           execution.jenkinsJob as string,
           execution.jenkinsBuildId as string
@@ -2296,7 +2331,6 @@ router.get('/monitoring/stats', generalAuthRateLimiter, rateLimitMiddleware.limi
     logger.info(`Getting monitoring statistics...`, {}, LOG_CONTEXTS.JENKINS);
 
     // 获取混合同步服务的统计信息
-    const { hybridSyncService } = await import('../services/HybridSyncService');
     const syncStats = hybridSyncService.getMonitoringStats();
 
     // 获取最近的执行统计
@@ -2372,7 +2406,6 @@ router.post('/monitoring/fix-stuck', generalAuthRateLimiter, rateLimitMiddleware
       const timeoutMs = timeoutMinutes * 60 * 1000;
       const timeoutThreshold = new Date(Date.now() - timeoutMs);
 
-      const { query } = await import('../config/database');
       const stuckExecutions = await query(`
         SELECT id, status, jenkins_job, jenkins_build_id, jenkins_url,
                start_time, TIMESTAMPDIFF(MINUTE, start_time, NOW()) as duration_minutes
@@ -2427,8 +2460,6 @@ router.post('/monitoring/fix-stuck', generalAuthRateLimiter, rateLimitMiddleware
  */
 router.get('/monitor/status', generalAuthRateLimiter, rateLimitMiddleware.limit, async (_req: Request, res: Response) => {
   try {
-    const { executionMonitorService } = await import('../services/ExecutionMonitorService');
-
     const status = executionMonitorService.getStatus();
     const stats = executionMonitorService.getStats();
 

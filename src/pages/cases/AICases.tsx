@@ -1,6 +1,5 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import MindElixir, { type MindElixirData, type MindElixirInstance } from 'mind-elixir';
-import 'mind-elixir/style.css';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import './AICases.css';
 import {
   Activity,
   Bot,
@@ -9,22 +8,19 @@ import {
   CheckCircle2,
   FileText,
   GitBranch,
-  GripHorizontal,
-  History,
   Link2,
   ListTree,
   Loader2,
-  Menu,
   PlayCircle,
   ShieldAlert,
-  X,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
-import { useTheme } from '@/contexts/ThemeContext';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { useAiGeneration } from '@/contexts/AiGenerationContext';
 import { AiCaseSidebar } from './components/AiCaseSidebar';
-import { AiCaseCanvasToolbar } from './components/AiCaseCanvasToolbar';
+import { AiWorkspaceHeader } from './components/AiWorkspaceHeader';
+import { AiWorkspaceSummaryBar } from './components/AiWorkspaceSummaryBar';
+import { AiWorkspaceTabs, type AiWorkspaceTabItem } from './components/AiWorkspaceTabs';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -52,10 +48,6 @@ import {
   normalizeMindData,
   removeNodeAttachmentId,
   setNodeStatus,
-  readMindThemePreference,
-  resolveMindTheme,
-  MIND_THEME_STORAGE_KEY,
-  type AiCaseMindThemeId,
 } from '@/lib/aiCaseMindMap';
 import {
   deleteNodeAttachment,
@@ -106,18 +98,10 @@ type StreamGenerateResultPayload =
   | AiCaseGenerationResult
   | { generated: AiCaseGenerationResult; workspace: AiCaseWorkspaceDetail };
 
-const MIN_CANVAS_SCALE = 0.6;
-const MAX_CANVAS_SCALE = 1.8;
-const CANVAS_SCALE_STEP = 0.1;
 const NODE_TAG_VISIBILITY_STORAGE_KEY = 'ai-case-node-tags-visible';
 const WAIT_COPY_MAGIC = 'MIND-ELIXIR-WAIT-COPY';
-const SIDEBAR_WIDTH = 320;
-const FLOAT_PANEL_WIDTH = 300;
-const FLOAT_PANEL_DEFAULT_RIGHT = 16;
-const FLOAT_PANEL_DEFAULT_TOP = 8;
 
 type WorkspaceTab = 'materials' | 'results' | 'coverage' | 'execution';
-type ResultViewMode = 'mind' | 'list';
 type RiskLevel = 'high' | 'medium' | 'low';
 
 interface GeneratedCaseListItem {
@@ -130,12 +114,7 @@ interface GeneratedCaseListItem {
   sourceLabel: string;
 }
 
-const WORKSPACE_TAB_ITEMS: Array<{
-  id: WorkspaceTab;
-  label: string;
-  description: string;
-  icon: ReactNode;
-}> = [
+const WORKSPACE_TAB_ITEMS: AiWorkspaceTabItem<WorkspaceTab>[] = [
   {
     id: 'materials',
     label: '输入材料',
@@ -145,7 +124,7 @@ const WORKSPACE_TAB_ITEMS: Array<{
   {
     id: 'results',
     label: '生成结果',
-    description: '查看脑图与结构化结果',
+    description: '查看结构化结果与详情',
     icon: <BrainCircuit className="h-4 w-4" />,
   },
   {
@@ -201,56 +180,8 @@ function collectGeneratedCases(mapData: AiCaseMindData): GeneratedCaseListItem[]
   return items;
 }
 
-function WorkspaceSummaryCard({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint: string;
-}) {
-  return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-      <div className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</div>
-      <div className="mt-1 text-xl font-semibold text-slate-900 dark:text-white">{value}</div>
-      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{hint}</div>
-    </div>
-  );
-}
-
-function WorkspaceTabButton({
-  active,
-  icon,
-  label,
-  description,
-  onClick,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  description: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`min-w-[180px] rounded-xl border px-4 py-3 text-left transition-colors ${
-        active
-          ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/60 dark:bg-indigo-500/10 dark:text-indigo-300'
-          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-700 dark:hover:bg-slate-800/80'
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        <span className={active ? '' : 'text-slate-400 dark:text-slate-500'}>{icon}</span>
-        <span className="text-sm font-semibold">{label}</span>
-      </div>
-      <div className={`mt-1 text-xs ${active ? 'text-indigo-600/80 dark:text-indigo-300/80' : 'text-slate-500 dark:text-slate-400'}`}>
-        {description}
-      </div>
-    </button>
-  );
+function getFirstGeneratedCaseId(mapData: AiCaseMindData): string | null {
+  return collectGeneratedCases(mapData)[0]?.id ?? null;
 }
 
 function WorkspacePanelCard({
@@ -282,70 +213,6 @@ function WorkspacePanelCard({
  * 浮动面板拖拽 hook
  * 返回面板位置、重置位置函数、拖拽把手事件处理函数
  */
-function useDraggablePanel(containerRef: React.RefObject<HTMLElement | null>, panelOpen: boolean) {
-  const PANEL_W = FLOAT_PANEL_WIDTH;
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const dragging = useRef(false);
-  const startPointer = useRef({ x: 0, y: 0 });
-  const startPanel = useRef({ x: 0, y: 0 });
-
-  // 每次打开面板时重置到右上角默认位置
-  useEffect(() => {
-    if (panelOpen) {
-      setPos(null);
-    }
-  }, [panelOpen]);
-
-  /** 计算边界限制后的实际位置 */
-  const clamp = useCallback((x: number, y: number): { x: number; y: number } => {
-    const el = containerRef.current;
-    if (!el) return { x, y };
-    const { width, height } = el.getBoundingClientRect();
-    // 面板高度用概估值（最大 80% 容器高）和最小展示高度
-    const panelH = Math.min(height * 0.8, height - 16);
-    const minX = 0;
-    const maxX = width - PANEL_W;
-    const minY = 0;
-    const maxY = height - panelH;
-    return {
-      x: Math.max(minX, Math.min(maxX, x)),
-      y: Math.max(minY, Math.min(maxY, y)),
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef]);
-
-  const onPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    // 只响应主键
-    if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragging.current = true;
-    startPointer.current = { x: e.clientX, y: e.clientY };
-    // 获取面板父元素，用于计算当前面板 left/top
-    const panel = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-float-panel]');
-    if (panel) {
-      startPanel.current = { x: panel.offsetLeft, y: panel.offsetTop };
-    }
-  }, []);
-
-  const onPointerMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragging.current) return;
-    e.preventDefault();
-    const dx = e.clientX - startPointer.current.x;
-    const dy = e.clientY - startPointer.current.y;
-    setPos(clamp(startPanel.current.x + dx, startPanel.current.y + dy));
-  }, [clamp]);
-
-  const onPointerUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragging.current) return;
-    dragging.current = false;
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-  }, []);
-
-  return { pos, onPointerDown, onPointerMove, onPointerUp };
-}
-
 function readNodeTagVisibilityPreference(): boolean {
   if (typeof window === 'undefined') {
     return true;
@@ -455,8 +322,6 @@ function AiCasesInner() {
   const [location, setLocation] = useLocation();
   // 全局 AI 生成状态：用于切换页面后仍能显示进度角标、弹跨页通知
   const { notifyStart, notifyProgress, notifyDone } = useAiGeneration();
-  // 获取全局 dark/light 模式，用于联动脑图主题
-  const { resolvedTheme } = useTheme();
 
   // 从 URL 参数读取要打开的文档 ID；未指定时回退到固定的默认工作区
   // 使用 state 而非 useMemo，确保 URL 变化时能响应式更新
@@ -472,10 +337,6 @@ function AiCasesInner() {
     setActiveDocId((prev) => (prev !== newDocId ? newDocId : prev));
   }, [location]);
 
-const mapContainerRef = useRef<HTMLDivElement | null>(null);
-const canvasSectionRef = useRef<HTMLElement | null>(null);
-const canvasDivRef = useRef<HTMLDivElement | null>(null);
-  const mindRef = useRef<MindElixirInstance | null>(null);
   const docRef = useRef<AiCaseWorkspaceDocument | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const selectedNodeIdRef = useRef<string | null>(null);
@@ -483,7 +344,6 @@ const canvasDivRef = useRef<HTMLDivElement | null>(null);
   const mindDataRef = useRef<AiCaseMindData | null>(null);
   const isUploadingRef = useRef(false);
   const showNodeKindTagsRef = useRef(readNodeTagVisibilityPreference());
-  const mindThemeIdRef = useRef<AiCaseMindThemeId>(readMindThemePreference());
   const generateProgressResetTimerRef = useRef<number | null>(null);
   // 流式请求的 AbortController：用于组件卸载或重新生成时取消未完成的请求
   const streamAbortControllerRef = useRef<AbortController | null>(null);
@@ -506,7 +366,7 @@ const canvasDivRef = useRef<HTMLDivElement | null>(null);
   const [requirementText, setRequirementText] = useState('');
   const [mindData, setMindData] = useState<AiCaseMindData | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  // 多选节点 ID 列表（MindElixir 支持 Ctrl/Shift 多选）
+  // 多选节点 ID 列表
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -519,22 +379,13 @@ const canvasDivRef = useRef<HTMLDivElement | null>(null);
   const [attachmentReloadSeed, setAttachmentReloadSeed] = useState(0);
   const [attachments, setAttachments] = useState<AiCaseAttachmentPreview[]>([]);
   const [remoteSyncMeta, setRemoteSyncMeta] = useState<RemoteSyncMeta>(DEFAULT_REMOTE_SYNC_META);
-  const [canvasScalePercent, setCanvasScalePercent] = useState(100);
-  const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
-  const [showNodeKindTags, setShowNodeKindTags] = useState<boolean>(() => readNodeTagVisibilityPreference());
-  const [mindThemeId, setMindThemeId] = useState<AiCaseMindThemeId>(() => readMindThemePreference());
   const [isImportingMindNodes, setIsImportingMindNodes] = useState(false);
 // 移动端侧边栏抽屉
-const [sidebarOpen, setSidebarOpen] = useState(false);
 // 浮动面板（桌端）
-const [panelOpen, setPanelOpen] = useState(false);
 // 浮动面板拖拽
-const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMove, onPointerUp: panelDragUp } = useDraggablePanel(canvasDivRef, panelOpen);
   // 需求编辑弹窗
   const [isRequirementDialogOpen, setIsRequirementDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('results');
-  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>('mind');
-
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
   }, [selectedNodeId]);
@@ -546,42 +397,6 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
   useEffect(() => {
     mindDataRef.current = mindData;
   }, [mindData]);
-
-  useEffect(() => {
-    showNodeKindTagsRef.current = showNodeKindTags;
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(NODE_TAG_VISIBILITY_STORAGE_KEY, showNodeKindTags ? 'true' : 'false');
-    }
-  }, [showNodeKindTags]);
-
-  // 持久化脑图主题偏好，并在实例已创建时即时应用
-  useEffect(() => {
-    mindThemeIdRef.current = mindThemeId;
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(MIND_THEME_STORAGE_KEY, mindThemeId);
-    }
-    if (mindRef.current) {
-      mindRef.current.changeTheme(resolveMindTheme(mindThemeId, resolvedTheme === 'dark'));
-    }
-  }, [mindThemeId, resolvedTheme]);
-
-  // 当全局 dark/light 模式切换时，同步更新脑图主题
-  useEffect(() => {
-    if (mindRef.current) {
-      mindRef.current.changeTheme(resolveMindTheme(mindThemeIdRef.current, resolvedTheme === 'dark'));
-    }
-  }, [resolvedTheme]);
-
-  useEffect(() => {
-    const onFullscreenChange = () => {
-      setIsCanvasFullscreen(document.fullscreenElement === canvasSectionRef.current);
-    };
-
-    document.addEventListener('fullscreenchange', onFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', onFullscreenChange);
-    };
-  }, []);
 
   const clearGenerateProgressTimers = useCallback(() => {
     if (generateProgressResetTimerRef.current) {
@@ -705,7 +520,6 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
         showNodeKindTags: showNodeKindTagsRef.current,
       });
       const selectedId = options?.selectedId ?? selectedNodeIdRef.current;
-      const shouldRefresh = options?.refreshMind ?? true;
 
       setMindData(normalized);
       mindDataRef.current = normalized;
@@ -714,29 +528,10 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
         setSelectedNodeId(options.selectedId);
       }
 
-      if (mindRef.current && shouldRefresh) {
-        mindRef.current.refresh(normalized as MindElixirData);
-
-        if (selectedId) {
-          window.setTimeout(() => {
-            if (!mindRef.current || !selectedId) {
-              return;
-            }
-            try {
-              const topic = mindRef.current.findEle(selectedId);
-              mindRef.current.selectNode(topic);
-            } catch {
-              // no-op: node may not exist after refresh
-            }
-          }, 0);
-        }
-      }
-
       schedulePersistRef.current(normalized, selectedId ?? null);
     },
     []
   );
-
   useEffect(() => {
     schedulePersistRef.current = schedulePersist;
   }, [schedulePersist]);
@@ -804,11 +599,11 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
             // 移除 URL 参数避免刷新重复触发
             const newUrl = window.location.pathname;
             window.history.replaceState({}, '', newUrl);
-            // 立即进入"生成中"状态，避免短暂闪出默认脑图
+            // 立即进入"生成中"状态，避免短暂闪出默认模板
             setIsGenerating(true);
             setGenerationProgress(2);
             setGenerationStageText('正在连接后端流式通道...');
-            // 延迟一点执行，确保 MindElixir 实例已挂载
+            // 延迟一点执行，确保页面初始化完成
             autoGenerateTimerRef.current = window.setTimeout(() => {
               autoGenerateTimerRef.current = null;
               handleGenerateRef.current?.();
@@ -865,11 +660,11 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
           if (searchParamsAutoGen.get('autoGenerate') === 'true') {
             // 移除 URL 参数避免刷新重复触发
             window.history.replaceState({}, '', window.location.pathname);
-            // 立即进入"生成中"状态，避免短暂闪出默认脑图
+            // 立即进入"生成中"状态，避免短暂闪出默认模板
             setIsGenerating(true);
             setGenerationProgress(2);
             setGenerationStageText('正在连接后端流式通道...');
-            // 延迟一点执行，确保 MindElixir 实例已挂载
+            // 延迟一点执行，确保页面初始化完成
             autoGenerateTimerRef.current = window.setTimeout(() => {
               autoGenerateTimerRef.current = null;
               handleGenerateRef.current?.();
@@ -930,114 +725,6 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
     };
   }, [activeDocId]);
 
-  useEffect(() => {
-    if (isBootstrapping || !mapContainerRef.current || mindRef.current || !mindDataRef.current) {
-      return;
-    }
-
-    const initialData = mindDataRef.current;
-    const instance = new MindElixir({
-      el: mapContainerRef.current,
-      direction: MindElixir.SIDE,
-      editable: true,
-      contextMenu: true,
-      toolBar: false,
-      keypress: true,
-      allowUndo: true,
-      locale: 'zh_CN',
-      overflowHidden: false,
-      theme: resolveMindTheme(mindThemeIdRef.current, resolvedTheme === 'dark'),
-    });
-
-    const initError = instance.init(initialData as MindElixirData);
-    if (initError) {
-      toast.error('脑图初始化失败');
-      console.error('[AICases] mind-elixir init failed', initError);
-      return;
-    }
-
-    mindRef.current = instance;
-    instance.toCenter();
-    setCanvasScalePercent(Math.round((instance.scaleVal ?? 1) * 100));
-
-    const onOperation = () => {
-      if (!mindRef.current) {
-        return;
-      }
-
-      const previousNodeIds = mindDataRef.current ? collectNodeIds(mindDataRef.current.nodeData) : [];
-      const snapshot = normalizeMindData(mindRef.current.getData() as AiCaseMindData, {
-        showNodeKindTags: showNodeKindTagsRef.current,
-      });
-      const nextNodeIdSet = new Set(collectNodeIds(snapshot.nodeData));
-      const removedNodeCount = previousNodeIds.filter((nodeId) => !nextNodeIdSet.has(nodeId)).length;
-
-      setMindData(snapshot);
-      mindDataRef.current = snapshot;
-      setCanvasScalePercent(Math.round((mindRef.current.scaleVal ?? 1) * 100));
-      schedulePersistRef.current(snapshot, selectedNodeIdRef.current);
-
-      if (removedNodeCount > 0) {
-        void cleanupStaleAttachmentsRef.current(snapshot, {
-          reason: 'node_deleted',
-          showCountToast: true,
-        }).then((cleanedCount) => {
-          if (cleanedCount > 0) {
-            setAttachmentReloadSeed((value) => value + 1);
-          }
-        });
-      }
-    };
-
-        const onSelectNodes = (nodes: Array<{ id: string }>) => {
-          // 保留完整多选列表，first ID 作为"主选中节点"（用于单选场景，如附件）
-          const allIds = nodes.map((n) => n.id).filter(Boolean);
-          const nextSelected = allIds[0] ?? null;
-          setSelectedNodeId(nextSelected);
-          setSelectedNodeIds(allIds);
-          selectedNodeIdsRef.current = allIds;
-
-          if (!mindRef.current) {
-            return;
-          }
-
-          const snapshot = normalizeMindData(mindRef.current.getData() as AiCaseMindData, {
-            showNodeKindTags: showNodeKindTagsRef.current,
-          });
-          setMindData(snapshot);
-          mindDataRef.current = snapshot;
-          schedulePersistRef.current(snapshot, nextSelected);
-        };
-
-        const onUnselectNodes = () => {
-          setSelectedNodeId(null);
-          setSelectedNodeIds([]);
-          selectedNodeIdsRef.current = [];
-
-          if (!mindRef.current) {
-            return;
-          }
-
-          const snapshot = normalizeMindData(mindRef.current.getData() as AiCaseMindData, {
-            showNodeKindTags: showNodeKindTagsRef.current,
-          });
-          setMindData(snapshot);
-          mindDataRef.current = snapshot;
-          schedulePersistRef.current(snapshot, null);
-        };
-
-    instance.bus.addListener('operation', onOperation);
-    instance.bus.addListener('selectNodes', onSelectNodes);
-    instance.bus.addListener('unselectNodes', onUnselectNodes);
-
-    return () => {
-      instance.bus.removeListener('operation', onOperation);
-      instance.bus.removeListener('selectNodes', onSelectNodes);
-      instance.bus.removeListener('unselectNodes', onUnselectNodes);
-      instance.destroy();
-      mindRef.current = null;
-    };
-  }, [isBootstrapping]);
 
   const selectedNode = useMemo(() => {
     if (!mindData || !selectedNodeId) {
@@ -1166,103 +853,13 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
     };
   }, [attachments.length, highRiskCases.length, isRemoteLinked, progress.completionRate, progress.total, requirementText]);
 
-  const handleFocusGeneratedCase = useCallback((nodeId: string) => {
+    const handleFocusGeneratedCase = useCallback((nodeId: string) => {
     setActiveTab('results');
-    setResultViewMode('mind');
     selectedNodeIdRef.current = nodeId;
     selectedNodeIdsRef.current = [nodeId];
     setSelectedNodeId(nodeId);
     setSelectedNodeIds([nodeId]);
-
-    window.setTimeout(() => {
-      if (!mindRef.current) {
-        return;
-      }
-
-      try {
-        const target = mindRef.current.findEle(nodeId);
-        mindRef.current.selectNode(target);
-      } catch {
-        // no-op: node may not be ready yet
-      }
-    }, 0);
   }, []);
-
-  const handleCanvasScale = useCallback((scale: number) => {
-    if (!mindRef.current) {
-      return;
-    }
-
-    const nextScale = Math.max(MIN_CANVAS_SCALE, Math.min(MAX_CANVAS_SCALE, scale));
-    mindRef.current.scale(nextScale);
-    setCanvasScalePercent(Math.round(nextScale * 100));
-  }, []);
-
-  const handleZoomOut = useCallback(() => {
-    const current = mindRef.current?.scaleVal ?? canvasScalePercent / 100;
-    handleCanvasScale(current - CANVAS_SCALE_STEP);
-  }, [canvasScalePercent, handleCanvasScale]);
-
-  const handleZoomIn = useCallback(() => {
-    const current = mindRef.current?.scaleVal ?? canvasScalePercent / 100;
-    handleCanvasScale(current + CANVAS_SCALE_STEP);
-  }, [canvasScalePercent, handleCanvasScale]);
-
-  const handleCenterCanvas = useCallback(() => {
-    if (!mindRef.current) {
-      return;
-    }
-
-    mindRef.current.toCenter();
-    setCanvasScalePercent(Math.round((mindRef.current.scaleVal ?? 1) * 100));
-  }, []);
-
-  const handleFitCanvas = useCallback(() => {
-    if (!mindRef.current) {
-      return;
-    }
-
-    mindRef.current.scaleFit();
-    setCanvasScalePercent(Math.round((mindRef.current.scaleVal ?? 1) * 100));
-  }, []);
-
-  const handleToggleCanvasFullscreen = useCallback(async () => {
-    const section = canvasSectionRef.current;
-    if (!section) {
-      return;
-    }
-
-    try {
-      if (document.fullscreenElement === section) {
-        await document.exitFullscreen();
-        return;
-      }
-
-      await section.requestFullscreen();
-    } catch (error) {
-      console.error('[AICases] toggle fullscreen failed', error);
-      toast.error('切换全屏失败，请检查浏览器权限');
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!mindRef.current) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      if (!mindRef.current) {
-        return;
-      }
-
-      mindRef.current.scaleFit();
-      setCanvasScalePercent(Math.round((mindRef.current.scaleVal ?? 1) * 100));
-    }, 80);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [isCanvasFullscreen]);
 
   const startGenerateProgress = useCallback(
     (initialStage: string = '正在连接后端流式通道...') => {
@@ -1367,7 +964,7 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
     let buffer = '';
     let finalPayload: StreamGenerateResultPayload | null = null;
 
-    // 渐进式渲染：收到第一个 node_module 时初始化骨架脑图
+    // 渐进式渲染：收到第一个 node_module 时初始化骨架结构
     let skeletonData: AiCaseMindData | null = null;
 
     const processEventBlock = (block: string): void => {
@@ -1410,7 +1007,7 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
         return;
       }
 
-      // 渐进式节点推送：每收到一个 module 节点，立即按索引位置替换到骨架脑图
+      // 渐进式节点推送：每收到一个 module 节点，立即按索引位置替换到骨架结构
       if (eventName === 'node_module') {
         const moduleNode = payload?.moduleNode;
         const moduleIndex: number = typeof payload?.moduleIndex === 'number' ? payload.moduleIndex : 0;
@@ -1465,10 +1062,7 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
         };
         skeletonData = nextSkeletonData;
 
-        // 实时刷新脑图（使用 mindRef 直接刷新，不触发 schedulePersist 避免频繁写 IndexedDB）
-        if (mindRef.current) {
-          mindRef.current.refresh(nextSkeletonData as MindElixirData);
-        }
+        // 实时刷新结构数据，不触发 schedulePersist，避免频繁写 IndexedDB
         setMindData(nextSkeletonData);
         mindDataRef.current = nextSkeletonData;
 
@@ -1484,7 +1078,7 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
       if (eventName === 'result') {
         finalPayload = (payload?.data ?? null) as StreamGenerateResultPayload | null;
 
-        // 流式渲染结束时，立即用 AI 生成的 workspaceName 更新骨架脑图根节点 topic
+        // 流式渲染结束时，立即用 AI 生成的 workspaceName 更新骨架根节点 topic
         if (finalPayload !== null && typeof finalPayload === 'object') {
           const fp = finalPayload as Record<string, unknown>;
           const resultGenerated = 'generated' in fp
@@ -1499,11 +1093,7 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
               ...skeletonData,
               nodeData: { ...skeletonData.nodeData, topic: resultWsName },
             };
-            skeletonData = updatedSkeleton;
-            if (mindRef.current) {
-              mindRef.current.refresh(updatedSkeleton as MindElixirData);
-            }
-            setMindData(updatedSkeleton);
+            skeletonData = updatedSkeleton;            setMindData(updatedSkeleton);
             mindDataRef.current = updatedSkeleton;
           }
         }
@@ -1565,31 +1155,6 @@ const { pos: panelPos, onPointerDown: panelDragDown, onPointerMove: panelDragMov
     isWorkspaceNameUserEditedRef.current = true;
     setWorkspaceName(name);
   }, []);
-
-  const handleToggleNodeKindTags = useCallback(() => {
-    const nextVisible = !showNodeKindTagsRef.current;
-    showNodeKindTagsRef.current = nextVisible;
-    setShowNodeKindTags(nextVisible);
-
-    const currentData = mindDataRef.current;
-    if (currentData) {
-      const nextData = normalizeMindData(currentData, {
-        showNodeKindTags: nextVisible,
-      });
-
-      setDataAndSync(nextData, {
-        selectedId: selectedNodeIdRef.current,
-        refreshMind: true,
-      });
-    }
-
-toast.success(nextVisible ? '已开启节点标签展示' : '已隐藏节点标签');
-}, [setDataAndSync]);
-
-const handleChangeMindTheme = useCallback((themeId: AiCaseMindThemeId) => {
-  mindThemeIdRef.current = themeId;
-  setMindThemeId(themeId);
-}, []);
 
 const applyWorkspaceDetail = useCallback(
     (workspace: AiCaseWorkspaceDetail, options?: { keepSelection?: boolean }) => {
@@ -1817,7 +1382,7 @@ const applyWorkspaceDetail = useCallback(
             try {
               const currentData = mindDataRef.current;
               if (!currentData) {
-                toast.error('当前脑图未初始化，无法导入复制节点');
+                toast.error('当前工作区数据未初始化，无法导入复制节点');
                 return;
               }
 
@@ -1910,8 +1475,7 @@ const applyWorkspaceDetail = useCallback(
     }
 
     setActiveTab('results');
-    setResultViewMode('mind');
-    setIsRequirementDialogOpen(false);
+        setIsRequirementDialogOpen(false);
     startGenerateProgress();
     setIsGenerating(true);
     try {
@@ -1943,7 +1507,7 @@ const applyWorkspaceDetail = useCallback(
             }
           : generated.mapData;
 
-      setGenerationStageText('正在回写脑图节点与结构化步骤...');
+      setGenerationStageText('正在回写节点结构与结构化步骤...');
       const normalized = normalizeMindData(finalMapData, {
         showNodeKindTags: showNodeKindTagsRef.current,
       });
@@ -1954,7 +1518,7 @@ const applyWorkspaceDetail = useCallback(
       // 先更新 mindDataRef.current，再更新 workspaceName，避免因 React 状态更新异步特性
       // 导致 useEffect 在 mindDataRef.current 更新前触发，持久化旧数据覆盖新数据
       setDataAndSync(expanded.data, {
-        selectedId: expanded.data.nodeData.id,
+        selectedId: getFirstGeneratedCaseId(expanded.data) ?? expanded.data.nodeData.id,
         refreshMind: true,
       });
 
@@ -1970,7 +1534,7 @@ const applyWorkspaceDetail = useCallback(
       // 判断用户是否已离开 AI 用例页，若已离开则弹跨页面 toast
       const isOnAiPage = window.location.pathname === '/cases/ai';
       if (isOnAiPage) {
-        toast.success(`AI 用例脑图生成完成（${generated.source === 'llm' ? '大模型' : '回退模板'}）`);
+        toast.success(`AI 用例生成完成（${generated.source === 'llm' ? '大模型' : '回退模板'}）`);
       } else {
         toast.success('AI 用例生成完成，点击返回查看', {
           duration: 8000,
@@ -1994,7 +1558,7 @@ const applyWorkspaceDetail = useCallback(
       });
 
       setDataAndSync(expanded.data, {
-        selectedId: expanded.data.nodeData.id,
+        selectedId: getFirstGeneratedCaseId(expanded.data) ?? expanded.data.nodeData.id,
         refreshMind: true,
       });
       await cleanupStaleAttachments(expanded.data);
@@ -2063,7 +1627,7 @@ const applyWorkspaceDetail = useCallback(
 
   const handlePublishRemote = useCallback(async () => {
     if (!mindData) {
-      toast.error('脑图尚未初始化，无法发布');
+      toast.error('工作区数据尚未初始化，无法发布');
       return;
     }
 
@@ -2140,7 +1704,7 @@ const applyWorkspaceDetail = useCallback(
     });
     await cleanupStaleAttachments(next);
     setAttachmentReloadSeed((value) => value + 1);
-    toast.success('已恢复默认脑图模板');
+    toast.success('已恢复默认工作区模板');
   }, [workspaceName, setDataAndSync, cleanupStaleAttachments]);
 
   const handleStatusChange = useCallback(async (status: AiCaseNodeStatus) => {
@@ -2290,84 +1854,35 @@ const applyWorkspaceDetail = useCallback(
     <div className="h-full flex flex-col bg-white dark:bg-slate-950 overflow-hidden">
 
       {/* 顶部标题栏（全屏时隐藏） */}
-      {!isCanvasFullscreen ? (
-        <header className="shrink-0 h-12 flex items-center justify-between px-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-          <div className="flex items-center gap-2.5">
-            {/* 移动端汉堡菜单 */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="lg:hidden h-8 w-8 p-0"
-              onClick={() => setSidebarOpen((v) => !v)}
-            >
-              {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-            </Button>
-            <div className="p-1.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-300">
-              <BrainCircuit className="h-4 w-4" />
-            </div>
-            <h1 className="text-sm font-semibold text-slate-900 dark:text-white">AI 用例工作台</h1>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs gap-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
-              onClick={() => setIsRequirementDialogOpen(true)}
-            >
-              <FileText className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">需求信息</span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs gap-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
-              onClick={() => setLocation('/cases/ai-create')}
-            >
-              <History className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">用例记录</span>
-            </Button>
-            <span className="hidden sm:block">{saveStateText}</span>
-            <span className="hidden md:block">{remoteStatusText}</span>
-          </div>
-        </header>
-      ) : null}
+      <AiWorkspaceHeader
+          title="AI 用例工作台"
+          saveStateText={saveStateText}
+          remoteStatusText={remoteStatusText}
+          onOpenRequirement={() => setIsRequirementDialogOpen(true)}
+          onOpenHistory={() => setLocation('/cases/ai-history')}
+        />
+      
+          <AiWorkspaceSummaryBar
+            items={[
+              { label: '输入材料', value: `${workspaceSummary.materialCount}`, hint: '需求、附件和远端上下文' },
+              { label: '生成用例', value: `${workspaceSummary.caseCount}`, hint: '当前工作台中的测试点数量' },
+              { label: '高风险项', value: `${workspaceSummary.highRiskCount}`, hint: '按优先级和状态初步推断' },
+              { label: '当前覆盖率', value: workspaceSummary.coverageRate, hint: '基于节点状态的阶段性指标' },
+              { label: '执行状态', value: workspaceSummary.executionState, hint: isRemoteLinked ? remoteStatusText : '尚未发布到远端工作台' },
+            ]}
+          />
 
-      {!isCanvasFullscreen ? (
-        <>
-          <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950 px-4 py-3">
-            <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
-              <WorkspaceSummaryCard label="输入材料" value={`${workspaceSummary.materialCount}`} hint="需求、附件和远端上下文" />
-              <WorkspaceSummaryCard label="生成用例" value={`${workspaceSummary.caseCount}`} hint="当前工作台中的测试点数量" />
-              <WorkspaceSummaryCard label="高风险项" value={`${workspaceSummary.highRiskCount}`} hint="按优先级和状态初步推断" />
-              <WorkspaceSummaryCard label="当前覆盖率" value={workspaceSummary.coverageRate} hint="基于节点状态的阶段性指标" />
-              <WorkspaceSummaryCard label="执行状态" value={workspaceSummary.executionState} hint={isRemoteLinked ? remoteStatusText : '尚未发布到远端工作台'} />
-            </div>
-          </div>
+          <AiWorkspaceTabs
+            activeTab={activeTab}
+            items={WORKSPACE_TAB_ITEMS}
+            onChange={setActiveTab}
+          />
+      
 
-          <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {WORKSPACE_TAB_ITEMS.map((tab) => (
-                <WorkspaceTabButton
-                  key={tab.id}
-                  active={activeTab === tab.id}
-                  icon={tab.icon}
-                  label={tab.label}
-                  description={tab.description}
-                  onClick={() => setActiveTab(tab.id)}
-                />
-              ))}
-            </div>
-          </div>
-        </>
-      ) : null}
-
-      {/* 主体：左侧边栏 + 右侧画布 */}
-      {!isCanvasFullscreen && activeTab === 'materials' ? (
+      {/* 主体内容 */}
+      {activeTab === 'materials' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+          <div className="grid gap-4 grid-cols-[1.6fr_1fr]">
             <WorkspacePanelCard
               title="需求与附件"
               description="这里先承接当前最核心的输入材料，确保 AI 生成入口不变。"
@@ -2406,7 +1921,7 @@ const applyWorkspaceDetail = useCallback(
                   </div>
 
                   {attachments.length > 0 ? (
-                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    <div className="mt-3 grid grid-cols-2 gap-2">
                       {attachments.slice(0, 6).map((attachment) => (
                         <div key={attachment.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2">
                           <div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{attachment.name}</div>
@@ -2484,50 +1999,41 @@ const applyWorkspaceDetail = useCallback(
         </section>
       ) : null}
 
-      {!isCanvasFullscreen && activeTab === 'results' ? (
+      {activeTab === 'results' ? (
         <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-slate-900 dark:text-white">生成结果</div>
-              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">保留现有脑图工作区，并补上结构化列表视图，方便后续审阅和批量操作。</div>
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">以结构化列表作为默认结果视图，方便审阅、筛选和批量操作。</div>
             </div>
             <div className="flex items-center gap-2">
               <Button
                 type="button"
                 size="sm"
-                variant={resultViewMode === 'mind' ? 'default' : 'outline'}
-                className={resultViewMode === 'mind' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : ''}
-                onClick={() => setResultViewMode('mind')}
-              >
-                <BrainCircuit className="mr-1.5 h-3.5 w-3.5" />
-                脑图视图
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={resultViewMode === 'list' ? 'default' : 'outline'}
-                className={resultViewMode === 'list' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : ''}
-                onClick={() => setResultViewMode('list')}
+                variant="default"
+                className="bg-indigo-600 hover:bg-indigo-700 text-white"
               >
                 <ListTree className="mr-1.5 h-3.5 w-3.5" />
                 列表视图
-              </Button>
-            </div>
+              </Button></div>
           </div>
         </div>
       ) : null}
 
-      {!isCanvasFullscreen && activeTab === 'coverage' ? (
+      {activeTab === 'coverage' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
           <div className="grid gap-4">
-            <div className="grid gap-4 md:grid-cols-4">
-              <WorkspaceSummaryCard label="高风险项" value={`${highRiskCases.length}`} hint="优先级 P0 / 失败项优先展示" />
-              <WorkspaceSummaryCard label="待补充项" value={`${coverageGapCases.length}`} hint="待执行、阻塞和失败项合并展示" />
-              <WorkspaceSummaryCard label="模块数" value={`${moduleCoverage.length}`} hint="按脑图模块节点聚合" />
-              <WorkspaceSummaryCard label="总体覆盖率" value={`${progress.completionRate}%`} hint="基于节点进度的临时口径" />
-            </div>
+            <AiWorkspaceSummaryBar
+              items={[
+                { label: '高风险项', value: `${highRiskCases.length}`, hint: '优先级 P0 / 失败项优先展示' },
+                { label: '待补充项', value: `${coverageGapCases.length}`, hint: '待执行、阻塞和失败项合并展示' },
+                { label: '模块数', value: `${moduleCoverage.length}`, hint: '按模块节点聚合' },
+                { label: '总体覆盖率', value: `${progress.completionRate}%`, hint: '基于节点进度的临时口径' },
+              ]}
+              gridClassName="grid-cols-4"
+            />
 
-            <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+            <div className="grid gap-4 grid-cols-[1.2fr_1fr]">
               <WorkspacePanelCard title="高风险点" description="Phase 1 先基于优先级和执行状态生成静态风险清单。">
                 {highRiskCases.length > 0 ? (
                   <div className="space-y-2">
@@ -2564,9 +2070,11 @@ const applyWorkspaceDetail = useCallback(
                           <div className="text-sm font-medium text-slate-900 dark:text-white">{item.moduleName}</div>
                           <div className="text-xs text-slate-500 dark:text-slate-400">{item.done}/{item.total} · 高风险 {item.highRisk}</div>
                         </div>
-                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                          <div className="h-full rounded-full bg-indigo-500" style={{ width: `${item.completionRate}%` }} />
-                        </div>
+                        <progress
+                          className="ai-cases-progress ai-cases-progress--indigo mt-2 h-2 w-full overflow-hidden rounded-full"
+                          max={100}
+                          value={item.completionRate}
+                        />
                       </div>
                     ))}
                   </div>
@@ -2581,9 +2089,9 @@ const applyWorkspaceDetail = useCallback(
         </section>
       ) : null}
 
-      {!isCanvasFullscreen && activeTab === 'execution' ? (
+      {activeTab === 'execution' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr]">
+          <div className="grid gap-4 grid-cols-[1.1fr_1fr]">
             <div className="grid gap-4">
               <WorkspacePanelCard
                 title="发布"
@@ -2601,7 +2109,7 @@ const applyWorkspaceDetail = useCallback(
                   </Button>
                 )}
               >
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
                     <div className="text-xs text-slate-500 dark:text-slate-400">远端状态</div>
                     <div className="mt-1 font-medium text-slate-900 dark:text-white">{remoteStatusText}</div>
@@ -2614,7 +2122,7 @@ const applyWorkspaceDetail = useCallback(
               </WorkspacePanelCard>
 
               <WorkspacePanelCard title="执行触发骨架" description="Phase 1 先把执行入口布局搭好，后续对接 Jenkins 真实触发。">
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid grid-cols-3 gap-3">
                   <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
                     <div className="text-xs text-slate-500 dark:text-slate-400">执行范围</div>
                     <div className="mt-1 font-medium text-slate-900 dark:text-white">全部 / 按模块 / 高风险</div>
@@ -2666,183 +2174,11 @@ const applyWorkspaceDetail = useCallback(
         </section>
       ) : null}
 
-      <div className={`flex-1 min-h-0 flex relative ${(activeTab === 'results' && resultViewMode === 'mind') || isCanvasFullscreen ? 'flex' : 'hidden'}`}>
-
-        {/* 移动端侧边栏 Drawer（全屏时隐藏） */}
-        {!isCanvasFullscreen && sidebarOpen ? (
-          <div className="lg:hidden absolute inset-0 z-40 flex">
-            {/* 遮罩 */}
-            <div
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-              onClick={() => setSidebarOpen(false)}
-            />
-            {/* 侧边栏内容 */}
-            <div
-              className="relative z-50 h-full overflow-y-auto overflow-x-hidden bg-white dark:bg-slate-900 shadow-2xl"
-              style={{ width: SIDEBAR_WIDTH }}
-            >
-              <AiCaseSidebar
-                isGenerating={isGenerating}
-                generationProgress={generationProgress}
-                generationStageText={generationStageText}
-                onGenerate={() => setIsRequirementDialogOpen(true)}
-                progress={progress}
-                selectedNode={selectedNode}
-                selectedNodeStatus={selectedNodeStatus}
-                canEditSelectedNode={canEditSelectedNode}
-                isMultiSelect={isMultiSelect}
-                selectedTestcaseCount={selectedTestcaseNodeIds.length}
-                canEditAnySelectedNode={canEditAnySelectedNode}
-                isUpdatingNodeStatus={isUpdatingNodeStatus}
-                onStatusChange={handleStatusChange}
-                attachments={attachments}
-                isUploading={isUploading}
-                onUploadAttachment={handleUploadAttachment}
-                onDeleteAttachment={handleDeleteAttachment}
-                isRemoteLinked={isRemoteLinked}
-                remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
-                isPublishingRemote={isPublishingRemote}
-                isSyncingRemote={isSyncingRemote}
-                onPublishRemote={handlePublishRemote}
-                onSyncFromRemote={handleSyncFromRemote}
-                onResetTemplate={handleResetTemplate}
-                onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
-                mindData={mindData}
-              />
-            </div>
-          </div>
-        ) : null}
-
-        {/* 右侧画布区域 */}
-        <section
-          ref={canvasSectionRef}
-          className={`flex-1 min-w-0 flex flex-col overflow-hidden ${
-            isCanvasFullscreen ? 'fixed inset-0 z-50 bg-white dark:bg-slate-900' : ''
-          }`}
-        >
-<AiCaseCanvasToolbar
-scalePercent={canvasScalePercent}
-isFullscreen={isCanvasFullscreen}
-showNodeKindTags={showNodeKindTags}
-mindThemeId={mindThemeId}
-panelOpen={panelOpen}
-onZoomIn={handleZoomIn}
-onZoomOut={handleZoomOut}
-onCenter={handleCenterCanvas}
-onFit={handleFitCanvas}
-onToggleFullscreen={() => void handleToggleCanvasFullscreen()}
-onToggleNodeTags={handleToggleNodeKindTags}
-onChangeMindTheme={handleChangeMindTheme}
-onTogglePanel={() => setPanelOpen((v) => !v)}
-/>
-
-          <div
-            ref={canvasDivRef}
-            className="relative flex-1 min-h-0 [&_.map-container]:!bg-white dark:[&_.map-container]:!bg-slate-900 [&_.map-container_.map-canvas]:!transition-none"
-          >
-            <div ref={mapContainerRef} className="h-full w-full" />
-
-            {/* 桌端浮动面板（全屏时也可显示，在 XMind 画布内可拖拽） */}
-            {panelOpen ? (
-              <div
-                data-float-panel
-                className="hidden lg:flex absolute z-40 flex-col rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden select-none"
-                style={
-                  panelPos
-                    ? { width: FLOAT_PANEL_WIDTH, maxHeight: 'calc(100% - 16px)', left: panelPos.x, top: panelPos.y }
-                    : { width: FLOAT_PANEL_WIDTH, maxHeight: 'calc(100% - 16px)', right: FLOAT_PANEL_DEFAULT_RIGHT, top: FLOAT_PANEL_DEFAULT_TOP }
-                }
-              >
-                {/* 拖拽把手 */}
-                <div
-                  className="shrink-0 flex items-center justify-center h-7 cursor-grab active:cursor-grabbing bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  onPointerDown={panelDragDown}
-                  onPointerMove={panelDragMove}
-                  onPointerUp={panelDragUp}
-                >
-                  <GripHorizontal className="h-3.5 w-3.5 text-slate-400" />
-                </div>
-                {/* 面板内容 */}
-                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-                  <AiCaseSidebar
-                    isGenerating={isGenerating}
-                    generationProgress={generationProgress}
-                    generationStageText={generationStageText}
-                    onGenerate={() => setIsRequirementDialogOpen(true)}
-                    progress={progress}
-                    selectedNode={selectedNode}
-                    selectedNodeStatus={selectedNodeStatus}
-                    canEditSelectedNode={canEditSelectedNode}
-                    isMultiSelect={isMultiSelect}
-                    selectedTestcaseCount={selectedTestcaseNodeIds.length}
-                    canEditAnySelectedNode={canEditAnySelectedNode}
-                    isUpdatingNodeStatus={isUpdatingNodeStatus}
-                    onStatusChange={handleStatusChange}
-                    attachments={attachments}
-                    isUploading={isUploading}
-                    onUploadAttachment={handleUploadAttachment}
-                    onDeleteAttachment={handleDeleteAttachment}
-                    isRemoteLinked={isRemoteLinked}
-                    remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
-                    isPublishingRemote={isPublishingRemote}
-                    isSyncingRemote={isSyncingRemote}
-                    onPublishRemote={handlePublishRemote}
-                    onSyncFromRemote={handleSyncFromRemote}
-                    onResetTemplate={handleResetTemplate}
-                    onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
-                    mindData={mindData}
-                  />
-                </div>
-              </div>
-            ) : null}
-
-            {/* AI 生成进度覆盖层 */}
-            {isGenerating && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white dark:bg-slate-900">
-                <div className="flex flex-col items-center gap-5 max-w-xs w-full px-8">
-                  {/* 动效图标 */}
-                  <div className="relative flex items-center justify-center">
-                    <div className="absolute w-16 h-16 rounded-full bg-indigo-500/15 animate-ping" />
-                    <div className="relative w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                      <Bot className="h-6 w-6 text-white" />
-                    </div>
-                  </div>
-
-                  {/* 文字区域 */}
-                  <div className="text-center space-y-1">
-                    <p className="text-sm font-semibold text-slate-800 dark:text-white">
-                      AI 正在生成测试用例...
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 min-h-[1.25rem]">
-                      {generationStageText || '正在分析需求内容'}
-                    </p>
-                  </div>
-
-                  {/* 进度条 */}
-                  <div className="w-full space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px] text-slate-500">
-                      <span>生成进度</span>
-                      <span className="font-medium tabular-nums">{generationProgress}%</span>
-                    </div>
-                    <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500 ease-out"
-                        style={{ width: `${generationProgress}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
-
-      {/* 需求编辑弹窗 */}
-      {!isCanvasFullscreen && activeTab === 'results' && resultViewMode === 'list' ? (
+      
+      {activeTab === 'results' ? (
         <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-            <WorkspacePanelCard title="测试用例列表" description="从脑图中派生出的结构化列表，后续将支持更多筛选与批量操作。">
+          <div className="grid gap-4 grid-cols-[1.6fr_1fr]">
+            <WorkspacePanelCard title="测试用例列表" description="从当前工作区结构中派生出的结构化列表，后续将支持更多筛选与批量操作。">
               {generatedCases.length > 0 ? (
                 <div className="space-y-2">
                   {generatedCases.map((item) => (
@@ -2886,28 +2222,42 @@ onTogglePanel={() => setPanelOpen((v) => !v)}
               )}
             </WorkspacePanelCard>
 
-            <WorkspacePanelCard title="结果说明" description="Phase 1 先把结果审阅骨架搭起来。">
-              <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
-                <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                  <div className="text-xs text-slate-500 dark:text-slate-400">当前结果规模</div>
-                  <div className="mt-1 font-medium text-slate-900 dark:text-white">{generatedCases.length} 条测试点</div>
-                </div>
-                <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                  <div className="text-xs text-slate-500 dark:text-slate-400">高风险结果</div>
-                  <div className="mt-1 font-medium text-slate-900 dark:text-white">{highRiskCases.length} 条</div>
-                </div>
-                <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                  <div className="text-xs text-slate-500 dark:text-slate-400">后续扩展</div>
-                  <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">这里后续会补充来源说明、风险说明、批量编辑和补充生成入口。</div>
-                </div>
-              </div>
-            </WorkspacePanelCard>
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+              <AiCaseSidebar
+                isGenerating={isGenerating}
+                generationProgress={generationProgress}
+                generationStageText={generationStageText}
+                onGenerate={() => setIsRequirementDialogOpen(true)}
+                progress={progress}
+                selectedNode={selectedNode}
+                selectedNodeStatus={selectedNodeStatus}
+                canEditSelectedNode={canEditSelectedNode}
+                isMultiSelect={isMultiSelect}
+                selectedTestcaseCount={selectedTestcaseNodeIds.length}
+                canEditAnySelectedNode={canEditAnySelectedNode}
+                isUpdatingNodeStatus={isUpdatingNodeStatus}
+                onStatusChange={handleStatusChange}
+                attachments={attachments}
+                isUploading={isUploading}
+                onUploadAttachment={handleUploadAttachment}
+                onDeleteAttachment={handleDeleteAttachment}
+                isRemoteLinked={isRemoteLinked}
+                remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
+                isPublishingRemote={isPublishingRemote}
+                isSyncingRemote={isSyncingRemote}
+                onPublishRemote={handlePublishRemote}
+                onSyncFromRemote={handleSyncFromRemote}
+                onResetTemplate={handleResetTemplate}
+                onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
+                mindData={mindData}
+              />
+            </div>
           </div>
         </section>
       ) : null}
 
       <Dialog open={isRequirementDialogOpen} onOpenChange={setIsRequirementDialogOpen}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="max-w-[600px]">
           <DialogHeader>
             <DialogTitle>需求信息</DialogTitle>
           </DialogHeader>
@@ -2932,7 +2282,7 @@ onTogglePanel={() => setPanelOpen((v) => !v)}
                 onChange={(e) => setRequirementText(e.target.value)}
                 rows={10}
                 className="w-full resize-none rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-sm leading-relaxed text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-colors"
-                placeholder="粘贴 PRD、需求描述或技术方案，点击「AI 生成」按钮自动生成测试用例脑图..."
+                placeholder="粘贴 PRD、需求描述或技术方案，点击「AI 生成」按钮自动生成测试用例结构..."
               />
             </div>
           </div>

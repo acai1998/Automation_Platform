@@ -82,12 +82,12 @@ export default function Home() {
   }, [timeRange]);
 
   return (
-    <div className="p-6 md:p-8 lg:p-12">
+    <div className="p-10">
       <div className="max-w-7xl mx-auto flex flex-col gap-8">
           {/* Page Heading */}
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 animate-fade-in-up">
+          <div className="flex items-end justify-between gap-4 animate-fade-in-up">
             <div className="flex flex-col gap-1">
-              <h2 className="text-slate-900 dark:text-white text-3xl md:text-4xl font-black tracking-tight">
+              <h2 className="text-slate-900 dark:text-white text-4xl font-black tracking-tight">
                 仪表盘
               </h2>
               <p className="text-slate-500 dark:text-slate-400 text-base font-normal">
@@ -124,18 +124,20 @@ export default function Home() {
           </div>
 
           {/* Charts Section */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 animate-fade-in-up animate-delay-300">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in-up animate-delay-300">
             {/* Today's Execution Donut Chart */}
             <TodayExecution
               data={dashboardData || undefined}
             />
 
             {/* Trend Line Chart */}
-            <TrendChart
-              timeRange={timeRange}
-              data={dashboardData || undefined}
-              onRefresh={fetchAllData}
-            />
+            <div className="lg:col-span-2">
+              <TrendChart
+                timeRange={timeRange}
+                data={dashboardData || undefined}
+                onRefresh={fetchAllData}
+              />
+            </div>
           </div>
 
           {/* Recent Test Runs */}

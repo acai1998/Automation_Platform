@@ -18,10 +18,9 @@ import {
   Monitor,
   Gauge,
   BrainCircuit,
+  History,
   PanelLeftClose,
-  PanelLeftOpen,
-  X,
-  Menu,
+  PanelLeftOpen
 } from "lucide-react";
 
 // ----------------------------------------------------------------
@@ -51,7 +50,14 @@ const navItems: NavItem[] = [
       { label: "性能自动化", href: "/cases/performance", icon: <Gauge className="h-4 w-4" /> },
     ],
   },
-  { icon: <BrainCircuit className="h-5 w-5" />, label: "AI 用例", href: "/cases/ai-create" },
+  {
+    icon: <BrainCircuit className="h-5 w-5" />,
+    label: "AI 工作台",
+    children: [
+      { label: "工作台首页", href: "/cases/ai-create", icon: <BrainCircuit className="h-4 w-4" /> },
+      { label: "全部记录", href: "/cases/ai-history", icon: <History className="h-4 w-4" /> },
+    ],
+  },
   { icon: <Boxes className="h-5 w-5" />, label: "任务管理", href: "/tasks" },
   { icon: <BarChart3 className="h-5 w-5" />, label: "运行记录", href: "/reports" },
   { icon: <Settings className="h-5 w-5" />, label: "系统设置", href: "/settings" },
@@ -99,17 +105,18 @@ function MiniDrawer({ item, anchorRect, onClose, location, onNavigate }: MiniDra
 
   const top = anchorRect.top;
 
+  // Apply dynamic top via DOM (avoids inline styles)
+  useEffect(() => {
+    if (overlayRef.current) {
+      overlayRef.current.style.top = `${top}px`;
+    }
+  }, [top]);
+
   return createPortal(
     <div
       ref={overlayRef}
-      style={{
-        position: "fixed",
-        left: 72,
-        top,
-        zIndex: 50,
-        minWidth: 180,
-      }}
       className="
+        fixed left-[72px] z-50 min-w-[180px]
         bg-white dark:bg-slate-900
         border border-slate-200 dark:border-slate-700
         rounded-xl shadow-xl shadow-slate-200/60 dark:shadow-slate-900/60
@@ -423,8 +430,8 @@ function SidebarContent({ location, onNavigate, mode, onToggle }: SidebarContent
       <nav className={`flex-1 overflow-y-auto py-4 ${isExpanded ? "px-3" : "px-2"}`}>
         <div className={`space-y-1 ${!isExpanded ? "flex flex-col items-stretch gap-1" : ""}`}>
           {navItems.map((item) => {
-            // 仅对"AI 用例"菜单项在生成中时展示角标
-            const isAiCaseItem = item.label === "AI 用例";
+            // 仅对"AI 工作台"菜单项在生成中时展示角标
+            const isAiCaseItem = item.label === "AI 工作台";
             const badge =
               isAiCaseItem && isGenerating ? (
                 <AiGeneratingBadge progress={progress} mode={isExpanded ? 'expanded' : 'icon-only'} />
@@ -558,7 +565,8 @@ function SidebarContent({ location, onNavigate, mode, onToggle }: SidebarContent
 // ----------------------------------------------------------------
 export function Sidebar() {
   const [location, setLocation] = useLocation();
-  const { navState, isDrawerOpen, toggleNav, openDrawer, closeDrawer } = useNavCollapse();
+  const { navState, toggleNav } = useNavCollapse();
+  const asideRef = useRef<HTMLElement>(null);
 
   const handleNavigate = useCallback(
     (href: string) => {
@@ -567,92 +575,26 @@ export function Sidebar() {
     [setLocation]
   );
 
-  // ── Desktop sidebar (expanded or icon-only) ──
-  if (navState === "expanded" || navState === "icon-only") {
-    const w = navState === "expanded" ? 200 : 72;
-    return (
-      <aside
-        style={{
-          width: w,
-          minWidth: w,
-          transition: "width 0.28s cubic-bezier(0.4,0,0.2,1), min-width 0.28s cubic-bezier(0.4,0,0.2,1)",
-        }}
-        className="hidden lg:flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200/80 dark:border-slate-800 h-full overflow-hidden"
-      >
-        <SidebarContent
-          location={location}
-          onNavigate={handleNavigate}
-          mode={navState}
-          onToggle={toggleNav}
-        />
-      </aside>
-    );
-  }
+  const w = navState === "expanded" ? 200 : 72;
 
-  // ── Drawer mode (mobile / hidden) ──
+  useEffect(() => {
+    if (asideRef.current) {
+      asideRef.current.style.width = `${w}px`;
+      asideRef.current.style.minWidth = `${w}px`;
+    }
+  }, [w]);
+
   return (
-    <>
-      {/* Mobile hamburger trigger — fixed top-left since Header is removed */}
-      <button
-        type="button"
-        onClick={openDrawer}
-        title="打开导航菜单"
-        className="
-          lg:hidden fixed top-3 left-3 z-30
-          flex items-center justify-center w-9 h-9
-          rounded-lg bg-white/90 dark:bg-slate-900/90
-          backdrop-blur-sm
-          border border-slate-200/80 dark:border-slate-700/80
-          shadow-sm shadow-slate-200/60 dark:shadow-slate-900/60
-          text-slate-500 dark:text-slate-400
-          hover:bg-slate-50 dark:hover:bg-slate-800
-          hover:text-slate-700 dark:hover:text-white
-          active:scale-95
-          transition-all duration-200
-        "
-      >
-        <Menu className="h-4 w-4" />
-      </button>
-
-      {/* Backdrop */}
-      {isDrawerOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[1px] lg:hidden
-            animate-in fade-in-0 duration-200"
-          onClick={closeDrawer}
-          aria-hidden="true"
-        />
-      )}
-
-      {/* Drawer panel */}
-      <div
-        style={{
-          width: "min(70vw, 300px)",
-          transform: isDrawerOpen ? "translateX(0)" : "translateX(-100%)",
-          transition: "transform 0.28s cubic-bezier(0.4,0,0.2,1)",
-        }}
-        className="fixed left-0 top-0 z-50 h-full
-          bg-white dark:bg-slate-900 border-r border-slate-200/80 dark:border-slate-800
-          flex flex-col shadow-2xl lg:hidden"
-      >
-        {/* Drawer close button */}
-        <button
-          type="button"
-          onClick={closeDrawer}
-          className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-        >
-          <X className="h-4 w-4" />
-        </button>
-
-        <SidebarContent
-          location={location}
-          onNavigate={(href) => {
-            handleNavigate(href);
-            closeDrawer();
-          }}
-          mode="expanded"
-        />
-      </div>
-    </>
+    <aside
+      ref={asideRef}
+      className="transition-[width,min-width] duration-[280ms] ease-[cubic-bezier(0.4,0,0.2,1)] flex h-full flex-col overflow-hidden border-r border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-900"
+    >
+      <SidebarContent
+        location={location}
+        onNavigate={handleNavigate}
+        mode={navState}
+        onToggle={toggleNav}
+      />
+    </aside>
   );
 }

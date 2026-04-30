@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import {
   BrainCircuit, Search, ChevronDown, ChevronUp,
-  Filter, RefreshCw,
+  Filter, RefreshCw, ArrowLeft, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ import { AiCaseHistoryCard } from './components/AiCaseHistoryCard';
 
 type SortKey = 'updatedAt' | 'createdAt' | 'total' | 'completionRate';
 type FilterMode = 'all' | 'synced' | 'local-only';
+const PAGE_SIZE = 10;
 
 // ── Summary Stats ─────────────────────────────────────────────────
 
@@ -55,7 +56,7 @@ function SummaryStats({ docs }: { docs: AiCaseWorkspaceDocument[] }) {
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div className="grid grid-cols-4 gap-3">
       {cards.map((card) => (
         <div key={card.label} className={`${card.bg} rounded-xl p-4 flex flex-col gap-1`}>
           <span className="text-xs text-slate-500 dark:text-slate-400">{card.label}</span>
@@ -83,6 +84,7 @@ export default function AICaseHistory() {
   const [sortDesc, setSortDesc] = useState(true);
   const [filter, setFilter] = useState<FilterMode>('all');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
+  const [page, setPage] = useState(1);
   const filterRef = useRef<HTMLDivElement>(null);
 
   // Close filter menu on outside click
@@ -152,6 +154,23 @@ export default function AICaseHistory() {
     return r;
   }, [docs, progressCache, search, filter, sortKey, sortDesc]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [search, filter, sortKey, sortDesc]);
+
+  const totalPages = Math.max(1, Math.ceil(displayed.length / PAGE_SIZE));
+  const pagedDocs = useMemo(() => {
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * PAGE_SIZE;
+    return displayed.slice(start, start + PAGE_SIZE);
+  }, [displayed, page, totalPages]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   const toggleSort = useCallback((k: SortKey) => {
     if (sortKey === k) setSortDesc((v) => !v);
     else { setSortKey(k); setSortDesc(true); }
@@ -179,11 +198,20 @@ export default function AICaseHistory() {
               <BrainCircuit className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900 dark:text-white">用例记录</h1>
-              <p className="text-xs text-slate-500 dark:text-slate-400">管理所有 AI 生成的测试用例工作区</p>
+              <h1 className="text-lg font-bold text-slate-900 dark:text-white">全部记录</h1>
+              <p className="text-xs text-slate-500 dark:text-slate-400">搜索、筛选并分页管理所有 AI 工作台历史记录</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs gap-1.5"
+              onClick={() => setLocation('/cases/ai-create')}
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              返回首页
+            </Button>
             <Button
               size="sm" variant="outline" className="h-8 text-xs gap-1.5"
               onClick={load} disabled={loading}
@@ -287,7 +315,7 @@ export default function AICaseHistory() {
           {/* Result count hint */}
           {!loading && (
             <p className="text-xs text-slate-400">
-              共 {displayed.length} 条记录
+              共 {displayed.length} 条记录，当前第 {page}/{totalPages} 页
               {(search || filter !== 'all') && docs.length !== displayed.length
                 ? `（已过滤，全部共 ${docs.length} 条）`
                 : null}
@@ -348,9 +376,9 @@ export default function AICaseHistory() {
           )}
 
           {/* Record list */}
-          {!loading && displayed.length > 0 && (
+          {!loading && pagedDocs.length > 0 && (
             <div className="space-y-3">
-              {displayed.map((doc) => (
+              {pagedDocs.map((doc) => (
 <AiCaseHistoryCard
 key={doc.id}
 doc={doc}
@@ -359,6 +387,37 @@ onDeleted={handleDeleted}
 currentDocId={lastOpenedDocId}
 />
               ))}
+            </div>
+          )}
+
+          {!loading && displayed.length > PAGE_SIZE && (
+            <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                每页 {PAGE_SIZE} 条
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2"
+                  disabled={page <= 1}
+                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <div className="min-w-[88px] text-center text-xs font-medium text-slate-600 dark:text-slate-300">
+                  第 {page} / {totalPages} 页
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           )}
 

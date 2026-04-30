@@ -193,11 +193,11 @@ function renderLegend() {
   return (
     <div className="flex items-center justify-center gap-5 mt-1 text-xs text-slate-500 dark:text-gray-400">
       <span className="flex items-center gap-1.5">
-        <span className="inline-block w-5 h-0.5 rounded" style={{ background: CHART_CONFIG.colors.primary }} />
+        <span className="inline-block w-5 h-0.5 rounded bg-[#39E079]" />
         成功率（左轴）
       </span>
       <span className="flex items-center gap-1.5">
-        <span className="inline-block w-3 h-3 rounded-sm" style={{ background: CHART_CONFIG.colors.danger, opacity: 0.7 }} />
+        <span className="inline-block w-3 h-3 rounded-sm bg-[#f87171] opacity-70" />
         失败用例数（右轴）
       </span>
     </div>
@@ -217,7 +217,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
             <UiTooltipTrigger asChild>
               <button
                 type="button"
-                className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
                 aria-label="查看趋势图说明"
               >
                 <HelpCircle className="h-4 w-4" />
@@ -253,8 +253,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
           type="button"
           onClick={() => onChartTypeChange('line')}
           disabled={isLoading}
-          aria-label="切换为折线图"
-          aria-pressed={chartType === 'line' ? 'true' : 'false'}
+          aria-label={`切换为折线图${chartType === 'line' ? '（当前选中）' : ''}`}
           className={`p-2 rounded-lg transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
             chartType === 'line'
               ? 'bg-primary/10 text-primary'
@@ -267,8 +266,7 @@ function ChartHeader({ timeRange, chartType, onChartTypeChange, isLoading = fals
           type="button"
           onClick={() => onChartTypeChange('bar')}
           disabled={isLoading}
-          aria-label="切换为柱状图"
-          aria-pressed={chartType === 'bar' ? 'true' : 'false'}
+          aria-label={`切换为柱状图${chartType === 'bar' ? '（当前选中）' : ''}`}
           className={`p-2 rounded-lg transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
             chartType === 'bar'
               ? 'bg-primary/10 text-primary'
@@ -558,7 +556,7 @@ export function TrendChart({ timeRange, data, onRefresh }: TrendChartProps) {
 
   return (
     <div
-      className="xl:col-span-2 rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark p-6 flex flex-col transition-all duration-200 hover:shadow-lg hover:border-primary/10"
+      className="rounded-xl border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark p-6 flex flex-col transition-all duration-200 hover:shadow-lg hover:border-primary/10"
       role="region"
       aria-label={TIME_RANGE_LABELS[timeRange]}
     >

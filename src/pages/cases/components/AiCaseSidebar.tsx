@@ -221,7 +221,7 @@ export function AiCaseSidebar({
   const selectedNodeLabel = selectedNode?.topic ?? '未选中节点';
 
   const handleExportMarkdown = useCallback(() => {
-    if (!mindData) { toast.error('脑图数据尚未加载，无法导出'); return; }
+    if (!mindData) { toast.error('结果数据尚未加载，无法导出'); return; }
     const md = exportMindDataToMarkdown(mindData);
     const safeTitle = (mindData.nodeData.topic || 'AI-Testcase').replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_');
     downloadTextFile(md, `${safeTitle}.md`);
@@ -357,7 +357,7 @@ export function AiCaseSidebar({
                 })() : null}
               </>
             ) : (
-              <p className="text-[11px] text-slate-400">请在脑图中点击一个节点</p>
+              <p className="text-[11px] text-slate-400">请先在列表中选择一个测试点</p>
             )}
           </div>
         </div>

@@ -447,7 +447,7 @@ export interface AiCaseAttachmentItem {
 
 export const aiCasesApi = {
   /**
-   * 调用 AI 生成测试用例脑图
+   * 调用 AI 生成测试用例结构
    *
    * @param data.requirementText - 需求文档文本（必填）
    * @param data.workspaceName   - 工作台名称（可选，默认由 AI 推断）

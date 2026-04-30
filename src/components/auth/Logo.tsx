@@ -27,12 +27,13 @@ export function Logo({ className = 'h-6 w-6' }: LogoProps) {
 export function AuthLogo() {
   return (
     <div className="flex items-center gap-3">
-      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-indigo-500/20 to-cyan-400/15 text-cyan-200 shadow-[0_10px_30px_rgba(34,211,238,0.12)]">
         <Logo />
       </div>
-      <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-        AutoTest
-      </h2>
+      <div>
+        <h2 className="text-2xl font-black tracking-[-0.04em] text-white">AutoTest</h2>
+        <p className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Automation Platform</p>
+      </div>
     </div>
   );
 }
