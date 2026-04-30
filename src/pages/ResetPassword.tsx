@@ -1,19 +1,21 @@
-import { useState, useEffect } from 'react';
-import { Link, useLocation } from 'wouter';
-import { CheckCircle2, XCircle, KeyRound } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useLocation } from 'wouter';
+import { CheckCircle2, XCircle } from 'lucide-react';
 import { resetPassword } from '@/services/authApi';
 import {
-  AuthLogo,
+  AuthBackLink,
   AuthError,
+  AuthLayout,
+  AuthPageHeader,
+  AuthStatusPanel,
   PasswordInput,
-  SubmitButton,
   Spinner,
+  SubmitButton,
 } from '@/components/auth';
 import { validatePassword } from '@/utils/validation';
 
 export default function ResetPassword() {
   const [, setLocation] = useLocation();
-  // 从 URL 中提取 token 参数
   const searchParams = new URLSearchParams(window.location.search);
   const token = searchParams.get('token');
 
@@ -31,8 +33,8 @@ export default function ResetPassword() {
 
   const passwordMismatch = confirmPassword.length > 0 && password !== confirmPassword;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError('');
 
     if (!token) {
@@ -40,7 +42,6 @@ export default function ResetPassword() {
       return;
     }
 
-    // 验证密码
     const passwordValidation = validatePassword(password);
     if (!passwordValidation.valid) {
       setError(passwordValidation.message);
@@ -68,107 +69,94 @@ export default function ResetPassword() {
     }
   };
 
+  const renderContent = () => {
+    if (!token) {
+      return (
+        <AuthStatusPanel
+          tone="error"
+          icon={<XCircle className="h-7 w-7" />}
+          title="链接无效"
+          description="请重新发起找回密码流程。"
+          action={
+            <button
+              type="button"
+              onClick={() => setLocation('/forgot-password')}
+              className="rounded-2xl border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm font-semibold text-rose-100 transition-colors duration-200 hover:bg-rose-300/15"
+            >
+              重新发送链接
+            </button>
+          }
+        />
+      );
+    }
+
+    if (success) {
+      return (
+        <AuthStatusPanel
+          tone="success"
+          icon={<CheckCircle2 className="h-7 w-7" />}
+          title="密码已重置"
+          description="现在可以使用新密码登录。"
+          action={
+            <button
+              type="button"
+              onClick={() => setLocation('/login')}
+              className="rounded-2xl border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm font-semibold text-emerald-100 transition-colors duration-200 hover:bg-emerald-300/15"
+            >
+              前往登录
+            </button>
+          }
+        />
+      );
+    }
+
+    return (
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <AuthError message={error} />
+
+        <PasswordInput
+          id="password"
+          name="password"
+          label="新密码"
+          value={password}
+          onChange={setPassword}
+          placeholder="至少 6 位字符"
+          required
+          minLength={6}
+          showStrength
+        />
+
+        <PasswordInput
+          id="confirmPassword"
+          name="confirmPassword"
+          label="确认新密码"
+          value={confirmPassword}
+          onChange={setConfirmPassword}
+          placeholder="再次输入新密码"
+          required
+          error={passwordMismatch}
+          errorMessage={passwordMismatch ? '两次输入的密码不一致' : undefined}
+        />
+
+        <SubmitButton isLoading={isLoading} disabled={passwordMismatch}>
+          {isLoading ? <Spinner className="h-5 w-5 text-white" /> : '重置密码'}
+        </SubmitButton>
+      </form>
+    );
+  };
+
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-slate-50 dark:bg-[#101922] px-6 py-12">
-      <div className="w-full max-w-md">
-        <div className="rounded-2xl bg-white dark:bg-[#1a2632] p-8 shadow-xl">
-          {/* Logo Header */}
-          <div className="mb-8 flex justify-center">
-            <AuthLogo />
-          </div>
+    <AuthLayout>
+      <div className="space-y-8">
+        <AuthBackLink href="/login">返回登录</AuthBackLink>
 
-          {!token ? (
-            <div className="text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/20">
-                <XCircle className="h-8 w-8 text-red-500" />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-                无效的链接
-              </h1>
-              <p className="text-slate-500 dark:text-slate-400 mb-6">
-                该密码重置链接无效或已过期
-              </p>
-              <Link
-                href="/forgot-password"
-                className="inline-flex items-center justify-center rounded-lg bg-blue-500 px-6 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-600"
-              >
-                重新发送重置链接
-              </Link>
-            </div>
-          ) : success ? (
-            <div className="text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/20">
-                <CheckCircle2 className="h-8 w-8 text-green-500" />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-                密码已重置
-              </h1>
-              <p className="text-slate-500 dark:text-slate-400 mb-6">
-                您的密码已成功重置，现在可以使用新密码登录
-              </p>
-              <button
-                onClick={() => setLocation('/login')}
-                className="inline-flex w-full items-center justify-center rounded-lg bg-blue-500 px-6 py-3.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-600"
-              >
-                前往登录
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="text-center mb-8">
-                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/20">
-                  <KeyRound className="h-8 w-8 text-blue-500" />
-                </div>
-                <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-                  设置新密码
-                </h1>
-                <p className="text-slate-500 dark:text-slate-400">
-                  请输入您的新密码
-                </p>
-              </div>
+        <AuthPageHeader
+          title={token ? '设置新密码' : '重置链接失效'}
+          description={token ? '输入新的登录密码' : '重新获取重置链接'}
+        />
 
-              <form onSubmit={handleSubmit} className="space-y-5">
-                <AuthError message={error} />
-
-                <PasswordInput
-                  id="password"
-                  name="password"
-                  label="新密码"
-                  value={password}
-                  onChange={setPassword}
-                  placeholder="至少 6 位字符"
-                  required
-                  minLength={6}
-                  showStrength
-                />
-
-                <PasswordInput
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  label="确认新密码"
-                  value={confirmPassword}
-                  onChange={setConfirmPassword}
-                  placeholder="再次输入新密码"
-                  required
-                  error={passwordMismatch}
-                  errorMessage={passwordMismatch ? '两次输入的密码不一致' : undefined}
-                />
-
-                <SubmitButton isLoading={isLoading} disabled={passwordMismatch}>
-                  {isLoading ? <Spinner className="h-5 w-5 text-white" /> : '重置密码'}
-                </SubmitButton>
-              </form>
-            </>
-          )}
-
-          <p className="mt-8 text-center text-sm text-slate-500 dark:text-slate-400">
-            记起密码了？{' '}
-            <Link href="/login" className="font-bold text-blue-500 hover:text-blue-600 hover:underline">
-              立即登录
-            </Link>
-          </p>
-        </div>
+        {renderContent()}
       </div>
-    </div>
+    </AuthLayout>
   );
 }

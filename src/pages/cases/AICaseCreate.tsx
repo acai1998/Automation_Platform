@@ -1,111 +1,362 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'wouter';
 import {
-  BrainCircuit, Bot, Loader2, Plus, Search,
-  ChevronDown, ChevronUp, Filter, RefreshCw, ArrowUpRight,
+  ArrowRight,
+  ArrowUpDown,
+  BookOpen,
+  Bot,
+  Boxes,
+  Bug,
+  ChevronRight,
+  Clock3,
+  Code2,
+  FileText,
+  Filter,
+  FolderUp,
+  Inbox,
+  Link2,
+  Loader2,
+  NotebookTabs,
+  PencilLine,
+  Plus,
+  RefreshCcw,
+  Search,
+  Sparkles,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetDescription,
 } from '@/components/ui/sheet';
-import { toast } from 'sonner';
 import { listAllWorkspaceDocuments } from '@/lib/aiCaseStorage';
 import { computeProgress } from '@/lib/aiCaseMindMap';
-import { type AiCaseWorkspaceDocument } from '@/types/aiCases';
-import { AiCaseHistoryCard } from './components/AiCaseHistoryCard';
+import type {
+  AiCaseMindData,
+  AiCaseNode,
+  AiCaseNodePriority,
+  AiCaseProgress,
+  AiCaseWorkspaceDocument,
+} from '@/types/aiCases';
 import { useAiGeneration } from '@/contexts/AiGenerationContext';
 
-// ── Types ─────────────────────────────────────────────────────────
-
-type SortKey = 'updatedAt' | 'createdAt' | 'total' | 'completionRate';
-type FilterMode = 'all' | 'synced' | 'local-only';
-
-/** 生成工作台文档的唯一 ID */
 function generateWorkspaceId(): string {
   return `ai-ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// 常量定义在模块级别，避免每次渲染重建
-const SORT_OPTS: Array<{ key: SortKey; label: string }> = [
-  { key: 'updatedAt', label: '最近更新' },
-  { key: 'createdAt', label: '创建时间' },
-  { key: 'total', label: '用例数' },
-  { key: 'completionRate', label: '通过率' },
+type HistoryFilterMode = 'all' | 'synced' | 'local-only';
+type HistorySortMode = 'updatedAt' | 'createdAt';
+type WorkspaceInputMode = 'direct' | 'upload' | 'template';
+
+interface WorkspaceMetrics {
+  progress: AiCaseProgress;
+  moduleCount: number;
+  highestPriority: AiCaseNodePriority;
+}
+
+interface MaterialChip {
+  label: string;
+  icon: typeof FileText;
+  tone: string;
+}
+
+interface QuickStartCardItem {
+  title: string;
+  description: string;
+  actionLabel: string;
+  icon: typeof FileText;
+  iconTone: string;
+  onClick: () => void;
+}
+
+interface InputModeOption {
+  id: WorkspaceInputMode;
+  label: string;
+  icon: typeof PencilLine;
+}
+
+interface SupplementOption {
+  id: string;
+  label: string;
+  icon: typeof FileText;
+  accent: string;
+}
+
+const MATERIAL_CHIPS: MaterialChip[] = [
+  {
+    label: 'PRD / 需求文档',
+    icon: FileText,
+    tone: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300',
+  },
+  {
+    label: 'OpenAPI / 接口文档',
+    icon: NotebookTabs,
+    tone: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300',
+  },
+  {
+    label: '缺陷单',
+    icon: Bug,
+    tone: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300',
+  },
+  {
+    label: '代码变更',
+    icon: Code2,
+    tone: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300',
+  },
 ];
 
-const FILTER_LABELS: Record<FilterMode, string> = {
+const WORKSPACE_MODULE_OPTIONS = [
+  '登录与认证',
+  '接口联调',
+  '订单流程',
+  '支付结算',
+  '数据报表',
+  '测试平台配置',
+] as const;
+
+const INPUT_MODE_OPTIONS: InputModeOption[] = [
+  { id: 'direct', label: '直接输入', icon: PencilLine },
+  { id: 'upload', label: '上传文档', icon: FolderUp },
+  { id: 'template', label: '从模板开始', icon: Boxes },
+];
+
+const SUPPLEMENT_OPTIONS: SupplementOption[] = [
+  { id: 'prd', label: 'PRD / 需求文档', icon: FileText, accent: 'text-violet-600' },
+  { id: 'openapi', label: 'OpenAPI / 接口文档', icon: NotebookTabs, accent: 'text-emerald-600' },
+  { id: 'attachment', label: '附件上传', icon: Link2, accent: 'text-blue-600' },
+  { id: 'code', label: '代码变更', icon: Code2, accent: 'text-amber-600' },
+  { id: 'bug', label: '缺陷单', icon: Bug, accent: 'text-rose-500' },
+];
+
+const NEXT_STEP_ITEMS = [
+  '补充输入材料',
+  '生成结构化测试用例',
+  '查看覆盖与风险',
+  '执行与回流',
+] as const;
+
+const EXAMPLE_REQUIREMENT_TEXT = [
+  '业务目标：优化登录模块测试设计，覆盖账号密码登录、验证码、记住我和登录失败限制。',
+  '核心流程：用户输入邮箱和密码后提交；支持忘记密码；连续输错 5 次后账户临时锁定。',
+  '边界条件：空值、超长输入、错误密码、过期验证码、已锁定账号。',
+  '异常场景：服务超时、接口 500、登录态失效、频繁重试。',
+].join('\n');
+
+const HISTORY_FILTER_LABELS: Record<HistoryFilterMode, string> = {
   all: '全部',
   synced: '已同步',
   'local-only': '仅本地',
 };
 
-// ── Summary Stats ─────────────────────────────────────────────────
+const HISTORY_SORT_LABELS: Record<HistorySortMode, string> = {
+  updatedAt: '最近更新',
+  createdAt: '创建时间',
+};
 
-function SummaryStats({ docs }: { docs: AiCaseWorkspaceDocument[] }) {
-  const s = useMemo(() => {
-    let totalCases = 0, passedCases = 0, syncedDocs = 0;
-    for (const d of docs) {
-      const p = computeProgress(d.mapData);
-      totalCases += p.total;
-      passedCases += p.passed;
-      if (d.syncMode === 'hybrid' && d.remoteWorkspaceId) syncedDocs++;
-    }
-    return {
-      totalCases,
-      passRate: totalCases === 0 ? 0 : Math.round((passedCases / totalCases) * 100),
-      syncedDocs,
-    };
-  }, [docs]);
+const PRIORITY_RANK: Record<AiCaseNodePriority, number> = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+  P3: 3,
+};
 
-  // 将 cards 数组纳入 useMemo，避免每次组件重渲染都创建新的数组对象
-  const cards = useMemo(() => [
-    {
-      label: '生成记录', value: docs.length, unit: '条',
-      c: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-50 dark:bg-violet-900/20',
-      border: 'border-violet-100 dark:border-violet-800/30',
-    },
-    {
-      label: '累计用例', value: s.totalCases, unit: '条',
-      c: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-900/20',
-      border: 'border-blue-100 dark:border-blue-800/30',
-    },
-    {
-      label: '整体通过率', value: s.passRate, unit: '%',
-      c: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-900/20',
-      border: 'border-emerald-100 dark:border-emerald-800/30',
-    },
-    {
-      label: '已同步服务端', value: s.syncedDocs, unit: '条',
-      c: 'text-sky-600 dark:text-sky-400', bg: 'bg-sky-50 dark:bg-sky-900/20',
-      border: 'border-sky-100 dark:border-sky-800/30',
-    },
-  ], [docs.length, s.totalCases, s.passRate, s.syncedDocs]);
+const FIRST_USE_STEPS = [
+  {
+    title: '准备输入',
+    description: '整理业务需求、接口文档与边界条件',
+    icon: FileText,
+    tone: 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
+    indexTone: 'bg-violet-600 text-white',
+  },
+  {
+    title: '生成结果',
+    description: 'AI 生成结构化测试点与用例',
+    icon: Sparkles,
+    tone: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
+    indexTone: 'bg-emerald-600 text-white',
+  },
+  {
+    title: '补充优化',
+    description: '人工筛选、补点并确认覆盖风险',
+    icon: PencilLine,
+    tone: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300',
+    indexTone: 'bg-amber-500 text-white',
+  },
+  {
+    title: '执行回流',
+    description: '执行高风险范围并沉淀结果',
+    icon: RefreshCcw,
+    tone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+    indexTone: 'bg-blue-600 text-white',
+  },
+] as const;
 
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      {cards.map((card) => (
-        <div
-          key={card.label}
-          className={`${card.bg} border ${card.border} rounded-xl px-4 py-3 flex flex-col gap-0.5`}
-        >
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">{card.label}</span>
-          <div className="flex items-baseline gap-0.5 mt-0.5">
-            <span className={`text-2xl font-bold leading-none ${card.c}`}>{card.value}</span>
-            <span className={`text-xs font-medium ${card.c} opacity-80`}>{card.unit}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+const PRIORITY_DISPLAY: Record<
+  AiCaseNodePriority,
+  { label: string; className: string }
+> = {
+  P0: {
+    label: '高',
+    className:
+      'bg-rose-50 text-rose-600 ring-rose-100 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-500/20',
+  },
+  P1: {
+    label: '中',
+    className:
+      'bg-amber-50 text-amber-600 ring-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/20',
+  },
+  P2: {
+    label: '低',
+    className:
+      'bg-emerald-50 text-emerald-600 ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20',
+  },
+  P3: {
+    label: '低',
+    className:
+      'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700',
+  },
+};
+
+function walkNodes(node: AiCaseNode, visit: (current: AiCaseNode) => void): void {
+  visit(node);
+  for (const child of node.children ?? []) {
+    walkNodes(child as AiCaseNode, visit);
+  }
 }
 
-// ── New Requirement Sheet ─────────────────────────────────────────
+function collectWorkspaceMetrics(doc: AiCaseWorkspaceDocument): WorkspaceMetrics {
+  let moduleCount = 0;
+  let highestPriority: AiCaseNodePriority = 'P3';
+
+  walkNodes(doc.mapData.nodeData, (node) => {
+    const metadata = node.metadata;
+    if (!metadata) return;
+
+    if (metadata.kind === 'module') {
+      moduleCount += 1;
+    }
+
+    if (PRIORITY_RANK[metadata.priority] < PRIORITY_RANK[highestPriority]) {
+      highestPriority = metadata.priority;
+    }
+  });
+
+  return {
+    progress: computeProgress(doc.mapData),
+    moduleCount,
+    highestPriority,
+  };
+}
+
+function countModules(data: AiCaseMindData): number {
+  let moduleCount = 0;
+  walkNodes(data.nodeData, (node) => {
+    if (node.metadata?.kind === 'module') {
+      moduleCount += 1;
+    }
+  });
+  return moduleCount;
+}
+
+function formatRelativeTime(ts: number): string {
+  const diff = Math.floor((Date.now() - ts) / 60_000);
+  if (diff < 1) return '刚刚';
+  if (diff < 60) return `${diff} 分钟前`;
+  const hours = Math.floor(diff / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  return new Date(ts).toLocaleDateString('zh-CN');
+}
+
+function formatDateTime(ts: number): string {
+  return new Date(ts).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function resolveWorkspaceStatus(
+  doc: AiCaseWorkspaceDocument,
+  progress: AiCaseProgress
+): { label: string; className: string } {
+  if (doc.remoteStatus === 'published') {
+    return {
+      label: '已发布',
+      className: 'bg-emerald-50 text-emerald-700 ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20',
+    };
+  }
+
+  if (doc.remoteStatus === 'archived') {
+    return {
+      label: '已归档',
+      className: 'bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700',
+    };
+  }
+
+  if (progress.total === 0) {
+    return {
+      label: '待生成',
+      className: 'bg-amber-50 text-amber-700 ring-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/20',
+    };
+  }
+
+  if (progress.completionRate >= 100) {
+    return {
+      label: '已完成',
+      className: 'bg-blue-50 text-blue-700 ring-blue-100 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/20',
+    };
+  }
+
+  return {
+    label: '进行中',
+    className: 'bg-indigo-50 text-indigo-700 ring-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-500/20',
+  };
+}
+
+function resolvePriorityDisplay(priority: AiCaseNodePriority): {
+  label: string;
+  className: string;
+} {
+  return PRIORITY_DISPLAY[priority];
+}
+
+function HeroBackdrop() {
+  return (
+    <>
+      <div className="pointer-events-none absolute inset-x-0 top-4 hidden h-28 xl:block">
+        <div className="absolute left-0 top-8 h-px w-40 bg-[#dbe5ff]" />
+        <div className="absolute left-40 top-8 h-10 w-10 rounded-tl-[18px] border-l border-t border-[#dbe5ff]" />
+        <div className="absolute left-52 top-0 h-px w-52 bg-[#dbe5ff]" />
+        <div className="absolute left-[36%] top-0 h-6 w-6 rounded-tr-[12px] border-r border-t border-[#dbe5ff]" />
+        <div className="absolute left-[36%] top-0 h-px w-20 bg-[#dbe5ff]" />
+        <div className="absolute right-[28%] top-0 h-px w-52 bg-[#dbe5ff]" />
+        <div className="absolute right-[16%] top-0 h-6 w-6 rounded-tl-[12px] border-l border-t border-[#dbe5ff]" />
+        <div className="absolute right-10 top-0 h-px w-44 bg-[#dbe5ff]" />
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-6 hidden h-16 xl:block">
+        <div className="absolute left-16 bottom-0 h-px w-36 bg-[#dbe5ff]" />
+        <div className="absolute left-52 bottom-0 h-5 w-5 rounded-bl-[10px] border-b border-l border-[#dbe5ff]" />
+        <div className="absolute left-[42%] bottom-0 h-px w-56 bg-[#dbe5ff]" />
+        <div className="absolute right-[24%] bottom-0 h-5 w-5 rounded-br-[10px] border-b border-r border-[#dbe5ff]" />
+        <div className="absolute right-12 bottom-0 h-px w-36 bg-[#dbe5ff]" />
+      </div>
+
+      <div className="pointer-events-none absolute -left-14 top-8 h-40 w-40 rounded-full bg-[radial-gradient(circle,_rgba(93,115,255,0.12),_transparent_72%)]" />
+      <div className="pointer-events-none absolute right-8 top-1 h-52 w-52 rounded-full bg-[radial-gradient(circle,_rgba(104,82,255,0.14),_transparent_68%)]" />
+      <div className="pointer-events-none absolute right-[18%] top-14 h-32 w-32 rounded-full bg-[radial-gradient(circle,_rgba(117,180,255,0.18),_transparent_72%)]" />
+    </>
+  );
+}
 
 interface NewRequirementSheetProps {
   open: boolean;
@@ -116,10 +367,21 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
   const [, setLocation] = useLocation();
   const { notifyStart } = useAiGeneration();
   const [workspaceName, setWorkspaceName] = useState('');
+  const [workspaceModule, setWorkspaceModule] = useState('');
   const [requirementText, setRequirementText] = useState('');
+  const [inputMode, setInputMode] = useState<WorkspaceInputMode>('direct');
+  const [selectedSupplements, setSelectedSupplements] = useState<string[]>(['prd', 'openapi']);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleGenerate = async () => {
+  const resetForm = () => {
+    setWorkspaceName('');
+    setWorkspaceModule('');
+    setRequirementText('');
+    setInputMode('direct');
+    setSelectedSupplements(['prd', 'openapi']);
+  };
+
+  const navigateToWorkspace = async (autoGenerate: boolean) => {
     if (!requirementText.trim()) {
       toast.error('请先输入需求描述');
       return;
@@ -128,21 +390,14 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
     setIsSubmitting(true);
     try {
       const docId = generateWorkspaceId();
-
-      // 先通知全局 Context 开始生成（携带 docId），
-      // AICases 页面生成完成后才会真正将文档写入 localStorage。
-      // 这样列表页在生成完成前不会出现该条记录，消除歧义。
       notifyStart(docId);
 
       onOpenChange(false);
-      setWorkspaceName('');
-      setRequirementText('');
+      resetForm();
 
-      // 将需求文本和名称通过 URL 参数传递给 AICases 页面，
-      // AICases 检测到 autoGenerate=true 后自行创建文档并开始生成。
       const params = new URLSearchParams();
       params.set('docId', docId);
-      params.set('autoGenerate', 'true');
+      params.set('autoGenerate', autoGenerate ? 'true' : 'false');
       params.set('initName', workspaceName.trim() || 'AI Testcase Workspace');
       params.set('initReq', requirementText.trim());
       setLocation(`/cases/ai?${params.toString()}`);
@@ -150,84 +405,229 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
       console.error('[AICaseCreate] failed to navigate', error);
       toast.error('跳转失败，请重试');
     } finally {
-      // 无论成功还是失败都重置提交状态，避免 Sheet 在不卸载场景下按钮永久禁用
       setIsSubmitting(false);
     }
+  };
+
+  const handleGenerate = async () => {
+    await navigateToWorkspace(true);
+  };
+
+  const handleCreateOnly = async () => {
+    await navigateToWorkspace(false);
   };
 
   const handleClose = () => {
     if (!isSubmitting) {
       onOpenChange(false);
-      // 取消时重置表单内容，下次打开时是干净的新建表单
-      setWorkspaceName('');
-      setRequirementText('');
+      resetForm();
     }
+  };
+
+  const toggleSupplement = (id: string) => {
+    setSelectedSupplements((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    );
   };
 
   return (
     <Sheet open={open} onOpenChange={handleClose}>
-      <SheetContent className="w-full sm:max-w-lg flex flex-col gap-0 p-0 overflow-hidden" preventClose={isSubmitting}>
-        <SheetHeader className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-slate-100 dark:border-slate-800">
+      <SheetContent
+        className="flex w-full max-w-[540px] flex-col gap-0 overflow-hidden border-slate-200 bg-[#fcfcff] p-0 [&>button]:right-5 [&>button]:top-5 [&>button]:h-9 [&>button]:w-9 [&>button]:rounded-full [&>button]:border [&>button]:border-slate-200 [&>button]:bg-white/90 [&>button]:text-slate-500 [&>button]:shadow-sm [&>button]:hover:bg-white [&>button]:hover:text-slate-700"
+        preventClose={isSubmitting}
+      >
+        <SheetHeader className="flex-shrink-0 border-b border-slate-200/80 bg-white px-6 pb-5 pt-5">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-sm shadow-indigo-500/25 flex-shrink-0">
-              <Bot className="h-5 w-5 text-white" />
+            <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-[18px] bg-[linear-gradient(135deg,#ede9fe_0%,#ddd6fe_45%,#c4b5fd_100%)] shadow-[0_12px_32px_rgba(124,58,237,0.18)]">
+              <Bot className="h-7 w-7 text-violet-600" />
             </div>
             <div>
-              <SheetTitle className="text-base font-bold text-slate-900 dark:text-white">
-                新增需求
+              <SheetTitle className="text-[28px] font-black tracking-tight text-slate-900">
+                新增 AI 工作台
               </SheetTitle>
-              <SheetDescription className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                输入需求，AI 将自动生成测试用例脑图
+              <SheetDescription className="mt-1 max-w-[360px] text-sm leading-6 text-slate-500">
+                输入需求背景或导入材料，创建一个可继续补充、生成、执行与回流的 AI 工作台。
               </SheetDescription>
             </div>
           </div>
         </SheetHeader>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-              工作台名称{' '}
-              <span className="text-slate-400 font-normal text-xs">（可选）</span>
-            </label>
-            <Input
-              value={workspaceName}
-              onChange={(e) => setWorkspaceName(e.target.value)}
-              placeholder="例如：登录模块测试"
-            />
-          </div>
+        <div className="flex-1 space-y-6 overflow-y-auto bg-[linear-gradient(180deg,#ffffff_0%,#faf7ff_100%)] px-6 py-5">
+          <section className="space-y-4">
+            <div className="text-base font-bold text-slate-900">基础信息</div>
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-              需求描述 / PRD <span className="text-rose-500">*</span>
-            </label>
+            <div className="space-y-2">
+              <label className="block text-sm font-semibold text-slate-700">
+                工作台名称 <span className="text-xs font-normal text-slate-400">（可选）</span>
+              </label>
+              <Input
+                value={workspaceName}
+                onChange={(event) => setWorkspaceName(event.target.value)}
+                placeholder="例如：登录模块测试设计"
+                className="h-11 rounded-xl border-slate-200 bg-white"
+              />
+              <p className="text-xs leading-5 text-slate-500">
+                建议填写清晰的业务模块或场景名称，便于后续继续协作。
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-semibold text-slate-700">
+                所属模块 <span className="text-xs font-normal text-slate-400">（可选）</span>
+              </label>
+              <select
+                aria-label="所属模块"
+                value={workspaceModule}
+                onChange={(event) => setWorkspaceModule(event.target.value)}
+                className="flex h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-violet-300 focus:ring-2 focus:ring-violet-100"
+              >
+                <option value="">请选择模块</option>
+                {WORKSPACE_MODULE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <div className="text-base font-bold text-slate-900">输入方式</div>
+            <div className="grid grid-cols-3 gap-3">
+              {INPUT_MODE_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                const active = inputMode === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setInputMode(option.id)}
+                    className={`flex h-11 items-center justify-center gap-2 rounded-xl border text-sm font-semibold transition ${
+                      active
+                        ? 'border-violet-300 bg-violet-50 text-violet-700 shadow-[0_8px_20px_rgba(124,58,237,0.08)]'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs leading-5 text-slate-500">
+              你也可以先创建工作台，再到侧边补充资料或切换更多来源。
+            </p>
+          </section>
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <label className="block text-sm font-semibold text-slate-700">
+                需求描述 / PRD <span className="text-rose-500">*</span>
+              </label>
+              <button
+                type="button"
+                className="text-xs font-semibold text-violet-600 hover:text-violet-700"
+                onClick={() => setRequirementText(EXAMPLE_REQUIREMENT_TEXT)}
+              >
+                试试示例输入
+              </button>
+            </div>
             <Textarea
               value={requirementText}
-              onChange={(e) => setRequirementText(e.target.value)}
-              rows={14}
-              className="resize-none leading-relaxed"
-              placeholder="粘贴 PRD、需求描述或技术方案，AI 将自动分析并生成完整的测试用例脑图..."
+              onChange={(event) => setRequirementText(event.target.value)}
+              rows={9}
+              className="min-h-[180px] resize-none rounded-2xl border-slate-200 bg-white leading-7"
+              placeholder="粘贴 PRD、需求描述、验收标准、接口背景或测试上下文。建议包含：业务目标、核心流程、边界条件、异常场景。"
             />
-          </div>
+          </section>
+
+          <section className="space-y-4">
+            <div>
+              <div className="text-sm font-semibold text-slate-700">
+                补充材料 <span className="text-xs font-normal text-slate-400">（可选）</span>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                补充更多输入来源，可提升 AI 生成结果的准确性。
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              {SUPPLEMENT_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                const active = selectedSupplements.includes(option.id);
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => toggleSupplement(option.id)}
+                    className={`rounded-2xl border bg-white px-3 py-4 text-center transition ${
+                      active
+                        ? 'border-violet-200 shadow-[0_12px_24px_rgba(124,58,237,0.08)]'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <Icon className={`mx-auto h-5 w-5 ${option.accent}`} />
+                    <div className="mt-2 text-xs font-semibold leading-5 text-slate-700">{option.label}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-violet-100 bg-[linear-gradient(135deg,#faf5ff_0%,#f5f3ff_100%)] p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-violet-700">创建后你可以继续：</div>
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs font-medium text-slate-600">
+                  {NEXT_STEP_ITEMS.map((item) => (
+                    <div key={item} className="flex items-center gap-2">
+                      <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl bg-white/70 shadow-sm">
+                <Sparkles className="h-7 w-7 text-violet-500" />
+              </div>
+            </div>
+          </section>
         </div>
 
-        <div className="flex-shrink-0 px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
+        <div className="flex-shrink-0 border-t border-slate-200 bg-white px-6 py-4">
           <div className="flex gap-3">
             <Button
               variant="outline"
-              className="flex-1"
+              className="h-11 flex-1 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
               onClick={handleClose}
               disabled={isSubmitting}
             >
               取消
             </Button>
             <Button
-              className="flex-1 gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
+              variant="outline"
+              className="h-11 flex-1 rounded-xl border-violet-200 bg-white text-violet-700 hover:bg-violet-50"
+              onClick={handleCreateOnly}
+              disabled={isSubmitting || !requirementText.trim()}
+            >
+              保存并继续补充
+            </Button>
+            <Button
+              className="h-11 flex-[1.35] gap-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700"
               onClick={handleGenerate}
               disabled={isSubmitting || !requirementText.trim()}
             >
-              {isSubmitting
-                ? <><Loader2 className="h-4 w-4 animate-spin" />准备中…</>
-                : <><Bot className="h-4 w-4" />AI 生成用例</>}
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  准备中
+                </>
+              ) : (
+                <>
+                  <Bot className="h-4 w-4" />
+                  创建并生成首版用例
+                </>
+              )}
             </Button>
           </div>
         </div>
@@ -236,26 +636,529 @@ function NewRequirementSheet({ open, onOpenChange }: NewRequirementSheetProps) {
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────────
+interface HeroSectionProps {
+  onCreate: () => void;
+  onCreateFromTemplate: () => void;
+  onViewExample: () => void;
+}
 
-/** 上次在脑图页面打开的文档 ID，用于列表页标识「当前工作区」 */
-const LAST_OPENED_DOC_KEY = 'ai-case-last-opened-doc-id';
+function HeroSection({
+  onCreate,
+  onCreateFromTemplate,
+  onViewExample,
+}: HeroSectionProps) {
+  return (
+    <section className="relative overflow-hidden rounded-[34px] border border-[#dce6fb] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-8 py-8 shadow-[0_22px_64px_rgba(148,163,184,0.10)] dark:border-slate-800 dark:bg-slate-900">
+      <HeroBackdrop />
+
+      <div className="relative flex flex-col gap-8">
+        <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+          <div className="max-w-4xl">
+            <div className="text-sm font-semibold tracking-[0.22em] text-[#6a7ecb]">
+              AI WORKBENCH
+            </div>
+            <h1 className="mt-3 text-[36px] font-bold tracking-tight text-slate-900 dark:text-white">
+              AI 智能用例工作台
+            </h1>
+            <p className="mt-4 max-w-3xl text-[15px] leading-8 text-slate-600 dark:text-slate-300">
+              基于需求、接口文档、缺陷和代码变更生成结构化测试用例，并支持补充、执行与回流沉淀。
+            </p>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              {MATERIAL_CHIPS.map((chip) => {
+                const Icon = chip.icon;
+                return (
+                  <span
+                    key={chip.label}
+                    className={`inline-flex items-center gap-2 rounded-[14px] border px-4 py-2 text-sm font-medium shadow-[0_6px_18px_rgba(148,163,184,0.08)] ${chip.tone}`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {chip.label}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+            <Button
+              type="button"
+              size="lg"
+              className="h-14 rounded-[16px] bg-[linear-gradient(135deg,#4e6bff_0%,#654bff_100%)] px-6 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(92,88,255,0.28)] hover:opacity-95"
+              onClick={onCreate}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              新建工作台
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
+              className="h-14 rounded-[16px] border-[#d9e1f6] bg-white px-6 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(148,163,184,0.10)] hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              onClick={onCreateFromTemplate}
+            >
+              <BookOpen className="mr-2 h-4 w-4" />
+              从模板创建
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-14 rounded-[16px] px-3 text-sm font-semibold text-[#4e6bff] hover:bg-[#eef3ff] hover:text-[#3956f6] dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
+              onClick={onViewExample}
+            >
+              查看示例
+            </Button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+interface QuickStartSectionProps {
+  items: QuickStartCardItem[];
+}
+
+function QuickStartSection({ items }: QuickStartSectionProps) {
+  return (
+    <section className="rounded-[32px] border border-[#e3eafc] bg-white/92 px-6 py-5 shadow-[0_18px_50px_rgba(148,163,184,0.10)] backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900">
+      <h2 className="mb-5 text-[30px] font-bold tracking-tight text-slate-900 dark:text-white">常用入口</h2>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.title}
+              type="button"
+              onClick={item.onClick}
+              className="group rounded-[24px] border border-[#dfe7fb] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-5 text-left shadow-[0_12px_30px_rgba(148,163,184,0.10)] transition-all hover:-translate-y-0.5 hover:border-[#b8c8ff] hover:shadow-[0_18px_38px_rgba(78,107,255,0.12)] dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-500/30"
+            >
+              <div className="flex items-center gap-4">
+                <div className={`flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-[20px] shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] ${item.iconTone}`}>
+                  <Icon className="h-7 w-7" />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-[28px] font-semibold tracking-tight text-slate-900 dark:text-white">
+                        {item.title}
+                      </div>
+                      <div className="mt-2 max-w-[320px] text-sm leading-7 text-slate-500 dark:text-slate-400">
+                        {item.description}
+                      </div>
+                    </div>
+                    <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border border-[#dde6fb] bg-white text-[#4e6bff] transition-transform group-hover:translate-x-0.5 dark:border-slate-700 dark:bg-slate-900">
+                      <ChevronRight className="h-5 w-5" />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-indigo-600 dark:text-indigo-300">
+                    {item.actionLabel}
+                    <ArrowRight className="h-4 w-4" />
+                  </div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+interface RecentWorkspacePanelProps {
+  docs: AiCaseWorkspaceDocument[];
+  metrics: Map<string, WorkspaceMetrics>;
+  onOpen: (id: string) => void;
+  onCreate: () => void;
+  onCreateFromTemplate: () => void;
+  onViewAll: () => void;
+  onViewExample: () => void;
+}
+
+function RecentWorkspacePanel({
+  docs,
+  metrics,
+  onOpen,
+  onCreate,
+  onCreateFromTemplate,
+  onViewAll,
+  onViewExample,
+}: RecentWorkspacePanelProps) {
+  return (
+    <div className="rounded-[30px] border border-[#e3eafc] bg-white/95 p-6 shadow-[0_18px_52px_rgba(148,163,184,0.12)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <h3 className="text-[30px] font-bold tracking-tight text-slate-900 dark:text-white">继续上次工作</h3>
+        <Button
+          type="button"
+          variant="ghost"
+          className="px-0 text-sm font-semibold text-indigo-600 hover:bg-transparent hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+          onClick={onViewAll}
+        >
+          查看全部
+          <ArrowRight className="ml-1 h-4 w-4" />
+        </Button>
+      </div>
+
+      {docs.length === 0 ? (
+        <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50/60 px-6 py-12 text-center dark:border-slate-800 dark:bg-slate-950/40">
+          <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-full bg-[radial-gradient(circle_at_50%_40%,rgba(129,140,248,0.18),rgba(255,255,255,0)_70%)]">
+            <Clock3 className="h-12 w-12 text-slate-400 dark:text-slate-500" />
+          </div>
+          <div className="mt-5 text-4xl font-bold tracking-tight text-slate-900 dark:text-white">
+            暂无最近工作台
+          </div>
+          <p className="mx-auto mt-3 max-w-xl text-base leading-7 text-slate-500 dark:text-slate-400">
+            创建第一条需求后，你可以在这里继续未完成的 AI 工作台。
+          </p>
+
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <Button
+              type="button"
+              className="h-11 rounded-xl bg-indigo-600 px-6 text-sm font-semibold text-white hover:bg-indigo-700"
+              onClick={onCreate}
+            >
+              新增需求
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 rounded-xl border-slate-200 bg-white px-6 text-sm font-semibold dark:border-slate-700 dark:bg-slate-900"
+              onClick={onCreateFromTemplate}
+            >
+              从模板创建
+            </Button>
+          </div>
+
+          <div className="mt-8 border-t border-slate-200 pt-5 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+            也可以先
+            <button
+              type="button"
+              className="mx-1 font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+              onClick={onViewExample}
+            >
+              查看示例
+            </button>
+            ，了解完整工作流。
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {docs.map((doc) => {
+            const currentMetrics = metrics.get(doc.id) ?? {
+              progress: computeProgress(doc.mapData),
+              moduleCount: countModules(doc.mapData),
+              highestPriority: 'P3' as AiCaseNodePriority,
+            };
+            const status = resolveWorkspaceStatus(doc, currentMetrics.progress);
+
+            return (
+              <button
+                key={doc.id}
+                type="button"
+                onClick={() => onOpen(doc.id)}
+                className="w-full rounded-[22px] border border-[#dfe7fb] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] px-5 py-4 text-left shadow-[0_10px_24px_rgba(148,163,184,0.08)] transition-all hover:-translate-y-0.5 hover:border-[#b8c8ff] hover:shadow-[0_16px_32px_rgba(78,107,255,0.12)] dark:border-slate-800 dark:bg-slate-950 dark:hover:border-indigo-500/30 dark:hover:bg-slate-900"
+              >
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-[16px] bg-[linear-gradient(135deg,#eff4ff_0%,#dfe8ff_100%)] text-[#4e6bff] shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] dark:bg-slate-800 dark:text-indigo-300">
+                      <Boxes className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="line-clamp-1 text-lg font-semibold text-slate-900 dark:text-white">
+                        {doc.name}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                        最近更新：{formatRelativeTime(doc.updatedAt)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-1 flex-wrap items-center gap-x-5 gap-y-3 xl:justify-end">
+                    <div className="text-sm text-slate-500 dark:text-slate-400">
+                      模块 <span className="ml-1 font-semibold text-slate-700 dark:text-slate-200">{currentMetrics.moduleCount}</span>
+                    </div>
+                    <div className="text-sm text-slate-500 dark:text-slate-400">
+                      用例 <span className="ml-1 font-semibold text-slate-700 dark:text-slate-200">{currentMetrics.progress.total}</span>
+                    </div>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${status.className}`}>
+                      {status.label}
+                    </span>
+                    <div className="min-w-[150px]">
+                      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                        <span>完成率</span>
+                        <span>{currentMetrics.progress.completionRate}%</span>
+                      </div>
+                      <div className="mt-2 h-2 rounded-full bg-[#e8eefb] dark:bg-slate-800">
+                        <div
+                          ref={(el) => {
+                            if (el) el.style.width = `${Math.min(currentMetrics.progress.completionRate, 100)}%`;
+                          }}
+                          className="h-2 rounded-full bg-[linear-gradient(90deg,#5e73ff_0%,#3d7cff_100%)] transition-all"
+                        />
+                      </div>
+                    </div>
+                    <ArrowRight className="h-5 w-5 flex-shrink-0 text-[#5a71ff]" />
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FirstUseTipsPanel({ onViewExample }: { onViewExample: () => void }) {
+  return (
+    <div className="rounded-[30px] border border-[#e3eafc] bg-white/95 p-6 shadow-[0_18px_52px_rgba(148,163,184,0.12)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-5 text-[30px] font-bold tracking-tight text-slate-900 dark:text-white">推荐工作流</div>
+
+      <div className="space-y-5">
+        {FIRST_USE_STEPS.map((step, index) => {
+          const Icon = step.icon;
+          const isLast = index === FIRST_USE_STEPS.length - 1;
+
+          return (
+            <div key={step.title} className="relative flex gap-4">
+              {!isLast ? (
+                <div className="absolute left-[16px] top-9 h-[calc(100%+12px)] w-px border-l border-dashed border-[#cddafd] dark:border-slate-700" />
+              ) : null}
+
+              <div className="relative flex flex-col items-center">
+                <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${step.indexTone}`}>
+                  {index + 1}
+                </div>
+              </div>
+
+              <div className="flex min-w-0 flex-1 gap-3 rounded-[20px] border border-[#e1e8fb] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] px-3 py-3 shadow-[0_10px_24px_rgba(148,163,184,0.08)] dark:border-slate-800 dark:bg-slate-950/50">
+                <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-[18px] ${step.tone}`}>
+                  <Icon className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-lg font-semibold text-slate-900 dark:text-white">
+                    {step.title}
+                  </div>
+                  <div className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                    {step.description}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <Button
+        type="button"
+        variant="ghost"
+        className="mt-6 h-12 w-full rounded-[18px] bg-[#f4f7ff] text-sm font-semibold text-[#4e6bff] hover:bg-[#edf2ff] hover:text-[#3956f6] dark:bg-slate-950 dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
+        onClick={onViewExample}
+      >
+        查看完整工作流
+        <ArrowRight className="ml-1 h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
+interface HistoryPreviewSectionProps {
+  docs: AiCaseWorkspaceDocument[];
+  metrics: Map<string, WorkspaceMetrics>;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  historyFilter: HistoryFilterMode;
+  historySort: HistorySortMode;
+  onToggleFilter: () => void;
+  onToggleSort: () => void;
+  onOpen: (id: string) => void;
+  onViewAll: () => void;
+}
+
+function HistoryPreviewSection({
+  docs,
+  metrics,
+  searchValue,
+  onSearchChange,
+  historyFilter,
+  historySort,
+  onToggleFilter,
+  onToggleSort,
+  onOpen,
+  onViewAll,
+}: HistoryPreviewSectionProps) {
+  return (
+    <section className="rounded-[32px] border border-[#e3eafc] bg-white/95 p-6 shadow-[0_18px_52px_rgba(148,163,184,0.12)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-[30px] font-bold tracking-tight text-slate-900 dark:text-white">全部历史记录</h2>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          className="px-0 text-sm font-semibold text-indigo-600 hover:bg-transparent hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+          onClick={onViewAll}
+        >
+          查看全部
+          <ArrowRight className="ml-1 h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="relative w-full max-w-[520px]">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            value={searchValue}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="搜索工作台名称..."
+            className="h-11 rounded-[16px] border-[#d9e3fa] bg-[#fbfcff] pl-11 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] dark:border-slate-700 dark:bg-slate-900"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 rounded-[16px] border-[#d9e3fa] bg-white px-4 text-sm font-medium shadow-[0_8px_20px_rgba(148,163,184,0.10)] dark:border-slate-700 dark:bg-slate-900"
+            onClick={onToggleFilter}
+          >
+            <Filter className="mr-2 h-4 w-4" />
+            筛选: {HISTORY_FILTER_LABELS[historyFilter]}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 rounded-[16px] border-[#d9e3fa] bg-white px-4 text-sm font-medium shadow-[0_8px_20px_rgba(148,163,184,0.10)] dark:border-slate-700 dark:bg-slate-900"
+            onClick={onToggleSort}
+          >
+            <ArrowUpDown className="mr-2 h-4 w-4" />
+            排序: {HISTORY_SORT_LABELS[historySort]}
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-[24px] border border-[#dfe7fb] dark:border-slate-800">
+        {docs.length === 0 ? (
+          <div className="flex min-h-[240px] items-center justify-center bg-white px-6 py-10 dark:bg-slate-900">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-50 text-violet-500 dark:bg-violet-500/10 dark:text-violet-300">
+                <Inbox className="h-8 w-8" />
+              </div>
+              <div>
+                <div className="text-2xl font-semibold text-slate-900 dark:text-white">暂无历史记录</div>
+                <div className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                  创建第一条需求后，这里会展示你的历史工作台。
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-[#e8eefb] text-sm dark:divide-slate-800">
+              <thead className="bg-[#f8fbff] dark:bg-slate-950/60">
+                <tr className="text-left text-xs font-semibold tracking-wide text-slate-500 dark:text-slate-400">
+                  <th className="px-5 py-3">名称</th>
+                  <th className="px-5 py-3">更新时间</th>
+                  <th className="px-5 py-3">模块数</th>
+                  <th className="px-5 py-3">用例数</th>
+                  <th className="px-5 py-3">优先级</th>
+                  <th className="px-5 py-3">状态</th>
+                  <th className="px-5 py-3">进度</th>
+                  <th className="px-5 py-3 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#e8eefb] bg-white dark:divide-slate-800 dark:bg-slate-900">
+                {docs.map((doc) => {
+                  const currentMetrics = metrics.get(doc.id) ?? {
+                    progress: computeProgress(doc.mapData),
+                    moduleCount: countModules(doc.mapData),
+                    highestPriority: 'P3' as AiCaseNodePriority,
+                  };
+                  const status = resolveWorkspaceStatus(doc, currentMetrics.progress);
+                  const priority = resolvePriorityDisplay(currentMetrics.highestPriority);
+
+                  return (
+                    <tr key={doc.id} className="transition-colors hover:bg-[#f8fbff] dark:hover:bg-slate-950/60">
+                      <td className="px-5 py-4">
+                        <div className="max-w-[280px]">
+                          <div className="line-clamp-1 font-semibold text-slate-900 dark:text-white">
+                            {doc.name}
+                          </div>
+                          <div className="mt-1 line-clamp-1 text-xs text-slate-500 dark:text-slate-400">
+                            {doc.requirement}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
+                        {formatDateTime(doc.updatedAt)}
+                      </td>
+                      <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
+                        {currentMetrics.moduleCount}
+                      </td>
+                      <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
+                        {currentMetrics.progress.total}
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${priority.className}`}>
+                          {priority.label}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${status.className}`}>
+                          {status.label}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="min-w-[140px]">
+                          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                            <span>
+                              {currentMetrics.progress.done}/{currentMetrics.progress.total}
+                            </span>
+                            <span>{currentMetrics.progress.completionRate}%</span>
+                          </div>
+                          <div className="mt-2 h-2 rounded-full bg-[#e8eefb] dark:bg-slate-800">
+                            <div
+                              ref={(el) => {
+                                if (el) el.style.width = `${Math.min(currentMetrics.progress.completionRate, 100)}%`;
+                              }}
+                              className="h-2 rounded-full bg-[linear-gradient(90deg,#5e73ff_0%,#3d7cff_100%)] transition-all"
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-8 px-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
+                          onClick={() => onOpen(doc.id)}
+                        >
+                          打开
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
 
 export default function AICaseCreate() {
   const [, setLocation] = useLocation();
   const [sheetOpen, setSheetOpen] = useState(false);
-  // 读取最后一次在脑图页面打开的文档 ID
-  const [lastOpenedDocId] = useState(() =>
-    window.localStorage.getItem(LAST_OPENED_DOC_KEY) ?? undefined
-  );
   const [docs, setDocs] = useState<AiCaseWorkspaceDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('updatedAt');
-  const [sortDesc, setSortDesc] = useState(true);
-  const [filter, setFilter] = useState<FilterMode>('all');
-  const [showFilterMenu, setShowFilterMenu] = useState(false);
-  const filterRef = useRef<HTMLDivElement>(null);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilterMode>('all');
+  const [historySort, setHistorySort] = useState<HistorySortMode>('updatedAt');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -268,322 +1171,218 @@ export default function AICaseCreate() {
     }
   }, []);
 
-  // 订阅 AI 生成状态：当 generatingDocId 从「有→无」时，说明生成结束，自动刷新列表
-  const { generatingDocId, progress: aiProgress } = useAiGeneration();
+  const { generatingDocId } = useAiGeneration();
   const prevGeneratingDocIdRef = useRef<string | null>(generatingDocId);
+
   useEffect(() => {
-    const prev = prevGeneratingDocIdRef.current;
+    const previousDocId = prevGeneratingDocIdRef.current;
     prevGeneratingDocIdRef.current = generatingDocId;
-    // 从「有值 → null」表示生成刚结束，触发列表刷新
-    if (prev !== null && generatingDocId === null) {
+
+    if (previousDocId !== null && generatingDocId === null) {
       load();
     }
   }, [generatingDocId, load]);
 
-  // Close filter menu on outside click
   useEffect(() => {
-    if (!showFilterMenu) return;
-    const h = (e: MouseEvent) => {
-      if (filterRef.current && !filterRef.current.contains(e.target as Node))
-        setShowFilterMenu(false);
-    };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [showFilterMenu]);
+    load();
+  }, [load]);
 
-  useEffect(() => { load(); }, [load]);
+  const metricsById = useMemo(
+    () => new Map(docs.map((doc) => [doc.id, collectWorkspaceMetrics(doc)])),
+    [docs]
+  );
+
+  const sortedDocs = useMemo(
+    () => [...docs].sort((left, right) => right.updatedAt - left.updatedAt),
+    [docs]
+  );
+
+  const recentDocs = useMemo(() => sortedDocs.slice(0, 3), [sortedDocs]);
+
+  const historyPreviewDocs = useMemo(() => {
+    const keyword = historySearch.trim().toLowerCase();
+    let nextDocs = [...sortedDocs];
+
+    if (keyword) {
+      nextDocs = nextDocs.filter((doc) =>
+        doc.name.toLowerCase().includes(keyword) || doc.requirement.toLowerCase().includes(keyword)
+      );
+    }
+
+    if (historyFilter === 'synced') {
+      nextDocs = nextDocs.filter((doc) => doc.syncMode === 'hybrid' && !!doc.remoteWorkspaceId);
+    }
+
+    if (historyFilter === 'local-only') {
+      nextDocs = nextDocs.filter((doc) => !doc.remoteWorkspaceId);
+    }
+
+    nextDocs.sort((left, right) =>
+      historySort === 'createdAt'
+        ? right.createdAt - left.createdAt
+        : right.updatedAt - left.updatedAt
+    );
+
+    return nextDocs.slice(0, 5);
+  }, [historyFilter, historySearch, historySort, sortedDocs]);
 
   const handleOpen = useCallback(
     (id: string) => setLocation(`/cases/ai?docId=${encodeURIComponent(id)}`),
     [setLocation]
   );
 
-  const handleDeleted = useCallback(
-    (id: string) => setDocs((prev) => prev.filter((d) => d.id !== id)),
-    []
-  );
+  const handleViewAll = useCallback(() => {
+    setLocation('/cases/ai-history');
+  }, [setLocation]);
 
-  // 预计算所有 doc 的 progress，避免排序时重复调用 computeProgress
-  const progressCache = useMemo(
-    () => new Map(docs.map((d) => [d.id, computeProgress(d.mapData)])),
-    [docs]
-  );
+  const handleCreateFromTemplate = useCallback(() => {
+    toast.info('模板创建能力正在接入，当前可先通过新增需求创建工作台');
+  }, []);
 
-  const displayed = useMemo(() => {
-    let r = [...docs];
-    if (search.trim()) {
-      const kw = search.trim().toLowerCase();
-      r = r.filter((d) =>
-        d.name.toLowerCase().includes(kw) || d.requirement.toLowerCase().includes(kw)
-      );
-    }
-    if (filter === 'synced') r = r.filter((d) => d.syncMode === 'hybrid' && d.remoteWorkspaceId);
-    if (filter === 'local-only') r = r.filter((d) => !d.remoteWorkspaceId);
+  const handleViewExample = useCallback(() => {
+    toast.info('示例工作台入口预留中，当前可先创建一条需求体验完整流程');
+  }, []);
 
-    r.sort((a, b) => {
-      let va: number, vb: number;
-      if (sortKey === 'updatedAt') { va = a.updatedAt; vb = b.updatedAt; }
-      else if (sortKey === 'createdAt') { va = a.createdAt; vb = b.createdAt; }
-      else if (sortKey === 'total') {
-        va = progressCache.get(a.id)?.total ?? 0;
-        vb = progressCache.get(b.id)?.total ?? 0;
-      } else {
-        va = progressCache.get(a.id)?.completionRate ?? 0;
-        vb = progressCache.get(b.id)?.completionRate ?? 0;
-      }
-      return sortDesc ? vb - va : va - vb;
+  const handleImportMaterials = useCallback(() => {
+    toast.info('资料导入入口预留中，当前可先把核心内容粘贴到新增需求中');
+  }, []);
+
+  const toggleHistoryFilter = useCallback(() => {
+    setHistoryFilter((current) => {
+      if (current === 'all') return 'synced';
+      if (current === 'synced') return 'local-only';
+      return 'all';
     });
-    return r;
-  }, [docs, progressCache, search, filter, sortKey, sortDesc]);
+  }, []);
 
-  const toggleSort = useCallback((k: SortKey) => {
-    if (sortKey === k) setSortDesc((v) => !v);
-    else { setSortKey(k); setSortDesc(true); }
-  }, [sortKey]);
+  const toggleHistorySort = useCallback(() => {
+    setHistorySort((current) => (current === 'updatedAt' ? 'createdAt' : 'updatedAt'));
+  }, []);
 
-  // 是否有真实数据（不含正在生成的临时占位）
-  const hasData = docs.length > 0;
+  const quickStartItems = useMemo<QuickStartCardItem[]>(
+    () => [
+      {
+        title: '新建工作台',
+        description: '从 PRD、需求或变更创建工作台并生成测试用例',
+        actionLabel: '立即创建',
+        icon: FileText,
+        iconTone: 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
+        onClick: () => setSheetOpen(true),
+      },
+      {
+        title: '导入资料',
+        description: '上传接口文档、附件、缺陷单和代码变更',
+        actionLabel: '去导入',
+        icon: FolderUp,
+        iconTone: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
+        onClick: handleImportMaterials,
+      },
+      {
+        title: '查看示例',
+        description: '查看一条完整的工作台示例，快速理解流程',
+        actionLabel: '查看示例',
+        icon: BookOpen,
+        iconTone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+        onClick: handleViewExample,
+      },
+    ],
+    [handleImportMaterials, handleViewExample]
+  );
 
   return (
-    <div className="h-full flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden">
-      {/* ── Page Header ── */}
-      <div className="flex-shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-3.5">
-        <div className="flex items-center justify-between gap-4">
-          {/* 左侧：标题区 */}
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center shadow-sm shadow-violet-500/20">
-              <BrainCircuit className="h-4 w-4 text-white" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-sm font-semibold text-slate-900 dark:text-white leading-tight truncate">
-                AI 生成用例
-              </h1>
-              <p className="text-xs text-slate-400 dark:text-slate-500 leading-tight mt-0.5 hidden sm:block">
-                输入需求，AI 自动为你生成完整测试用例脑图
-              </p>
-            </div>
-          </div>
-
-          {/* 右侧：操作区 */}
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {/* 刷新：使用 Button 组件保证 focus-visible / disabled 样式与全局一致 */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={load}
-              disabled={loading}
-              title="刷新列表"
-              aria-label="刷新列表"
-              className="h-8 w-8 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-
-            {/* 主 CTA：新增需求 */}
-            <Button
-              size="sm"
-              className="h-8 text-xs gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm shadow-indigo-600/20"
-              onClick={() => setSheetOpen(true)}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              新增需求
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Scrollable Content ── */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-5 space-y-4">
-
-          {/* Loading skeleton */}
-          {loading && (
-            <>
-              {/* 统计卡片 skeleton */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-xl px-4 py-3 animate-pulse">
-                    <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded w-2/3 mb-2" />
-                    <div className="h-6 bg-slate-100 dark:bg-slate-800 rounded w-1/2" />
-                  </div>
-                ))}
-              </div>
-              {/* 卡片列表 skeleton */}
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700/80 p-4 space-y-3 animate-pulse"
-                  >
-                    <div className="flex gap-3">
-                      <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-800 flex-shrink-0" />
-                      <div className="flex-1 space-y-2">
-                        <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded w-1/3" />
-                        <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded w-1/4" />
-                      </div>
-                    </div>
-                    <div className="h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full" />
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {!loading && (
-            <>
-              {/* Summary stats：有数据时显示 */}
-              {hasData && <SummaryStats docs={docs} />}
-
-              {/* Toolbar：有数据时显示（搜索/排序/过滤） */}
-              {hasData && (
-                <div className="flex items-center gap-2.5 flex-wrap">
-                  {/* Search */}
-                  <div className="relative flex-1 min-w-44">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                    <Input
-                      className="pl-8 h-8 text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700"
-                      placeholder="搜索名称或需求内容…"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                    />
-                  </div>
-
-                  {/* Sort tabs */}
-                  <div className="flex items-center gap-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-1 py-1">
-                    {SORT_OPTS.map((o) => (
-                      <button
-                        key={o.key}
-                        type="button"
-                        onClick={() => toggleSort(o.key)}
-                        className={[
-                          'px-2 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-0.5 cursor-pointer',
-                          sortKey === o.key
-                            ? 'bg-primary text-white shadow-sm'
-                            : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200',
-                        ].join(' ')}
-                      >
-                        {o.label}
-                        {sortKey === o.key && (
-                          sortDesc
-                            ? <ChevronDown className="h-3 w-3" />
-                            : <ChevronUp className="h-3 w-3" />
-                        )}
-                      </button>
+    <div className="relative h-full overflow-y-auto bg-[linear-gradient(180deg,#f5f8ff_0%,#f7f9fd_28%,#f4f6fb_100%)] dark:bg-slate-950">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top_left,rgba(117,155,255,0.12),transparent_36%),radial-gradient(circle_at_top_right,rgba(101,75,255,0.10),transparent_28%)]" />
+      <div className="relative mx-auto max-w-[1360px] px-6 py-8">
+        {loading ? (
+          <div className="space-y-6">
+            <div className="rounded-[32px] border border-slate-200 bg-white px-8 py-8 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                <div className="space-y-4">
+                  <div className="h-12 w-52 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-6 w-[420px] max-w-full animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="flex flex-wrap gap-3">
+                    {[1, 2, 3, 4].map((item) => (
+                      <div key={item} className="h-10 w-36 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
                     ))}
                   </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="h-12 w-32 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-12 w-36 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+                </div>
+              </div>
+            </div>
 
-                  {/* Filter */}
-                  <div className="relative" ref={filterRef}>
-                    <button
-                      type="button"
-                      onClick={() => setShowFilterMenu((v) => !v)}
-                      className={[
-                        'flex items-center gap-1.5 px-2.5 h-8 rounded-lg text-xs font-medium border transition-all cursor-pointer',
-                        filter !== 'all'
-                          ? 'border-primary bg-primary/5 text-primary dark:bg-primary/10'
-                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
-                      ].join(' ')}
-                    >
-                      <Filter className="h-3.5 w-3.5" />
-                      {FILTER_LABELS[filter]}
-                      <ChevronDown className={`h-3 w-3 transition-transform ${showFilterMenu ? 'rotate-180' : ''}`} />
-                    </button>
-                    {showFilterMenu && (
-                      <div className="absolute right-0 top-full mt-1.5 z-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 min-w-28 animate-in fade-in-0 slide-in-from-top-2 duration-150">
-                        {(['all', 'synced', 'local-only'] as FilterMode[]).map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => { setFilter(m); setShowFilterMenu(false); }}
-                            className={[
-                              'w-full text-left px-3 py-1.5 text-xs transition-colors cursor-pointer',
-                              filter === m
-                                ? 'text-primary font-medium bg-primary/5'
-                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800',
-                            ].join(' ')}
-                          >
-                            {FILTER_LABELS[m]}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+            <div className="grid gap-4 xl:grid-cols-3">
+              {[1, 2, 3].map((item) => (
+                <div
+                  key={item}
+                  className="rounded-[26px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900"
+                >
+                  <div className="flex gap-4">
+                    <div className="h-14 w-14 animate-pulse rounded-2xl bg-slate-100 dark:bg-slate-800" />
+                    <div className="flex-1 space-y-3">
+                      <div className="h-8 w-32 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
+                      <div className="h-4 w-full animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+                      <div className="h-4 w-2/3 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+                    </div>
                   </div>
                 </div>
-              )}
+              ))}
+            </div>
 
-              {/* Result count hint */}
-              {hasData && (
-                <p className="text-xs text-slate-400 -mt-1">
-                  共 {displayed.length} 条记录
-                  {(search || filter !== 'all') && docs.length !== displayed.length
-                    ? `（已过滤，全部共 ${docs.length} 条）`
-                    : null}
-                </p>
-              )}
-
-              {/* Empty state：无数据时居中展示，不再放重复按钮 */}
-              {docs.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-24 text-center select-none">
-                  {/* 图标 */}
-                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-900/20 dark:to-indigo-900/20 border border-violet-100 dark:border-violet-800/30 flex items-center justify-center mb-4">
-                    <BrainCircuit className="h-7 w-7 text-violet-400 dark:text-violet-500" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    还没有生成记录
-                  </h3>
-                  <p className="text-xs text-slate-400 dark:text-slate-500 max-w-56 leading-relaxed mb-4">
-                    输入需求描述，让 AI 自动生成完整的测试用例脑图
-                  </p>
-                  {/* 指引文案替代重复按钮：箭头 + 文字指向右上角 */}
-                  <div className="flex items-center gap-1.5 text-xs text-indigo-500 dark:text-indigo-400 font-medium">
-                    <ArrowUpRight className="h-3.5 w-3.5" />
-                    <span>点击右上角「新增需求」开始生成</span>
-                  </div>
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+              {[1, 2].map((item) => (
+                <div
+                  key={item}
+                  className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900"
+                >
+                  <div className="h-8 w-44 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
+                  <div className="mt-5 h-64 animate-pulse rounded-[24px] bg-slate-100 dark:bg-slate-800" />
                 </div>
-              )}
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <HeroSection
+              onCreate={() => setSheetOpen(true)}
+              onCreateFromTemplate={handleCreateFromTemplate}
+              onViewExample={handleViewExample}
+            />
 
-              {/* No search results */}
-              {hasData && displayed.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Search className="h-7 w-7 text-slate-300 dark:text-slate-600 mb-3" />
-                  <p className="text-sm text-slate-500 dark:text-slate-400">没有匹配的记录</p>
-                  <button
-                    type="button"
-                    className="mt-2 text-xs text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300 cursor-pointer underline-offset-2 hover:underline transition-colors"
-                    onClick={() => { setSearch(''); setFilter('all'); }}
-                  >
-                    清除筛选条件
-                  </button>
-                </div>
-              )}
+            <QuickStartSection items={quickStartItems} />
 
-              {/* Record list */}
-              {displayed.length > 0 && (
-                <div className="space-y-3">
-                  {displayed.map((doc) => (
-                    <AiCaseHistoryCard
-                      key={doc.id}
-                      doc={doc}
-                      onOpen={handleOpen}
-                      onDeleted={handleDeleted}
-                      currentDocId={lastOpenedDocId}
-                      generatingDocId={generatingDocId ?? undefined}
-                      generationProgress={aiProgress}
-                    />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+              <RecentWorkspacePanel
+                docs={recentDocs}
+                metrics={metricsById}
+                onOpen={handleOpen}
+                onCreate={() => setSheetOpen(true)}
+                onCreateFromTemplate={handleCreateFromTemplate}
+                onViewAll={handleViewAll}
+                onViewExample={handleViewExample}
+              />
+              <FirstUseTipsPanel onViewExample={handleViewExample} />
+            </section>
 
-        </div>
+            <HistoryPreviewSection
+              docs={historyPreviewDocs}
+              metrics={metricsById}
+              searchValue={historySearch}
+              onSearchChange={setHistorySearch}
+              historyFilter={historyFilter}
+              historySort={historySort}
+              onToggleFilter={toggleHistoryFilter}
+              onToggleSort={toggleHistorySort}
+              onOpen={handleOpen}
+              onViewAll={handleViewAll}
+            />
+          </div>
+        )}
       </div>
 
-      {/* ── New Requirement Sheet ── */}
-      <NewRequirementSheet
-        open={sheetOpen}
-        onOpenChange={setSheetOpen}
-      />
+      <NewRequirementSheet open={sheetOpen} onOpenChange={setSheetOpen} />
     </div>
   );
 }

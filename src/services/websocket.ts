@@ -59,19 +59,6 @@ enum LogLevel {
 }
 
 /**
- * Vite 环境变量类型定义
- * 扩展全局 ImportMeta 接口
- */
-declare global {
-  interface ImportMeta {
-    readonly env: {
-      readonly VITE_API_URL?: string;
-      readonly PROD?: boolean;
-    };
-  }
-}
-
-/**
  * 数据验证函数
  */
 function isValidExecutionUpdate(data: unknown): data is ExecutionUpdate {

@@ -179,7 +179,7 @@ export function AiCaseHistoryCard({
   doc: AiCaseWorkspaceDocument;
   onOpen: (id: string) => void;
   onDeleted: (id: string) => void;
-  /** 当前在脑图页面打开的文档 ID，用于标识「当前工作区」 badge */
+  /** 当前打开的文档 ID，用于标识「当前工作区」 badge */
   currentDocId?: string;
   /** 全局 AiGenerationContext 中正在生成的文档 ID */
   generatingDocId?: string;
@@ -298,7 +298,7 @@ export function AiCaseHistoryCard({
         {isThisGenerating ? (
           <div className="mt-3 flex items-center gap-2 text-xs text-violet-500 dark:text-violet-400">
             <Sparkles className="h-3 w-3" />
-            <span>AI 正在分析需求并构建测试用例脑图，完成后将自动出现在列表…</span>
+            <span>AI 正在分析需求并构建测试用例结构，完成后将自动出现在列表…</span>
           </div>
         ) : (
           <div className="mt-3 flex items-center gap-3 text-xs text-slate-500 flex-wrap">

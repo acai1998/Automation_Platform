@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { executionService } from '../services/ExecutionService';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
+import { query } from '../config/database';
 import { authenticate, requireTester } from '../middleware/auth';
 
 const router = Router();
@@ -414,7 +415,6 @@ router.get('/stuck', async (req, res) => {
     const timeoutThreshold = new Date(Date.now() - timeoutMs);
 
     // Query stuck executions
-    const { query } = await import('../config/database');
     const stuckExecutions = await query<Array<{
       id: number;
       status: string;

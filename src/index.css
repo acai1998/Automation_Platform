@@ -122,14 +122,18 @@
    * 支持 Webkit (Chrome, Safari, Edge) 和 Firefox
    * ---------------------------------------- */
 
-  /* Firefox 滚动条支持 */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: rgb(203 213 225) transparent;
+  /* Firefox 滚动条支持 - @supports 避免不支持浏览器报警告 */
+  @supports (scrollbar-width: thin) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgb(203 213 225) transparent;
+    }
   }
 
-  .dark * {
-    scrollbar-color: rgb(37 45 61) transparent;
+  @supports (scrollbar-color: rgb(203 213 225) transparent) {
+    .dark * {
+      scrollbar-color: rgb(37 45 61) transparent;
+    }
   }
 
   /* Webkit 滚动条样式 */
@@ -263,14 +267,20 @@
 }
 
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
+    @supports (text-wrap: balance) {
+      .text-balance {
+        text-wrap: balance;
+      }
+    }
+    .progress-fill {
+      width: 0%;
+    }
+
+    .text-crisp {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
   }
-  .text-crisp {
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-}
 
 /* ============================================
  * 可访问性 - 尊重用户的减少动画偏好
@@ -285,55 +295,4 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
-}
-
-/* ============================================
- * Mind-Elixir 节点标签内联样式
- *
- * 将 .tags 改为 display:inline-flex，使其与 span.text（inline-block）
- * 在同一文字行内水平排列，节点高度 = 文字行高，不外溢、不遮线。
- *
- * 关键约束：
- *   - 不修改 me-tpc 的 display（保持 block），避免改变 offsetWidth，
- *     从而不影响 mind-elixir generateMainBranch / generateSubBranch 的连线坐标计算
- *   - 不修改 me-parent 的 padding/margin，避免影响 SVG 连线整体坐标
- * ============================================ */
-.map-container me-parent me-tpc {
-  overflow: visible;
-}
-
-.map-container me-parent me-tpc .tags {
-  display: inline-flex;
-  vertical-align: middle;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 4px;
-  margin-left: 6px;
-  padding: 0;
-  pointer-events: none;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* LHS（左侧）节点：
- * mind-elixir 原生已设置 .lhs me-tpc { direction: ltr }，因此 me-tpc 内部
- * span.text 和 .tags 仍按 LTR 顺序排列（文字在前、Tag 在后）。
- * 为使 Tag 靠近主节点（即出现在文字左侧），我们借助 me-tpc 本身的 direction:
- * 暂时移除原生的 "direction:ltr" 覆盖，让 .lhs 的 direction:rtl 作用到 me-tpc，
- * 同时给 .tags 显式设 direction:ltr 保持 Tag 文字可读。
- *
- * 不改 me-tpc 的 display 属性，offsetWidth 行为不变，连线坐标不受影响。
- */
-.map-container .lhs me-parent me-tpc {
-  direction: rtl; /* 覆盖原生的 direction:ltr，使 inline 子元素从右向左排 */
-}
-
-.map-container .lhs me-parent me-tpc .text {
-  direction: ltr; /* 节点文字保持 LTR 可读 */
-}
-
-.map-container .lhs me-parent me-tpc .tags {
-  direction: ltr; /* Tag 文字保持 LTR 可读 */
-  margin-left: 0;
-  margin-right: 6px;
 }

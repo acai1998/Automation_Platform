@@ -1,0 +1,33 @@
+.ai-cases-progress {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: rgb(226 232 240);
+}
+
+.dark .ai-cases-progress {
+  background-color: rgb(51 65 85);
+}
+
+.ai-cases-progress::-webkit-progress-bar {
+  background-color: transparent;
+}
+
+.ai-cases-progress--indigo::-webkit-progress-value {
+  background-color: rgb(99 102 241);
+  border-radius: 9999px;
+}
+
+.ai-cases-progress--gradient::-webkit-progress-value {
+  background-image: linear-gradient(90deg, rgb(99 102 241), rgb(168 85 247));
+  border-radius: 9999px;
+}
+
+.ai-cases-progress--indigo::-moz-progress-bar {
+  background-color: rgb(99 102 241);
+  border-radius: 9999px;
+}
+
+.ai-cases-progress--gradient::-moz-progress-bar {
+  background-image: linear-gradient(90deg, rgb(99 102 241), rgb(168 85 247));
+  border-radius: 9999px;
+}

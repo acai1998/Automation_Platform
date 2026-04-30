@@ -1,15 +1,13 @@
 import type { ResultSetHeader } from 'mysql2/promise';
 import { query, queryOne } from '../config/database';
-import logger from '../utils/logger';
-import { LOG_CONTEXTS } from '../config/logging';
 import {
   calculateWorkspaceCounters,
-  normalizeMapData,
-  updateNodeStatusInMap,
-  type AiCaseMapData,
+  normalizeStructureData,
+  updateNodeStatusInStructure,
+  type AiCaseStructureData,
   type AiCaseNodeStatus,
   type AiCaseWorkspaceCounters,
-} from './aiCaseMapBuilder';
+} from './aiCaseStructureBuilder';
 
 export type AiCaseWorkspaceStatus = 'draft' | 'published' | 'archived';
 export type AiCaseSyncSource = 'local_import' | 'remote_direct' | 'mixed';
@@ -97,7 +95,7 @@ export interface AiCaseWorkspaceSummary {
 }
 
 export interface AiCaseWorkspaceDetail extends AiCaseWorkspaceSummary {
-  mapData: AiCaseMapData;
+  mapData: AiCaseStructureData;
 }
 
 export interface ListAiCaseWorkspacesFilters {
@@ -172,10 +170,10 @@ function clampOffset(offset: number | undefined): number {
   return Math.max(0, Math.floor(offset));
 }
 
-function parseMapDataFromRow(raw: string): AiCaseMapData {
+function parseStructureDataFromRow(raw: string): AiCaseStructureData {
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return normalizeMapData(parsed);
+    return normalizeStructureData(parsed);
   } catch (error) {
     throw new Error(`map_data JSON 解析失败: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -321,7 +319,7 @@ export class AiCaseService {
 
     return {
       ...toWorkspaceSummary(row),
-      mapData: parseMapDataFromRow(row.map_data),
+      mapData: parseStructureDataFromRow(row.map_data),
     };
   }
 
@@ -331,10 +329,10 @@ export class AiCaseService {
       throw new Error('name 不能为空');
     }
 
-    const normalizedMapData = normalizeMapData(input.mapData);
-    const counters = calculateWorkspaceCounters(normalizedMapData);
+    const normalizedStructureData = normalizeStructureData(input.mapData);
+    const counters = calculateWorkspaceCounters(normalizedStructureData);
     const workspaceKey = input.workspaceKey?.trim() || generateWorkspaceKey();
-    const mapDataJson = JSON.stringify(normalizedMapData);
+    const mapDataJson = JSON.stringify(normalizedStructureData);
 
     const insertResult = await query<ResultSetHeader>(
       `INSERT INTO Auto_AiCaseWorkspaces (
@@ -398,9 +396,9 @@ export class AiCaseService {
       throw new Error('工作台版本冲突，请刷新后重试');
     }
 
-    const existingMapData = parseMapDataFromRow(row.map_data);
-    const nextMapData = input.mapData !== undefined ? normalizeMapData(input.mapData) : existingMapData;
-    const counters = calculateWorkspaceCounters(nextMapData);
+    const existingStructureData = parseStructureDataFromRow(row.map_data);
+    const nextStructureData = input.mapData !== undefined ? normalizeStructureData(input.mapData) : existingStructureData;
+    const counters = calculateWorkspaceCounters(nextStructureData);
     const nextVersion = row.version + 1;
 
     await query<ResultSetHeader>(
@@ -427,7 +425,7 @@ export class AiCaseService {
         input.name?.trim() || row.name,
         input.projectId !== undefined ? input.projectId : row.project_id,
         input.requirementText !== undefined ? input.requirementText : row.requirement_text,
-        JSON.stringify(nextMapData),
+        JSON.stringify(nextStructureData),
         input.status ?? row.status,
         input.syncSource ?? row.sync_source,
         nextVersion,
@@ -461,14 +459,14 @@ export class AiCaseService {
       throw new Error('工作台不存在');
     }
 
-    const mapData = parseMapDataFromRow(row.map_data);
-    const result = updateNodeStatusInMap(mapData, input.nodeId, input.status);
+    const structureData = parseStructureDataFromRow(row.map_data);
+    const result = updateNodeStatusInStructure(structureData, input.nodeId, input.status);
 
     if (!result.updated) {
       throw new Error('未找到指定 nodeId');
     }
 
-    const counters = calculateWorkspaceCounters(result.mapData);
+    const counters = calculateWorkspaceCounters(result.structureData);
     const nextVersion = row.version + 1;
 
     await query<ResultSetHeader>(
@@ -487,7 +485,7 @@ export class AiCaseService {
            updated_at = NOW()
        WHERE id = ?`,
       [
-        JSON.stringify(result.mapData),
+        JSON.stringify(result.structureData),
         nextVersion,
         counters.totalCases,
         counters.todoCases,
