@@ -196,6 +196,32 @@ const FIRST_USE_STEPS = [
   },
 ] as const;
 
+const PRIORITY_DISPLAY: Record<
+  AiCaseNodePriority,
+  { label: string; className: string }
+> = {
+  P0: {
+    label: '高',
+    className:
+      'bg-rose-50 text-rose-600 ring-rose-100 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-500/20',
+  },
+  P1: {
+    label: '中',
+    className:
+      'bg-amber-50 text-amber-600 ring-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/20',
+  },
+  P2: {
+    label: '低',
+    className:
+      'bg-emerald-50 text-emerald-600 ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20',
+  },
+  P3: {
+    label: '低',
+    className:
+      'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700',
+  },
+};
+
 function walkNodes(node: AiCaseNode, visit: (current: AiCaseNode) => void): void {
   visit(node);
   for (const child of node.children ?? []) {
@@ -294,6 +320,42 @@ function resolveWorkspaceStatus(
     label: '进行中',
     className: 'bg-indigo-50 text-indigo-700 ring-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-500/20',
   };
+}
+
+function resolvePriorityDisplay(priority: AiCaseNodePriority): {
+  label: string;
+  className: string;
+} {
+  return PRIORITY_DISPLAY[priority];
+}
+
+function HeroBackdrop() {
+  return (
+    <>
+      <div className="pointer-events-none absolute inset-x-0 top-4 hidden h-28 xl:block">
+        <div className="absolute left-0 top-8 h-px w-40 bg-[#dbe5ff]" />
+        <div className="absolute left-40 top-8 h-10 w-10 rounded-tl-[18px] border-l border-t border-[#dbe5ff]" />
+        <div className="absolute left-52 top-0 h-px w-52 bg-[#dbe5ff]" />
+        <div className="absolute left-[36%] top-0 h-6 w-6 rounded-tr-[12px] border-r border-t border-[#dbe5ff]" />
+        <div className="absolute left-[36%] top-0 h-px w-20 bg-[#dbe5ff]" />
+        <div className="absolute right-[28%] top-0 h-px w-52 bg-[#dbe5ff]" />
+        <div className="absolute right-[16%] top-0 h-6 w-6 rounded-tl-[12px] border-l border-t border-[#dbe5ff]" />
+        <div className="absolute right-10 top-0 h-px w-44 bg-[#dbe5ff]" />
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-6 hidden h-16 xl:block">
+        <div className="absolute left-16 bottom-0 h-px w-36 bg-[#dbe5ff]" />
+        <div className="absolute left-52 bottom-0 h-5 w-5 rounded-bl-[10px] border-b border-l border-[#dbe5ff]" />
+        <div className="absolute left-[42%] bottom-0 h-px w-56 bg-[#dbe5ff]" />
+        <div className="absolute right-[24%] bottom-0 h-5 w-5 rounded-br-[10px] border-b border-r border-[#dbe5ff]" />
+        <div className="absolute right-12 bottom-0 h-px w-36 bg-[#dbe5ff]" />
+      </div>
+
+      <div className="pointer-events-none absolute -left-14 top-8 h-40 w-40 rounded-full bg-[radial-gradient(circle,_rgba(93,115,255,0.12),_transparent_72%)]" />
+      <div className="pointer-events-none absolute right-8 top-1 h-52 w-52 rounded-full bg-[radial-gradient(circle,_rgba(104,82,255,0.14),_transparent_68%)]" />
+      <div className="pointer-events-none absolute right-[18%] top-14 h-32 w-32 rounded-full bg-[radial-gradient(circle,_rgba(117,180,255,0.18),_transparent_72%)]" />
+    </>
+  );
 }
 
 interface NewRequirementSheetProps {
@@ -586,19 +648,20 @@ function HeroSection({
   onViewExample,
 }: HeroSectionProps) {
   return (
-    <section className="relative overflow-hidden rounded-[32px] border border-slate-200/80 bg-white px-8 py-8 shadow-[0_24px_80px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-900">
-      <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-[radial-gradient(circle,_rgba(99,102,241,0.16),_transparent_68%)]" />
-      <div className="pointer-events-none absolute right-20 top-0 h-64 w-64 rounded-full bg-[radial-gradient(circle,_rgba(191,219,254,0.28),_transparent_68%)]" />
-      <div className="pointer-events-none absolute right-0 top-8 h-56 w-[420px] rounded-full bg-[conic-gradient(from_210deg_at_50%_50%,rgba(255,255,255,0)_0deg,rgba(129,140,248,0.12)_80deg,rgba(255,255,255,0)_210deg)] blur-2xl" />
+    <section className="relative overflow-hidden rounded-[34px] border border-[#dce6fb] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-8 py-8 shadow-[0_22px_64px_rgba(148,163,184,0.10)] dark:border-slate-800 dark:bg-slate-900">
+      <HeroBackdrop />
 
       <div className="relative flex flex-col gap-8">
         <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-          <div className="max-w-3xl">
-            <h1 className="text-4xl font-black tracking-tight text-slate-900 dark:text-white sm:text-5xl">
-              AI 工作台
+          <div className="max-w-4xl">
+            <div className="text-sm font-semibold tracking-[0.22em] text-[#6a7ecb]">
+              AI WORKBENCH
+            </div>
+            <h1 className="mt-3 text-[36px] font-bold tracking-tight text-slate-900 dark:text-white">
+              AI 智能用例工作台
             </h1>
-            <p className="mt-4 text-lg leading-8 text-slate-600 dark:text-slate-300">
-              输入需求并生成结构化测试用例，继续完成筛选、补充、执行与回流。
+            <p className="mt-4 max-w-3xl text-[15px] leading-8 text-slate-600 dark:text-slate-300">
+              基于需求、接口文档、缺陷和代码变更生成结构化测试用例，并支持补充、执行与回流沉淀。
             </p>
 
             <div className="mt-5 flex flex-wrap gap-3">
@@ -607,7 +670,7 @@ function HeroSection({
                 return (
                   <span
                     key={chip.label}
-                    className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-medium ${chip.tone}`}
+                    className={`inline-flex items-center gap-2 rounded-[14px] border px-4 py-2 text-sm font-medium shadow-[0_6px_18px_rgba(148,163,184,0.08)] ${chip.tone}`}
                   >
                     <Icon className="h-4 w-4" />
                     {chip.label}
@@ -621,17 +684,17 @@ function HeroSection({
             <Button
               type="button"
               size="lg"
-              className="h-12 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 hover:bg-indigo-700"
+              className="h-14 rounded-[16px] bg-[linear-gradient(135deg,#4e6bff_0%,#654bff_100%)] px-6 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(92,88,255,0.28)] hover:opacity-95"
               onClick={onCreate}
             >
               <Plus className="mr-2 h-4 w-4" />
-              新增需求
+              新建工作台
             </Button>
             <Button
               type="button"
               size="lg"
               variant="outline"
-              className="h-12 rounded-xl border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              className="h-14 rounded-[16px] border-[#d9e1f6] bg-white px-6 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(148,163,184,0.10)] hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
               onClick={onCreateFromTemplate}
             >
               <BookOpen className="mr-2 h-4 w-4" />
@@ -640,7 +703,7 @@ function HeroSection({
             <Button
               type="button"
               variant="ghost"
-              className="h-12 rounded-xl px-3 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
+              className="h-14 rounded-[16px] px-3 text-sm font-semibold text-[#4e6bff] hover:bg-[#eef3ff] hover:text-[#3956f6] dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
               onClick={onViewExample}
             >
               查看示例
@@ -658,8 +721,8 @@ interface QuickStartSectionProps {
 
 function QuickStartSection({ items }: QuickStartSectionProps) {
   return (
-    <section className="space-y-4">
-      <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">快速开始</h2>
+    <section className="rounded-[32px] border border-[#e3eafc] bg-white/92 px-6 py-5 shadow-[0_18px_50px_rgba(148,163,184,0.10)] backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900">
+      <h2 className="mb-5 text-[30px] font-bold tracking-tight text-slate-900 dark:text-white">常用入口</h2>
 
       <div className="grid gap-4 xl:grid-cols-3">
         {items.map((item) => {
@@ -669,24 +732,26 @@ function QuickStartSection({ items }: QuickStartSectionProps) {
               key={item.title}
               type="button"
               onClick={item.onClick}
-              className="group rounded-[26px] border border-slate-200 bg-white p-5 text-left shadow-[0_18px_45px_rgba(15,23,42,0.04)] transition-all hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_20px_50px_rgba(79,70,229,0.08)] dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-500/30"
+              className="group rounded-[24px] border border-[#dfe7fb] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-5 text-left shadow-[0_12px_30px_rgba(148,163,184,0.10)] transition-all hover:-translate-y-0.5 hover:border-[#b8c8ff] hover:shadow-[0_18px_38px_rgba(78,107,255,0.12)] dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-500/30"
             >
-              <div className="flex items-start gap-4">
-                <div className={`flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl ${item.iconTone}`}>
+              <div className="flex items-center gap-4">
+                <div className={`flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-[20px] shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] ${item.iconTone}`}>
                   <Icon className="h-7 w-7" />
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center justify-between gap-4">
                     <div>
-                      <div className="text-2xl font-semibold text-slate-900 dark:text-white">
+                      <div className="text-[28px] font-semibold tracking-tight text-slate-900 dark:text-white">
                         {item.title}
                       </div>
-                      <div className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                      <div className="mt-2 max-w-[320px] text-sm leading-7 text-slate-500 dark:text-slate-400">
                         {item.description}
                       </div>
                     </div>
-                    <ChevronRight className="mt-1 h-5 w-5 flex-shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-500 dark:text-slate-600" />
+                    <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border border-[#dde6fb] bg-white text-[#4e6bff] transition-transform group-hover:translate-x-0.5 dark:border-slate-700 dark:bg-slate-900">
+                      <ChevronRight className="h-5 w-5" />
+                    </div>
                   </div>
 
                   <div className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-indigo-600 dark:text-indigo-300">
@@ -723,9 +788,9 @@ function RecentWorkspacePanel({
   onViewExample,
 }: RecentWorkspacePanelProps) {
   return (
-    <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-[30px] border border-[#e3eafc] bg-white/95 p-6 shadow-[0_18px_52px_rgba(148,163,184,0.12)] dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-5 flex items-center justify-between gap-3">
-        <h3 className="text-2xl font-semibold text-slate-900 dark:text-white">最近继续</h3>
+        <h3 className="text-[30px] font-bold tracking-tight text-slate-900 dark:text-white">继续上次工作</h3>
         <Button
           type="button"
           variant="ghost"
@@ -794,31 +859,48 @@ function RecentWorkspacePanel({
                 key={doc.id}
                 type="button"
                 onClick={() => onOpen(doc.id)}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-left transition-colors hover:border-indigo-200 hover:bg-white dark:border-slate-800 dark:bg-slate-950 dark:hover:border-indigo-500/30 dark:hover:bg-slate-900"
+                className="w-full rounded-[22px] border border-[#dfe7fb] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] px-5 py-4 text-left shadow-[0_10px_24px_rgba(148,163,184,0.08)] transition-all hover:-translate-y-0.5 hover:border-[#b8c8ff] hover:shadow-[0_16px_32px_rgba(78,107,255,0.12)] dark:border-slate-800 dark:bg-slate-950 dark:hover:border-indigo-500/30 dark:hover:bg-slate-900"
               >
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="line-clamp-1 text-lg font-semibold text-slate-900 dark:text-white">
-                      {doc.name}
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-[16px] bg-[linear-gradient(135deg,#eff4ff_0%,#dfe8ff_100%)] text-[#4e6bff] shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] dark:bg-slate-800 dark:text-indigo-300">
+                      <Boxes className="h-5 w-5" />
                     </div>
-                    <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                      最近更新：{formatRelativeTime(doc.updatedAt)}
+                    <div className="min-w-0">
+                      <div className="line-clamp-1 text-lg font-semibold text-slate-900 dark:text-white">
+                        {doc.name}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                        最近更新：{formatRelativeTime(doc.updatedAt)}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex flex-1 flex-wrap items-center gap-x-5 gap-y-3 xl:justify-end">
+                    <div className="text-sm text-slate-500 dark:text-slate-400">
+                      模块 <span className="ml-1 font-semibold text-slate-700 dark:text-slate-200">{currentMetrics.moduleCount}</span>
+                    </div>
+                    <div className="text-sm text-slate-500 dark:text-slate-400">
+                      用例 <span className="ml-1 font-semibold text-slate-700 dark:text-slate-200">{currentMetrics.progress.total}</span>
+                    </div>
                     <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${status.className}`}>
                       {status.label}
                     </span>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
-                      模块 {currentMetrics.moduleCount}
-                    </span>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
-                      用例 {currentMetrics.progress.total}
-                    </span>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
-                      完成率 {currentMetrics.progress.completionRate}%
-                    </span>
+                    <div className="min-w-[150px]">
+                      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                        <span>完成率</span>
+                        <span>{currentMetrics.progress.completionRate}%</span>
+                      </div>
+                      <div className="mt-2 h-2 rounded-full bg-[#e8eefb] dark:bg-slate-800">
+                        <div
+                          ref={(el) => {
+                            if (el) el.style.width = `${Math.min(currentMetrics.progress.completionRate, 100)}%`;
+                          }}
+                          className="h-2 rounded-full bg-[linear-gradient(90deg,#5e73ff_0%,#3d7cff_100%)] transition-all"
+                        />
+                      </div>
+                    </div>
+                    <ArrowRight className="h-5 w-5 flex-shrink-0 text-[#5a71ff]" />
                   </div>
                 </div>
               </button>
@@ -832,8 +914,8 @@ function RecentWorkspacePanel({
 
 function FirstUseTipsPanel({ onViewExample }: { onViewExample: () => void }) {
   return (
-    <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
-      <div className="mb-5 text-2xl font-semibold text-slate-900 dark:text-white">首次使用建议</div>
+    <div className="rounded-[30px] border border-[#e3eafc] bg-white/95 p-6 shadow-[0_18px_52px_rgba(148,163,184,0.12)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-5 text-[30px] font-bold tracking-tight text-slate-900 dark:text-white">推荐工作流</div>
 
       <div className="space-y-5">
         {FIRST_USE_STEPS.map((step, index) => {
@@ -843,7 +925,7 @@ function FirstUseTipsPanel({ onViewExample }: { onViewExample: () => void }) {
           return (
             <div key={step.title} className="relative flex gap-4">
               {!isLast ? (
-                <div className="absolute left-[16px] top-9 h-[calc(100%+12px)] w-px border-l border-dashed border-slate-200 dark:border-slate-700" />
+                <div className="absolute left-[16px] top-9 h-[calc(100%+12px)] w-px border-l border-dashed border-[#cddafd] dark:border-slate-700" />
               ) : null}
 
               <div className="relative flex flex-col items-center">
@@ -852,8 +934,8 @@ function FirstUseTipsPanel({ onViewExample }: { onViewExample: () => void }) {
                 </div>
               </div>
 
-              <div className="flex min-w-0 flex-1 gap-3 rounded-2xl bg-slate-50/80 px-3 py-3 dark:bg-slate-950/50">
-                <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl ${step.tone}`}>
+              <div className="flex min-w-0 flex-1 gap-3 rounded-[20px] border border-[#e1e8fb] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] px-3 py-3 shadow-[0_10px_24px_rgba(148,163,184,0.08)] dark:border-slate-800 dark:bg-slate-950/50">
+                <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-[18px] ${step.tone}`}>
                   <Icon className="h-6 w-6" />
                 </div>
                 <div className="min-w-0">
@@ -873,7 +955,7 @@ function FirstUseTipsPanel({ onViewExample }: { onViewExample: () => void }) {
       <Button
         type="button"
         variant="ghost"
-        className="mt-6 h-11 w-full rounded-2xl bg-slate-50 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:bg-slate-950 dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
+        className="mt-6 h-12 w-full rounded-[18px] bg-[#f4f7ff] text-sm font-semibold text-[#4e6bff] hover:bg-[#edf2ff] hover:text-[#3956f6] dark:bg-slate-950 dark:text-indigo-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-200"
         onClick={onViewExample}
       >
         查看完整工作流
@@ -909,10 +991,10 @@ function HistoryPreviewSection({
   onViewAll,
 }: HistoryPreviewSectionProps) {
   return (
-    <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
+    <section className="rounded-[32px] border border-[#e3eafc] bg-white/95 p-6 shadow-[0_18px_52px_rgba(148,163,184,0.12)] dark:border-slate-800 dark:bg-slate-900">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">全部历史记录</h2>
+          <h2 className="text-[30px] font-bold tracking-tight text-slate-900 dark:text-white">全部历史记录</h2>
         </div>
         <Button
           type="button"
@@ -932,7 +1014,7 @@ function HistoryPreviewSection({
             value={searchValue}
             onChange={(event) => onSearchChange(event.target.value)}
             placeholder="搜索工作台名称..."
-            className="h-11 rounded-xl border-slate-200 bg-white pl-11 text-sm dark:border-slate-700 dark:bg-slate-900"
+            className="h-11 rounded-[16px] border-[#d9e3fa] bg-[#fbfcff] pl-11 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] dark:border-slate-700 dark:bg-slate-900"
           />
         </div>
 
@@ -940,7 +1022,7 @@ function HistoryPreviewSection({
           <Button
             type="button"
             variant="outline"
-            className="h-11 rounded-xl border-slate-200 bg-white px-4 text-sm font-medium dark:border-slate-700 dark:bg-slate-900"
+            className="h-11 rounded-[16px] border-[#d9e3fa] bg-white px-4 text-sm font-medium shadow-[0_8px_20px_rgba(148,163,184,0.10)] dark:border-slate-700 dark:bg-slate-900"
             onClick={onToggleFilter}
           >
             <Filter className="mr-2 h-4 w-4" />
@@ -949,7 +1031,7 @@ function HistoryPreviewSection({
           <Button
             type="button"
             variant="outline"
-            className="h-11 rounded-xl border-slate-200 bg-white px-4 text-sm font-medium dark:border-slate-700 dark:bg-slate-900"
+            className="h-11 rounded-[16px] border-[#d9e3fa] bg-white px-4 text-sm font-medium shadow-[0_8px_20px_rgba(148,163,184,0.10)] dark:border-slate-700 dark:bg-slate-900"
             onClick={onToggleSort}
           >
             <ArrowUpDown className="mr-2 h-4 w-4" />
@@ -958,7 +1040,7 @@ function HistoryPreviewSection({
         </div>
       </div>
 
-      <div className="mt-4 overflow-hidden rounded-[24px] border border-slate-200 dark:border-slate-800">
+      <div className="mt-4 overflow-hidden rounded-[24px] border border-[#dfe7fb] dark:border-slate-800">
         {docs.length === 0 ? (
           <div className="flex min-h-[240px] items-center justify-center bg-white px-6 py-10 dark:bg-slate-900">
             <div className="flex flex-col items-center gap-4 text-center">
@@ -975,9 +1057,9 @@ function HistoryPreviewSection({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
-              <thead className="bg-slate-50 dark:bg-slate-950/60">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            <table className="min-w-full divide-y divide-[#e8eefb] text-sm dark:divide-slate-800">
+              <thead className="bg-[#f8fbff] dark:bg-slate-950/60">
+                <tr className="text-left text-xs font-semibold tracking-wide text-slate-500 dark:text-slate-400">
                   <th className="px-5 py-3">名称</th>
                   <th className="px-5 py-3">更新时间</th>
                   <th className="px-5 py-3">模块数</th>
@@ -988,7 +1070,7 @@ function HistoryPreviewSection({
                   <th className="px-5 py-3 text-right">操作</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-800 dark:bg-slate-900">
+              <tbody className="divide-y divide-[#e8eefb] bg-white dark:divide-slate-800 dark:bg-slate-900">
                 {docs.map((doc) => {
                   const currentMetrics = metrics.get(doc.id) ?? {
                     progress: computeProgress(doc.mapData),
@@ -996,9 +1078,10 @@ function HistoryPreviewSection({
                     highestPriority: 'P3' as AiCaseNodePriority,
                   };
                   const status = resolveWorkspaceStatus(doc, currentMetrics.progress);
+                  const priority = resolvePriorityDisplay(currentMetrics.highestPriority);
 
                   return (
-                    <tr key={doc.id} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-950/60">
+                    <tr key={doc.id} className="transition-colors hover:bg-[#f8fbff] dark:hover:bg-slate-950/60">
                       <td className="px-5 py-4">
                         <div className="max-w-[280px]">
                           <div className="line-clamp-1 font-semibold text-slate-900 dark:text-white">
@@ -1019,8 +1102,8 @@ function HistoryPreviewSection({
                         {currentMetrics.progress.total}
                       </td>
                       <td className="px-5 py-4">
-                        <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                          {currentMetrics.highestPriority}
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${priority.className}`}>
+                          {priority.label}
                         </span>
                       </td>
                       <td className="px-5 py-4">
@@ -1036,12 +1119,12 @@ function HistoryPreviewSection({
                             </span>
                             <span>{currentMetrics.progress.completionRate}%</span>
                           </div>
-                          <div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800">
+                          <div className="mt-2 h-2 rounded-full bg-[#e8eefb] dark:bg-slate-800">
                             <div
                               ref={(el) => {
                                 if (el) el.style.width = `${Math.min(currentMetrics.progress.completionRate, 100)}%`;
                               }}
-                              className="h-2 rounded-full bg-indigo-500 transition-all"
+                              className="h-2 rounded-full bg-[linear-gradient(90deg,#5e73ff_0%,#3d7cff_100%)] transition-all"
                             />
                           </div>
                         </div>
@@ -1114,7 +1197,7 @@ export default function AICaseCreate() {
     [docs]
   );
 
-  const recentDocs = useMemo(() => sortedDocs.slice(0, 5), [sortedDocs]);
+  const recentDocs = useMemo(() => sortedDocs.slice(0, 3), [sortedDocs]);
 
   const historyPreviewDocs = useMemo(() => {
     const keyword = historySearch.trim().toLowerCase();
@@ -1179,8 +1262,8 @@ export default function AICaseCreate() {
   const quickStartItems = useMemo<QuickStartCardItem[]>(
     () => [
       {
-        title: '新建需求',
-        description: '从 PRD、需求描述或原型开始生成测试用例',
+        title: '新建工作台',
+        description: '从 PRD、需求或变更创建工作台并生成测试用例',
         actionLabel: '立即创建',
         icon: FileText,
         iconTone: 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
@@ -1196,7 +1279,7 @@ export default function AICaseCreate() {
       },
       {
         title: '查看示例',
-        description: '查看一条完整的 AI 工作台示例，快速理解流程',
+        description: '查看一条完整的工作台示例，快速理解流程',
         actionLabel: '查看示例',
         icon: BookOpen,
         iconTone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
@@ -1207,8 +1290,9 @@ export default function AICaseCreate() {
   );
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f6f8fc] dark:bg-slate-950">
-      <div className="mx-auto max-w-[1320px] px-6 py-8">
+    <div className="relative h-full overflow-y-auto bg-[linear-gradient(180deg,#f5f8ff_0%,#f7f9fd_28%,#f4f6fb_100%)] dark:bg-slate-950">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top_left,rgba(117,155,255,0.12),transparent_36%),radial-gradient(circle_at_top_right,rgba(101,75,255,0.10),transparent_28%)]" />
+      <div className="relative mx-auto max-w-[1360px] px-6 py-8">
         {loading ? (
           <div className="space-y-6">
             <div className="rounded-[32px] border border-slate-200 bg-white px-8 py-8 shadow-[0_18px_45px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
