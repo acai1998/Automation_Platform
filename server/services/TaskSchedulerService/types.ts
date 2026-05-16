@@ -15,6 +15,7 @@ export interface QueueItem {
   taskId: number;
   triggerReason: 'scheduled' | 'manual' | 'retry';
   operatorId?: number;
+  scheduledFor?: Date;
   enqueuedAt: number;
   priority: number;
   timeoutTimer?: NodeJS.Timeout;

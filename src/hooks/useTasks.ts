@@ -369,6 +369,7 @@ export interface QueuedItemInfo {
   waitMs: number;
   priority: number;
   queuePosition: number;
+  scheduledFor?: string;
 }
 
 /** 直连等待队列项详情（run-case / run-batch 专用） */

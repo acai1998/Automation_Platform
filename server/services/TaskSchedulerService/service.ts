@@ -32,6 +32,7 @@ import {
   PRIORITY_RETRY,
   PRIORITY_SCHEDULED,
   QUEUE_ITEM_TIMEOUT_MS,
+  SCHEDULED_QUEUE_ITEM_TIMEOUT_MS,
   SCHEDULER_USER_ID,
   SLOT_HOLD_TIMEOUT_MS,
   SLOT_RECONCILE_INTERVAL_MS,
@@ -45,6 +46,10 @@ import {
   mapPollRowToScheduledTask,
 } from './taskQueries';
 import { TaskSchedulerRegistryHelper } from './registry';
+import {
+  getQueueItemTimeoutMs,
+  isDuplicateQueuedDispatch,
+} from './queuePolicy';
 import type {
   DirectQueueItem,
   QueueItem,
@@ -88,10 +93,10 @@ export class TaskSchedulerService {
   private taskCache: Map<number, ScheduledTask> = new Map();
 
   /**
-   * 最近一次已触发的 cron 窗口（taskId -> windowStartMs）
+   * 最近已触发的 cron 窗口（taskId -> windowStartMs set）
    * 用于防止“补偿触发 + 正常定时触发”在同一窗口内重复创建运行记录。
    */
-  private recentScheduledWindowByTaskId: Map<number, number> = new Map();
+  private recentScheduledWindowsByTaskId: Map<number, Set<number>> = new Map();
 
   /** 是否已启动 */
   private started = false;
@@ -112,7 +117,7 @@ export class TaskSchedulerService {
     this.registryHelper = new TaskSchedulerRegistryHelper({
       taskCache: this.taskCache,
       timers: this.timers,
-      dispatchTask: (taskId, triggerReason, operatorId) => this.dispatchTask(taskId, triggerReason, operatorId),
+      dispatchTask: (taskId, triggerReason, operatorId, scheduledFor) => this.dispatchTask(taskId, triggerReason, operatorId, scheduledFor),
       recordAuditLog: (taskId, action, operatorId, metadata) => this.recordAuditLog(taskId, action, operatorId, metadata),
       unregisterTask: (taskId) => this.unregisterTask(taskId),
     });
@@ -181,6 +186,8 @@ export class TaskSchedulerService {
     logger.info('TaskSchedulerService started', {
       event: LOG_EVENTS.SCHEDULER_STARTED,
       concurrencyLimit: CONCURRENCY_LIMIT,
+      queueItemTimeoutMs: QUEUE_ITEM_TIMEOUT_MS,
+      scheduledQueueItemTimeoutMs: SCHEDULED_QUEUE_ITEM_TIMEOUT_MS,
       slotReconcileIntervalMs: SLOT_RECONCILE_INTERVAL_MS,
     }, LOG_CONTEXTS.EXECUTION);
   }
@@ -356,6 +363,7 @@ export class TaskSchedulerService {
     if (!task) return;
     this.unregisterTask(taskId);
     if (task.status === 'active' && task.cronExpression) {
+      this.taskCache.set(task.id, task);
       this.registryHelper.scheduleTask(task);
     }
   }
@@ -369,7 +377,7 @@ export class TaskSchedulerService {
       this.timers.delete(taskId);
     }
     this.taskCache.delete(taskId);
-    this.recentScheduledWindowByTaskId.delete(taskId);
+    this.recentScheduledWindowsByTaskId.delete(taskId);
     // [P1] 从等待队列中也清除，并取消队列超时 timer
     const removedItems = this.waitQueue.filter(item => item.taskId === taskId);
     for (const item of removedItems) {
@@ -385,7 +393,14 @@ export class TaskSchedulerService {
    */
   getStatus(): {
     running: Array<{ taskId: number; runId: number; elapsedMs: number; label?: string }>;
-    queued: Array<{ taskId: number; triggerReason: string; waitMs: number; priority: number; queuePosition: number }>;
+    queued: Array<{
+      taskId: number;
+      triggerReason: string;
+      waitMs: number;
+      priority: number;
+      queuePosition: number;
+      scheduledFor?: string;
+    }>;
     directQueued: Array<{ label: string; waitMs: number; queuePosition: number }>;
     scheduled: number[];
     concurrencyLimit: number;
@@ -407,6 +422,7 @@ export class TaskSchedulerService {
         waitMs: now - item.enqueuedAt,
         priority: item.priority,
         queuePosition: idx + 1,
+        scheduledFor: item.scheduledFor?.toISOString(),
       })),
       directQueued: this.directQueue.map((item, idx) => ({
         label: item.label,
@@ -770,7 +786,12 @@ export class TaskSchedulerService {
    * 3. 槽位在 executeTask 返回后**不立即释放**，而是在 Jenkins 回调/超时后释放
    * 4. 队列最大深度保护（MAX_QUEUE_DEPTH）+ 队列项超时（QUEUE_ITEM_TIMEOUT_MS）
    */
-  async dispatchTask(taskId: number, triggerReason: 'scheduled' | 'manual' | 'retry' = 'scheduled', operatorId?: number): Promise<void> {
+  async dispatchTask(
+    taskId: number,
+    triggerReason: 'scheduled' | 'manual' | 'retry' = 'scheduled',
+    operatorId?: number,
+    scheduledFor?: Date,
+  ): Promise<void> {
     if (this.runningSlots.size >= CONCURRENCY_LIMIT) {
       // [P1] 队列深度保护
       if (this.waitQueue.length >= MAX_QUEUE_DEPTH) {
@@ -783,9 +804,20 @@ export class TaskSchedulerService {
         return;
       }
 
-      // [P1] 同一任务已在队列中则跳过（防重复入队）
-      if (this.waitQueue.some(item => item.taskId === taskId)) {
-        logger.debug(`Task ${taskId} already in queue, skipping duplicate enqueue`, { event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED, taskId }, LOG_CONTEXTS.EXECUTION);
+      const candidateQueueItem = {
+        taskId,
+        triggerReason,
+        scheduledFor,
+      };
+
+      // [P1] 同一调度窗口已在队列中则跳过；不同 cron 窗口需要保留，避免周期触发被吞掉。
+      if (this.waitQueue.some(item => isDuplicateQueuedDispatch(item, candidateQueueItem))) {
+        logger.debug(`Task ${taskId} already in queue, skipping duplicate enqueue`, {
+          event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
+          taskId,
+          triggerReason,
+          scheduledFor: scheduledFor?.toISOString() ?? null,
+        }, LOG_CONTEXTS.EXECUTION);
         return;
       }
 
@@ -798,22 +830,27 @@ export class TaskSchedulerService {
         taskId,
         triggerReason,
         operatorId,
+        scheduledFor,
         enqueuedAt: Date.now(),
         priority,
       };
 
-      // [P1] 队列项超时：超过 QUEUE_ITEM_TIMEOUT_MS 自动移除
+      const queueTimeoutMs = getQueueItemTimeoutMs(triggerReason);
+
+      // [P1] 队列项超时：scheduled 使用更长等待，避免周期触发在槽位释放前被丢弃
       queueItem.timeoutTimer = setTimeout(() => {
         const idx = this.waitQueue.findIndex(it => it === queueItem);
         if (idx !== -1) {
           this.waitQueue.splice(idx, 1);
-          logger.warn(`Task ${taskId} queue item timed out and removed (waited ${QUEUE_ITEM_TIMEOUT_MS}ms)`, {
+          logger.warn(`Task ${taskId} queue item timed out and removed (waited ${queueTimeoutMs}ms)`, {
             event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_TIMEOUT,
             taskId,
             waitMs: Date.now() - queueItem.enqueuedAt,
+            triggerReason,
+            scheduledFor: scheduledFor?.toISOString() ?? null,
           }, LOG_CONTEXTS.EXECUTION);
         }
-      }, QUEUE_ITEM_TIMEOUT_MS);
+      }, queueTimeoutMs);
       if (queueItem.timeoutTimer.unref) queueItem.timeoutTimer.unref();
 
       // [P1] 按优先级插入（稳定排序：priority ASC，enqueuedAt ASC）
@@ -833,6 +870,8 @@ export class TaskSchedulerService {
         priority,
         queuePosition: this.waitQueue.findIndex(it => it === queueItem) + 1,
         queueDepth: this.waitQueue.length,
+        queueTimeoutMs,
+        scheduledFor: scheduledFor?.toISOString() ?? null,
       }, LOG_CONTEXTS.EXECUTION);
       return;
     }
@@ -843,11 +882,12 @@ export class TaskSchedulerService {
       triggerReason,
       runningSlots: this.runningSlots.size,
       limit: CONCURRENCY_LIMIT,
+      scheduledFor: scheduledFor?.toISOString() ?? null,
     }, LOG_CONTEXTS.EXECUTION);
 
     try {
       // [P1] executeTask 内部会在 Jenkins 触发成功后注册 slot，失败时不注册（不占用槽位）
-      await this.executeTask(taskId, triggerReason, operatorId);
+      await this.executeTask(taskId, triggerReason, operatorId, scheduledFor);
       // 触发成功后清理历史重试状态，避免后续误判
       this.clearRetryState(taskId);
     } catch (err) {
@@ -863,69 +903,141 @@ export class TaskSchedulerService {
   /**
    * 判断当前 scheduled 触发是否与最近窗口重复（补偿 + 定时并发场景防重）
    */
-  private async isDuplicateScheduledWindow(taskId: number, cronExpression: string): Promise<{ duplicated: boolean; windowStart: Date | null; reason?: string }> {
+  private rememberScheduledWindow(taskId: number, windowStartMs: number): void {
+    let windows = this.recentScheduledWindowsByTaskId.get(taskId);
+    if (!windows) {
+      windows = new Set<number>();
+      this.recentScheduledWindowsByTaskId.set(taskId, windows);
+    }
+
+    const cutoffMs = Date.now() - MAX_MISSED_WINDOW_MS;
+    for (const rememberedWindow of windows) {
+      if (rememberedWindow < cutoffMs) {
+        windows.delete(rememberedWindow);
+      }
+    }
+
+    windows.add(windowStartMs);
+  }
+
+  private hasRememberedScheduledWindow(taskId: number, windowStartMs: number): boolean {
+    const windows = this.recentScheduledWindowsByTaskId.get(taskId);
+    return windows?.has(windowStartMs) ?? false;
+  }
+
+  private async isDuplicateScheduledWindow(
+    taskId: number,
+    cronExpression: string,
+    scheduledFor?: Date,
+  ): Promise<{ duplicated: boolean; windowStart: Date | null; reason?: string }> {
     const now = new Date();
-    const windowStart = getPrevCronTime(
-      cronExpression,
-      new Date(now.getTime() + 1000),
-      MAX_MISSED_WINDOW_MS,
-    );
+    const windowStart = scheduledFor && !Number.isNaN(scheduledFor.getTime())
+      ? scheduledFor
+      : getPrevCronTime(
+        cronExpression,
+        new Date(now.getTime() + 1000),
+        MAX_MISSED_WINDOW_MS,
+      );
+
     if (!windowStart) {
       logger.debug(`Unable to compute previous cron window for task ${taskId}`, {
         event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
         taskId,
         cronExpression,
+        scheduledFor: scheduledFor?.toISOString() ?? null,
       }, LOG_CONTEXTS.EXECUTION);
       return { duplicated: false, windowStart: null, reason: 'window_unavailable' };
     }
 
     const windowStartMs = windowStart.getTime();
-    const inMemoryWindow = this.recentScheduledWindowByTaskId.get(taskId);
-    if (inMemoryWindow === windowStartMs) {
+    const windowStartIso = windowStart.toISOString();
+
+    if (this.hasRememberedScheduledWindow(taskId, windowStartMs)) {
       logger.info(`Task ${taskId} duplicate detected by memory guard`, {
         event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
         taskId,
-        windowStart: new Date(windowStartMs).toISOString(),
+        windowStart: windowStartIso,
         reason: 'memory_guard',
       }, LOG_CONTEXTS.EXECUTION);
       return { duplicated: true, windowStart, reason: 'memory_guard' };
     }
 
-    const lastExecution = await queryOne<{ id: number; created_at: string | null }>(
-      `SELECT id, created_at
-       FROM Auto_TestCaseTaskExecutions
-       WHERE task_id = ?
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [taskId]
-    );
+    this.rememberScheduledWindow(taskId, windowStartMs);
 
-    if (lastExecution?.created_at) {
-      const lastCreatedAt = new Date(lastExecution.created_at).getTime();
-      // 容错：允许少量时钟偏移（默认 5s），避免因节点或 DB 时钟微小差异造成重复触发
-      const toleranceMs = parseInt(process.env.SCHEDULER_DEDUPE_TOLERANCE_MS || '5000', 10);
-      if (!Number.isNaN(lastCreatedAt) && lastCreatedAt >= (windowStartMs - toleranceMs)) {
-        this.recentScheduledWindowByTaskId.set(taskId, windowStartMs);
-        logger.info(`Task ${taskId} duplicate detected by DB guard`, {
-          event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
-          taskId,
-          windowStart: new Date(windowStartMs).toISOString(),
-          lastExecutionCreatedAt: new Date(lastCreatedAt).toISOString(),
-          toleranceMs,
-          reason: 'db_guard',
-        }, LOG_CONTEXTS.EXECUTION);
-        return { duplicated: true, windowStart, reason: 'db_guard' };
-      }
+    let auditMatch: { id: number } | null = null;
+    try {
+      auditMatch = await queryOne<{ id: number }>(
+        `SELECT id
+         FROM Auto_TaskAuditLogs
+         WHERE task_id = ?
+           AND action = 'triggered'
+           AND JSON_VALID(metadata)
+           AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.scheduledFor')) = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [taskId, windowStartIso],
+      );
+    } catch (err) {
+      logger.warn(`Task ${taskId} scheduled window audit guard failed, continuing with memory guard`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
+        taskId,
+        windowStart: windowStartIso,
+        error: err instanceof Error ? err.message : String(err),
+      }, LOG_CONTEXTS.EXECUTION);
     }
 
-    this.recentScheduledWindowByTaskId.set(taskId, windowStartMs);
+    if (auditMatch) {
+      logger.info(`Task ${taskId} duplicate detected by scheduled window audit guard`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
+        taskId,
+        windowStart: windowStartIso,
+        reason: 'audit_window_guard',
+      }, LOG_CONTEXTS.EXECUTION);
+      return { duplicated: true, windowStart, reason: 'audit_window_guard' };
+    }
+
+    if (!scheduledFor) {
+      const lastExecution = await queryOne<{ id: number; created_at: string | null }>(
+        `SELECT id, created_at
+         FROM Auto_TestCaseTaskExecutions
+         WHERE task_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [taskId],
+      );
+
+      if (lastExecution?.created_at) {
+        const lastCreatedAt = new Date(lastExecution.created_at).getTime();
+        // 容错：允许少量时钟偏移（默认 5s），避免因节点或 DB 时钟微小差异造成重复触发
+        const toleranceMs = parseInt(process.env.SCHEDULER_DEDUPE_TOLERANCE_MS || '5000', 10);
+        if (!Number.isNaN(lastCreatedAt) && lastCreatedAt >= (windowStartMs - toleranceMs)) {
+          logger.info(`Task ${taskId} duplicate detected by DB guard`, {
+            event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
+            taskId,
+            windowStart: windowStartIso,
+            lastExecutionCreatedAt: new Date(lastCreatedAt).toISOString(),
+            toleranceMs,
+            reason: 'db_guard',
+          }, LOG_CONTEXTS.EXECUTION);
+          return { duplicated: true, windowStart, reason: 'db_guard' };
+        }
+      }
+    } else {
+      logger.debug(`Task ${taskId} skipped legacy DB duplicate guard for explicit scheduled window`, {
+        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
+        taskId,
+        windowStart: windowStartIso,
+        reason: 'explicit_scheduled_window',
+      }, LOG_CONTEXTS.EXECUTION);
+    }
+
     return { duplicated: false, windowStart };
   }
 
   /**
    * 实际执行任务：创建运行记录 + 触发 Jenkins
    */
-  private async executeTask(taskId: number, triggerReason: string, operatorId?: number): Promise<void> {
+  private async executeTask(taskId: number, triggerReason: string, operatorId?: number, scheduledFor?: Date): Promise<void> {
     // 从 DB 重新读取任务配置（确保最新）
     const row = await queryOne<{
       id: number; name: string; case_ids: string; project_id: number;
@@ -948,7 +1060,7 @@ export class TaskSchedulerService {
     try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
 
     if (triggerReason === 'scheduled') {
-      const dedupe = await this.isDuplicateScheduledWindow(taskId, row.cron_expression);
+      const dedupe = await this.isDuplicateScheduledWindow(taskId, row.cron_expression, scheduledFor);
       if (dedupe.duplicated) {
         logger.warn(`Task ${taskId} duplicate scheduled trigger skipped`, {
           event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
@@ -958,12 +1070,14 @@ export class TaskSchedulerService {
           traceId,
           dedupeReason: dedupe.reason,
           windowStart: dedupe.windowStart?.toISOString() ?? null,
+          scheduledFor: scheduledFor?.toISOString() ?? null,
         }, LOG_CONTEXTS.EXECUTION);
         await this.recordAuditLog(taskId, 'duplicate_scheduled_skipped', SCHEDULER_USER_ID, {
           triggerReason,
           traceId,
           dedupeReason: dedupe.reason,
           windowStart: dedupe.windowStart?.toISOString() ?? null,
+          scheduledFor: scheduledFor?.toISOString() ?? null,
         });
         return;
       }
@@ -990,13 +1104,14 @@ export class TaskSchedulerService {
         caseIds,
         triggerReason,
         traceId,
+        scheduledFor: scheduledFor?.toISOString() ?? null,
       }, LOG_CONTEXTS.EXECUTION);
       // ⚠️ Bug Fix: 即使跳过执行，也必须更新内存中的 lastRunAt
       // 否则 compensateMissedFires 每次都会误判为"漏触发"并额外再 dispatch 一次，
       // 导致每个 cron 周期产生 2 条记录（补偿 + 正常），记录不断堆积
       const cachedTask = this.taskCache.get(taskId);
       if (cachedTask) {
-        cachedTask.lastRunAt = new Date();
+        cachedTask.lastRunAt = scheduledFor ?? new Date();
       }
       return;
     }
@@ -1012,7 +1127,7 @@ export class TaskSchedulerService {
       status: row.status as 'active',
       maxRetries: row.max_retries ?? 1,
       retryDelayMs: row.retry_delay_ms ?? 30_000,
-      lastRunAt: new Date(),
+      lastRunAt: scheduledFor ?? new Date(),
     };
     this.taskCache.set(taskId, updatedCache);
 
@@ -1024,6 +1139,7 @@ export class TaskSchedulerService {
           taskId,
           triggerReason,
           traceId,
+          scheduledFor: scheduledFor?.toISOString() ?? null,
         }, LOG_CONTEXTS.EXECUTION);
 
         await this.recordAuditLog(taskId, 'skipped', SCHEDULER_USER_ID, {
@@ -1031,6 +1147,7 @@ export class TaskSchedulerService {
           triggerReason,
           traceId,
           caseCount: caseIds.length,
+          scheduledFor: scheduledFor?.toISOString() ?? null,
         });
 
         return;
@@ -1072,6 +1189,7 @@ export class TaskSchedulerService {
       triggerReason,
       traceId,
       cronExpression: row.cron_expression,
+      scheduledFor: scheduledFor?.toISOString() ?? null,
     }, LOG_CONTEXTS.EXECUTION);
 
     // 记录审计日志：手动触发时使用实际操作者 ID，调度/重试时使用系统用户
@@ -1085,6 +1203,7 @@ export class TaskSchedulerService {
       caseCount: caseIds.length,
       traceId,
       cronExpression: row.cron_expression,
+      scheduledFor: scheduledFor?.toISOString() ?? null,
       source: triggerReason === 'manual' ? 'manual_api' : triggerReason === 'retry' ? 'retry_timer' : 'scheduler',
     });
 
@@ -1409,9 +1528,10 @@ export class TaskSchedulerService {
         taskId: next.taskId,
         triggerReason: next.triggerReason,
         queueDepth: this.waitQueue.length,
+        scheduledFor: next.scheduledFor?.toISOString() ?? null,
       }, LOG_CONTEXTS.EXECUTION);
 
-      this.dispatchTask(next.taskId, next.triggerReason, next.operatorId).catch(err => {
+      this.dispatchTask(next.taskId, next.triggerReason, next.operatorId, next.scheduledFor).catch(err => {
         logger.errorLog(err, `Queue drain dispatch failed for task ${next.taskId}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED });
       });
     }
