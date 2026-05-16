@@ -1,7 +1,6 @@
 ﻿/**
  * TaskSchedulerService - 任务定时调度引擎
  *
- * 功能：
  * 1. 启动时加载所有 scheduled + active 任务，注册 Cron 定时器
  * 2. 支持动态添加/移除/更新任务调度
  * 3. 服务启动恢复：检测漏触发（上次执行时间 + cron 下次执行时间 < now），进行补偿执行
@@ -9,10 +8,8 @@
  * 5. 失败重试：支持 maxRetries / retryDelayMs 配置
  * 6. [P1] 并发槽位以 runId 为维度，槽位在 Jenkins 回调或执行超时后释放
  * 7. [P1] 等待队列支持优先级、入队时间、最大深度和队列超时机制
- *
  * 依赖：croner（零依赖、原生 TS 支持的 cron 解析库）
  */
-
 import { query, queryOne, getPool } from '../../config/database';
 import logger from '../../utils/logger';
 import { LOG_CONTEXTS, LOG_EVENTS } from '../../config/logging';
@@ -37,7 +34,7 @@ import {
   SLOT_HOLD_TIMEOUT_MS,
   SLOT_RECONCILE_INTERVAL_MS,
 } from './config';
-import { getNextCronTime, getPrevCronTime } from './cron';
+import { getNextCronTime } from './cron';
 import {
   loadAllScheduledTasks,
   loadLastRunAt,
@@ -50,6 +47,9 @@ import {
   getQueueItemTimeoutMs,
   isDuplicateQueuedDispatch,
 } from './queuePolicy';
+import { TaskSchedulerDirectQueueController } from './directQueueController';
+import { isDuplicateScheduledWindow } from './scheduledWindowDedupe';
+import { buildSchedulerStatus, type TaskSchedulerStatusSnapshot } from './status';
 import type {
   DirectQueueItem,
   QueueItem,
@@ -57,13 +57,10 @@ import type {
   RunningSlot,
   ScheduledTask,
 } from './types';
-// ──────────────────────────────────────────────────────────
-// 类型定义
-// ──────────────────────────────────────────────────────────
-
 
 export class TaskSchedulerService {
   private readonly registryHelper: TaskSchedulerRegistryHelper;
+  private readonly directQueueController: TaskSchedulerDirectQueueController;
 
   /** taskId → setInterval / setTimeout handle */
   private timers: Map<number, NodeJS.Timeout> = new Map();
@@ -101,8 +98,6 @@ export class TaskSchedulerService {
   /** 是否已启动 */
   private started = false;
 
-  /** 占位 runId 计数器（负数，递减，保证不与真实 runId 冲突） */
-  private _placeholderRunIdCounter = 0;
 
   /** 周期轮询 DB 同步任务变更的定时器 */
   private taskPollTimer?: NodeJS.Timeout;
@@ -114,6 +109,12 @@ export class TaskSchedulerService {
   private slotReconcileInFlight = false;
 
   constructor() {
+    this.directQueueController = new TaskSchedulerDirectQueueController({
+      runningSlots: this.runningSlots,
+      directQueue: this.directQueue,
+      drainScheduledQueue: () => this.drainQueue(),
+    });
+
     this.registryHelper = new TaskSchedulerRegistryHelper({
       taskCache: this.taskCache,
       timers: this.timers,
@@ -387,364 +388,38 @@ export class TaskSchedulerService {
     logger.debug(`Task ${taskId} unregistered from scheduler`, { event: LOG_EVENTS.SCHEDULER_TASK_UNREGISTERED, taskId }, LOG_CONTEXTS.EXECUTION);
   }
 
-  /**
-   * [P1] 获取调度器当前状态（扩展版，供监控接口使用）
-   * 新增：队列深度、每个队列项的排队时长、每个运行槽位已运行时长
-   */
-  getStatus(): {
-    running: Array<{ taskId: number; runId: number; elapsedMs: number; label?: string }>;
-    queued: Array<{
-      taskId: number;
-      triggerReason: string;
-      waitMs: number;
-      priority: number;
-      queuePosition: number;
-      scheduledFor?: string;
-    }>;
-    directQueued: Array<{ label: string; waitMs: number; queuePosition: number }>;
-    scheduled: number[];
-    concurrencyLimit: number;
-    queueDepth: number;
-    directQueueDepth: number;
-    maxQueueDepth: number;
-  } {
-    const now = Date.now();
-    return {
-      running: Array.from(this.runningSlots.values()).map(slot => ({
-        taskId: slot.taskId,
-        runId: slot.runId,
-        elapsedMs: now - slot.startedAt,
-        label: slot.label,
-      })),
-      queued: this.waitQueue.map((item, idx) => ({
-        taskId: item.taskId,
-        triggerReason: item.triggerReason,
-        waitMs: now - item.enqueuedAt,
-        priority: item.priority,
-        queuePosition: idx + 1,
-        scheduledFor: item.scheduledFor?.toISOString(),
-      })),
-      directQueued: this.directQueue.map((item, idx) => ({
-        label: item.label,
-        waitMs: now - item.enqueuedAt,
-        queuePosition: idx + 1,
-      })),
-      scheduled: Array.from(this.taskCache.keys()),
-      concurrencyLimit: CONCURRENCY_LIMIT,
-      queueDepth: this.waitQueue.length,
-      directQueueDepth: this.directQueue.length,
-      maxQueueDepth: MAX_QUEUE_DEPTH,
-    };
+  getStatus(): TaskSchedulerStatusSnapshot {
+    return buildSchedulerStatus({
+      runningSlots: this.runningSlots,
+      waitQueue: this.waitQueue,
+      directQueue: this.directQueue,
+      taskCache: this.taskCache,
+    });
   }
-
-  /**
-   * [P1] 查询某个任务在队列中的位置（供前端显示"排队中"状态）
-   * @returns 1-based position，0 表示不在队列中
-   */
   getQueuePosition(taskId: number): number {
     const idx = this.waitQueue.findIndex(item => item.taskId === taskId);
     return idx === -1 ? 0 : idx + 1;
   }
 
-  /**
-   * 异步直连入队（run-case / run-batch 推荐使用）
-   *
-   * 行为：
-   * - 立即返回（非阻塞），不等待槽位
-   * - 若当前槽位有空余，则 setImmediate 后异步调用 job()
-   * - 若槽位满，则将 job 放入 directQueue，待槽位释放后自动触发
-   * - 队列已满（MAX_QUEUE_DEPTH）→ 抛出错误（调用方返回 503）
-   *
-   * @param label    来源标识（如 "case:123"），用于日志和监控展示
-   * @param job      异步任务回调，槽位可用时执行；接收占位 runId（负数），
-   *                 job 内部应调用 registerDirectSlot(realRunId, label, placeholderRunId) 替换占位
-   */
   enqueueDirectJob(label: string, job: (placeholderRunId: number) => Promise<void>): void {
-    if (this.runningSlots.size < CONCURRENCY_LIMIT) {
-      // 有空余槽位，立即预占一个槽位，再异步执行 job
-      const placeholderRunId = --this._placeholderRunIdCounter;
-      const placeholderTimer = setTimeout(() => {
-        if (this.runningSlots.has(placeholderRunId)) {
-          this.runningSlots.delete(placeholderRunId);
-          logger.warn(`[Direct] Placeholder slot ${placeholderRunId} for ${label} expired (immediate path)`, {
-            event: LOG_EVENTS.SCHEDULER_SLOT_TIMEOUT,
-            label,
-          }, LOG_CONTEXTS.EXECUTION);
-          this.drainDirectQueue();
-          this.drainQueue();
-        }
-      }, 30_000);
-      if (placeholderTimer.unref) placeholderTimer.unref();
-
-      this.runningSlots.set(placeholderRunId, {
-        taskId: 0,
-        runId: placeholderRunId,
-        startedAt: Date.now(),
-        timeoutTimer: placeholderTimer,
-        label: `placeholder:${label}`,
-      });
-
-      logger.debug(`[Direct] Slot pre-allocated immediately (placeholder=${placeholderRunId}) for ${label}`, {
-        event: LOG_EVENTS.SCHEDULER_SLOT_REGISTERED,
-        slotsUsed: this.runningSlots.size,
-        limit: CONCURRENCY_LIMIT,
-      }, LOG_CONTEXTS.EXECUTION);
-
-      setImmediate(() => job(placeholderRunId).catch(err => {
-        logger.errorLog(err, `[Direct] Immediate job failed for ${label}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED, label });
-      }));
-      return;
-    }
-
-    // 队列深度保护
-    if (this.directQueue.length >= MAX_QUEUE_DEPTH) {
-      logger.warn(`[Direct] Queue full, rejecting ${label}`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_FULL,
-        directQueueDepth: this.directQueue.length,
-        maxQueueDepth: MAX_QUEUE_DEPTH,
-      }, LOG_CONTEXTS.EXECUTION);
-      throw new Error(`并发执行队列已满（${MAX_QUEUE_DEPTH}），请稍后再试`);
-    }
-
-    // 包装成 DirectQueueItem，resolve(placeholderRunId) 时执行 job
-    const item: DirectQueueItem = {
-      enqueuedAt: Date.now(),
-      label,
-      resolve: (placeholderRunId: number) => {
-        job(placeholderRunId).catch(err => {
-          logger.errorLog(err, `[Direct] Queued job failed for ${label}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED, label });
-        });
-      },
-      reject: (err: Error) => {
-        logger.warn(`[Direct] Queued job rejected for ${label}: ${err.message}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED, label }, LOG_CONTEXTS.EXECUTION);
-      },
-    };
-
-    // 队列超时自动移除（超时后不再执行，但 runId 已创建，状态会因无回调而由 slot 超时处理）
-    item.timeoutTimer = setTimeout(() => {
-      const idx = this.directQueue.indexOf(item);
-      if (idx !== -1) {
-        this.directQueue.splice(idx, 1);
-        logger.warn(`[Direct] Queue item timed out for ${label}`, {
-          event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_TIMEOUT,
-          waitMs: Date.now() - item.enqueuedAt,
-        }, LOG_CONTEXTS.EXECUTION);
-        item.reject(new Error(`排队等待超时（${Math.round(QUEUE_ITEM_TIMEOUT_MS / 1000)}秒），任务已取消`));
-      }
-    }, QUEUE_ITEM_TIMEOUT_MS);
-    if (item.timeoutTimer.unref) item.timeoutTimer.unref();
-
-    this.directQueue.push(item);
-
-    logger.info(`[Direct] ${label} queued (concurrency limit ${CONCURRENCY_LIMIT} reached)`, {
-      event: LOG_EVENTS.SCHEDULER_TASK_QUEUED,
-      label,
-      directQueuePosition: this.directQueue.length,
-      slotsUsed: this.runningSlots.size,
-    }, LOG_CONTEXTS.EXECUTION);
-
-    // 入队后立即尝试一次 drain，防止入队时恰好有槽位释放的竞态
-    setImmediate(() => this.drainDirectQueue());
+    this.directQueueController.enqueueDirectJob(label, job);
   }
 
-  /**
-   * 直连槽位申请（run-case / run-batch 专用）
-   *
-   * 行为：
-   * - 当前 runningSlots 未满 → 立即返回（可立即执行）
-   * - 已满但队列未满 → 排队等待，直到有槽位释放（Promise 在槽位可用时 resolve）
-   * - 队列已满 → 立即 reject（返回 503）
-   * - 等待超时（QUEUE_ITEM_TIMEOUT_MS）→ 自动 reject
-   *
-   * 注意：调用方必须在执行完成（或失败）后调用 releaseDirectSlot(runId) 释放槽位。
-   *
-   * @param label 来源标识（如 "case:123"），用于日志和监控展示
-   * @returns Promise<void>，resolve 时可以开始执行
-   */
   async acquireDirectSlot(label: string): Promise<void> {
-    if (this.runningSlots.size < CONCURRENCY_LIMIT) {
-      logger.debug(`[Direct] Slot acquired immediately for ${label}`, {
-        event: LOG_EVENTS.SCHEDULER_SLOT_REGISTERED,
-        slotsUsed: this.runningSlots.size,
-        limit: CONCURRENCY_LIMIT,
-      }, LOG_CONTEXTS.EXECUTION);
-      return; // 直接通过
-    }
-
-    // 队列深度保护
-    if (this.directQueue.length >= MAX_QUEUE_DEPTH) {
-      logger.warn(`[Direct] Queue full, rejecting ${label}`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_FULL,
-        directQueueDepth: this.directQueue.length,
-        maxQueueDepth: MAX_QUEUE_DEPTH,
-      }, LOG_CONTEXTS.EXECUTION);
-      throw new Error(`并发执行队列已满（${MAX_QUEUE_DEPTH}），请稍后再试`);
-    }
-
-    // 排队等待
-    return new Promise<void>((resolve, reject) => {
-      const item: DirectQueueItem = {
-        enqueuedAt: Date.now(),
-        label,
-        resolve: (_placeholderRunId: number) => resolve(),
-        reject,
-      };
-
-      // 队列超时自动移除
-      item.timeoutTimer = setTimeout(() => {
-        const idx = this.directQueue.indexOf(item);
-        if (idx !== -1) {
-          this.directQueue.splice(idx, 1);
-          logger.warn(`[Direct] Queue item timed out for ${label}`, {
-            event: LOG_EVENTS.SCHEDULER_TASK_QUEUE_TIMEOUT,
-            waitMs: Date.now() - item.enqueuedAt,
-          }, LOG_CONTEXTS.EXECUTION);
-          reject(new Error(`Queue item timed out for ${label}`));
-        }
-      }, QUEUE_ITEM_TIMEOUT_MS);
-      if (item.timeoutTimer.unref) item.timeoutTimer.unref();
-
-      this.directQueue.push(item);
-
-      logger.info(`[Direct] ${label} queued (concurrency limit ${CONCURRENCY_LIMIT} reached)`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_QUEUED,
-        label,
-        directQueuePosition: this.directQueue.length,
-        slotsUsed: this.runningSlots.size,
-      }, LOG_CONTEXTS.EXECUTION);
-    });
+    return this.directQueueController.acquireDirectSlot(label);
   }
 
-  /**
-   * 直连槽位注册（enqueueDirectJob job 内部调用，将真实 runId 替换占位槽位）
-   * 槽位持有至 Jenkins 回调（releaseSlotByRunId）或超时自动释放
-   *
-   * @param runId           真实的执行 runId（正数）
-   * @param label           来源标识
-   * @param placeholderRunId 占位 runId（负数），注册前先删除占位槽位；不传则不删
-   */
   registerDirectSlot(runId: number, label: string, placeholderRunId?: number): void {
-    // 移除占位槽位（释放占位的超时 timer）
-    if (placeholderRunId !== undefined) {
-      const placeholder = this.runningSlots.get(placeholderRunId);
-      if (placeholder) {
-        clearTimeout(placeholder.timeoutTimer);
-        this.runningSlots.delete(placeholderRunId);
-      }
-    }
-    const timeoutTimer = setTimeout(() => {
-      const slot = this.runningSlots.get(runId);
-      if (slot) {
-        this.runningSlots.delete(runId);
-        logger.warn(`[Direct] Slot for runId=${runId} (${label}) auto-released after timeout`, {
-      event: LOG_EVENTS.SCHEDULER_SLOT_TIMEOUT,
-      runId,
-      label,
-      heldMs: SLOT_HOLD_TIMEOUT_MS,
-    }, LOG_CONTEXTS.EXECUTION);
-        this.drainDirectQueue();
-        this.drainQueue();
-      }
-    }, SLOT_HOLD_TIMEOUT_MS);
-
-    if (timeoutTimer.unref) timeoutTimer.unref();
-
-    this.runningSlots.set(runId, {
-      taskId: 0, // 直连执行无 taskId
-      runId,
-      startedAt: Date.now(),
-      timeoutTimer,
-      label,
-    });
-
-    logger.info(`[Direct] Slot registered for runId=${runId} (${label})`, {
-      event: LOG_EVENTS.SCHEDULER_SLOT_REGISTERED,
-      runId,
-      label,
-      slotsUsed: this.runningSlots.size,
-      slotsLimit: CONCURRENCY_LIMIT,
-    }, LOG_CONTEXTS.EXECUTION);
+    this.directQueueController.registerDirectSlot(runId, label, placeholderRunId);
   }
 
-  /**
-   * 从直连等待队列中取出下一个等待方并通知（FIFO）
-   * 在槽位释放后（releaseSlotByRunId / drainQueue）调用
-   *
-   * 关键设计：drain 出一个 job 后，立即用占位 runId（负数）预占一个槽位，
-   * 防止 while 循环在 job 异步执行前重复 drain（竞态条件）。
-   * job 内部调用 registerDirectSlot(realRunId) 时会覆盖占位槽位。
-   */
   private drainDirectQueue(): void {
-    while (this.directQueue.length > 0 && this.runningSlots.size < CONCURRENCY_LIMIT) {
-      const next = this.directQueue.shift()!;
-      if (next.timeoutTimer) clearTimeout(next.timeoutTimer);
-
-      // 用占位 runId（负数，递减保证唯一）立即预占槽位，防止并发多取
-      const placeholderRunId = --this._placeholderRunIdCounter;
-      const placeholderTimer = setTimeout(() => {
-        // 占位超时（正常情况下 registerDirectSlot 会在几毫秒内替换掉占位）
-        if (this.runningSlots.has(placeholderRunId)) {
-          this.runningSlots.delete(placeholderRunId);
-        logger.warn(`[Direct] Placeholder slot ${placeholderRunId} for ${next.label} expired, releasing`, {
-          event: LOG_EVENTS.SCHEDULER_SLOT_TIMEOUT,
-          label: next.label,
-        }, LOG_CONTEXTS.EXECUTION);
-          this.drainDirectQueue();
-          this.drainQueue();
-        }
-      }, 30_000); // 30秒兜底
-      if (placeholderTimer.unref) placeholderTimer.unref();
-
-      this.runningSlots.set(placeholderRunId, {
-        taskId: 0,
-        runId: placeholderRunId,
-        startedAt: Date.now(),
-        timeoutTimer: placeholderTimer,
-        label: `placeholder:${next.label}`,
-      });
-
-      logger.debug(`[Direct] Draining queue: slot pre-allocated (placeholder=${placeholderRunId}) for ${next.label} (waited ${Date.now() - next.enqueuedAt}ms)`, {
-        event: LOG_EVENTS.SCHEDULER_SLOT_REGISTERED,
-        label: next.label,
-        placeholderRunId,
-        directQueueDepth: this.directQueue.length,
-        slotsUsed: this.runningSlots.size,
-      }, LOG_CONTEXTS.EXECUTION);
-
-      // 通知 job 执行；job 内部应调用 registerDirectSlot(realRunId) 替换占位槽位
-      next.resolve(placeholderRunId);
-    }
+    this.directQueueController.drainDirectQueue();
   }
 
-  /**
-   * [P1] 释放运行槽位
-   * 默认在 Jenkins 回调成功后调用；也可由对账任务兜底释放
-   */
   releaseSlotByRunId(runId: number, source: 'callback' | 'db_reconcile' | 'db_missing' = 'callback'): void {
-    const slot = this.runningSlots.get(runId);
-    // 不允许通过此方法释放占位槽位（负数 runId），占位由 registerDirectSlot 内部管理
-    if (!slot || runId < 0) return;
-
-    clearTimeout(slot.timeoutTimer);
-    this.runningSlots.delete(runId);
-
-    logger.info(`[P1] Slot released for runId=${runId} (taskId=${slot.taskId}) via ${source}`, {
-      event: LOG_EVENTS.SCHEDULER_SLOT_RELEASED,
-      runId,
-      taskId: slot.taskId,
-      source,
-      heldMs: Date.now() - slot.startedAt,
-    }, LOG_CONTEXTS.EXECUTION);
-
-    // 槽位释放后，尝试从队列中取出下一个任务（任务队列和直连队列都需要 drain）
-    this.drainDirectQueue();
-    this.drainQueue();
+    this.directQueueController.releaseSlotByRunId(runId, source);
   }
-
-  // ─────────────────────────────────────────────
-  // 内部：加载与注册
-  // ─────────────────────────────────────────────
-
   private async loadAndRegisterAllTasks(): Promise<void> {
     await this.registryHelper.loadAndRegisterAllTasks();
   }
@@ -901,140 +576,6 @@ export class TaskSchedulerService {
   }
 
   /**
-   * 判断当前 scheduled 触发是否与最近窗口重复（补偿 + 定时并发场景防重）
-   */
-  private rememberScheduledWindow(taskId: number, windowStartMs: number): void {
-    let windows = this.recentScheduledWindowsByTaskId.get(taskId);
-    if (!windows) {
-      windows = new Set<number>();
-      this.recentScheduledWindowsByTaskId.set(taskId, windows);
-    }
-
-    const cutoffMs = Date.now() - MAX_MISSED_WINDOW_MS;
-    for (const rememberedWindow of windows) {
-      if (rememberedWindow < cutoffMs) {
-        windows.delete(rememberedWindow);
-      }
-    }
-
-    windows.add(windowStartMs);
-  }
-
-  private hasRememberedScheduledWindow(taskId: number, windowStartMs: number): boolean {
-    const windows = this.recentScheduledWindowsByTaskId.get(taskId);
-    return windows?.has(windowStartMs) ?? false;
-  }
-
-  private async isDuplicateScheduledWindow(
-    taskId: number,
-    cronExpression: string,
-    scheduledFor?: Date,
-  ): Promise<{ duplicated: boolean; windowStart: Date | null; reason?: string }> {
-    const now = new Date();
-    const windowStart = scheduledFor && !Number.isNaN(scheduledFor.getTime())
-      ? scheduledFor
-      : getPrevCronTime(
-        cronExpression,
-        new Date(now.getTime() + 1000),
-        MAX_MISSED_WINDOW_MS,
-      );
-
-    if (!windowStart) {
-      logger.debug(`Unable to compute previous cron window for task ${taskId}`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
-        taskId,
-        cronExpression,
-        scheduledFor: scheduledFor?.toISOString() ?? null,
-      }, LOG_CONTEXTS.EXECUTION);
-      return { duplicated: false, windowStart: null, reason: 'window_unavailable' };
-    }
-
-    const windowStartMs = windowStart.getTime();
-    const windowStartIso = windowStart.toISOString();
-
-    if (this.hasRememberedScheduledWindow(taskId, windowStartMs)) {
-      logger.info(`Task ${taskId} duplicate detected by memory guard`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
-        taskId,
-        windowStart: windowStartIso,
-        reason: 'memory_guard',
-      }, LOG_CONTEXTS.EXECUTION);
-      return { duplicated: true, windowStart, reason: 'memory_guard' };
-    }
-
-    this.rememberScheduledWindow(taskId, windowStartMs);
-
-    let auditMatch: { id: number } | null = null;
-    try {
-      auditMatch = await queryOne<{ id: number }>(
-        `SELECT id
-         FROM Auto_TaskAuditLogs
-         WHERE task_id = ?
-           AND action = 'triggered'
-           AND JSON_VALID(metadata)
-           AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.scheduledFor')) = ?
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [taskId, windowStartIso],
-      );
-    } catch (err) {
-      logger.warn(`Task ${taskId} scheduled window audit guard failed, continuing with memory guard`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
-        taskId,
-        windowStart: windowStartIso,
-        error: err instanceof Error ? err.message : String(err),
-      }, LOG_CONTEXTS.EXECUTION);
-    }
-
-    if (auditMatch) {
-      logger.info(`Task ${taskId} duplicate detected by scheduled window audit guard`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
-        taskId,
-        windowStart: windowStartIso,
-        reason: 'audit_window_guard',
-      }, LOG_CONTEXTS.EXECUTION);
-      return { duplicated: true, windowStart, reason: 'audit_window_guard' };
-    }
-
-    if (!scheduledFor) {
-      const lastExecution = await queryOne<{ id: number; created_at: string | null }>(
-        `SELECT id, created_at
-         FROM Auto_TestCaseTaskExecutions
-         WHERE task_id = ?
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [taskId],
-      );
-
-      if (lastExecution?.created_at) {
-        const lastCreatedAt = new Date(lastExecution.created_at).getTime();
-        // 容错：允许少量时钟偏移（默认 5s），避免因节点或 DB 时钟微小差异造成重复触发
-        const toleranceMs = parseInt(process.env.SCHEDULER_DEDUPE_TOLERANCE_MS || '5000', 10);
-        if (!Number.isNaN(lastCreatedAt) && lastCreatedAt >= (windowStartMs - toleranceMs)) {
-          logger.info(`Task ${taskId} duplicate detected by DB guard`, {
-            event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
-            taskId,
-            windowStart: windowStartIso,
-            lastExecutionCreatedAt: new Date(lastCreatedAt).toISOString(),
-            toleranceMs,
-            reason: 'db_guard',
-          }, LOG_CONTEXTS.EXECUTION);
-          return { duplicated: true, windowStart, reason: 'db_guard' };
-        }
-      }
-    } else {
-      logger.debug(`Task ${taskId} skipped legacy DB duplicate guard for explicit scheduled window`, {
-        event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,
-        taskId,
-        windowStart: windowStartIso,
-        reason: 'explicit_scheduled_window',
-      }, LOG_CONTEXTS.EXECUTION);
-    }
-
-    return { duplicated: false, windowStart };
-  }
-
-  /**
    * 实际执行任务：创建运行记录 + 触发 Jenkins
    */
   private async executeTask(taskId: number, triggerReason: string, operatorId?: number, scheduledFor?: Date): Promise<void> {
@@ -1060,7 +601,12 @@ export class TaskSchedulerService {
     try { caseIds = JSON.parse(row.case_ids || '[]'); } catch { /* ignore */ }
 
     if (triggerReason === 'scheduled') {
-      const dedupe = await this.isDuplicateScheduledWindow(taskId, row.cron_expression, scheduledFor);
+      const dedupe = await isDuplicateScheduledWindow({
+        taskId,
+        cronExpression: row.cron_expression,
+        scheduledFor,
+        recentScheduledWindowsByTaskId: this.recentScheduledWindowsByTaskId,
+      });
       if (dedupe.duplicated) {
         logger.warn(`Task ${taskId} duplicate scheduled trigger skipped`, {
           event: LOG_EVENTS.SCHEDULER_TASK_DUPLICATE_SKIPPED,

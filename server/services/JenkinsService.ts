@@ -2,222 +2,39 @@ import { isMisconfiguredTestRepoUrl, normalizeGitRemoteUrl } from '../utils/jenk
 import { normalizeConfiguredJenkinsBaseUrl } from '../utils/jenkinsUrl';
 import logger from '../utils/logger';
 import { getSecretOrEnv } from '../utils/secrets';
+import {
+  extractParameterNamesFromApiPayload,
+  extractXmlValue,
+  extractXmlValues,
+  isRecord,
+  normalizeBaseUrl,
+  runGitCommand,
+} from './JenkinsServiceUtils';
+import type {
+  BuildCancelledCallback,
+  BuildResolvedCallback,
+  CaseType,
+  JenkinsConfig,
+  JenkinsCrumb,
+  JenkinsErrorCategory,
+  JenkinsJobInspection,
+  JenkinsQueueItem,
+  JenkinsQueueMetrics,
+  JenkinsTriggerHttpResult,
+  JenkinsTriggerResult,
+} from './JenkinsServiceTypes';
+export { isJenkinsErrorRetryable } from './JenkinsServiceTypes';
+export type {
+  BuildCancelledCallback,
+  BuildResolvedCallback,
+  CaseType,
+  JenkinsConfig,
+  JenkinsErrorCategory,
+  JenkinsJobInspection,
+  JenkinsQueueMetrics,
+  JenkinsTriggerResult,
+} from './JenkinsServiceTypes';
 
-/**
- * Jenkins 配置接口
- */
-export interface JenkinsConfig {
-  baseUrl: string;
-  username: string;
-  token: string;
-  jobs: {
-    api: string;
-    ui: string;
-    performance: string;
-  };
-  testRepoUrl?: string;
-  testRepoBranch: string;
-}
-
-export interface JenkinsJobInspection {
-  jobName: string;
-  jobUrl: string;
-  jobClass?: string;
-  definitionClass?: string;
-  parameterized: boolean;
-  parameterNames: string[];
-  triggerReady: boolean;
-  scmUrl?: string;
-  branchSpec?: string;
-  scriptPath?: string;
-  hasTimerTrigger: boolean;
-  timerSpec?: string;
-  issues: string[];
-  recommendations: string[];
-}
-
-function runGitCommand(command: string): string | undefined {
-  try {
-    const { execSync } = require('child_process') as typeof import('child_process');
-    const output = execSync(command, {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return output || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.trim().replace(/\/+$/, '');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, '\'')
-    .replace(/&amp;/g, '&');
-}
-
-function extractXmlValue(xml: string, pattern: RegExp): string | undefined {
-  const match = pattern.exec(xml);
-  if (!match?.[1]) {
-    return undefined;
-  }
-
-  return decodeXmlEntities(match[1].trim());
-}
-
-function extractXmlValues(xml: string, pattern: RegExp): string[] {
-  return Array.from(
-    new Set(
-      Array.from(xml.matchAll(pattern))
-        .map((match) => match[1]?.trim())
-        .filter((value): value is string => Boolean(value))
-        .map(decodeXmlEntities)
-    )
-  );
-}
-
-function extractParameterNamesFromApiPayload(payload: Record<string, unknown>): string[] {
-  const collected = new Set<string>();
-
-  for (const key of ['actions', 'property']) {
-    const source = payload[key];
-    if (!Array.isArray(source)) {
-      continue;
-    }
-
-    for (const entry of source) {
-      if (!isRecord(entry)) {
-        continue;
-      }
-
-      const definitions = entry.parameterDefinitions;
-      if (!Array.isArray(definitions)) {
-        continue;
-      }
-
-      for (const definition of definitions) {
-        if (isRecord(definition) && typeof definition.name === 'string' && definition.name.trim()) {
-          collected.add(definition.name.trim());
-        }
-      }
-    }
-  }
-
-  return Array.from(collected);
-}
-
-/**
- * 错误分类：用于区分应重试的错误和不应重试的错误
- */
-export type JenkinsErrorCategory =
-  | 'none'           // 无错误（成功）
-  | 'network'        // 网络不可达（DNS失败、连接拒绝、超时等），可重试
-  | 'auth_failed'    // 认证失败（401/403），不应重试
-  | 'not_found'      // 资源不存在（Job不存在，404），不应重试
-  | 'bad_request'    // 参数错误（400），不应重试
-  | 'rate_limited'   // 被限流（429），可重试
-  | 'server_error';  // 服务端错误（5xx），可重试
-
-/**
- * 判断某类错误是否应该触发重试
- */
-export function isJenkinsErrorRetryable(category: JenkinsErrorCategory): boolean {
-  return category === 'network' || category === 'rate_limited' || category === 'server_error';
-}
-
-/**
- * Jenkins 触发结果
- */
-export interface JenkinsTriggerResult {
-  success: boolean;
-  queueId?: number;
-  buildUrl?: string;
-  buildNumber?: number;
-  message: string;
-  /** 错误分类，用于调度器判断是否需要重试 */
-  errorCategory: JenkinsErrorCategory;
-}
-
-/**
- * Jenkins Queue Item（通过 queueId 轮询获取的结果）
- */
-interface JenkinsQueueItem {
-  id: number;
-  why: string | null;
-  cancelled: boolean;
-  executable?: {
-    number: number;
-    url: string;
-  };
-}
-
-interface JenkinsCrumb {
-  field: string;
-  value: string;
-  fetchedAt: number;
-}
-
-interface JenkinsTriggerHttpResult {
-  response: Response;
-  errorText?: string;
-}
-
-/**
- * [dev-10] queueId → buildNumber 解析完成后的回调类型
- * 由调用方注入，异步回调中更新数据库
- * @param buildNumber  Jenkins 真实构建号
- * @param buildUrl     Jenkins 构建 URL
- * @param queueWaitMs  构建在 Jenkins 队列中等待的时长（毫秒）
- */
-export type BuildResolvedCallback = (buildNumber: number, buildUrl: string, queueWaitMs: number) => Promise<void>;
-
-/**
- * [dev-11] Jenkins 队列取消/超时时的回调类型
- * 当 pollQueueForBuild 返回 null（构建被取消或等待超时）时调用
- * @param reason  取消原因：'cancelled'（Jenkins 队列项被取消）或 'timeout'（轮询超时）
- */
-export type BuildCancelledCallback = (reason: 'cancelled' | 'timeout') => Promise<void>;
-
-/**
- * 用例类型
- */
-export type CaseType = 'api' | 'ui' | 'performance';
-
-/**
- * Jenkins Queue 指标（内存存储，进程重启后重置）
- */
-export interface JenkinsQueueMetrics {
-  /** queueId 轮询总次数 */
-  totalPolls: number;
-  /** 成功解析出 buildNumber 的次数 */
-  resolvedCount: number;
-  /** 轮询超时/取消次数 */
-  timeoutCount: number;
-  /** 所有成功解析的队列等待时长（ms）列表，保留最近 1000 条 */
-  waitTimeSamples: number[];
-  /** 队列等待时长总和（ms，仅成功解析） */
-  totalWaitMs: number;
-  /** 平均队列等待时长（ms） */
-  avgWaitMs: number;
-  /** 最大队列等待时长（ms） */
-  maxWaitMs: number;
-}
-
-/**
- * Jenkins 服务类
- * 负责与 Jenkins 交互，触发 Job 执行
- */
 export class JenkinsService {
   private config: JenkinsConfig;
 
