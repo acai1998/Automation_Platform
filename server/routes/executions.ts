@@ -3,6 +3,7 @@ import { executionService } from '../services/ExecutionService';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
 import { authenticate, requireTester } from '../middleware/auth';
+import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 
 const router = Router();
 
@@ -175,7 +176,7 @@ router.get('/test-runs', async (req, res) => {
  * GET /api/executions/stale-summary
  * 获取历史卡住执行汇总（用于运行记录页提示条）
  */
-router.get('/stale-summary', authenticate, async (req, res) => {
+router.get('/stale-summary', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const maxAgeHours = Math.min(168, Math.max(1, parseInt(String(req.query.maxAgeHours ?? '24'), 10) || 24));
     const stalePendingMinutes = Math.min(24 * 60, Math.max(1, parseInt(String(req.query.stalePendingMinutes ?? '10'), 10) || 10));
@@ -200,7 +201,7 @@ router.get('/stale-summary', authenticate, async (req, res) => {
  * POST /api/executions/cleanup-stale
  * 一次性清理历史卡住执行（pending/running -> aborted）
  */
-router.post('/cleanup-stale', authenticate, requireTester, async (req, res) => {
+router.post('/cleanup-stale', generalAuthRateLimiter, authenticate, requireTester, async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const dryRun = typeof body.dryRun === 'boolean' ? body.dryRun : false;
