@@ -1,0 +1,99 @@
+<style>
+  .architecture {
+    display: grid;
+    grid-template-columns: 1fr .7fr 1fr;
+    gap: 1rem;
+    align-items: stretch;
+    margin: 1.5rem 0;
+  }
+  .box {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+  .box h3 {
+    margin-bottom: .7rem;
+  }
+  .item {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .65rem .75rem;
+    margin-bottom: .55rem;
+    font-size: .86rem;
+  }
+  .item strong {
+    display: block;
+    color: var(--text-primary);
+  }
+  .item span {
+    color: var(--text-secondary);
+  }
+  .connector {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: .8rem;
+  }
+  .arrow {
+    text-align: center;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    background: var(--selected-bg);
+    border-radius: 999px;
+    padding: .55rem;
+    font-size: .82rem;
+  }
+  .outside {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: .75rem;
+    margin-top: 1rem;
+  }
+  .outside .box {
+    border-style: dashed;
+  }
+  @media (max-width: 900px) {
+    .architecture,
+    .outside {
+      grid-template-columns: 1fr;
+    }
+    .connector {
+      min-height: auto;
+    }
+  }
+</style>
+
+<h2>去 Jenkins 化后的目标链路</h2>
+<p class="subtitle">接口自动化作为独立引擎接入平台，平台负责任务入口、权限、业务视图和统一报表；引擎负责集合、环境、调度、执行和原始报告。</p>
+
+<div class="architecture">
+  <div class="box">
+    <h3>Automation Platform</h3>
+    <div class="item"><strong>任务入口</strong><span>手动执行、定时配置、后续 GitLab 触发</span></div>
+    <div class="item"><strong>业务关联</strong><span>项目、需求、用例、负责人、环境</span></div>
+    <div class="item"><strong>统一看板</strong><span>执行状态、趋势、失败聚合、报告入口</span></div>
+    <div class="item"><strong>权限与审计</strong><span>谁触发、何时触发、触发原因</span></div>
+  </div>
+
+  <div class="connector">
+    <div class="arrow">REST API / Webhook</div>
+    <div class="arrow">Result Callback / Polling</div>
+    <div class="arrow">Artifact Link / JSON Report</div>
+  </div>
+
+  <div class="box">
+    <h3>Open Source API Automation Engine</h3>
+    <div class="item"><strong>接口集合</strong><span>接口、场景、断言、前后置脚本</span></div>
+    <div class="item"><strong>环境变量</strong><span>域名、Token、账号、密钥</span></div>
+    <div class="item"><strong>调度与触发</strong><span>Cron、Webhook、CLI/API trigger</span></div>
+    <div class="item"><strong>结果与报告</strong><span>JSON/JUnit/HTML，失败详情和耗时</span></div>
+  </div>
+</div>
+
+<div class="outside">
+  <div class="box"><h3>GitLab</h3><div class="item"><span>代码变更后触发平台或引擎任务</span></div></div>
+  <div class="box"><h3>旧 Jenkins</h3><div class="item"><span>保留现有 UI/性能等自动化链路，接口自动化不依赖它</span></div></div>
+  <div class="box"><h3>报告归档</h3><div class="item"><span>平台存摘要，引擎或对象存储保存完整报告</span></div></div>
+</div>
