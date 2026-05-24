@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { AppDataSource } from '../config/dataSource';
 import { TestCaseRepository } from '../repositories/TestCaseRepository';
 import { jenkinsService, CaseType } from '../services/JenkinsService';
+import { authenticate, requireTester } from '../middleware/auth';
+import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
 
@@ -225,7 +227,7 @@ router.get('/:id', async (req, res) => {
  * POST /api/cases
  * 创建用例
  */
-router.post('/', async (req, res) => {
+router.post('/', generalAuthRateLimiter, authenticate, requireTester, async (req, res) => {
   try {
     const {
       name,
@@ -271,7 +273,7 @@ router.post('/', async (req, res) => {
  * PUT /api/cases/:id
  * 更新用例
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', generalAuthRateLimiter, authenticate, requireTester, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const {
@@ -319,7 +321,7 @@ router.put('/:id', async (req, res) => {
  * DELETE /api/cases/:id
  * 删除用例
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', generalAuthRateLimiter, authenticate, requireTester, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
@@ -338,7 +340,7 @@ router.delete('/:id', async (req, res) => {
  * POST /api/cases/:id/run
  * 触发单用例执行
  */
-router.post('/:id/run', async (req, res) => {
+router.post('/:id/run', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 

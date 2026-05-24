@@ -4,6 +4,7 @@ import logger from '../utils/logger';
 import { LOG_CONTEXTS, createTimer } from '../config/logging';
 import { query } from '../config/database';
 import { authenticate, requireTester } from '../middleware/auth';
+import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 
 const router = Router();
 
@@ -11,7 +12,7 @@ const router = Router();
  * POST /api/executions/callback
  * Jenkins 执行结果回调接口
  */
-router.post('/callback', async (req, res) => {
+router.post('/callback', generalAuthRateLimiter, async (req, res) => {
   const timer = createTimer();
   const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
 
@@ -85,7 +86,7 @@ router.post('/callback', async (req, res) => {
  * POST /api/executions/:id/start
  * 标记执行开始运行（Jenkins 开始执行时调用）
  */
-router.post('/:id/start', async (req, res) => {
+router.post('/:id/start', generalAuthRateLimiter, authenticate, async (req, res) => {
   const timer = createTimer();
   const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
 
@@ -126,7 +127,7 @@ router.post('/:id/start', async (req, res) => {
  * 获取 Auto_TestRun 表的运行记录列表
  * 支持筛选参数：triggerType、status、startDate（YYYY-MM-DD）、endDate（YYYY-MM-DD）
  */
-router.get('/test-runs', async (req, res) => {
+router.get('/test-runs', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     // 分页上限保护：默认 50，最大 100
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
@@ -176,7 +177,7 @@ router.get('/test-runs', async (req, res) => {
  * GET /api/executions/stale-summary
  * 获取历史卡住执行汇总（用于运行记录页提示条）
  */
-router.get('/stale-summary', authenticate, async (req, res) => {
+router.get('/stale-summary', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const maxAgeHours = Math.min(168, Math.max(1, parseInt(String(req.query.maxAgeHours ?? '24'), 10) || 24));
     const stalePendingMinutes = Math.min(24 * 60, Math.max(1, parseInt(String(req.query.stalePendingMinutes ?? '10'), 10) || 10));
@@ -201,7 +202,7 @@ router.get('/stale-summary', authenticate, async (req, res) => {
  * POST /api/executions/cleanup-stale
  * 一次性清理历史卡住执行（pending/running -> aborted）
  */
-router.post('/cleanup-stale', authenticate, requireTester, async (req, res) => {
+router.post('/cleanup-stale', generalAuthRateLimiter, authenticate, requireTester, async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const dryRun = typeof body.dryRun === 'boolean' ? body.dryRun : false;
@@ -229,7 +230,7 @@ router.post('/cleanup-stale', authenticate, requireTester, async (req, res) => {
  * 根据 Auto_TestRun.id（runId）获取该批次的用例结果列表
  * 注意：此路由必须放在 /:id/results 之前，防止被 Express 误匹配
  */
-router.get("/test-runs/:runId/results", async (req, res) => {
+router.get("/test-runs/:runId/results", generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const runId = parseInt(req.params.runId);
     const result = await executionService.getResultsByRunId(runId);
@@ -244,7 +245,7 @@ router.get("/test-runs/:runId/results", async (req, res) => {
  * GET /api/executions/test-runs/:runId/scheduler-logs
  * 获取运行记录关联的调度追踪日志（用于排障）
  */
-router.get('/test-runs/:runId/scheduler-logs', async (req, res) => {
+router.get('/test-runs/:runId/scheduler-logs', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const runId = parseInt(req.params.runId);
     if (Number.isNaN(runId) || runId <= 0) {
@@ -267,7 +268,7 @@ router.get('/test-runs/:runId/scheduler-logs', async (req, res) => {
  * 获取运行批次的用例结果列表，:id 为 Auto_TestRun.id（runId）
  * 内部通过 execution_id 字段（优先）或时间窗口反查 executionId，再取用例结果
  */
-router.get("/:id/results", async (req, res) => {
+router.get("/:id/results", generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const runId = parseInt(req.params.id);
     const page = parseInt(req.query.page as string) || 1;
@@ -285,7 +286,7 @@ router.get("/:id/results", async (req, res) => {
  * GET /api/executions/:id
  * 获取 TestRun 运行详情，:id 为 Auto_TestRun.id（runId）
  */
-router.get("/:id", async (req, res) => {
+router.get("/:id", generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const data = await executionService.getTestRunDetailRow(id);
@@ -301,7 +302,7 @@ router.get("/:id", async (req, res) => {
  * GET /api/executions
  * 获取运行记录列表
  */
-router.get('/', async (req, res) => {
+router.get('/', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     // 分页上限保护：默认 20，最大 100
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
@@ -317,7 +318,7 @@ router.get('/', async (req, res) => {
  * POST /api/executions/:id/sync
  * 手动同步执行状态（从Jenkins获取最新状态）
  */
-router.post('/:id/sync', async (req, res) => {
+router.post('/:id/sync', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
@@ -364,7 +365,7 @@ router.post('/:id/sync', async (req, res) => {
  * POST /api/executions/sync-stuck
  * 批量同步可能卡住的执行（状态为running但时间较长）
  */
-router.post('/sync-stuck', async (req, res) => {
+router.post('/sync-stuck', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const rawTimeoutMinutes = (req.body as Record<string, unknown>)['timeoutMinutes'];
     const rawMaxExecutions = (req.body as Record<string, unknown>)['maxExecutions'];
@@ -408,7 +409,7 @@ router.post('/sync-stuck', async (req, res) => {
  * GET /api/executions/stuck
  * 获取可能卡住的执行列表（状态为running/pending但时间较长）
  */
-router.get('/stuck', async (req, res) => {
+router.get('/stuck', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const timeoutMinutes = parseInt(req.query.timeout as string) || 10;
     const timeoutMs = timeoutMinutes * 60 * 1000;
@@ -457,7 +458,7 @@ router.get('/stuck', async (req, res) => {
  * POST /api/executions/:id/cancel
  * 取消执行
  */
-router.post('/:id/cancel', async (req, res) => {
+router.post('/:id/cancel', generalAuthRateLimiter, authenticate, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await executionService.cancelExecution(id);

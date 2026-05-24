@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { dashboardService } from '../services/DashboardService';
 import { dailySummaryScheduler } from '../services/DailySummaryScheduler';
+import { authenticate, requireAdmin } from '../middleware/auth';
+import { generalAuthRateLimiter } from '../middleware/authRateLimiter';
 import logger from '../utils/logger';
 import { LOG_CONTEXTS, LOG_EVENTS } from '../config/logging';
 
@@ -352,7 +354,7 @@ router.get('/all', async (req, res) => {
  * POST /api/dashboard/refresh-summary
  * 刷新每日汇总数据
  */
-router.post('/refresh-summary', async (req, res) => {
+router.post('/refresh-summary', generalAuthRateLimiter, authenticate, requireAdmin, async (req, res) => {
   try {
     const { date } = req.body;
     await dashboardService.refreshDailySummary(date);
@@ -403,7 +405,7 @@ router.get('/summary-status', async (_req, res) => {
  * POST /api/dashboard/trigger-manual-summary
  * 手动触发每日汇总生成
  */
-router.post('/trigger-manual-summary', async (req, res) => {
+router.post('/trigger-manual-summary', generalAuthRateLimiter, authenticate, requireAdmin, async (req, res) => {
   try {
     const { date } = req.body;
     await dailySummaryScheduler.triggerManualSummary(date);
@@ -426,7 +428,7 @@ router.post('/trigger-manual-summary', async (req, res) => {
  * POST /api/dashboard/backfill-summaries
  * 批量生成历史汇总数据
  */
-router.post('/backfill-summaries', async (req, res) => {
+router.post('/backfill-summaries', generalAuthRateLimiter, authenticate, requireAdmin, async (req, res) => {
   try {
     const { days = 30, onlyMissingDates = true } = req.body;
     const result = await dailySummaryScheduler.backfillHistoricalSummaries(days, onlyMissingDates);
