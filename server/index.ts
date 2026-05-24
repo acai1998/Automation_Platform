@@ -141,7 +141,34 @@ async function initializeDailySummaryData(): Promise<void> {
   }
 }
 
+// 通用 API 速率限制 - 防止资源耗尽和滥用
+const apiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15分钟窗口
+  max: 500, // 每个IP每15分钟最多500次API请求
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req: express.Request) => {
+    // 跳过已有专属速率限制的路由
+    return req.path.startsWith('/api/auth/') || req.path.startsWith('/api/jenkins/');
+  },
+  handler: (req: express.Request, res: express.Response) => {
+    logger.warn('API rate limit exceeded', {
+      event: LOG_EVENTS.SECURITY_RATE_LIMIT_EXCEEDED,
+      ip: req.ip,
+      path: req.path,
+      method: req.method,
+    }, LOG_CONTEXTS.SECURITY);
+
+    res.status(429).json({
+      success: false,
+      error: 'Too many requests',
+      message: 'Please try again later',
+    });
+  },
+});
+
 // API 路由
+app.use('/api/', apiRateLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/executions', executionRoutes);
@@ -150,9 +177,32 @@ app.use('/api/tasks', tasksRoutes);
 app.use('/api/jenkins', jenkinsRoutes);
 app.use('/api/ai-cases', aiCasesRoutes);
 
+// 管理员操作速率限制 - 防止滥用和暴力攻击
+const adminRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15分钟窗口
+  max: 10, // 每个IP每15分钟最多10次管理员操作
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req: express.Request, res: express.Response) => {
+    logger.warn('Admin rate limit exceeded', {
+      event: LOG_EVENTS.SECURITY_RATE_LIMIT_EXCEEDED,
+      ip: req.ip,
+      path: req.path,
+      method: req.method,
+      userAgent: req.headers['user-agent'],
+    }, LOG_CONTEXTS.SECURITY);
+
+    res.status(429).json({
+      success: false,
+      error: 'Too many admin requests',
+      message: 'Please try again later',
+    });
+  },
+});
+
 // 【紧急修复】修复孤立的 TestRun 记录
 // 安全修复：添加 authenticate 和 requireAdmin 中间件，确保只有管理员才能执行数据修复操作
-app.post('/api/fix-orphaned-runs', authenticate, requireAdmin, async (_req, res) => {
+app.post('/api/fix-orphaned-runs', adminRateLimiter, authenticate, requireAdmin, async (_req, res) => {
   try {
     if (!executionRepository) {
       return res.status(503).json({
@@ -179,7 +229,7 @@ app.post('/api/fix-orphaned-runs', authenticate, requireAdmin, async (_req, res)
 // 用于处理 TestRun.execution_id 为 NULL 的情况
 // 场景：如果 TestRun 的 ID 与其对应的 TaskExecution ID 相同，直接绑定
 // 安全修复：添加 authenticate 和 requireAdmin 中间件，确保只有管理员才能执行数据修复操作
-app.post('/api/fix-specific-run/:runId', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/fix-specific-run/:runId', adminRateLimiter, authenticate, requireAdmin, async (req, res) => {
   // 资源泄漏修复：将 queryRunner 声明在外层，确保在任何情况下都能正确释放
   let queryRunner: ReturnType<typeof AppDataSource.createQueryRunner> | null = null;
 
