@@ -1,0 +1,115 @@
+<style>
+  .cards {
+    grid-template-columns: repeat(3, minmax(240px, 1fr));
+  }
+  .card {
+    cursor: pointer;
+  }
+  .score {
+    display: flex;
+    gap: .35rem;
+    margin: .7rem 0;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--border);
+  }
+  .dot.on {
+    background: var(--accent);
+  }
+  .tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+    margin: .75rem 0;
+  }
+  .tag {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: .2rem .5rem;
+    font-size: .72rem;
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+  }
+  .fit {
+    margin-top: .8rem;
+    padding-top: .8rem;
+    border-top: 1px solid var(--border);
+  }
+  .fit strong {
+    display: block;
+    font-size: .8rem;
+    margin-bottom: .25rem;
+  }
+  .fit p {
+    font-size: .82rem;
+  }
+</style>
+
+<h2>完整开源平台接入方案对比</h2>
+<p class="subtitle">点击你更倾向的方向。这里的判断重点是：完整 UI、自托管、接口自动化、定时执行、CI 触发、报告回收、二次集成成本。</p>
+
+<div class="cards">
+  <div class="card" data-choice="metersphere" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>A. MeterSphere 优先</h3>
+      <div class="score">
+        <span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span>
+      </div>
+      <p>开源企业级持续测试平台，覆盖接口测试、测试计划、定时执行、报告、DevOps 集成。</p>
+      <div class="tag-row">
+        <span class="tag">完整平台</span>
+        <span class="tag">中文生态</span>
+        <span class="tag">REST API</span>
+        <span class="tag">定时任务</span>
+        <span class="tag">GitLab CI 可接</span>
+      </div>
+      <div class="fit">
+        <strong>推荐理由</strong>
+        <p>最贴近你的中台接入目标：先部署独立平台，再通过 API/报告链接/回调轮询接入现有平台。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="runnergo" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>B. RunnerGo 备选 POC</h3>
+      <div class="score">
+        <span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+      <p>偏接口自动化/性能测试的一体化工具，值得验证部署、API 能力和企业集成细节。</p>
+      <div class="tag-row">
+        <span class="tag">自托管</span>
+        <span class="tag">接口测试</span>
+        <span class="tag">性能测试</span>
+        <span class="tag">需 POC</span>
+      </div>
+      <div class="fit">
+        <strong>适合场景</strong>
+        <p>如果更看重轻量和性能压测组合，可以并行做小 POC，但不建议先押主线。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="client-tools" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>C. Hoppscotch/Bruno 类</h3>
+      <div class="score">
+        <span class="dot on"></span><span class="dot on"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+      <p>更像开源 API 客户端或 Git 友好集合工具，适合开发调试，不太适合作为完整自动化平台核心。</p>
+      <div class="tag-row">
+        <span class="tag">API 客户端</span>
+        <span class="tag">集合管理</span>
+        <span class="tag">CLI</span>
+        <span class="tag">平台能力较弱</span>
+      </div>
+      <div class="fit">
+        <strong>不推荐主线</strong>
+        <p>需要你当前平台补大量调度、报告、权限和运行历史能力，会偏离“直接使用完整开源平台”。</p>
+      </div>
+    </div>
+  </div>
+</div>

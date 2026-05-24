@@ -1,0 +1,95 @@
+<style>
+  .model {
+    display: grid;
+    grid-template-columns: 1fr .75fr 1fr;
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .box {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+  .box h3 {
+    margin-bottom: .65rem;
+  }
+  .chip {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .6rem .7rem;
+    margin-bottom: .55rem;
+    font-size: .84rem;
+  }
+  .chip.good {
+    border-color: var(--success);
+  }
+  .chip.warn {
+    border-color: var(--warning);
+  }
+  .arrow-stack {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: .7rem;
+  }
+  .arrow {
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: .55rem;
+    text-align: center;
+    color: var(--accent);
+    background: var(--selected-bg);
+    font-size: .82rem;
+  }
+  .summary {
+    margin-top: 1rem;
+    border: 1px solid var(--accent);
+    background: var(--selected-bg);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+  .summary p {
+    color: var(--text-secondary);
+  }
+  @media (max-width: 900px) {
+    .model {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<h2>如果主线改成 Bruno</h2>
+<p class="subtitle">Bruno 很适合作为接口集合和执行格式的核心，但不是一个带服务端调度/RBAC/统一看板的完整平台。</p>
+
+<div class="model">
+  <div class="box">
+    <h3>Bruno 负责</h3>
+    <div class="chip good">接口集合：.bru / OpenCollection YAML，文件化存储</div>
+    <div class="chip good">调试体验：桌面客户端，REST / GraphQL / gRPC / WebSocket / SOAP</div>
+    <div class="chip good">自动化脚本：JS tests/assertions、变量、环境、数据驱动</div>
+    <div class="chip good">CLI 执行：bru run、tags、env、parallel、bail</div>
+    <div class="chip good">报告产物：JSON / JUnit / HTML</div>
+  </div>
+
+  <div class="arrow-stack">
+    <div class="arrow">GitLab Repo 保存集合</div>
+    <div class="arrow">平台拉取仓库并运行 bru CLI</div>
+    <div class="arrow">解析报告并汇总到平台</div>
+  </div>
+
+  <div class="box">
+    <h3>当前平台补齐</h3>
+    <div class="chip warn">定时任务：Cron、队列、重试、超时</div>
+    <div class="chip warn">Webhook 触发：GitLab push/MR/release</div>
+    <div class="chip warn">执行中心：状态、进度、历史、负责人</div>
+    <div class="chip warn">权限审计：谁配置、谁触发、触发原因</div>
+    <div class="chip warn">结果收集：读取 JSON/JUnit，沉淀摘要和报告链接</div>
+  </div>
+</div>
+
+<div class="summary">
+  <h3>结论</h3>
+  <p>Bruno 主线不是“接一个完整平台”，而是“用 Bruno 作为 Git-native 接口自动化资产和 runner 标准，让你的平台成为调度与报告中枢”。这个方案更轻、更活跃，也更贴合后续 GitLab 变更触发。</p>
+</div>

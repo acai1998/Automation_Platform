@@ -1,0 +1,104 @@
+<style>
+  .flow-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .lane {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+    min-height: 260px;
+  }
+  .lane h3 {
+    margin-bottom: .75rem;
+  }
+  .pill {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .65rem .75rem;
+    margin-bottom: .6rem;
+    background: var(--bg-primary);
+    font-size: .86rem;
+  }
+  .pill strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: .9rem;
+  }
+  .pill span {
+    color: var(--text-secondary);
+  }
+  .bridge {
+    border: 2px solid var(--accent);
+    background: var(--selected-bg);
+  }
+  .note-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  .note {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: .9rem;
+  }
+  .note h4 {
+    font-size: .85rem;
+    margin-bottom: .35rem;
+  }
+  .note p {
+    color: var(--text-secondary);
+    font-size: .84rem;
+  }
+  @media (max-width: 900px) {
+    .flow-grid,
+    .note-row {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<h2>接口自动化接入位置</h2>
+<p class="subtitle">基于当前项目已有的 Jenkins 执行、任务调度、回调和报告链路，接口自动化可以作为新的执行能力接入，而不是重做整个平台。</p>
+
+<div class="flow-grid">
+  <div class="lane">
+    <h3>现有平台</h3>
+    <div class="pill"><strong>用例管理</strong><span>当前已有 API 用例页入口和测试用例表</span></div>
+    <div class="pill"><strong>任务调度</strong><span>支持 cron、手动、队列、重试、超时释放</span></div>
+    <div class="pill"><strong>执行记录</strong><span>Auto_TestRun / Auto_TestRunResults</span></div>
+    <div class="pill"><strong>报告与看板</strong><span>已有执行状态、统计、WebSocket 进度</span></div>
+  </div>
+
+  <div class="lane bridge">
+    <h3>建议新增适配层</h3>
+    <div class="pill"><strong>接口集合同步</strong><span>Postman/OpenAPI/开源工具项目导入</span></div>
+    <div class="pill"><strong>环境与密钥映射</strong><span>变量、域名、认证、敏感值隔离</span></div>
+    <div class="pill"><strong>Runner 适配器</strong><span>统一触发 Jenkins、本地容器或外部 CLI</span></div>
+    <div class="pill"><strong>结果标准化</strong><span>把断言、请求、响应、耗时转成平台结果</span></div>
+  </div>
+
+  <div class="lane">
+    <h3>开源执行工具</h3>
+    <div class="pill"><strong>集合编辑/导入</strong><span>类似 Postman/Apifox 的开源方案</span></div>
+    <div class="pill"><strong>命令行执行</strong><span>适合定时、CI/CD、GitLab Webhook</span></div>
+    <div class="pill"><strong>测试报告产物</strong><span>HTML/JUnit/JSON，再回传平台</span></div>
+    <div class="pill"><strong>后续 GitLab 触发</strong><span>代码变更触发接口回归任务</span></div>
+  </div>
+</div>
+
+<div class="note-row">
+  <div class="note">
+    <h4>第一阶段重点</h4>
+    <p>先把接口自动化“跑起来、可定时、结果可回收”，尽量复用当前调度与 Jenkins 链路。</p>
+  </div>
+  <div class="note">
+    <h4>后续扩展点</h4>
+    <p>GitLab Webhook 或 CI Pipeline 只需要调用统一任务触发 API，不必关心底层 runner 是什么。</p>
+  </div>
+</div>

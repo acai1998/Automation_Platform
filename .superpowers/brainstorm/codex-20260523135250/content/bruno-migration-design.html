@@ -1,0 +1,107 @@
+<style>
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr .7fr 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .panel {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+  .panel h3 {
+    margin-bottom: .7rem;
+  }
+  .node {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .65rem .75rem;
+    margin-bottom: .55rem;
+    font-size: .84rem;
+  }
+  .node strong {
+    display: block;
+    color: var(--text-primary);
+  }
+  .node span {
+    color: var(--text-secondary);
+  }
+  .bridge {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: .7rem;
+  }
+  .flow {
+    text-align: center;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    background: var(--selected-bg);
+    border-radius: 999px;
+    padding: .55rem;
+    font-size: .82rem;
+  }
+  .phases {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: .75rem;
+  }
+  .phase {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: .85rem;
+  }
+  .phase h4 {
+    font-size: .86rem;
+    margin-bottom: .35rem;
+  }
+  .phase p {
+    font-size: .78rem;
+    color: var(--text-secondary);
+  }
+  @media (max-width: 900px) {
+    .grid,
+    .phases {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<h2>Bruno 核心能力迁移设计</h2>
+<p class="subtitle">保留 Bruno 的文件格式、桌面调试体验和 CLI runner，把平台补成调度、执行、结果、权限和 GitLab 触发中枢。</p>
+
+<div class="grid">
+  <div class="panel">
+    <h3>Bruno 核心能力</h3>
+    <div class="node"><strong>Collection / Folder / Request</strong><span>.bru 文件或 OpenCollection YAML</span></div>
+    <div class="node"><strong>Environment / Variables</strong><span>环境变量、运行时变量、密钥引用</span></div>
+    <div class="node"><strong>Tests / Scripts</strong><span>JS 断言、前后置脚本、接口串联</span></div>
+    <div class="node"><strong>CLI Runner</strong><span>bru run + tags/env/vars/reporters</span></div>
+  </div>
+
+  <div class="bridge">
+    <div class="flow">GitLab repo sync</div>
+    <div class="flow">Platform creates run</div>
+    <div class="flow">Worker executes bru CLI</div>
+    <div class="flow">Parse JSON/JUnit/HTML</div>
+  </div>
+
+  <div class="panel">
+    <h3>当前平台新增能力</h3>
+    <div class="node"><strong>Bruno 项目映射</strong><span>项目、仓库、分支、collection path</span></div>
+    <div class="node"><strong>API 任务模型</strong><span>选择 collection/folder/request/tags/env</span></div>
+    <div class="node"><strong>BrunoRunnerService</strong><span>执行、超时、取消、产物收集</span></div>
+    <div class="node"><strong>统一结果中心</strong><span>沿用 Auto_TestRun / Auto_TestRunResults</span></div>
+  </div>
+</div>
+
+<div class="phases">
+  <div class="phase"><h4>Phase 1</h4><p>GitLab 同步 + Bruno CLI 手动执行 + JSON/HTML 报告入库</p></div>
+  <div class="phase"><h4>Phase 2</h4><p>接入现有 cron 调度、队列、重试、WebSocket 状态</p></div>
+  <div class="phase"><h4>Phase 3</h4><p>平台化管理环境变量、tags、失败聚合和报告详情</p></div>
+  <div class="phase"><h4>Phase 4</h4><p>GitLab Webhook 触发 MR/Push/Release 接口回归</p></div>
+</div>
