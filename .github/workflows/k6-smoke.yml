@@ -25,7 +25,7 @@ jobs:
       - name: Run k6 API smoke test
         working-directory: perf
         env:
-          BASE_URL: ${{ secrets.PERF_BASE_URL }}
+          BASE_URL: ${{ vars.PERF_BASE_URL || secrets.PERF_BASE_URL }}
           API_TOKEN: ${{ secrets.PERF_API_TOKEN }}
           SMOKE_EMAIL: ${{ secrets.PERF_SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.PERF_SMOKE_PASSWORD }}

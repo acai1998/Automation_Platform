@@ -14,7 +14,8 @@
       "password": "${SMOKE_PASSWORD}"
     },
     "expectedStatus": 200,
-    "requiresCredentials": true
+    "requiresCredentials": true,
+    "captureToken": true
   },
   {
     "name": "current_user",

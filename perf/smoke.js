@@ -6,6 +6,7 @@ const BASE_URL = (__ENV.BASE_URL || '').replace(/\/$/, '');
 const API_TOKEN = __ENV.API_TOKEN || '';
 const SMOKE_EMAIL = __ENV.SMOKE_EMAIL || '';
 const SMOKE_PASSWORD = __ENV.SMOKE_PASSWORD || '';
+let authToken = API_TOKEN;
 
 if (!BASE_URL) {
   throw new Error('BASE_URL is required');
@@ -44,7 +45,7 @@ function resolveBody(body) {
 }
 
 function shouldSkip(api) {
-  if (api.requiresToken && !API_TOKEN) {
+  if (api.requiresToken && !authToken) {
     return true;
   }
 
@@ -53,6 +54,17 @@ function shouldSkip(api) {
   }
 
   return false;
+}
+
+function captureAuthToken(api, response) {
+  if (!api.captureToken || response.status !== api.expectedStatus) {
+    return;
+  }
+
+  const body = response.json();
+  if (body && typeof body.token === 'string') {
+    authToken = body.token;
+  }
 }
 
 export default function () {
@@ -67,8 +79,8 @@ export default function () {
       'Content-Type': 'application/json',
     };
 
-    if (API_TOKEN) {
-      headers.Authorization = `Bearer ${API_TOKEN}`;
+    if (authToken) {
+      headers.Authorization = `Bearer ${authToken}`;
     }
 
     const params = {
@@ -92,6 +104,8 @@ export default function () {
       [`${api.name} status is ${api.expectedStatus}`]: (r) => r.status === api.expectedStatus,
       [`${api.name} response time < 800ms`]: (r) => r.timings.duration < 800,
     });
+
+    captureAuthToken(api, response);
 
     sleep(1);
   }
