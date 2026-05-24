@@ -6,6 +6,9 @@ on:
     # Daily at Singapore/China 09:00. GitHub cron uses UTC.
     - cron: '0 1 * * *'
 
+permissions:
+  contents: read
+
 jobs:
   k6-smoke:
     runs-on: ubuntu-latest
