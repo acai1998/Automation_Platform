@@ -21,7 +21,12 @@ import type { ScheduledTask } from './types';
 interface TaskSchedulerRegistryHelperDeps {
   taskCache: Map<number, ScheduledTask>;
   timers: Map<number, NodeJS.Timeout>;
-  dispatchTask: (taskId: number, triggerReason?: 'scheduled' | 'manual' | 'retry', operatorId?: number) => Promise<void>;
+  dispatchTask: (
+    taskId: number,
+    triggerReason?: 'scheduled' | 'manual' | 'retry',
+    operatorId?: number,
+    scheduledFor?: Date,
+  ) => Promise<void>;
   recordAuditLog: (taskId: number, action: string, operatorId: number | null, metadata: Record<string, unknown>) => Promise<void>;
   unregisterTask: (taskId: number) => void;
 }
@@ -96,7 +101,7 @@ export class TaskSchedulerRegistryHelper {
         prevShouldRun: prevShouldRun.toISOString(),
         lastRunAt: task.lastRunAt?.toISOString() ?? null,
       }, LOG_CONTEXTS.EXECUTION);
-      this.deps.dispatchTask(task.id, 'scheduled').catch((err) => {
+      this.deps.dispatchTask(task.id, 'scheduled', undefined, prevShouldRun).catch((err) => {
         logger.errorLog(err, `Compensation dispatch failed for task ${task.id}`, { event: LOG_EVENTS.SCHEDULER_TASK_COMPENSATION_FAILED });
       });
     });
@@ -159,7 +164,7 @@ export class TaskSchedulerRegistryHelper {
         dueAt: next.toISOString(),
       }, LOG_CONTEXTS.EXECUTION);
 
-      await this.deps.dispatchTask(task.id, 'scheduled').catch((err) => {
+      await this.deps.dispatchTask(task.id, 'scheduled', undefined, next).catch((err) => {
         logger.errorLog(err, `Scheduled dispatch failed for task ${task.id}`, { event: LOG_EVENTS.SCHEDULER_TASK_EXECUTION_FAILED });
       });
 

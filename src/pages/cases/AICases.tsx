@@ -1,41 +1,14 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './AICases.css';
-import {
-  Activity,
-  Bot,
-  BrainCircuit,
-  Bug,
-  CheckCircle2,
-  FileText,
-  GitBranch,
-  Link2,
-  ListTree,
-  Loader2,
-  PlayCircle,
-  ShieldAlert,
-} from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { useAiGeneration } from '@/contexts/AiGenerationContext';
-import { AiCaseSidebar } from './components/AiCaseSidebar';
-import { AiWorkspaceHeader } from './components/AiWorkspaceHeader';
-import { AiWorkspaceSummaryBar } from './components/AiWorkspaceSummaryBar';
-import { AiWorkspaceTabs, type AiWorkspaceTabItem } from './components/AiWorkspaceTabs';
 import { toast } from 'sonner';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogClose,
-} from '@/components/ui/dialog';
-import {
   aiCasesApi,
-  type AiCaseGenerationResult,
   type AiCaseWorkspaceDetail,
 } from '@/api';
-import { Button } from '@/components/ui/button';
 import {
   appendNodeAttachmentId,
   collectDescendantTestcaseIds,
@@ -60,263 +33,30 @@ import {
 import {
   AI_CASE_WORKSPACE_ID,
   createAiCaseAttachmentId,
-  createAiCaseNodeId,
   type AiCaseAttachmentPreview,
   type AiCaseMindData,
   type AiCaseNode,
-  type AiCaseNodeMetadata,
   type AiCaseNodeStatus,
   type AiCaseWorkspaceDocument,
-  type AiCaseSyncMode,
-  type AiCaseWorkspaceStatus,
 } from '@/types/aiCases';
-
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
-
-interface RemoteSyncMeta {
-  syncMode: AiCaseSyncMode;
-  remoteWorkspaceId: number | null;
-  remoteVersion: number | null;
-  remoteStatus: AiCaseWorkspaceStatus | null;
-  lastRemoteSyncedAt: number | null;
-}
-
-const DEFAULT_REMOTE_SYNC_META: RemoteSyncMeta = {
-  syncMode: 'local',
-  remoteWorkspaceId: null,
-  remoteVersion: null,
-  remoteStatus: null,
-  lastRemoteSyncedAt: null,
-};
-
-interface CleanupStaleAttachmentOptions {
-  reason?: 'regular' | 'node_deleted';
-  showCountToast?: boolean;
-}
-
-type StreamGenerateResultPayload =
-  | AiCaseGenerationResult
-  | { generated: AiCaseGenerationResult; workspace: AiCaseWorkspaceDetail };
-
-const NODE_TAG_VISIBILITY_STORAGE_KEY = 'ai-case-node-tags-visible';
-const WAIT_COPY_MAGIC = 'MIND-ELIXIR-WAIT-COPY';
-
-type WorkspaceTab = 'materials' | 'results' | 'coverage' | 'execution';
-type RiskLevel = 'high' | 'medium' | 'low';
-
-interface GeneratedCaseListItem {
-  id: string;
-  title: string;
-  moduleName: string;
-  priority: string;
-  status: AiCaseNodeStatus;
-  riskLevel: RiskLevel;
-  sourceLabel: string;
-}
-
-const WORKSPACE_TAB_ITEMS: AiWorkspaceTabItem<WorkspaceTab>[] = [
-  {
-    id: 'materials',
-    label: '输入材料',
-    description: '准备 PRD、附件和外部来源',
-    icon: <FileText className="h-4 w-4" />,
-  },
-  {
-    id: 'results',
-    label: '生成结果',
-    description: '查看结构化结果与详情',
-    icon: <BrainCircuit className="h-4 w-4" />,
-  },
-  {
-    id: 'coverage',
-    label: '覆盖与风险',
-    description: '评估高风险点与覆盖缺口',
-    icon: <ShieldAlert className="h-4 w-4" />,
-  },
-  {
-    id: 'execution',
-    label: '执行与回流',
-    description: '发布、执行与质量沉淀',
-    icon: <PlayCircle className="h-4 w-4" />,
-  },
-];
-
-function inferRiskLevel(priority: string | undefined, status: AiCaseNodeStatus): RiskLevel {
-  if (status === 'failed' || priority === 'P0') {
-    return 'high';
-  }
-  if (priority === 'P1' || priority === 'P2' || status === 'blocked') {
-    return 'medium';
-  }
-  return 'low';
-}
-
-function collectGeneratedCases(mapData: AiCaseMindData): GeneratedCaseListItem[] {
-  const modules = mapData.nodeData.children ?? [];
-  const items: GeneratedCaseListItem[] = [];
-
-  for (const moduleNode of modules) {
-    const moduleName = typeof moduleNode.topic === 'string' && moduleNode.topic.trim()
-      ? moduleNode.topic.trim()
-      : '未命名模块';
-
-    for (const caseNode of ((moduleNode.children ?? []) as AiCaseNode[])) {
-      const metadata = caseNode.metadata as Partial<AiCaseNodeMetadata> | undefined;
-      const priority = metadata?.priority ?? 'P2';
-      const status = metadata?.status ?? 'todo';
-
-      items.push({
-        id: caseNode.id,
-        title: caseNode.topic,
-        moduleName,
-        priority,
-        status,
-        riskLevel: inferRiskLevel(priority, status),
-        sourceLabel: caseNode.metadata?.aiGenerated ? 'AI 生成' : '手动补充',
-      });
-    }
-  }
-
-  return items;
-}
-
-function getFirstGeneratedCaseId(mapData: AiCaseMindData): string | null {
-  return collectGeneratedCases(mapData)[0]?.id ?? null;
-}
-
-function WorkspacePanelCard({
-  title,
-  description,
-  action,
-  children,
-}: {
-  title: string;
-  description: string;
-  action?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
-      <div className="flex items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800 px-5 py-4">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h3>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{description}</p>
-        </div>
-        {action}
-      </div>
-      <div className="px-5 py-4">{children}</div>
-    </div>
-  );
-}
-
-/**
- * 浮动面板拖拽 hook
- * 返回面板位置、重置位置函数、拖拽把手事件处理函数
- */
-function readNodeTagVisibilityPreference(): boolean {
-  if (typeof window === 'undefined') {
-    return true;
-  }
-
-  return window.localStorage.getItem(NODE_TAG_VISIBILITY_STORAGE_KEY) !== 'false';
-}
-
-function collectNodeIds(root: AiCaseNode): string[] {
-  const stack: AiCaseNode[] = [root];
-  const nodeIds: string[] = [];
-
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) {
-      continue;
-    }
-
-    nodeIds.push(current.id);
-
-    for (const child of current.children ?? []) {
-      stack.push(child as AiCaseNode);
-    }
-  }
-
-  return nodeIds;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function cloneImportedNode(rawNode: unknown): AiCaseNode | null {
-  if (!isRecord(rawNode)) {
-    return null;
-  }
-
-  const node = rawNode as unknown as AiCaseNode;
-  const topic = typeof node.topic === 'string' && node.topic.trim() ? node.topic.trim() : '未命名节点';
-  const cloned: AiCaseNode = {
-    ...node,
-    id: createAiCaseNodeId(),
-    topic,
-    expanded: node.expanded ?? true,
-  };
-
-  if (Array.isArray(node.children) && node.children.length > 0) {
-    const clonedChildren = node.children
-      .map((child) => cloneImportedNode(child))
-      .filter((child): child is AiCaseNode => Boolean(child));
-
-    if (clonedChildren.length > 0) {
-      cloned.children = clonedChildren;
-    } else {
-      delete cloned.children;
-    }
-  } else {
-    delete cloned.children;
-  }
-
-  return cloned;
-}
-
-function sanitizeImportedNodes(rawNodes: unknown[]): AiCaseNode[] {
-  return rawNodes
-    .map((rawNode) => cloneImportedNode(rawNode))
-    .filter((node): node is AiCaseNode => Boolean(node));
-}
-
-function resolveRemoteSyncMeta(doc: AiCaseWorkspaceDocument | null | undefined): RemoteSyncMeta {
-  if (!doc) {
-    return DEFAULT_REMOTE_SYNC_META;
-  }
-
-  return {
-    syncMode: doc.syncMode ?? (doc.remoteWorkspaceId ? 'hybrid' : 'local'),
-    remoteWorkspaceId: doc.remoteWorkspaceId ?? null,
-    remoteVersion: doc.remoteVersion ?? null,
-    remoteStatus: doc.remoteStatus ?? null,
-    lastRemoteSyncedAt: doc.lastRemoteSyncedAt ?? null,
-  };
-}
-
-function mergeRemoteWorkspaceToDoc(
-  doc: AiCaseWorkspaceDocument,
-  workspace: AiCaseWorkspaceDetail
-): AiCaseWorkspaceDocument {
-  const normalizedMapData = normalizeMindData(workspace.mapData);
-  const expanded = expandImportedCaseNodesFromNote(normalizedMapData);
-
-  return {
-    ...doc,
-    name: workspace.name,
-    requirement: workspace.requirementText ?? doc.requirement,
-    mapData: expanded.data,
-    lastSelectedNodeId: workspace.mapData.nodeData?.id ?? doc.lastSelectedNodeId,
-    syncMode: 'hybrid',
-    remoteWorkspaceId: workspace.id,
-    remoteVersion: workspace.version,
-    remoteStatus: workspace.status,
-    lastRemoteSyncedAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-}
+import { changeAiCaseNodeStatus, generateAiCases, uploadAiCaseImageFiles } from './AICasesActions';
+import { runAiCaseStreamGeneration } from './AICasesStream';
+import { AICasesWorkspaceView } from './AICasesWorkspaceView';
+import {
+  DEFAULT_REMOTE_SYNC_META,
+  MAX_UPLOAD_BYTES,
+  WAIT_COPY_MAGIC,
+  collectGeneratedCases,
+  collectNodeIds,
+  getFirstGeneratedCaseId,
+  mergeRemoteWorkspaceToDoc,
+  readNodeTagVisibilityPreference,
+  resolveRemoteSyncMeta,
+  sanitizeImportedNodes,
+  type CleanupStaleAttachmentOptions,
+  type RemoteSyncMeta,
+  type WorkspaceTab,
+} from './AICasesUtils';
 
 function AiCasesInner() {
   const [location, setLocation] = useLocation();
@@ -915,241 +655,20 @@ function AiCasesInner() {
     [clearGenerateProgressTimers, notifyProgress, notifyDone]
   );
 
-  const streamGenerateFromBackend = useCallback(async (): Promise<StreamGenerateResultPayload> => {
-    // 中止上一次未完成的流式请求（如快速重复点击生成按钮）
-    streamAbortControllerRef.current?.abort();
-    const controller = new AbortController();
-    streamAbortControllerRef.current = controller;
-
-    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-
-    const streamEndpoint =
-      typeof window !== 'undefined'
-        ? new URL('/api/ai-cases/generate/stream', window.location.origin).toString()
-        : 'http://localhost:3000/api/ai-cases/generate/stream';
-
-    const response = await fetch(streamEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({
-        requirementText,
-        workspaceName,
-        persist: false,
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      let message = `流式生成失败（HTTP ${response.status}）`;
-      try {
-        const payload = await response.json();
-        if (typeof payload?.message === 'string' && payload.message.trim()) {
-          message = payload.message;
-        }
-      } catch {
-        // no-op
-      }
-      throw new Error(message);
-    }
-
-    if (!response.body) {
-      throw new Error('后端未返回可读取的流式响应');
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let finalPayload: StreamGenerateResultPayload | null = null;
-
-    // 渐进式渲染：收到第一个 node_module 时初始化骨架结构
-    let skeletonData: AiCaseMindData | null = null;
-
-    const processEventBlock = (block: string): void => {
-      // 如果请求已被中止，不再处理任何事件
-      if (controller.signal.aborted) {
-        return;
-      }
-
-      let eventName = 'message';
-      const dataLines: string[] = [];
-
-      block.split('\n').forEach((line) => {
-        if (!line || line.startsWith(':')) {
-          return;
-        }
-
-        if (line.startsWith('event:')) {
-          eventName = line.slice(6).trim();
-          return;
-        }
-
-        if (line.startsWith('data:')) {
-          dataLines.push(line.slice(5).trimStart());
-        }
-      });
-
-      if (dataLines.length === 0) {
-        return;
-      }
-
-      let payload: Record<string, unknown>;
-      try {
-        payload = JSON.parse(dataLines.join('\n'));
-      } catch {
-        return;
-      }
-
-      if (eventName === 'progress') {
-        applyGenerateProgress(payload);
-        return;
-      }
-
-      // 渐进式节点推送：每收到一个 module 节点，立即按索引位置替换到骨架结构
-      if (eventName === 'node_module') {
-        const moduleNode = payload?.moduleNode;
-        const moduleIndex: number = typeof payload?.moduleIndex === 'number' ? payload.moduleIndex : 0;
-        const totalModules: number = typeof payload?.totalModules === 'number' ? payload.totalModules : 1;
-
-        if (!moduleNode || typeof moduleNode !== 'object') {
-          return;
-        }
-
-        if (!skeletonData) {
-          // 第一个 module：创建最小骨架根节点（不生成默认子节点，避免白白创建再丢弃）
-          const emptyRoot = normalizeMindData({
-            nodeData: {
-              id: `node-skeleton-root`,
-              topic: workspaceName || 'AI Testcase Workspace',
-              expanded: true,
-              children: [],
-            },
-          }, { showNodeKindTags: showNodeKindTagsRef.current });
-          skeletonData = emptyRoot;
-        }
-
-        // 性能优化：只对当前新模块做 normalize + expand，再按索引替换到骨架中
-        // 避免每次全量 normalize 整棵树（旧逻辑每次 append 导致 O(n²) 开销）
-        const singleModuleData: AiCaseMindData = {
-          ...skeletonData,
-          nodeData: {
-            ...skeletonData.nodeData,
-            children: [moduleNode as AiCaseNode],
-          },
-        };
-        const normalizedSingleModule = normalizeMindData(singleModuleData, {
-          showNodeKindTags: showNodeKindTagsRef.current,
-        });
-        const expandedSingleModule = expandImportedCaseNodesFromNote(normalizedSingleModule, {
-          showNodeKindTags: showNodeKindTagsRef.current,
-        });
-        const normalizedModuleNode = expandedSingleModule.data.nodeData.children?.[0] as AiCaseNode | undefined;
-
-        // 按索引替换（而非 append），防止并发推送或重试模块顺序错乱
-        const nextChildren = [...(skeletonData.nodeData.children ?? [])];
-        if (normalizedModuleNode) {
-          nextChildren[moduleIndex] = normalizedModuleNode;
-        }
-
-        const nextSkeletonData: AiCaseMindData = {
-          ...skeletonData,
-          nodeData: {
-            ...skeletonData.nodeData,
-            children: nextChildren,
-          },
-        };
-        skeletonData = nextSkeletonData;
-
-        // 实时刷新结构数据，不触发 schedulePersist，避免频繁写 IndexedDB
-        setMindData(nextSkeletonData);
-        mindDataRef.current = nextSkeletonData;
-
-        // 更新进度提示
-        const progressPercent = Math.round(((moduleIndex + 1) / totalModules) * 40) + 55;
-        setGenerationStageText(
-          `正在生成功能模块 ${moduleIndex + 1}/${totalModules}：${String((moduleNode as Record<string, unknown>).topic ?? '').slice(0, 20)}`
-        );
-        setGenerationProgress(Math.min(95, progressPercent));
-        return;
-      }
-
-      if (eventName === 'result') {
-        finalPayload = (payload?.data ?? null) as StreamGenerateResultPayload | null;
-
-        // 流式渲染结束时，立即用 AI 生成的 workspaceName 更新骨架根节点 topic
-        if (finalPayload !== null && typeof finalPayload === 'object') {
-          const fp = finalPayload as Record<string, unknown>;
-          const resultGenerated = 'generated' in fp
-            ? (fp.generated as { workspaceName?: string } | undefined)
-            : (fp as { workspaceName?: string });
-          const resultWsName =
-            typeof resultGenerated?.workspaceName === 'string' && resultGenerated.workspaceName.trim()
-              ? resultGenerated.workspaceName.trim()
-              : null;
-          if (resultWsName && skeletonData) {
-            const updatedSkeleton: AiCaseMindData = {
-              ...skeletonData,
-              nodeData: { ...skeletonData.nodeData, topic: resultWsName },
-            };
-            skeletonData = updatedSkeleton;            setMindData(updatedSkeleton);
-            mindDataRef.current = updatedSkeleton;
-          }
-        }
-        return;
-      }
-
-      if (eventName === 'error') {
-        throw new Error(
-          typeof payload?.message === 'string' && payload.message.trim()
-            ? payload.message
-            : '远端 AI 生成失败'
-        );
-      }
-
-      if (eventName === 'done' && payload?.success === false) {
-        throw new Error(
-          typeof payload?.message === 'string' && payload.message.trim()
-            ? payload.message
-            : '远端 AI 生成终止'
-        );
-      }
-    };
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
-
-      let separatorIndex = buffer.indexOf('\n\n');
-      while (separatorIndex !== -1) {
-        const block = buffer.slice(0, separatorIndex).trim();
-        buffer = buffer.slice(separatorIndex + 2);
-
-        if (block) {
-          processEventBlock(block);
-        }
-
-        separatorIndex = buffer.indexOf('\n\n');
-      }
-    }
-
-    buffer += decoder.decode().replace(/\r\n/g, '\n');
-    if (buffer.trim()) {
-      processEventBlock(buffer.trim());
-    }
-
-    if (!finalPayload) {
-      throw new Error('流式响应未返回生成结果');
-    }
-
-    return finalPayload;
-  }, [applyGenerateProgress, requirementText, workspaceName]);
-
+  const streamGenerateFromBackend = useCallback(() =>
+    runAiCaseStreamGeneration({
+      streamAbortControllerRef,
+      showNodeKindTagsRef,
+      mindDataRef,
+      requirementText,
+      workspaceName,
+      applyGenerateProgress,
+      setMindData,
+      setGenerationStageText,
+      setGenerationProgress,
+    }),
+    [applyGenerateProgress, requirementText, workspaceName]
+  );
   // 用户在侧边栏手动修改工作台名称时调用，标记"已手动编辑"，后续不再自动推断覆盖
   const handleWorkspaceNameChange = useCallback((name: string) => {
     isWorkspaceNameUserEditedRef.current = true;
@@ -1278,90 +797,20 @@ const applyWorkspaceDetail = useCallback(
   }, [cleanupStaleAttachments]);
 
   const uploadImageFiles = useCallback(
-    async (inputFiles: File[], source: 'picker' | 'paste') => {
-      const currentData = mindDataRef.current;
-      const currentSelectedNodeId = selectedNodeIdRef.current;
-
-      if (!currentData || !currentSelectedNodeId) {
-        toast.error('请先选中一个测试节点，再上传截图');
-        return;
-      }
-
-      const selectedNodeInData = findNodeById(currentData.nodeData, currentSelectedNodeId);
-      if (selectedNodeInData?.metadata?.kind !== 'testcase') {
-        toast.error('请先选中一个测试节点，再上传截图');
-        return;
-      }
-
-      if (inputFiles.length === 0) {
-        return;
-      }
-
-      if (isUploadingRef.current) {
-        toast.warning('截图上传中，请稍候');
-        return;
-      }
-
-      isUploadingRef.current = true;
-      setIsUploading(true);
-
-      try {
-        let nextData = currentData;
-        let successCount = 0;
-
-        for (const [index, file] of inputFiles.entries()) {
-          if (!file.type.startsWith('image/')) {
-            toast.error(`${file.name || '截图文件'} 不是图片文件，已跳过`);
-            continue;
-          }
-
-          if (file.size > MAX_UPLOAD_BYTES) {
-            toast.error(`${file.name || '截图文件'} 超过 8MB，已跳过`);
-            continue;
-          }
-
-          const normalizedFile = file.name
-            ? file
-            : new File([file], `clipboard-${Date.now()}-${index + 1}.png`, {
-                type: file.type || 'image/png',
-                lastModified: Date.now(),
-              });
-
-          const attachmentId = createAiCaseAttachmentId();
-          await saveNodeAttachment({
-          id: attachmentId,
-          docId: docRef.current?.id ?? activeDocId,
-            nodeId: currentSelectedNodeId,
-            name: normalizedFile.name,
-            mimeType: normalizedFile.type,
-            size: normalizedFile.size,
-            createdAt: Date.now(),
-            blob: normalizedFile,
-          });
-
-          nextData = appendNodeAttachmentId(nextData, currentSelectedNodeId, attachmentId);
-          successCount += 1;
-        }
-
-        if (successCount > 0) {
-          setDataAndSync(nextData, {
-            selectedId: currentSelectedNodeId,
-            refreshMind: false,
-          });
-          setAttachmentReloadSeed((value) => value + 1);
-          toast.success(source === 'paste' ? `已粘贴 ${successCount} 张截图` : `已上传 ${successCount} 张截图`);
-        }
-      } catch (error) {
-        console.error('[AICases] failed to upload attachment', error);
-        toast.error('截图上传失败，请重试');
-      } finally {
-        isUploadingRef.current = false;
-        setIsUploading(false);
-      }
-    },
-    [setDataAndSync]
+    (inputFiles: File[], source: 'picker' | 'paste') => uploadAiCaseImageFiles({
+      inputFiles,
+      source,
+      mindDataRef,
+      selectedNodeIdRef,
+      isUploadingRef,
+      docRef,
+      activeDocId,
+      setIsUploading,
+      setDataAndSync,
+      setAttachmentReloadSeed,
+    }),
+    [activeDocId, setDataAndSync]
   );
-
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
       if (isImportingMindNodes) {
@@ -1468,134 +917,26 @@ const applyWorkspaceDetail = useCallback(
 
   const handleGenerateRef = useRef<() => void>();
 
-  const handleGenerate = useCallback(async () => {
-    if (!requirementText.trim()) {
-      toast.error('请先输入需求描述，再执行 AI 生成');
-      return;
-    }
-
-    setActiveTab('results');
-        setIsRequirementDialogOpen(false);
-    startGenerateProgress();
-    setIsGenerating(true);
-    try {
-      const payload = await streamGenerateFromBackend();
-      const generated =
-        payload && typeof payload === 'object' && 'generated' in payload
-          ? payload.generated
-          : payload;
-
-      if (!generated || !generated.mapData) {
-        throw new Error('AI 返回数据为空');
-      }
-
-      // 用 AI 自动生成的工作台名称更新主节点和工作台名
-      const aiWorkspaceName =
-        typeof generated.workspaceName === 'string' && generated.workspaceName.trim()
-          ? generated.workspaceName.trim()
-          : workspaceName;
-
-      // AI 生成后用 AI 给出的名称覆盖，标记为"已编辑"避免后续被自动推断再次覆盖
-      isWorkspaceNameUserEditedRef.current = true;
-
-      // 始终确保 mapData 根节点 topic 与最终 workspaceName 一致（创建新对象，不直接修改）
-      const finalMapData =
-        generated.mapData.nodeData.topic !== aiWorkspaceName
-          ? {
-              ...generated.mapData,
-              nodeData: { ...generated.mapData.nodeData, topic: aiWorkspaceName },
-            }
-          : generated.mapData;
-
-      setGenerationStageText('正在回写节点结构与结构化步骤...');
-      const normalized = normalizeMindData(finalMapData, {
-        showNodeKindTags: showNodeKindTagsRef.current,
-      });
-      const expanded = expandImportedCaseNodesFromNote(normalized, {
-        showNodeKindTags: showNodeKindTagsRef.current,
-      });
-
-      // 先更新 mindDataRef.current，再更新 workspaceName，避免因 React 状态更新异步特性
-      // 导致 useEffect 在 mindDataRef.current 更新前触发，持久化旧数据覆盖新数据
-      setDataAndSync(expanded.data, {
-        selectedId: getFirstGeneratedCaseId(expanded.data) ?? expanded.data.nodeData.id,
-        refreshMind: true,
-      });
-
-      // 在 setDataAndSync 之后更新 workspaceName，确保 mindDataRef.current 已是新数据
-      if (aiWorkspaceName !== workspaceName) {
-        setWorkspaceName(aiWorkspaceName);
-      }
-
-      await cleanupStaleAttachments(expanded.data);
-      setAttachmentReloadSeed((value) => value + 1);
-      finishGenerateProgress(generated.source === 'llm' ? 'AI 生成完成' : '模板生成完成');
-
-      // 判断用户是否已离开 AI 用例页，若已离开则弹跨页面 toast
-      const isOnAiPage = window.location.pathname === '/cases/ai';
-      if (isOnAiPage) {
-        toast.success(`AI 用例生成完成（${generated.source === 'llm' ? '大模型' : '回退模板'}）`);
-      } else {
-        toast.success('AI 用例生成完成，点击返回查看', {
-          duration: 8000,
-          action: {
-            label: '返回查看',
-            onClick: () => setLocation('/cases/ai'),
-          },
-        });
-      }
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      console.error('[AICases] remote stream generate failed, fallback local', error);
-      setGenerationProgress(68);
-      setGenerationStageText('远端流式生成失败，正在切换本地模板...');
-      // 通知全局 Context 进度更新（用于 Sidebar 角标）
-      notifyProgress(68, '远端流式生成失败，正在切换本地模板...');
-
-      const generated = generateMindDataFromRequirement(requirementText, workspaceName);
-      const expanded = expandImportedCaseNodesFromNote(generated, {
-        showNodeKindTags: showNodeKindTagsRef.current,
-      });
-
-      setDataAndSync(expanded.data, {
-        selectedId: getFirstGeneratedCaseId(expanded.data) ?? expanded.data.nodeData.id,
-        refreshMind: true,
-      });
-      await cleanupStaleAttachments(expanded.data);
-      setAttachmentReloadSeed((value) => value + 1);
-      finishGenerateProgress('本地模板生成完成');
-
-      // 认证失败单独提示，引导用户重新登录
-      const isAuthError =
-        errMsg.includes('未提供认证令牌') ||
-        errMsg.includes('无效或过期的令牌') ||
-        errMsg.includes('HTTP 401') ||
-        errMsg.includes('未认证');
-
-      const isOnAiPageOnError = window.location.pathname === '/cases/ai';
-      if (isAuthError) {
-        toast.warning('登录状态已过期，AI 生成已切换至本地模板。请重新登录后再试', {
-          duration: 6000,
-          action: {
-            label: '去登录',
-            onClick: () => window.location.replace('/login'),
-          },
-        });
-      } else if (!isOnAiPageOnError) {
-        toast.warning('AI 生成失败，已使用本地模板，点击返回查看', {
-          duration: 8000,
-          action: {
-            label: '返回查看',
-            onClick: () => setLocation('/cases/ai'),
-          },
-        });
-      } else {
-        toast.warning(`远端 AI 生成失败，已使用本地模板生成（${errMsg}）`, { duration: 5000 });
-      }
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [
+  const handleGenerate = useCallback(() => generateAiCases({
+    requirementText,
+    workspaceName,
+    streamGenerateFromBackend,
+    showNodeKindTagsRef,
+    isWorkspaceNameUserEditedRef,
+    setActiveTab,
+    setIsRequirementDialogOpen,
+    startGenerateProgress,
+    setIsGenerating,
+    setGenerationProgress,
+    setGenerationStageText,
+    setDataAndSync,
+    setWorkspaceName,
+    cleanupStaleAttachments,
+    setAttachmentReloadSeed,
+    finishGenerateProgress,
+    notifyProgress,
+    setLocation,
+  }), [
     requirementText,
     workspaceName,
     streamGenerateFromBackend,
@@ -1606,7 +947,6 @@ const applyWorkspaceDetail = useCallback(
     notifyProgress,
     setLocation,
   ]);
-
   useEffect(() => {
     handleGenerateRef.current = handleGenerate;
   }, [handleGenerate]);
@@ -1707,108 +1047,20 @@ const applyWorkspaceDetail = useCallback(
     toast.success('已恢复默认工作区模板');
   }, [workspaceName, setDataAndSync, cleanupStaleAttachments]);
 
-  const handleStatusChange = useCallback(async (status: AiCaseNodeStatus) => {
-    if (!mindData || !canEditAnySelectedNode) {
-      toast.error('请先选中一个可执行测试节点');
-      return;
-    }
-
-    // 实际要操作的节点 ID 列表：所有选中节点中 kind=testcase 的
-    const targetIds = selectedTestcaseNodeIds;
-    if (targetIds.length === 0) {
-      toast.error('请先选中一个可执行测试节点');
-      return;
-    }
-
-    const remoteId = remoteSyncMetaRef.current.remoteWorkspaceId;
-    if (remoteId) {
-      setIsUpdatingNodeStatus(true);
-      try {
-        // 远端模式：串行更新每个 testcase 节点（API 每次只处理一个节点）
-        let latestWorkspace = null;
-        // 首次尝试前先做一次同步检查（只在第一个节点时处理 nodeId not found 问题）
-        let needsSync = false;
-
-        for (const nodeId of targetIds) {
-          try {
-            const resp = await aiCasesApi.updateNodeStatus(remoteId, {
-              nodeId,
-              status,
-              meta: { source: 'frontend_click', localUpdatedAt: Date.now() },
-            });
-            if (resp.data?.workspace) {
-              latestWorkspace = resp.data.workspace;
-            }
-          } catch (firstError) {
-            const msg = firstError instanceof Error ? firstError.message : '';
-            if (msg.includes('未找到指定 nodeId') && !needsSync) {
-              // 首次遇到"未找到 nodeId"：同步 mapData 到远端后，重试当前节点
-              needsSync = true;
-              console.warn('[AICases] nodeId not found on remote, auto-syncing mapData then retrying...');
-              const workspaceNameValue = workspaceName.trim() || 'AI Testcase Workspace';
-              const syncResp = await aiCasesApi.updateWorkspace(remoteId, {
-                name: workspaceNameValue,
-                requirementText: requirementText.trim(),
-                mapData: mindData,
-                syncSource: 'mixed',
-                status: remoteSyncMetaRef.current.remoteStatus ?? 'draft',
-              });
-              if (syncResp.data) {
-                updateRemoteSyncMeta({
-                  remoteVersion: syncResp.data.version,
-                  remoteStatus: syncResp.data.status,
-                  lastRemoteSyncedAt: Date.now(),
-                });
-              }
-              // 同步后重试
-              const retryResp = await aiCasesApi.updateNodeStatus(remoteId, {
-                nodeId,
-                status,
-                meta: { source: 'frontend_click', localUpdatedAt: Date.now() },
-              });
-              if (retryResp.data?.workspace) {
-                latestWorkspace = retryResp.data.workspace;
-              }
-            } else {
-              throw firstError;
-            }
-          }
-        }
-
-        if (!latestWorkspace) {
-          throw new Error('远端未返回工作台数据');
-        }
-
-        applyWorkspaceDetail(latestWorkspace, { keepSelection: true });
-        toast.success(
-          targetIds.length > 1
-            ? `已同步 ${targetIds.length} 个节点状态到远端`
-            : '节点状态已同步到远端'
-        );
-      } catch (error) {
-        console.error('[AICases] update remote node status failed', error);
-        toast.error(error instanceof Error ? error.message : '节点状态同步失败');
-      } finally {
-        setIsUpdatingNodeStatus(false);
-      }
-      return;
-    }
-
-    // 本地模式：一次性批量更新所有 testcase 节点状态
-    let next = mindData;
-    for (const nodeId of targetIds) {
-      next = setNodeStatus(next, nodeId, status);
-    }
-    setDataAndSync(next, {
-      // 保留当前主选中节点
-      selectedId: selectedNodeId,
-      refreshMind: true,
-    });
-    if (targetIds.length > 1) {
-      toast.success(`已批量更新 ${targetIds.length} 个节点状态`);
-    }
-  }, [mindData, canEditAnySelectedNode, selectedTestcaseNodeIds, selectedNodeId, workspaceName, requirementText, applyWorkspaceDetail, updateRemoteSyncMeta, setDataAndSync]);
-
+  const handleStatusChange = useCallback((status: AiCaseNodeStatus) => changeAiCaseNodeStatus({
+    status,
+    mindData,
+    canEditAnySelectedNode,
+    selectedTestcaseNodeIds,
+    selectedNodeId,
+    remoteSyncMetaRef,
+    workspaceName,
+    requirementText,
+    applyWorkspaceDetail,
+    updateRemoteSyncMeta,
+    setDataAndSync,
+    setIsUpdatingNodeStatus,
+  }), [mindData, canEditAnySelectedNode, selectedTestcaseNodeIds, selectedNodeId, workspaceName, requirementText, applyWorkspaceDetail, updateRemoteSyncMeta, setDataAndSync]);
   const handleUploadAttachment = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
@@ -1851,457 +1103,52 @@ const applyWorkspaceDetail = useCallback(
   // ─── 新双栏布局 ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-slate-950 overflow-hidden">
-
-      {/* 顶部标题栏（全屏时隐藏） */}
-      <AiWorkspaceHeader
-          title="AI 用例工作台"
-          saveStateText={saveStateText}
-          remoteStatusText={remoteStatusText}
-          onOpenRequirement={() => setIsRequirementDialogOpen(true)}
-          onOpenHistory={() => setLocation('/cases/ai-history')}
-        />
-      
-          <AiWorkspaceSummaryBar
-            items={[
-              { label: '输入材料', value: `${workspaceSummary.materialCount}`, hint: '需求、附件和远端上下文' },
-              { label: '生成用例', value: `${workspaceSummary.caseCount}`, hint: '当前工作台中的测试点数量' },
-              { label: '高风险项', value: `${workspaceSummary.highRiskCount}`, hint: '按优先级和状态初步推断' },
-              { label: '当前覆盖率', value: workspaceSummary.coverageRate, hint: '基于节点状态的阶段性指标' },
-              { label: '执行状态', value: workspaceSummary.executionState, hint: isRemoteLinked ? remoteStatusText : '尚未发布到远端工作台' },
-            ]}
-          />
-
-          <AiWorkspaceTabs
-            activeTab={activeTab}
-            items={WORKSPACE_TAB_ITEMS}
-            onChange={setActiveTab}
-          />
-      
-
-      {/* 主体内容 */}
-      {activeTab === 'materials' ? (
-        <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4 grid-cols-[1.6fr_1fr]">
-            <WorkspacePanelCard
-              title="需求与附件"
-              description="这里先承接当前最核心的输入材料，确保 AI 生成入口不变。"
-              action={(
-                <Button type="button" size="sm" className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white" onClick={() => setIsRequirementDialogOpen(true)}>
-                  <Bot className="h-3.5 w-3.5" />
-                  编辑需求
-                </Button>
-              )}
-            >
-              <div className="space-y-4">
-                <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-medium text-slate-900 dark:text-white">需求描述 / PRD</div>
-                      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">当前工作台生成所依赖的主需求文本</div>
-                    </div>
-                    <span className="rounded-full bg-indigo-100 px-2 py-1 text-[11px] font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
-                      {requirementText.trim() ? '已准备' : '待补充'}
-                    </span>
-                  </div>
-                  <div className="mt-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
-                    {requirementText.trim() || '还没有填写需求内容，建议先补充 PRD 或功能描述，再执行 AI 生成。'}
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-medium text-slate-900 dark:text-white">附件材料</div>
-                      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">复用当前工作台附件能力，后续扩展到接口文档、截图和说明材料。</div>
-                    </div>
-                    <span className="rounded-full bg-slate-200 px-2 py-1 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                      {attachments.length} 个
-                    </span>
-                  </div>
-
-                  {attachments.length > 0 ? (
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      {attachments.slice(0, 6).map((attachment) => (
-                        <div key={attachment.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2">
-                          <div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{attachment.name}</div>
-                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{(attachment.size / 1024).toFixed(1)} KB</div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="mt-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm text-slate-500 dark:text-slate-400">
-                      当前还没有上传附件。后续这里会统一展示 PRD、接口文档、截图和辅助材料。
-                    </div>
-                  )}
-                </div>
-              </div>
-            </WorkspacePanelCard>
-
-            <div className="grid gap-4">
-              <WorkspacePanelCard title="外部来源骨架" description="Phase 1 先把结构搭好，Phase 2 再逐步接真实平台。">
-                <div className="space-y-3">
-                  {[
-                    { icon: <Link2 className="h-4 w-4" />, title: '接口文档', desc: 'OpenAPI / Swagger 导入入口预留' },
-                    { icon: <GitBranch className="h-4 w-4" />, title: '代码变更', desc: 'PR / MR / Commit 影响面摘要预留' },
-                    { icon: <Bug className="h-4 w-4" />, title: '缺陷单', desc: '缺陷来源和高频问题预留' },
-                    { icon: <Activity className="h-4 w-4" />, title: '流量摘要', desc: '热门接口与异常热点预留' },
-                  ].map((item) => (
-                    <div key={item.title} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                      <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
-                        {item.icon}
-                        {item.title}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.desc}</div>
-                      <div className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">待接入</div>
-                    </div>
-                  ))}
-                </div>
-              </WorkspacePanelCard>
-
-              <WorkspacePanelCard
-                title="本次生成材料摘要"
-                description="确认当前工作台是否具备执行 AI 生成的最基本条件。"
-                action={(
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
-                    onClick={() => void handleGenerate()}
-                    disabled={isGenerating || !requirementText.trim()}
-                  >
-                    {isGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />}
-                    AI 生成
-                  </Button>
-                )}
-              >
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">需求文本</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{requirementText.trim() ? '已填写' : '未填写'}</div>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">附件数</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{attachments.length}</div>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">远端状态</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{isRemoteLinked ? '已关联远端' : '仅本地工作台'}</div>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">建议动作</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{requirementText.trim() ? '可开始生成' : '先补需求'}</div>
-                  </div>
-                </div>
-              </WorkspacePanelCard>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === 'results' ? (
-        <div className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-900 dark:text-white">生成结果</div>
-              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">以结构化列表作为默认结果视图，方便审阅、筛选和批量操作。</div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="default"
-                className="bg-indigo-600 hover:bg-indigo-700 text-white"
-              >
-                <ListTree className="mr-1.5 h-3.5 w-3.5" />
-                列表视图
-              </Button></div>
-          </div>
-        </div>
-      ) : null}
-
-      {activeTab === 'coverage' ? (
-        <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4">
-            <AiWorkspaceSummaryBar
-              items={[
-                { label: '高风险项', value: `${highRiskCases.length}`, hint: '优先级 P0 / 失败项优先展示' },
-                { label: '待补充项', value: `${coverageGapCases.length}`, hint: '待执行、阻塞和失败项合并展示' },
-                { label: '模块数', value: `${moduleCoverage.length}`, hint: '按模块节点聚合' },
-                { label: '总体覆盖率', value: `${progress.completionRate}%`, hint: '基于节点进度的临时口径' },
-              ]}
-              gridClassName="grid-cols-4"
-            />
-
-            <div className="grid gap-4 grid-cols-[1.2fr_1fr]">
-              <WorkspacePanelCard title="高风险点" description="Phase 1 先基于优先级和执行状态生成静态风险清单。">
-                {highRiskCases.length > 0 ? (
-                  <div className="space-y-2">
-                    {highRiskCases.slice(0, 6).map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => handleFocusGeneratedCase(item.id)}
-                        className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 text-left hover:border-indigo-300 hover:bg-indigo-50/40 dark:hover:border-indigo-500/60 dark:hover:bg-indigo-500/10 transition-colors"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-medium text-slate-900 dark:text-white">{item.title}</div>
-                            <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.moduleName} · {item.priority}</div>
-                          </div>
-                          <span className="rounded-full bg-rose-100 px-2 py-1 text-[11px] font-medium text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">高风险</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-                    还没有高风险点，先生成测试用例后这里会出现分析结果。
-                  </div>
-                )}
-              </WorkspacePanelCard>
-
-              <WorkspacePanelCard title="模块覆盖" description="这里先展示每个模块的完成率骨架，后续再接真实覆盖口径。">
-                {moduleCoverage.length > 0 ? (
-                  <div className="space-y-3">
-                    {moduleCoverage.map((item) => (
-                      <div key={item.moduleName} className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm font-medium text-slate-900 dark:text-white">{item.moduleName}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">{item.done}/{item.total} · 高风险 {item.highRisk}</div>
-                        </div>
-                        <progress
-                          className="ai-cases-progress ai-cases-progress--indigo mt-2 h-2 w-full overflow-hidden rounded-full"
-                          max={100}
-                          value={item.completionRate}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-                    暂无模块覆盖数据。
-                  </div>
-                )}
-              </WorkspacePanelCard>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === 'execution' ? (
-        <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4 grid-cols-[1.1fr_1fr]">
-            <div className="grid gap-4">
-              <WorkspacePanelCard
-                title="发布"
-                description="沿用当前远端工作台发布能力，作为执行前的统一入口。"
-                action={(
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
-                    onClick={() => void handlePublishRemote()}
-                    disabled={isPublishingRemote || isGenerating}
-                  >
-                    {isPublishingRemote ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                    发布工作台
-                  </Button>
-                )}
-              >
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">远端状态</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{remoteStatusText}</div>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">本地保存</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{saveStateText}</div>
-                  </div>
-                </div>
-              </WorkspacePanelCard>
-
-              <WorkspacePanelCard title="执行触发骨架" description="Phase 1 先把执行入口布局搭好，后续对接 Jenkins 真实触发。">
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">执行范围</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">全部 / 按模块 / 高风险</div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">执行环境</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">待接入</div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">Jenkins</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">保留现有执行链路</div>
-                  </div>
-                </div>
-              </WorkspacePanelCard>
-            </div>
-
-            <div className="grid gap-4">
-              <WorkspacePanelCard title="最近执行摘要" description="这里先展示工作台现状与后续回流入口。">
-                <div className="space-y-3">
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">当前工作台</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{workspaceName}</div>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">结果规模</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{generatedCases.length} 条测试点</div>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-4 py-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400">当前进度</div>
-                    <div className="mt-1 font-medium text-slate-900 dark:text-white">{progress.done}/{progress.total} 已完成</div>
-                  </div>
-                </div>
-              </WorkspacePanelCard>
-
-              <WorkspacePanelCard title="质量回流骨架" description="后续这里会承接质量评分、知识库回流和执行反馈。">
-                <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
-                  <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-4">
-                    <div className="font-medium text-slate-900 dark:text-white">质量评分</div>
-                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Phase 1 先放置入口，后续对接人工评分与系统评分。</div>
-                  </div>
-                  <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-4">
-                    <div className="font-medium text-slate-900 dark:text-white">知识库回流</div>
-                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">优质工作台后续可在这里直接加入知识库。</div>
-                  </div>
-                </div>
-              </WorkspacePanelCard>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      
-      {activeTab === 'results' ? (
-        <section className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-          <div className="grid gap-4 grid-cols-[1.6fr_1fr]">
-            <WorkspacePanelCard title="测试用例列表" description="从当前工作区结构中派生出的结构化列表，后续将支持更多筛选与批量操作。">
-              {generatedCases.length > 0 ? (
-                <div className="space-y-2">
-                  {generatedCases.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => handleFocusGeneratedCase(item.id)}
-                      className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
-                        selectedNodeId === item.id
-                          ? 'border-indigo-300 bg-indigo-50 dark:border-indigo-500/60 dark:bg-indigo-500/10'
-                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800/70'
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium text-slate-900 dark:text-white">{item.title}</div>
-                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.moduleName} · {item.priority} · {item.sourceLabel}</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${
-                            item.riskLevel === 'high'
-                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300'
-                              : item.riskLevel === 'medium'
-                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
-                                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
-                          }`}>
-                            {item.riskLevel === 'high' ? '高风险' : item.riskLevel === 'medium' ? '中风险' : '低风险'}
-                          </span>
-                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                            {item.status}
-                          </span>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-                  暂无生成结果，先回到“输入材料”补充需求后再执行 AI 生成。
-                </div>
-              )}
-            </WorkspacePanelCard>
-
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-              <AiCaseSidebar
-                isGenerating={isGenerating}
-                generationProgress={generationProgress}
-                generationStageText={generationStageText}
-                onGenerate={() => setIsRequirementDialogOpen(true)}
-                progress={progress}
-                selectedNode={selectedNode}
-                selectedNodeStatus={selectedNodeStatus}
-                canEditSelectedNode={canEditSelectedNode}
-                isMultiSelect={isMultiSelect}
-                selectedTestcaseCount={selectedTestcaseNodeIds.length}
-                canEditAnySelectedNode={canEditAnySelectedNode}
-                isUpdatingNodeStatus={isUpdatingNodeStatus}
-                onStatusChange={handleStatusChange}
-                attachments={attachments}
-                isUploading={isUploading}
-                onUploadAttachment={handleUploadAttachment}
-                onDeleteAttachment={handleDeleteAttachment}
-                isRemoteLinked={isRemoteLinked}
-                remoteWorkspaceId={remoteSyncMeta.remoteWorkspaceId ?? null}
-                isPublishingRemote={isPublishingRemote}
-                isSyncingRemote={isSyncingRemote}
-                onPublishRemote={handlePublishRemote}
-                onSyncFromRemote={handleSyncFromRemote}
-                onResetTemplate={handleResetTemplate}
-                onLoadHistoryWorkspace={handleLoadHistoryWorkspace}
-                mindData={mindData}
-              />
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      <Dialog open={isRequirementDialogOpen} onOpenChange={setIsRequirementDialogOpen}>
-        <DialogContent className="max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle>需求信息</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                工作台名称
-              </label>
-              <input
-                value={workspaceName}
-                onChange={(e) => handleWorkspaceNameChange(e.target.value)}
-                className="h-10 w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-colors"
-                placeholder="输入工作台标题"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                需求描述 / PRD
-              </label>
-              <textarea
-                value={requirementText}
-                onChange={(e) => setRequirementText(e.target.value)}
-                rows={10}
-                className="w-full resize-none rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-sm leading-relaxed text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-colors"
-                placeholder="粘贴 PRD、需求描述或技术方案，点击「AI 生成」按钮自动生成测试用例结构..."
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">取消</Button>
-            </DialogClose>
-            <Button
-              className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
-              onClick={handleGenerate}
-              disabled={isGenerating || !requirementText.trim()}
-            >
-              {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-              {isGenerating ? 'AI 生成中...' : 'AI 生成测试用例'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+    <AICasesWorkspaceView
+      saveStateText={saveStateText}
+      remoteStatusText={remoteStatusText}
+      onOpenHistory={() => setLocation('/cases/ai-history')}
+      workspaceSummary={workspaceSummary}
+      isRemoteLinked={isRemoteLinked}
+      activeTab={activeTab}
+      setActiveTab={setActiveTab}
+      requirementText={requirementText}
+      attachments={attachments}
+      isGenerating={isGenerating}
+      handleGenerate={handleGenerate}
+      generatedCases={generatedCases}
+      highRiskCases={highRiskCases}
+      coverageGapCases={coverageGapCases}
+      moduleCoverage={moduleCoverage}
+      progress={progress}
+      isPublishingRemote={isPublishingRemote}
+      handlePublishRemote={handlePublishRemote}
+      workspaceName={workspaceName}
+      selectedNodeId={selectedNodeId}
+      handleFocusGeneratedCase={handleFocusGeneratedCase}
+      generationProgress={generationProgress}
+      generationStageText={generationStageText}
+      selectedNode={selectedNode}
+      selectedNodeStatus={selectedNodeStatus}
+      canEditSelectedNode={canEditSelectedNode}
+      isMultiSelect={isMultiSelect}
+      selectedTestcaseNodeIds={selectedTestcaseNodeIds}
+      canEditAnySelectedNode={canEditAnySelectedNode}
+      isUpdatingNodeStatus={isUpdatingNodeStatus}
+      handleStatusChange={handleStatusChange}
+      isUploading={isUploading}
+      handleUploadAttachment={handleUploadAttachment}
+      handleDeleteAttachment={handleDeleteAttachment}
+      remoteSyncMeta={remoteSyncMeta}
+      isSyncingRemote={isSyncingRemote}
+      handleSyncFromRemote={handleSyncFromRemote}
+      handleResetTemplate={handleResetTemplate}
+      handleLoadHistoryWorkspace={handleLoadHistoryWorkspace}
+      mindData={mindData}
+      isRequirementDialogOpen={isRequirementDialogOpen}
+      setIsRequirementDialogOpen={setIsRequirementDialogOpen}
+      handleWorkspaceNameChange={handleWorkspaceNameChange}
+      setRequirementText={setRequirementText}
+    />
   );
 }
 

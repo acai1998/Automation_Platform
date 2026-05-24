@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/TailwindCSS-3.4-06B6D4?logo=tailwindcss" alt="TailwindCSS" />
   <img src="https://img.shields.io/badge/PM2-5.x-2B037A?logo=pm2" alt="PM2" />
   <img src="https://img.shields.io/badge/Socket.IO-4.x-010101?logo=socket.io" alt="Socket.IO" />
+  <img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/acai1998/ce72e9e3551850f329e4ee3b20bc80ea/raw/coverage.json" alt="Test Coverage" />
 </p>
 
 一个现代化的全栈自动化测试管理平台，用于管理测试用例、调度 Jenkins 执行任务、监控执行结果。平台专注于测试管理和调度，实际测试执行由 Jenkins 等外部系统完成。

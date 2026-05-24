@@ -1,0 +1,39 @@
+[
+  {
+    "name": "health",
+    "method": "GET",
+    "path": "/api/health",
+    "expectedStatus": 200
+  },
+  {
+    "name": "login",
+    "method": "POST",
+    "path": "/api/auth/login",
+    "body": {
+      "email": "${SMOKE_EMAIL}",
+      "password": "${SMOKE_PASSWORD}"
+    },
+    "expectedStatus": 200,
+    "requiresCredentials": true,
+    "captureToken": true
+  },
+  {
+    "name": "current_user",
+    "method": "GET",
+    "path": "/api/auth/me",
+    "expectedStatus": 200,
+    "requiresToken": true
+  },
+  {
+    "name": "dashboard_stats",
+    "method": "GET",
+    "path": "/api/dashboard/stats",
+    "expectedStatus": 200
+  },
+  {
+    "name": "cases_list",
+    "method": "GET",
+    "path": "/api/cases?limit=10&offset=0",
+    "expectedStatus": 200
+  }
+]

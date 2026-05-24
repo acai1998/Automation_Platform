@@ -16,6 +16,14 @@ export const SLOT_HOLD_TIMEOUT_MS = parseInt(
   10,
 );
 
+export const SCHEDULED_QUEUE_ITEM_TIMEOUT_MS = parseInt(
+  process.env.TASK_SCHEDULED_QUEUE_TIMEOUT_MS || String(Math.max(
+    QUEUE_ITEM_TIMEOUT_MS,
+    SLOT_HOLD_TIMEOUT_MS + 60 * 1000,
+  )),
+  10,
+);
+
 export const SLOT_RECONCILE_INTERVAL_MS = parseInt(
   process.env.TASK_SLOT_RECONCILE_INTERVAL_MS || '5000',
   10,
