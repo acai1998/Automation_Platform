@@ -17,7 +17,6 @@ import {
   Code,
   Monitor,
   Gauge,
-  ServerCog,
   BrainCircuit,
   History,
   PanelLeftClose,
@@ -47,7 +46,6 @@ const navItems: NavItem[] = [
     label: "用例管理",
     children: [
       { label: "API 自动化", href: "/cases/api", icon: <Code className="h-4 w-4" /> },
-      { label: "Bruno 接口自动化", href: "/cases/bruno", icon: <ServerCog className="h-4 w-4" /> },
       { label: "UI 自动化", href: "/cases/ui", icon: <Monitor className="h-4 w-4" /> },
       { label: "性能自动化", href: "/cases/performance", icon: <Gauge className="h-4 w-4" /> },
     ],

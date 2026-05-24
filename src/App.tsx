@@ -20,7 +20,6 @@ import Tasks from "./pages/tasks/Tasks";
 import APICases from "./pages/cases/APICases";
 import UICases from "./pages/cases/UICases";
 import PerformanceCases from "./pages/cases/PerformanceCases";
-import BrunoAutomation from "./pages/cases/BrunoAutomation";
 import AICases from "./pages/cases/AICases";
 import AICaseCreate from "./pages/cases/AICaseCreate";
 import AICaseHistory from "./pages/cases/AICaseHistory";
@@ -165,13 +164,6 @@ function Router() {
           <ProtectedRoute>
             <Layout>
               <PerformanceCases />
-            </Layout>
-          </ProtectedRoute>
-        </Route>
-        <Route path="/cases/bruno">
-          <ProtectedRoute>
-            <Layout>
-              <BrunoAutomation />
             </Layout>
           </ProtectedRoute>
         </Route>

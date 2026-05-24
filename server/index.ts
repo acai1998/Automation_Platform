@@ -16,7 +16,6 @@ import tasksRoutes from './routes/tasks';
 import jenkinsRoutes from './routes/jenkins';
 import authRoutes from './routes/auth';
 import aiCasesRoutes from './routes/aiCases';
-import brunoRoutes from './routes/bruno';
 import { dailySummaryScheduler } from './services/DailySummaryScheduler';
 import { executionMonitorService } from './services/ExecutionMonitorService';
 import { initializeWebSocketService, webSocketService } from './services/WebSocketService';
@@ -150,7 +149,6 @@ app.use('/api/cases', casesRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/jenkins', jenkinsRoutes);
 app.use('/api/ai-cases', aiCasesRoutes);
-app.use('/api/bruno', brunoRoutes);
 
 // 【紧急修复】修复孤立的 TestRun 记录
 // 安全修复：添加 authenticate 和 requireAdmin 中间件，确保只有管理员才能执行数据修复操作
