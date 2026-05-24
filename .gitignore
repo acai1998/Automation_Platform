@@ -27,7 +27,8 @@ Jenkinsfile.optimized
 .markdownlint.yaml
 .markdownlint.json
 .docs\报错日志.txt
-
+.superpowers/*
+.worktrees/
 
 # Distribution / packaging
 .Python
