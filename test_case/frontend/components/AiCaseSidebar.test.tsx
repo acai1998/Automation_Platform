@@ -134,7 +134,7 @@ describe('AiCaseSidebar – 节点操作', () => {
   it('未选中节点时节点说明卡片应显示提示文字', () => {
     render(<AiCaseSidebar {...buildDefaultProps({ selectedNode: null })} />);
     // 节点说明已合并到执行进度 section，且该 section 默认展开，无需额外点击
-    expect(screen.getByText('请在脑图中点击一个节点')).toBeInTheDocument();
+    expect(screen.getByText('请先在列表中选择一个测试点')).toBeInTheDocument();
   });
 
   it('选中非 testcase 节点时应显示"仅测试点可切换状态"提示', () => {

@@ -6,6 +6,10 @@ vi.mock('../../../server/config/dataSource', () => ({
   AppDataSource: {},
 }));
 
+vi.mock('../../../server/repositories/BaseRepository', () => ({
+  BaseRepository: class {},
+}));
+
 const { mockFindAllWithUser, mockCount } = vi.hoisted(() => ({
   mockFindAllWithUser: vi.fn(),
   mockCount: vi.fn(),
