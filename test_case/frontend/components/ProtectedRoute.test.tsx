@@ -30,6 +30,8 @@ describe('ProtectedRoute', () => {
       user: null,
       login: vi.fn(),
       logout: vi.fn(),
+      register: vi.fn(),
+      refreshUser: vi.fn(),
     });
 
     render(
@@ -49,6 +51,8 @@ describe('ProtectedRoute', () => {
       user: null,
       login: vi.fn(),
       logout: vi.fn(),
+      register: vi.fn(),
+      refreshUser: vi.fn(),
     });
 
     render(
@@ -70,6 +74,8 @@ describe('ProtectedRoute', () => {
       user: null,
       login: vi.fn(),
       logout: vi.fn(),
+      register: vi.fn(),
+      refreshUser: vi.fn(),
     });
 
     render(
@@ -87,9 +93,11 @@ describe('ProtectedRoute', () => {
     mockUseAuth.mockReturnValue({
       isAuthenticated: true,
       isLoading: false,
-      user: { id: 1, username: 'testuser' },
+      user: { id: 1, username: 'testuser', email: 'test@test.com', display_name: 'Test User', avatar: null, role: 'user', status: 'active' },
       login: vi.fn(),
       logout: vi.fn(),
+      register: vi.fn(),
+      refreshUser: vi.fn(),
     });
 
     render(
@@ -108,9 +116,11 @@ describe('ProtectedRoute', () => {
     mockUseAuth.mockReturnValue({
       isAuthenticated: true,
       isLoading: false,
-      user: { id: 1, username: 'testuser' },
+      user: { id: 1, username: 'testuser', email: 'test@test.com', display_name: 'Test User', avatar: null, role: 'user', status: 'active' },
       login: vi.fn(),
       logout: vi.fn(),
+      register: vi.fn(),
+      refreshUser: vi.fn(),
     });
 
     render(

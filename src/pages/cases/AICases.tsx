@@ -10,29 +10,24 @@ import {
   type AiCaseWorkspaceDetail,
 } from '@/api';
 import {
-  appendNodeAttachmentId,
   collectDescendantTestcaseIds,
   computeProgress,
   createInitialMindData,
   expandImportedCaseNodesFromNote,
   findNodeById,
-  generateMindDataFromRequirement,
   inferWorkspaceNameFromRequirement,
   normalizeMindData,
   removeNodeAttachmentId,
-  setNodeStatus,
 } from '@/lib/aiCaseMindMap';
 import {
   deleteNodeAttachment,
   deleteStaleWorkspaceAttachments,
   getWorkspaceDocument,
   listNodeAttachments,
-  saveNodeAttachment,
   saveWorkspaceDocument,
 } from '@/lib/aiCaseStorage';
 import {
   AI_CASE_WORKSPACE_ID,
-  createAiCaseAttachmentId,
   type AiCaseAttachmentPreview,
   type AiCaseMindData,
   type AiCaseNode,
@@ -44,11 +39,9 @@ import { runAiCaseStreamGeneration } from './AICasesStream';
 import { AICasesWorkspaceView } from './AICasesWorkspaceView';
 import {
   DEFAULT_REMOTE_SYNC_META,
-  MAX_UPLOAD_BYTES,
   WAIT_COPY_MAGIC,
   collectGeneratedCases,
   collectNodeIds,
-  getFirstGeneratedCaseId,
   mergeRemoteWorkspaceToDoc,
   readNodeTagVisibilityPreference,
   resolveRemoteSyncMeta,

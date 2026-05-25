@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Sidebar } from '@/components/Sidebar';
 
@@ -57,13 +57,7 @@ vi.mock('@/components/ThemeToggle', () => ({
   ThemeToggle: () => <div data-testid="theme-toggle" />,
 }));
 
-const mockUseLocation = vi.fn() as ReturnType<typeof vi.fn> & {
-  mockReturnValue: (val: [string, (to: string) => void]) => void;
-};
 const mockSetLocation = vi.fn();
-const mockUseAuth = vi.fn();
-const mockUseNavCollapse = vi.fn();
-const mockUseAiGeneration = vi.fn();
 
 import { useLocation } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
@@ -72,7 +66,7 @@ import { useAiGeneration } from '@/contexts/AiGenerationContext';
 
 function setupMocks({
   location = '/dashboard',
-  user = { display_name: 'Test User', username: 'testuser' },
+    user = { display_name: 'Test User', username: 'testuser' } as { display_name: string | null; username: string },
   navState = 'expanded' as 'expanded' | 'icon-only',
   isGenerating = false,
   progress = 0,

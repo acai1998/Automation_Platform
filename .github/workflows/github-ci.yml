@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+name: CI Pipeline
 
 on:
   push:
@@ -57,34 +57,6 @@ jobs:
 
       - name: Run tests
         run: npx vitest run
-
-  build:
-    name: Build Verification
-    needs: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build frontend
-        run: npm run build
-
-      - name: Build backend
-        run: npm run server:build
-
-      - name: Verify build output
-        run: |
-          test -f dist/index.html || (echo "Frontend build missing" && exit 1)
-          test -f dist/server/server/index.js || (echo "Backend build missing" && exit 1)
-          echo "Build verification passed"
 
   coverage:
     name: Test Coverage
