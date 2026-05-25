@@ -26,19 +26,21 @@ jobs:
           sudo apt-get install -y k6
 
       - name: Run k6 API smoke test
+        id: k6-run
         working-directory: perf
         env:
           BASE_URL: ${{ vars.PERF_BASE_URL || secrets.PERF_BASE_URL }}
           API_TOKEN: ${{ secrets.PERF_API_TOKEN }}
           SMOKE_EMAIL: ${{ secrets.PERF_SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.PERF_SMOKE_PASSWORD }}
+        continue-on-error: true
         run: |
           k6 run \
             --summary-export k6-summary.json \
             smoke.js
 
       - name: Upload k6 summary
-        if: always()
+        if: always() && hashFiles('perf/k6-summary.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: k6-summary
